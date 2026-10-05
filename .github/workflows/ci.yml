@@ -31,8 +31,8 @@ jobs:
       matrix:
         mode: [serial, parallel]
     env:
-      MFEM_PREFIX: ${{ github.workspace }}/../mfem-install
-      MESHES_VENV: ${{ github.workspace }}/../meshes-venv
+      MFEM_PREFIX: ${{ github.workspace }}/.ci-deps/mfem-install
+      MESHES_VENV: ${{ github.workspace }}/.ci-deps/meshes-venv
 
     steps:
       - uses: actions/checkout@v4
@@ -57,9 +57,11 @@ jobs:
           echo "MPICXX=$(command -v mpicxx.mpich)" >> "$GITHUB_ENV"
           echo "MPIEXEC=$(command -v mpiexec.mpich)" >> "$GITHUB_ENV"
 
+      # Restore and save are separate steps so that MFEM is cached as soon as
+      # it is built, even if a later step fails or the run is cancelled.
       - name: Restore MFEM
         id: mfem-cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: ${{ env.MFEM_PREFIX }}
           key: mfem-${{ matrix.mode }}-${{ env.MFEM_VERSION }}-hypre-${{ env.HYPRE_VERSION }}-ubuntu-24.04-${{ hashFiles('.github/ci/install_mfem.sh') }}
@@ -67,6 +69,13 @@ jobs:
       - name: Build MFEM
         if: steps.mfem-cache.outputs.cache-hit != 'true'
         run: .github/ci/install_mfem.sh ${{ matrix.mode }} "$MFEM_PREFIX"
+
+      - name: Save MFEM
+        if: steps.mfem-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.MFEM_PREFIX }}
+          key: ${{ steps.mfem-cache.outputs.cache-primary-key }}
 
       - uses: actions/setup-python@v5
         with:
@@ -103,8 +112,11 @@ jobs:
         run: |
           # The single-process tests run concurrently; the MPI tests (named
           # *_np<N>, up to 4 ranks) one at a time, so ranks never outnumber
-          # the runner's cores.
-          ctest -E '_np[0-9]+$' -j "$(nproc)" --output-on-failure
+          # the runner's cores. The MPI phase takes several minutes: the
+          # 4-rank tests run 3-5 times slower on the runner than on a
+          # workstation (the slowest, TestFluidGaugePar_np4, about 2 min).
+          # The timeout turns a hang into a failure naming the test.
+          ctest -E '_np[0-9]+$' -j "$(nproc)" --timeout 600 --output-on-failure
           if [[ ${{ matrix.mode }} == parallel ]]; then
-            ctest -R '_np[0-9]+$' --output-on-failure
+            ctest -R '_np[0-9]+$' --timeout 600 --output-on-failure
           fi
