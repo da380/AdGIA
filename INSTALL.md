@@ -9,7 +9,7 @@
    instructions](https://mfem.org/building/). CMake needs the directory
    holding `MFEMConfig.cmake`, normally the MFEM build or install directory.
    The continuous integration tests against MFEM 4.10 and hypre 3.1.0;
-   `.github/ci/build_mfem.sh serial|parallel <prefix>` builds and installs
+   `.github/ci/install_mfem.sh serial|parallel <prefix>` builds and installs
    that MFEM (and hypre) with the MPI compiler wrappers it is given, and
    works on a workstation too.
 4. **MPI** (optional), for the parallel build: the same MPI that hypre and

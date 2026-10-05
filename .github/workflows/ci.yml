@@ -2,7 +2,7 @@
 # and every pull request.
 #
 # MFEM (and, for the parallel build, hypre) are built from source by
-# .github/ci/build_mfem.sh and cached, so they are rebuilt only when the
+# .github/ci/install_mfem.sh and cached, so they are rebuilt only when the
 # versions below or that script change. The parallel job uses one MPI,
 # Ubuntu's MPICH, for hypre, MFEM, AdGIA and the launcher of the tests.
 
@@ -62,11 +62,11 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.MFEM_PREFIX }}
-          key: mfem-${{ matrix.mode }}-${{ env.MFEM_VERSION }}-hypre-${{ env.HYPRE_VERSION }}-ubuntu-24.04-${{ hashFiles('.github/ci/build_mfem.sh') }}
+          key: mfem-${{ matrix.mode }}-${{ env.MFEM_VERSION }}-hypre-${{ env.HYPRE_VERSION }}-ubuntu-24.04-${{ hashFiles('.github/ci/install_mfem.sh') }}
 
       - name: Build MFEM
         if: steps.mfem-cache.outputs.cache-hit != 'true'
-        run: .github/ci/build_mfem.sh ${{ matrix.mode }} "$MFEM_PREFIX"
+        run: .github/ci/install_mfem.sh ${{ matrix.mode }} "$MFEM_PREFIX"
 
       - uses: actions/setup-python@v5
         with:
