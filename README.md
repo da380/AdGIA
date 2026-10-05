@@ -1,5 +1,7 @@
 # AdGIA
 
+[![CI](https://github.com/da380/AdGIA/actions/workflows/ci.yml/badge.svg)](https://github.com/da380/AdGIA/actions/workflows/ci.yml)
+
 An open-source finite-element library for modelling glacial isostatic
 adjustment (GIA) and related processes of the solid Earth, such as
 post-seismic deformation. It is built on [MFEM](https://mfem.org) and aims to
