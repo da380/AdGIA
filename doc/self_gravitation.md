@@ -233,7 +233,7 @@ stable body — CG on the projected block system is admissible
 (`SolverType::BlockCG`, available as a diagnostic; its cost matches
 MINRES on the stable and steep three-layer test models). The solve uses
 a block-diagonal SPD preconditioner: Gauss–Seidel or
-BoomerAMG with elasticity options on `A_uu`, and on the shifted Laplacian
+systems BoomerAMG with nodal coarsening on `A_uu`, and on the shifted Laplacian
 `(K + εM)/4πG`, without `M_F`.
 
 **Schur CG.** CG on `S = A_uu − C A_φφ⁻¹ Cᵀ`, symmetric and, for a

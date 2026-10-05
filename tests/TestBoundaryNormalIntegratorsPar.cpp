@@ -19,7 +19,7 @@
      of the partition.
   2. CG preconditioned by BoomerAMG converges on the disconnected
      ParSubMesh, for a shifted Laplacian and for a shifted elasticity
-     operator with the elasticity AMG options (the setup used by
+     operator with the systems AMG options (the setup used by
      LinearQuasiStaticProblemBase), in an iteration count comparable to that
      on the connected mantle-only ParSubMesh. The counts are printed.
 */
@@ -233,7 +233,7 @@ AmgResult RunAmg(ParMesh& pparent, const Array<int>& solid, int order,
     r.its_scalar = cg.GetNumIterations();
     r.ok_scalar = cg.GetConverged();
   }
-  // Shifted elasticity, CG + BoomerAMG with the elasticity options.
+  // Shifted elasticity, CG + systems BoomerAMG (nodal coarsening).
   {
     ParFiniteElementSpace fes(&sub, &fec, dim);
     ParBilinearForm a(&fes);
@@ -250,7 +250,10 @@ AmgResult RunAmg(ParMesh& pparent, const Array<int>& solid, int order,
     Vector X(A->Height());
     X = 0.0;
     HypreBoomerAMG amg(*A);
-    amg.SetElasticityOptions(&fes);
+    amg.SetSystemsOptions(fes.GetVDim(), true);
+    HYPRE_BoomerAMGSetNodal(amg, 4);
+    HYPRE_BoomerAMGSetNodalDiag(amg, 1);
+    HYPRE_BoomerAMGSetCycleRelaxType(amg, 8, 3);
     amg.SetPrintLevel(0);
     CGSolver cg(MPI_COMM_WORLD);
     cg.SetOperator(*A);

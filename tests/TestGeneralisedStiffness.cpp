@@ -313,7 +313,10 @@ TEST_P(GeneralisedStiffnessTest, MaterialAffineEnergyPatch) {
     Vector CmB(mB.Size());
     Cm.Mult(mB, CmB);
     const real_t expected = mA * CmB;
-    EXPECT_NEAR(energy, expected, 1e-12 * std::abs(expected)) << name;
+    // Scaled by |mA| |C mB| rather than |expected|: the random A and B can
+    // make the product nearly cancel.
+    EXPECT_NEAR(energy, expected, 1e-12 * mA.Norml2() * CmB.Norml2())
+        << name;
   };
 
   ConstantCoefficient lam(1.3), mu(0.7);

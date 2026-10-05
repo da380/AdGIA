@@ -1,0 +1,110 @@
+# Build AdGIA and run its tests, serial and parallel, on every push to main
+# and every pull request.
+#
+# MFEM (and, for the parallel build, hypre) are built from source by
+# .github/ci/build_mfem.sh and cached, so they are rebuilt only when the
+# versions below or that script change. The parallel job uses one MPI,
+# Ubuntu's MPICH, for hypre, MFEM, AdGIA and the launcher of the tests.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  MFEM_VERSION: v4.10
+  HYPRE_VERSION: 3.1.0
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.mode }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [serial, parallel]
+    env:
+      MFEM_PREFIX: ${{ github.workspace }}/../mfem-install
+      MESHES_VENV: ${{ github.workspace }}/../meshes-venv
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System packages
+        run: |
+          sudo apt-get update
+          # gmsh (pulled in by planetmodel) needs the X and GL libraries even
+          # when it runs headless.
+          packages="libglu1-mesa libxrender1 libxcursor1 libxft2 libxinerama1"
+          if [[ ${{ matrix.mode }} == parallel ]]; then
+            packages="$packages mpich libmpich-dev libmetis-dev"
+          fi
+          sudo apt-get install -y --no-install-recommends $packages
+
+      - name: MPI compilers
+        if: matrix.mode == 'parallel'
+        run: |
+          # Name MPICH's wrappers and launcher explicitly, so nothing picks
+          # up another MPI from PATH.
+          echo "MPICC=$(command -v mpicc.mpich)" >> "$GITHUB_ENV"
+          echo "MPICXX=$(command -v mpicxx.mpich)" >> "$GITHUB_ENV"
+          echo "MPIEXEC=$(command -v mpiexec.mpich)" >> "$GITHUB_ENV"
+
+      - name: Restore MFEM
+        id: mfem-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.MFEM_PREFIX }}
+          key: mfem-${{ matrix.mode }}-${{ env.MFEM_VERSION }}-hypre-${{ env.HYPRE_VERSION }}-ubuntu-24.04-${{ hashFiles('.github/ci/build_mfem.sh') }}
+
+      - name: Build MFEM
+        if: steps.mfem-cache.outputs.cache-hit != 'true'
+        run: .github/ci/build_mfem.sh ${{ matrix.mode }} "$MFEM_PREFIX"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: meshes/pyproject.toml
+
+      - name: Mesh-generation Python
+        run: |
+          python -m venv "$MESHES_VENV"
+          "$MESHES_VENV/bin/pip" install --quiet "planetmodel[meshing,mfem]>=1.2.3"
+
+      - name: Configure
+        run: |
+          args=(-DCMAKE_BUILD_TYPE=Release
+                -DMFEM_DIR="$MFEM_PREFIX"
+                -DBUILD_EXAMPLES=ON
+                -DBUILD_TESTS=ON
+                -DBUILD_BENCHMARKS=OFF
+                -DMESHES_PYTHON="$MESHES_VENV/bin/python")
+          if [[ ${{ matrix.mode }} == parallel ]]; then
+            args+=(-DUSE_MPI=ON
+                   -DCMAKE_C_COMPILER="$MPICC"
+                   -DCMAKE_CXX_COMPILER="$MPICXX"
+                   -DMPIEXEC_EXECUTABLE="$MPIEXEC")
+          fi
+          cmake -S . -B build "${args[@]}"
+
+      - name: Build
+        run: cmake --build build -j "$(nproc)"
+
+      - name: Test
+        working-directory: build
+        run: |
+          # The single-process tests run concurrently; the MPI tests (named
+          # *_np<N>, up to 4 ranks) one at a time, so ranks never outnumber
+          # the runner's cores.
+          ctest -E '_np[0-9]+$' -j "$(nproc)" --output-on-failure
+          if [[ ${{ matrix.mode }} == parallel ]]; then
+            ctest -R '_np[0-9]+$' --output-on-failure
+          fi

@@ -143,7 +143,10 @@ void RunCase(int dim, int elementType, int order, const std::string& label) {
 
   // Projected CG with a projected BoomerAMG.
   HypreBoomerAMG amg(A);
-  amg.SetElasticityOptions(&pfes);
+  amg.SetSystemsOptions(pfes.GetVDim(), true);
+  HYPRE_BoomerAMGSetNodal(amg, 4);
+  HYPRE_BoomerAMGSetNodalDiag(amg, 1);
+  HYPRE_BoomerAMGSetCycleRelaxType(amg, 8, 3);
   amg.SetPrintLevel(0);
   ProjectedSolver PM(*P);
   PM.SetSolver(amg);

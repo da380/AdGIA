@@ -8,8 +8,12 @@
    (with hypre and METIS). See the [MFEM build
    instructions](https://mfem.org/building/). CMake needs the directory
    holding `MFEMConfig.cmake`, normally the MFEM build or install directory.
-4. **MPI** (optional), for the parallel build: the same MPI that MFEM was
-   built with.
+   The continuous integration tests against MFEM 4.10 and hypre 3.1.0;
+   `.github/ci/build_mfem.sh serial|parallel <prefix>` builds and installs
+   that MFEM (and hypre) with the MPI compiler wrappers it is given, and
+   works on a workstation too.
+4. **MPI** (optional), for the parallel build: the same MPI that hypre and
+   MFEM were built with, for the compiler and for `mpiexec`.
 5. **Python 3.12 or later** (examples and tests only). The gmsh meshes the
    examples and tests read are generated at build time by the scripts in
    `meshes/`, which need a Python that can import `planetmodel.mesh3d`, with

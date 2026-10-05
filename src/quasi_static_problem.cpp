@@ -328,7 +328,14 @@ void LinearQuasiStaticProblemBase::SetupDefaultPreconditioner(
 #ifdef MFEM_USE_MPI
     if (pfes_) {
       auto amg = std::make_unique<HypreBoomerAMG>(*A.As<HypreParMatrix>());
-      amg->SetElasticityOptions(pfes_);
+      // Systems AMG with the nodal coarsening and coarse-grid smoother of
+      // SetElasticityOptions, but without its rigid-body interpolation,
+      // which needs Ordering::byVDIM (MFEM 4.10 verifies this; the
+      // displacement spaces here are byNODES).
+      amg->SetSystemsOptions(pfes_->GetVDim(), true);
+      HYPRE_BoomerAMGSetNodal(*amg, 4);
+      HYPRE_BoomerAMGSetNodalDiag(*amg, 1);
+      HYPRE_BoomerAMGSetCycleRelaxType(*amg, 8, 3);
       amg->SetPrintLevel(0);
       prec_ = std::move(amg);
     } else

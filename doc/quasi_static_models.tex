@@ -506,7 +506,7 @@ coefficient needs).
 After assembly and elimination of essential conditions the discrete
 problem is $AX = b$ on true dofs, with $A$ symmetric positive
 (semi-)definite. The default solver is preconditioned CG: GS in serial,
-BoomerAMG with elasticity options in parallel, warm-started from the
+systems BoomerAMG with nodal coarsening in parallel, warm-started from the
 previous solution. Two devices of the base class matter mostly under time
 stepping (\S\ref{sec:visco}), where consecutive solves differ little.
 
@@ -1211,7 +1211,7 @@ with the projected block-diagonal preconditioner
   \mathcal{M}_\phi\approx\Bigl(\frac{K + \eps_sM_\phi}{4\pi G}\Bigr)^{-1},
 \end{equation}
 where $\mathcal{M}_u$ and $\mathcal{M}_\phi$ are GS sweeps (serial) or
-BoomerAMG V-cycles (parallel; elasticity options for $\mathcal{M}_u$),
+BoomerAMG V-cycles (parallel; systems AMG with nodal coarsening for $\mathcal{M}_u$),
 $M_\phi$ is the potential mass matrix and $\eps_s = 10^{-3}$ a shift making
 the Laplacian definite. $M_F$ is deliberately left out of
 $\mathcal{M}_\phi$ (it may make $A_{\phi\phi}$ nearly singular, below),
