@@ -1,0 +1,22 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+set(USE_MPI @USE_MPI@)
+
+set(MFEM_DIR @MFEM_DIR@)
+find_dependency(mfem NAMES mfem MFEM HINTS ${MFEM_DIR})
+message(STATUS "Found mfem config in: ${mfem_DIR} (version ${MFEM_VERSION})")
+
+
+if(USE_MPI)
+    enable_language(C)
+    set(MPIEXEC_EXECUTABLE @MPIEXEC_EXECUTABLE@)    
+    find_package(MPI REQUIRED)
+    if (NOT CMAKE_CXX_COMPILER AND @MFEM_CXX_COMPILER@)  
+        set(CMAKE_CXX_COMPILER "@MFEM_CXX_COMPILER@")      
+    endif()
+endif()
+
+include ( "${CMAKE_CURRENT_LIST_DIR}/AdGIATargets.cmake" )
+

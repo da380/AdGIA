@@ -1,0 +1,2773 @@
+\documentclass[11pt]{article}
+
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage[margin=1.05in]{geometry}
+\usepackage{bm}
+\usepackage{booktabs}
+\usepackage{array}
+\newcolumntype{P}[1]{>{\raggedright\arraybackslash}p{#1}}
+\usepackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
+
+\input{macros.inc}
+
+\numberwithin{equation}{section}
+\sloppy
+\setlength{\emergencystretch}{3em}
+\newtheorem{proposition}{Proposition}[section]
+\newtheorem{lemma}[proposition]{Lemma}
+\theoremstyle{remark}
+\newtheorem{remark}[proposition]{Remark}
+
+% --- notation ---------------------------------------------------------------
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\eps}{\varepsilon}
+\newcommand{\dS}{\,\mathrm{d}S}
+\newcommand{\dV}{\,\mathrm{d}V}
+\newcommand{\tr}{\operatorname{tr}}
+\newcommand{\cof}{\operatorname{cof}}
+\newcommand{\Div}{\operatorname{Div}}
+\newcommand{\sym}{\operatorname{sym}}
+\newcommand{\dev}{\operatorname{dev}}
+\newcommand{\DtN}{\mathrm{DtN}}
+\newcommand{\vu}{\mathbf{u}}
+\newcommand{\vv}{\mathbf{v}}
+\newcommand{\vw}{\mathbf{w}}
+\newcommand{\vm}{\mathbf{m}}
+\newcommand{\vn}{\hat{\mathbf{n}}}
+\newcommand{\vN}{\mathbf{N}}
+\newcommand{\vs}{\mathbf{s}}
+\newcommand{\vb}{\mathbf{b}}
+\newcommand{\vg}{\mathbf{g}}
+\newcommand{\vx}{\mathbf{x}}
+\newcommand{\vt}{\mathbf{t}}
+\newcommand{\bnu}{\bm{\nu}}
+\newcommand{\Ch}{\hat{C}}
+\newcommand{\Se}{\mathbf{S}_e}
+\newcommand{\MS}{M_{\mathrm{S}}}
+\newcommand{\MF}{M_{\mathrm{F}}}
+\newcommand{\SF}{\Sigma_{\mathrm{F}}}
+\newcommand{\code}[1]{\texttt{#1}}
+
+\title{The quasi-static problem classes of \texttt{AdGIA}:\\
+       physical models, approximations, discretisation and solvers}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent
+This document collects, for each linearised quasi-static problem class of
+the library, the physical model and its weak form, every physical
+assumption or approximation made beyond linearisation, the finite-element
+discretisation, and the numerical methods used to solve the discrete
+system. The classes are ordered from the simplest to the richest:
+non-gravitating traction and clamped problems (with a general, possibly
+pre-stressed and non-natural reference state supplied through the
+rheology); the mixed referential--spatial self-gravitating problem in
+Dahlen's organisation, including the full ladder of approximate
+core--mantle-boundary conditions used in glacial isostatic adjustment
+(GIA) codes and the physics each of them drops; the same problem with the
+fluid treated in the gauged (relabelling) formulation; the fully
+referential self-gravitating problem about a general equilibrium
+(an arbitrary elastic tensor, equilibrium stress and equilibrium mapping
+of the reference body); and the problem with a genuinely slipping
+fluid--solid interface, in its single-valued and broken-potential
+organisations and with both constraint-enforcement paths
+(penalty with augmented-Lagrangian iterations, and a monolithic
+Karush--Kuhn--Tucker (KKT) saddle-point system). A short closing section describes the viscoelastic time layer
+that runs on top of the elastic problems. Methods reused across classes
+--- coupling between a mesh and a sub-mesh of it, the
+Dirichlet-to-Neumann (exterior-gravity) boundary condition, projected
+Krylov solvers and rigid-mode handling, the penalty-and-refinement gauge
+fixing, the mapping layer --- are described in detail at first use only.
+Measured accuracies and costs are reported in \code{doc/benchmarks.tex};
+this document states only the qualitative conclusions a user needs.
+\end{abstract}
+
+\tableofcontents
+
+%==========================================================================
+\section{Common framework}
+\label{sec:common}
+%==========================================================================
+
+\subsection{Notation and vocabulary}
+\label{sec:notation}
+
+This subsection fixes every symbol and term used before its detailed
+treatment; later sections define their own local symbols at first use.
+
+\paragraph{Geometry.} $d\in\{2,3\}$ is the space dimension. $M$ is the
+(reference) body, $\MS$ and $\MF$ its solid and fluid regions (in
+\S\ref{sec:slip} written $M_{\mathrm{s}}$, $M_{\mathrm{f}}$), and
+$\Sigma$ the fluid--solid interfaces. $B\supset M$ is the computational
+ball of radius $b$, whose outer sphere $\partial B$ (the \emph{DtN
+sphere}) carries the exterior condition; the shell $B\setminus M$ is the
+(vacuum) \emph{buffer}. CMB and ICB are the core--mantle and inner-core
+boundaries.
+
+\paragraph{Fields.} Vectors and vector fields are bold. $\vu$ is the
+displacement and $\vv$ (or $\vu'$) a test function. $\rho$ is the
+density, $G$ the gravitational constant, $\Phi_0$ the background
+gravitational (plus centrifugal) potential and $g = |\grad\Phi_0|$.
+$\phi$ is the \emph{Eulerian} (spatial) perturbation of the gravitational
+potential, used by the mixed class, with test function $\chi$ (or
+$\phi'$); $\zeta = \Phi\circ\varphi$ is the \emph{referential} potential
+(the spatial potential $\Phi$ composed with the motion), with background
+$\zeta^0$ and perturbation $\zeta^1$, used by the referential classes.
+$\psi$ is an applied (tidal) potential and $\sigma$ a surface mass load.
+The reference state is described by the triple $(\Ch,\Se,\varphi_e)$:
+the second elastic tensor $\Ch$, the equilibrium second Piola--Kirchhoff
+stress $\Se$ and the equilibrium mapping $\varphi_e$, all defined in
+\S\ref{sec:refstate}. A \emph{rheology} is the library object that owns the
+material data (elastic tensor, and for viscoelastic bodies the relaxation
+branches of \S\ref{sec:visco}) and supplies the stiffness integrators.
+
+\paragraph{Operators and the macros of \code{macros.inc}.} $\grad$ is the
+gradient and $\divg$ the divergence of a vector field; $D\vu$ is the
+derivative (Jacobian matrix) of a vector field, $(D\vu)_{iA} = \partial
+u_i/\partial x_A$; $\eps(\vu) = \sym D\vu$ is the linearised strain, with
+$\sym A = \frac12(A + A^T)$, $\dev A = A - \frac1d(\tr A)\mathbf{1}$, $\tr$
+the trace and $\mathbf{1}$ the identity. $\Div$ is the referential
+divergence of a tensor field (row-wise), $\cof F = (\det F)F^{-T}$ the
+cofactor matrix, $A:B = A_{ij}B_{ij}$ the double contraction,
+$\langle\cdot,\cdot\rangle$ an inner product or duality pairing, and
+$\circ$ composition. $\jump{\cdot}$ denotes the jump of a quantity across
+an interface (solid side minus fluid side), $\norm{\cdot}$ the Euclidean
+norm of a coefficient vector (or the induced matrix norm), and
+$\abs{\cdot}$ an absolute value, Euclidean length or Frobenius norm.
+$\dS$ and $\dV$ are surface and volume measures. Lower-case indices
+$i,j,k,l$ are physical, upper-case $A,B$ referential; repeated indices are
+summed. A prime on a field ($\vu'$, $\phi'$) denotes a second argument of a
+bilinear form, except in $\rho'_F$ (\S\ref{sec:mixed}).
+
+\paragraph{The Mandel convention.} A symmetric $d\times d$ tensor $e$ is
+stored as the vector $\hat e\in\R^{n_s}$, $n_s = d(d+1)/2$, of its diagonal
+components and its off-diagonal components multiplied by $\sqrt2$, so that
+$\hat e\cdot\hat f = e:f$. A fourth-order tensor $C$ with the minor and
+major symmetries is stored as the symmetric $n_s\times n_s$ matrix $\hat C$
+with $\hat C\hat e\cdot\hat f = (Ce):f$ (21 independent components in 3-D,
+6 in 2-D). ``Mandel form'' and a hat over a tensor-valued expression refer
+to this convention (a hat over the bold $\mathbf{n}$, $\vn$, is instead a
+unit normal).
+
+\paragraph{Discretisation vocabulary (MFEM).} Fields are discretised in
+$H^1$-conforming Lagrange finite-element spaces; a \emph{dof} is a
+coefficient of the discrete field. For a vector field the \emph{vdofs} are
+the scalar coefficients of all components, and an \emph{L-vector} is the
+per-process vector of vdofs (the layout of an assembled linear form before
+boundary conditions). \emph{True dofs} are the globally unique unknowns
+after shared dofs are identified across processes; a prolongation
+$P_{\mathrm{T}}$ maps true dofs to L-vectors, and linear solves are posed
+on true dofs. Elements and boundary faces carry integer
+\emph{attributes} (region labels); a \emph{marker} is a Boolean array
+selecting attributes. A \emph{SubMesh} is a mesh built from a subset of
+the elements of a \emph{parent} mesh (or from a subset of its boundary
+faces), inheriting their attributes; a SubMesh may be disconnected. A
+\emph{shadow space} (\S\ref{sec:submesh}) is the parent's finite-element
+collection placed on a SubMesh. \emph{Isoparametric} means the geometry is
+represented with the same polynomial order as the field.
+
+\paragraph{Solvers.} CG is the conjugate-gradient method (symmetric
+positive definite systems), MINRES the minimal-residual method (symmetric,
+possibly indefinite systems, with a symmetric positive definite
+preconditioner); both are Krylov methods. GS is a Gauss--Seidel sweep and
+AMG algebraic multigrid (BoomerAMG from \emph{hypre}). A preconditioner, an
+approximate inverse, is written $\mathcal{M}$. The Lanczos process is used
+to estimate extreme eigenvalues.
+
+\paragraph{Abbreviations.} GIA: glacial isostatic adjustment. PREM: the
+Preliminary Reference Earth Model. DtN: Dirichlet-to-Neumann
+(\S\ref{sec:dtn}). AL: augmented Lagrangian. KKT: Karush--Kuhn--Tucker
+(saddle-point) system. Frequently cited papers are abbreviated WD
+(Woodhouse \& Deuss \cite{WoodhouseDeuss2007}), AC18 (Al-Attar, Crawford,
+Valentine \& Trampert \cite{AC18}), AW10 (Al-Attar \& Woodhouse
+\cite{AW10}) and MA24 (Maitra \& Al-Attar \cite{MaitraAlAttar2024}).
+``Dahlen's treatment'' of a fluid region means the elimination of the
+fluid displacement in favour of the potential (\S\ref{sec:mixed});
+``gauged'' means the alternative in which the fluid keeps its displacement
+and a gauge is fixed numerically (\S\ref{sec:gauged}).
+
+\paragraph{Overloaded symbols.} A few letters are used in more than one
+sense, always distinguished by context and defined locally: $\lambda$
+(Lam\'e parameter; generalised eigenvalue; interface multiplier), $P$
+(first Piola--Kirchhoff stress; projector; constraint-penalty matrix;
+dof injection), $M$ (body; mass matrices), $h$ (element size; Love number;
+$dt/\tau$), $Q$ (gauge-penalty matrix), $\eps$ ($\eps(\vu)$ with an
+argument is the strain, a bare $\eps$ a small parameter), $\sigma$ (Cauchy
+stress; surface mass load; slip map in \S\ref{sec:slip}), $S$ (second
+Piola--Kirchhoff stress; Schur complements), $B$ (the ball; various
+matrices $B_u$, $B_n$, $B_q$), $C$ (elastic tensors; the coupling matrix of
+\S\ref{sec:mixed}), $K$ (Laplacian stiffness matrix; a number of
+iterations; calligraphic $\mathcal{K}$ for the relabelling kernel and the
+block operator), $\kappa$ (bulk modulus; condition number $\kappa(\cdot)$),
+and $w$
+(non-bold: an augmented-Lagrangian multiplier vector; bold $\vw$: a
+displacement-like field defined where used).
+
+\subsection{Scope}
+
+All classes solve the \emph{linearised, quasi-static} equations of a
+(possibly self-gravitating, possibly pre-stressed) elastic body: the
+inertial term $\partial_t^2\vu$ and the Coriolis term are dropped, and
+rotation enters only through the centrifugal background, which for a
+constant rotation vector $\bm{\Omega}$ is absorbed into the background
+potential, $\Phi_0 \to \Phi_0 + \psi_{\mathrm{c}}$ with
+$\psi_{\mathrm{c}}$ the centrifugal potential (AC18; MA24). Time enters only through the data (loads,
+and, in the viscoelastic layer of \S\ref{sec:visco}, internal variables).
+Every class implements one small interface: at a time $t$,
+\code{AssembleForce}$(t)$ brings all time-dependent data to $t$ and
+clears increments, \code{AddForce} superposes dual vectors on the
+displacement row (in the L-vector layout), and \code{Solve()} computes the
+displacement (and any further unknowns, which remain internal), returning
+\code{false} if the linear solver did not converge; the displacement is
+read through \code{Displacement()}. There is one displacement field
+per class (two in the slip class); several solid regions share it on a
+possibly disconnected SubMesh, regional material differences being the
+rheology's business. Serial and parallel execution are handled by the same
+class: the finite-element space decides.
+
+\subsection{Naming and the problem-class grid}
+
+Class names are built from fixed axis slots,
+\begin{multline*}
+  [\text{Linear}|\text{Nonlinear}]\;[\text{QuasiStatic}|\text{Dynamic}]\;
+  [\text{Mixed}|\text{Referential}]^{?}\\
+  [\text{SelfGravitating}]^{?}\;[\text{variant}]\;\text{Problem}.
+\end{multline*}
+The elasticity is referential in \emph{every} class; the formulation slot
+names how the \emph{gravity} is described, and so exists only when the
+problem self-gravitates. \emph{Mixed} is the referential--spatial
+organisation (referential displacement, Eulerian potential perturbation:
+Dahlen's arrangement); \emph{Referential} is the fully referential one.
+Properties of the \emph{reference state} are carried by the rheology, not
+by the names (\S\ref{sec:refstate}). Table~\ref{tab:grid} summarises the
+classes treated here.
+
+\begin{table}[h]
+\centering
+\footnotesize
+\begin{tabular}{@{}P{4.4cm}P{2.0cm}P{2.8cm}P{2.6cm}P{2.6cm}@{}}
+\toprule
+Class (prefix \code{LinearQuasiStatic}) & Gravity & Reference state & Fluid regions & Solver \\
+\midrule
+\code{TractionProblem}, \code{ClampedProblem} (\S\ref{sec:nograv})
+  & none & general $(\Ch,\Se,\varphi_e)$ via rheology & optional gauged & (projected) CG \\
+\code{MixedSelfGravitating\-Problem} (\S\ref{sec:mixed}, \S\ref{sec:gauged})
+  & Eulerian $\phi$ & hydrostatic and natural, \emph{required} & Dahlen (\code{FluidRegion}), or gauged & block MINRES; Schur CG \\
+\code{ReferentialSelf\-GravitatingProblem} (\S\ref{sec:referential})
+  & referential $\zeta^1$ & general & welded gauged & block MINRES \\
+\code{ReferentialSelf\-GravitatingSlipProblem} (\S\ref{sec:slip})
+  & referential, single-valued or broken & general (broken organisation for $\varphi_e\neq\mathrm{id}$) & slipping, gauged & block MINRES with AL sweeps; or KKT MINRES \\
+\bottomrule
+\end{tabular}
+\caption{The quasi-static problem classes. ``Schur CG'': CG on the
+displacement Schur complement (\S\ref{sec:mixed-solvers}); ``AL sweeps'':
+penalty with augmented-Lagrangian iterations (\S\ref{sec:slip-enforce}); ``welded'':
+one continuous displacement across solid and fluid (\S\ref{sec:gauged});
+``single-valued or broken'': one potential on the ball, or one per region
+(\S\ref{sec:slip}).}
+\label{tab:grid}
+\end{table}
+
+\subsection{Kinematics, stress measures and reference states}
+\label{sec:refstate}
+
+We follow the notation of Maitra \& Al-Attar \cite{MaitraAlAttar2021}
+(close to Marsden \& Hughes \cite{MarsdenHughes}). A reference body $M$
+with referential coordinates $\vx$ is mapped by a motion $\varphi$ into
+physical space; $F = D\varphi$ is the deformation gradient (second index
+referential), $J = \det F$ its Jacobian, and $F^TF$ the right
+Cauchy--Green tensor. With $\varrho$ the physical (spatial) density, the
+referential density is $\rho = J\,\varrho\circ\varphi$. A reference
+surface element with unit normal $\vN$ and area $\dS$ is carried to a
+physical element with unit normal $\vn$ and area $\mathrm{d}S_{\mathrm{phys}}$
+related by \emph{Nanson's relation}
+\begin{equation}
+  \vn\,\mathrm{d}S_{\mathrm{phys}} = \cof(F)\,\vN\dS = J F^{-T}\vN\dS
+  =: \bnu\dS, \qquad \mathrm{d}S_{\mathrm{phys}} = |\bnu|\dS,
+  \label{eq:nanson0}
+\end{equation}
+which defines the unnormalised \emph{Nanson normal} $\bnu$. The material
+behaviour is given by a stored-energy density $W(\vx,F) = V(\vx,F^TF)$
+(per referential volume); $D_F$ denotes the derivative with respect to
+$F$. The first and second Piola--Kirchhoff stresses are $P = D_F W$ and
+$S = 2 D_{F^TF} V$ (the Cauchy stress being $\sigma = J^{-1}PF^T$), and
+there are two elastic tensors,
+\begin{equation}
+  A = D_F^2 W \ \ \text{(major symmetry only)}, \qquad
+  \Ch = 4 D_{F^TF}^2 V \ \ \text{(classical symmetries, 21 components)} .
+\end{equation}
+An \emph{equilibrium} $\varphi_e$ (with $F_e = D\varphi_e$,
+$J_e = \det F_e$, and $P_e$, $S_e$, $\sigma_e$ its stresses) satisfies
+$\Div P_e + \rho\bm{\gamma}_e = 0$, with $\bm{\gamma}_e$ the gravitational
+plus centrifugal acceleration; nothing requires the equilibrium stress to
+be hydrostatic.
+
+Following Al-Attar \& Crawford \cite{AlAttarCrawford2016}, two
+independent properties of the reference state are distinguished:
+\begin{itemize}
+\item \textbf{hydrostatic} versus non-hydrostatic: the equilibrium second
+  Piola--Kirchhoff stress is $\Se = -p^0\mathbf{1}$ with $p^0$ the
+  equilibrium pressure, or general;
+\item \textbf{natural} versus non-natural: the particle label is the
+  equilibrium position, $\varphi_e = \mathrm{id}$, or any other labelling,
+  $\varphi_e \neq \mathrm{id}$.
+\end{itemize}
+At a natural reference $P_e = S_e = \sigma_e =: T^0$ (the initial
+stress) and
+\begin{equation}
+  A_{iAjB} = \Ch_{iAjB} + \delta_{ij}\,T^0_{AB} .
+  \label{eq:AfromC}
+\end{equation}
+The reference body is arbitrary: physical statements are invariant under
+\emph{particle relabellings}, diffeomorphisms $\xi$ of the reference body
+(with $F_\xi = D\xi$, $J_\xi = \det F_\xi$) that change the labels without
+changing the physical state, under which (AC18, eqs.~83, 134--136)
+\begin{equation}
+  \tilde\rho = J_\xi\,\rho\circ\xi, \qquad
+  \tilde W(\tilde\vx,\tilde F) = J_\xi\,W(\xi(\tilde\vx), \tilde F F_\xi^{-1}),
+  \qquad
+  \tilde A_{ijkl} = J_\xi (F_\xi^{-1})_{jm}(F_\xi^{-1})_{ln} A_{imkn}\circ\xi,
+  \label{eq:relabel}
+\end{equation}
+with surface multipliers transforming with the \emph{surface} Jacobian.
+In the library a rheology carries the triple $(\Ch, \Se, \varphi_e)$
+(\code{ReferentialElasticRheology}); hydrostatic and natural states are
+special \emph{values} of it.
+
+\subsection{The quadratic energy and the moduli dictionary}
+\label{sec:dictionary}
+
+About a natural reference the quadratic elastic-plus-initial-stress energy
+is (WD, eqs.~12--16; AC18 eq.~97)
+\begin{equation}
+  E_2(\vu) = \frac12\int_M \Ch\,\eps(\vu):\eps(\vu)
+           + T^0_{AB}\,\partial_A u_k\,\partial_B u_k \dV ,
+  \label{eq:E2}
+\end{equation}
+the initial stress acting on the \emph{full} gradient. About a general
+equilibrium mapping the material term uses the linearised Green strain
+(the Green strain is $\frac12(F^TF - \mathbf{1})$; its linearisation about
+$F_e$ in the direction $D\vu$ is $\sym(F_e^TD\vu)$), and the implemented
+total-Lagrangian split (all quantities referred to the reference body) is
+\begin{equation}
+  a_{\mathrm{ref}}(\vu,\vv) = \int_M
+     \bigl\langle \Ch\,\widehat{\sym(F_e^TD\vu)},\,
+                       \widehat{\sym(F_e^TD\vv)} \bigr\rangle
+   + \Se : (D\vu^T D\vv) \dV ,
+  \label{eq:matgeo}
+\end{equation}
+(hats: Mandel vectors, \S\ref{sec:notation}), the \emph{material} stiffness carrying no Jacobian
+(strain energy per referential volume) and the \emph{geometric} stiffness
+$\int S_{AB}\,\partial_A u_k\,\partial_B v_k$ carrying no $F_e$.
+
+\paragraph{The dictionary.} Seismological models do not tabulate $\Ch$.
+With hydrostatic $T^0 = -p^0\mathbf{1}$, WD (eqs.~59--64) rearrange the equations so that
+the pressure parts of $A$ combine with $\grad p^0 = -\rho\grad\Phi_0$ into
+the familiar gravity terms $\rho[\grad(\vu\cdot\grad\Phi_0) -
+\grad\Phi_0\,\divg\vu]$, leaving a stiffness with the \emph{effective}
+tensor
+\begin{equation}
+  C^{\mathrm{eff}}_{ijkl} = \Ch_{ijkl}
+    + p^0(\delta_{ij}\delta_{kl} - \delta_{il}\delta_{jk} - \delta_{ik}\delta_{jl}).
+  \label{eq:Ceff}
+\end{equation}
+PREM's moduli are the isotropic components of $C^{\mathrm{eff}}$, not of
+$\Ch$; with $\kappa$ the bulk modulus, $\mu$ the shear modulus and
+$\lambda = \kappa - 2\mu/3$ the Lam\'e parameter, the conversion is
+\begin{equation}
+  \lambda_{\mathrm{bare}} = \lambda_{\mathrm{PREM}} - p^0, \qquad
+  \mu_{\mathrm{bare}} = \mu_{\mathrm{PREM}} + p^0, \qquad
+  \kappa_{\mathrm{bare}} = \kappa_{\mathrm{PREM}} - p^0/3 .
+  \label{eq:bare}
+\end{equation}
+This is not small: at the CMB $p^0 \approx 136$~GPa against
+$\mu_{\mathrm{PREM}} \approx 290$~GPa. In a fluid (stored energy a
+function of $J$ alone, $W = V(\vx,J)$)
+$\mu_{\mathrm{PREM}} = 0$ but $\mu_{\mathrm{bare}} = p^0$: the bare tensor
+of a fluid at pressure has pressure-sized shear components, which combine
+with the explicit $T^0$ term of \eqref{eq:AfromC} to make the incremental
+traction purely normal. Consequences used throughout:
+\begin{itemize}
+\item the \emph{mixed} class (\S\ref{sec:mixed}) assembles $C^{\mathrm{eff}}$
+  plus the rearranged gravity terms (WD eq.~59): PREM moduli are correct
+  there as they stand;
+\item every class assembling \eqref{eq:matgeo} must be given the
+  \emph{bare} $\Ch$; the conversion is done at coefficient level
+  (\code{BareElasticTensorCoefficient}, taking $p^0$ as a coefficient), so
+  model files keep seismological moduli;
+\item the two assemblies agree for hydrostatic $T^0$, which is tested as
+  an operator identity.
+\end{itemize}
+The stress dependence of the moduli themselves (the tensor $\Pi$ of
+\cite{MaitraAlAttar2021}, describing how the moduli change with
+incremental stress) is a constitutive question about Earth models and
+does not enter the linearised solvers.
+
+%==========================================================================
+\section{Non-gravitating problems: traction and clamped}
+\label{sec:nograv}
+%==========================================================================
+
+\subsection{Model and weak form}
+
+The classes \code{LinearQuasiStaticTractionProblem} and
+\code{LinearQuasiStaticClampedProblem} solve: find $\vu \in V$ with
+\begin{equation}
+  a(\vu, \vv) = \int_{\Gamma_N} \vt\cdot\vv \dS + \langle f, \vv\rangle
+  \qquad \forall \vv \in V_0 ,
+  \label{eq:nograv}
+\end{equation}
+where $V$ is the displacement space ($H^1$ vector fields on $M$, with the
+prescribed values on $\Gamma_D$ in the clamped case), $V_0$ the test space
+(vanishing on $\Gamma_D$), $\Gamma_N$ the loaded part of the boundary,
+$\vt$ the applied traction, $\langle f,\vv\rangle$ any further
+(dual-vector) load, and $a$ the stiffness supplied by the rheology (the
+object holding the material data):
+\begin{itemize}
+\item isotropic: $a(\vu,\vv) = \int_M \kappa\,\divg\vu\,\divg\vv +
+  2\mu\,\dev\eps(\vu):\dev\eps(\vv)$;
+\item anisotropic: $a(\vu,\vv) = \int_M C\eps(\vu):\eps(\vv)$, $C$ in
+  Mandel form (21 components in 3-D);
+\item referential (\code{ReferentialElasticRheology}): the material +
+  geometric split \eqref{eq:matgeo} for a general $(\Ch,\Se,\varphi_e)$ ---
+  the non-gravitating referential problem.
+\end{itemize}
+In the traction problem a traction $\vt$ acts on marked boundary
+attributes and there are no essential conditions. In the clamped problem
+the displacement is prescribed on $\Gamma_D$ ($\vu = \vu_D$, homogeneous by
+default) and a traction is applied on $\Gamma_N$; all other boundaries are
+traction-free. (``Mixed'' in the boundary-condition sense only; there is no
+relation to the mixed \emph{formulation} of \S\ref{sec:mixed}.) Further
+displacement loads $f$ are added through \code{ExternalLoad()} or
+\code{AddForce()}.
+
+\subsection{Assumptions and restrictions}
+
+\begin{enumerate}
+\item No gravity (no self-gravitation, no background gravity terms) and no
+  body force in the operator.
+\item The reference state enters only through the rheology. A
+  non-hydrostatic or non-natural state is admitted; whether the supplied
+  $\Se$ is an equilibrium of the body is the modeller's burden when it is
+  supplied as a raw coefficient (the background-state generators of
+  \S\ref{sec:background} produce equilibrated fields).
+\item The traction is per unit \emph{referential} area. A spatial traction
+  on a mapped boundary is composed with the Nanson area factor
+  $|\bnu| = \mathrm{d}\tilde S/\dS$ (\code{NansonAreaCoefficient},
+  \S\ref{sec:mappings}); composition is the driver's business, coefficients
+  stay referential.
+\item The pure traction problem requires a load with no net force or
+  torque (range compatibility); any incompatible part is projected out
+  (\S\ref{sec:projected}).
+\item In 2-D the isotropic rheologies describe a two-dimensional continuum
+  ($\lambda = \kappa - \mu$), not plane strain of a 3-D body; the
+  transversely isotropic tensor coefficient gives the plane-strain
+  restriction of the 3-D tensor. The two conventions should not be mixed.
+\end{enumerate}
+
+\subsection{Discretisation}
+\label{sec:nograv-disc}
+
+The displacement is sought in an $H^1$-conforming vector Lagrange space
+on a (possibly curved, isoparametric) mesh. Integrators:
+\begin{itemize}
+\item the bulk/deviatoric split needs no custom integrator, since
+  $\kappa\,\divg\vu\,\divg\vv + 2\mu\,\dev\eps(\vu):\dev\eps(\vv) =
+  \lambda\,\divg\vu\,\divg\vv + 2\mu\,\eps(\vu):\eps(\vv)$ with
+  $\lambda = \kappa - 2\mu/d$: two MFEM \code{ElasticityIntegrator}s with
+  $(\kappa, 1, 0)$ and $(\mu, -2/d, 1)$;
+\item anisotropic: \code{ElasticTensorIntegrator}, which at each
+  quadrature point forms the Mandel strain--displacement matrix $B_q$
+  (mapping an element's vdofs to the Mandel vector $\widehat{\eps(\vu)}$)
+  and accumulates $B_q^T\hat C B_q$ times the quadrature weight;
+\item referential: \code{MaterialStiffnessIntegrator} (the Mandel vector of
+  $\sym(F_e^TD\vu)$ built from the shape gradients and $F_e$; with
+  $F_e = \mathbf{1}$ this is \code{ElasticTensorIntegrator}) plus
+  \code{GeometricStiffnessIntegrator} (matrix-coefficient vector
+  diffusion with $\Se$).
+\end{itemize}
+The displacement order must be at least the geometry order: a rigid
+rotation of a curved element is representable only then. With order-1
+displacements on an order-2 mesh the discrete rigid modes are poor null
+vectors and results shift at the 10\,\% level on the coarse test problems.
+
+Each (re)assembly builds a fresh bilinear form that borrows the
+integrators from a never-assembled template form, rather than calling
+\code{Update()} on the old one (which only zeroes the matrix in place, and
+whose \code{Finalize(skip\_zeros)} may have dropped entries a changed
+coefficient needs).
+
+\subsection{Solvers}
+
+After assembly and elimination of essential conditions the discrete
+problem is $AX = b$ on true dofs, with $A$ symmetric positive
+(semi-)definite. The default solver is preconditioned CG: GS in serial,
+BoomerAMG with elasticity options in parallel, warm-started from the
+previous solution. Two devices of the base class matter mostly under time
+stepping (\S\ref{sec:visco}), where consecutive solves differ little.
+
+\paragraph{Warm starts and the absolute tolerance.} Preconditioned CG
+monitors the residual in the preconditioner norm,
+$\norm{r}_{\mathcal{M}} := (\mathcal{M}r, r)^{1/2}$, and MFEM stops when
+$\norm{r_k}_{\mathcal{M}} \le \max(\tau_{\mathrm{rel}}\norm{r_0}_{\mathcal{M}},
+\tau_{\mathrm{abs}})$. From a cold start $X_0 = 0$, $r_0 = b$ and the
+target is $\tau_{\mathrm{rel}}\norm{b}_{\mathcal{M}}$. From a warm start
+$r_0 = b - AX_0$ may already be $\sim10^{-12}\norm{b}$, so a relative
+criterion would ask for $\sim10^{-24}$ and CG would stall at its iteration
+limit. The base class therefore makes a warm-started solve converge to the
+\emph{same} target as a cold one:
+\begin{enumerate}
+\item form $\beta = \norm{b}_{\mathcal{M}} = (\mathcal{M}b, b)^{1/2}$ (one
+  preconditioner application and one global dot product);
+\item if $\beta = 0$, return $X = 0$ without solving;
+\item otherwise set $\tau_{\mathrm{abs}} = \tau_{\mathrm{rel}}\beta$ and
+  disable the relative criterion, then run CG from $X_0$.
+\end{enumerate}
+The returned solution then satisfies the cold-start criterion whatever the
+quality of the initial guess (the default $\tau_{\mathrm{rel}} =
+10^{-12}$).
+
+\paragraph{Preconditioner reuse.} When the operator is reassembled
+(relaxation weights, \S\ref{sec:visco}) the preconditioner $\mathcal{M}$,
+whose AMG setup dominates the cost, is kept while the iteration count
+stays within a factor (default 2) of the count recorded when it was built;
+past that it is rebuilt. The matrix is always the current one, so only the
+convergence rate, never the solution, depends on the lag.
+
+\subsection{Rigid modes and projected Krylov solvers}
+\label{sec:projected}
+
+A free body under traction (and, later, a self-gravitating body) has
+rigid motions as (near-)null vectors of its symmetric operator $A$. Two
+\emph{different} projections are involved, in different inner products.
+
+\paragraph{The modes.} The rigid motions $\vu_r = \mathbf{a} +
+\mathbf{b}\times\vx$ (in 2-D, $\mathbf{b}\times\vx$ is the in-plane
+rotation) are interpolated on the displacement space and orthonormalised
+in the Euclidean true-dof inner product by modified Gram--Schmidt
+(\code{NullSpaceProjector}; a vector numerically dependent on those
+already present is dropped, so callers may add modes freely). Collect them
+as the columns of $N = [\mathbf{n}_1,\dots,\mathbf{n}_m]$, $N^TN = I$, and
+define the Euclidean orthogonal projector
+\begin{equation}
+  P = I - NN^T, \qquad P = P^T = P^2, \qquad PN = 0 .
+  \label{eq:projector}
+\end{equation}
+
+\paragraph{Range compatibility.} Since $A = A^T$, $\mathrm{range}(A) =
+\ker(A)^\perp$ in the Euclidean inner product. If $N$ spans $\ker A$
+exactly, $AX = b$ is solvable iff $N^Tb = 0$ (no net force or torque), and
+$Pb$ is the compatible part of any load. For physically consistent loads
+replacing $b$ by $Pb$ is a round-off correction.
+
+\paragraph{The projected system.} \code{ProjectedSolver} hands its Krylov
+method the operator $PAP$ and solves
+\begin{equation}
+  PAP\,X = Pb, \qquad X\in\mathrm{range}(P) .
+  \label{eq:projsys}
+\end{equation}
+$PAP$ is symmetric and maps $\mathrm{range}(P)$ into itself, so a Krylov
+iteration started in $\mathrm{range}(P)$ stays there; and $PAP$ is
+positive definite on $\mathrm{range}(P)$ whenever $A$ is positive on the
+complement of the modes. Hence \eqref{eq:projsys} has a unique solution in
+$\mathrm{range}(P)$, which CG finds. When $N$ spans $\ker A$ exactly,
+$AX = APX = PAPX = Pb$ for $X\in\mathrm{range}(P)$ (because $AN = 0$ and
+$A$ symmetric give $A = PAP$), so $X$ solves the original problem. When the
+modes are only \emph{near}-null (curved geometry, gravity coupling),
+\eqref{eq:projsys} is the problem restricted to the complement of the
+modes --- a regularisation, which is the intended meaning in the coupled
+classes. The preconditioner is projected in the same way, $P\mathcal{M}P$:
+it is symmetric, positive on $\mathrm{range}(P)$, and keeps every
+preconditioned residual in $\mathrm{range}(P)$. An unprojected
+$\mathcal{M}$ instead re-injects a component along $N$ at every
+application; $PAP$ does not see that component, so nothing damps it. With
+BoomerAMG in parallel, or with the shifted Laplacian of the potential block
+(\S\ref{sec:mixed-solvers}), the re-injected component grows from one
+application to the next and CG diverges once the residual reaches
+round-off (serial GS does not trigger this in practice). The projected
+preconditioner is therefore used in every projected solve.
+
+\paragraph{Algorithm (projected solve).}
+\begin{enumerate}
+\item $b \leftarrow Pb$; $X_0 \leftarrow PX_0$ (a warm start may carry a
+  rigid component);
+\item run CG (or MINRES) on $PAP$ with preconditioner $P\mathcal{M}P$ from
+  $X_0$, with the warm-start tolerance logic above;
+\item $X \leftarrow PX$ (removing round-off drift along $N$);
+\item optionally re-gauge $X$ (next paragraph).
+\end{enumerate}
+Iterating on the unprojected $A$ while projecting only data and solution
+is weaker on all three counts: the near-null direction remains visible to
+the iteration, the preconditioner is unprojected, and the iterate may
+acquire a rigid component.
+
+\paragraph{The mass-weighted gauge solve.} Which representative
+$X + N\mathbf{c}$ is returned is a separate choice from range
+compatibility. The default is the Euclidean one, $N^TX = 0$. The physically
+meaningful one is zero net momentum and angular momentum,
+$\int\rho\,\vu\cdot(\mathbf{a} + \mathbf{b}\times\vx) = 0$ for all
+$\mathbf{a},\mathbf{b}$, i.e.\ $N^T M_\rho X = 0$ with $M_\rho$ the
+$\rho$-weighted vector mass matrix. It is selected by
+\code{SetMassWeightedGauge}: on the traction class it takes the density as
+an optional coefficient (unit density when omitted), and
+\code{SetEuclideanGauge()} restores the default; on the mixed class
+(\S\ref{sec:mixed-null}) it is a switch, \code{SetMassWeightedGauge(bool)},
+and uses the body's own density. It is
+applied \emph{after} the Euclidean solve: the gauged solution is the unique
+$X_g = X + N\mathbf{c}$ with $N^TM_\rho X_g = 0$, i.e.
+\begin{equation}
+  (N^TM_\rho N)\,\mathbf{c} = -N^TM_\rho X ,
+  \label{eq:gaugesolve}
+\end{equation}
+an $m\times m$ symmetric positive definite system ($m\le6$). Modes of
+zero $M_\rho$-norm (the 2-D constant potential of a block system,
+\S\ref{sec:mixed-2d}) are excluded from \eqref{eq:gaugesolve} and keep the
+Euclidean condition. The inner iteration is deliberately left Euclidean:
+an $M_\rho$-orthogonal projector $I - N(N^TM_\rho N)^{-1}N^TM_\rho$ is not
+symmetric, and $PAP$ built from it would not be. Strains, and every
+rigid-motion-invariant quantity, are the same in both gauges, since $X_g -
+X\in\mathrm{range}(N)$.
+
+\paragraph{Non-natural reference states.} With a referential rheology the
+rotational modes are those of the \emph{mapped} positions,
+$W\varphi_e(\vx)$ with $W$ a constant skew matrix; translations are exact null vectors either
+way, the mapped rotations are null through the moment balance of the
+background state, and \code{RigidPairResiduals()} measures both
+(translations at round-off, rotations decreasing with refinement). The
+mass-weighted rotational condition then reads $\int\rho\,\vu\cdot
+(\mathbf{b}\times\varphi_e(\vx)) = 0$ with the \emph{referential} density
+and no extra Jacobian factor.
+
+The clamped problem needs none of this: the essential conditions remove
+the rigid modes.
+
+\paragraph{Fluid regions without gravity.} The base class also accepts
+gauged fluid regions (\code{SetGaugedFluid}), used without gravity for
+the cavity tests of \S\ref{sec:gauged-verif}; the machinery is described
+in \S\ref{sec:gauged}.
+
+%==========================================================================
+\section{The mixed self-gravitating problem (Dahlen organisation)}
+\label{sec:mixed}
+%==========================================================================
+
+The class \code{LinearQuasiStaticMixedSelfGravitatingProblem} couples a
+referential displacement on the solid regions to the \emph{spatial}
+(Eulerian) gravitational potential perturbation on an enclosing ball, with
+a Dirichlet-to-Neumann exterior condition. The weak form follows Al-Attar
+\& Tromp \cite{AlAttarTromp2014} (eq.~2.52) and Yu, Al-Attar, Syvret \&
+Lloyd \cite{Yu2025} (eq.~3 and Appendix A). Fluid regions are treated in
+Dahlen's way: the fluid displacement is eliminated in favour of the
+potential. It is the hydrostatic specialisation of the general theory of
+\S\ref{sec:referential}.
+
+\subsection{Geometry}
+
+The body $M = \MS \cup \MF$ consists of solid regions $\MS$ (one or more;
+e.g.\ inner core and mantle) and fluid regions $\MF$. $B \supset M$ is the
+computational ball whose spherical (circular in 2-D) outer boundary carries
+the DtN condition. $\Phi_0$ is the background potential; $\sigma$ is a
+surface mass load on $\partial M$ (positive when mass is added); $\psi$ is
+an applied (tidal) potential. $\SF$ is the union of all fluid--solid
+interfaces, $\vm$ \emph{the outward normal of the solid} on it (pointing
+into the fluid whether the fluid lies below, as at the CMB, or above, as at
+the ICB), and $\rho_F$ the fluid-side density.
+
+\subsection{Assumptions and approximations}
+\label{sec:mixed-assume}
+
+\begin{enumerate}
+\item[(M1)] \textbf{Hydrostatic reference state}: the equilibrium stress
+  is $-p^0\mathbf{1}$, entering only through $\Phi_0$ and the fluid terms
+  (the WD rearrangement of \S\ref{sec:dictionary}); the stiffness is
+  $C^{\mathrm{eff}}$, so seismological moduli are correct inputs.
+\item[(M2)] \textbf{Natural reference state}: $\varphi_e = \mathrm{id}$ ---
+  the mesh is the physical equilibrium geometry. (M1) and (M2) are
+  requirements of the class, not defaults; the referential class of
+  \S\ref{sec:referential} lifts both.
+\item[(M3)] \textbf{Fluid regions} are inviscid and barotropic,
+  $\rho = \rho(\Phi_0)$ in $\MF$, and every fluid--solid interface is a
+  level surface of $\Phi_0$ (both forced by hydrostatic equilibrium).
+\item[(M4)] \textbf{Dahlen elimination} of the fluid displacement. In a
+  fluid region the linearised balance $-\grad p^1 = \rho^0\grad\phi +
+  \rho^1\grad\Phi_0$ (with $\rho^0$ the background density and $p^1$,
+  $\rho^1$ the Eulerian pressure and density perturbations) is processed, for perturbations of a \emph{spherical}
+  hydrostatic reference, in three moves (the modern rendering is
+  AW10, \S\S2.2--2.3): crossing with the radial unit vector
+  $\hat{\mathbf{r}}$ shows that $\hat p^1 + \rho^0\phi$ depends on the
+  radius $r$ alone, $\hat p^1$ denoting the aspherical part of $p^1$;
+  absorbing the degree-0 (spherically symmetric; $l$ denotes the
+  spherical-harmonic degree throughout) parts into the spherical reference slaves the aspherical pressure,
+  $\hat p^1 = -\rho^0\phi$; a further curl slaves the fluid density,
+  $\rho^1 = g^{-1}\partial_r\rho^0\,\phi$ --- the coefficient $\rho'_F$
+  below. What remains free is one \emph{constant} pressure perturbation per
+  connected fluid region: the degree-0 hole. Consequently the treatment
+  never sees the fluid's bulk modulus and misses its compressional physics
+  at $l=0$ (\S\ref{sec:cmb-deg0}). About an \emph{aspherical} hydrostatic
+  reference the elimination does not readily extend: the free data become
+  a whole function $f(\Phi_0)$ per fluid region, coupled to all harmonics
+  through Poisson's equation.
+\item[(M5)] \textbf{Bare displacement in the gravity coupling.} The
+  Eulerian coupling samples the reference potential at displaced positions
+  ($\vu\cdot\grad\grad\Phi_0$-type terms). If secular motions are excited
+  (true polar wander, slow rotations, drifts that grow displacement without
+  strain), this linearisation fails on an aspherical reference; a
+  spherically symmetric reference is immune because its potential is
+  invariant under the drift \cite{MaitraAlAttar2024}.
+\item[(M6)] In 2-D, problems with fluid regions are inconsistent at the
+  level of a constant potential (\S\ref{sec:mixed-2d}); 2-D fluid runs are
+  for testing only.
+\end{enumerate}
+
+\subsection{Weak form}
+
+In the form below $\rho_F$ is the fluid-side density on $\SF$ and
+$\rho'_F = \mathrm{d}\rho/\mathrm{d}\Phi_0$ the barotropic density gradient
+in the fluid, defined in \eqref{eq:rhoprime}. The symmetric bilinear form
+on $(\vu,\phi)\times(\vu',\phi')$ is
+\begin{align}
+  \mathcal{A}(\vu,\phi\,|\,\vu',\phi') ={}&
+    \int_{\MS} \kappa\,(\divg\vu)(\divg\vu') + \int_{\MS} 2\mu\,
+      \dev\eps(\vu):\dev\eps(\vu') \nonumber\\
+  &+ \tfrac12\int_{\MS}\rho\,\bigl[\grad(\vu\cdot\grad\Phi_0)\cdot\vu'
+      + \grad(\vu'\cdot\grad\Phi_0)\cdot\vu\bigr] \nonumber\\
+  &- \tfrac12\int_{\MS}\rho\,\bigl[(\vu\cdot\grad\Phi_0)\,\divg\vu'
+      + (\vu'\cdot\grad\Phi_0)\,\divg\vu\bigr] \nonumber\\
+  &+ \int_{\MS}\rho\,(\grad\phi\cdot\vu' + \grad\phi'\cdot\vu)
+   + \frac{1}{4\pi G}\int_{\R^3}\grad\phi\cdot\grad\phi'
+  \label{eq:mixedA}\\
+  &+ \int_{\MF}\rho'_F\,\phi\,\phi'
+  \tag{F1}\\
+  &- \int_{\SF}\rho_F\,(\vm\cdot\grad\Phi_0)(\vm\cdot\vu)(\vm\cdot\vu')\dS
+  \tag{F2}\\
+  &- \int_{\SF}\rho_F\,\bigl[\phi\,(\vm\cdot\vu') + \phi'\,(\vm\cdot\vu)\bigr]\dS .
+  \tag{F3}
+\end{align}
+The first six terms are the solid body; (F1)--(F3) appear with fluid
+regions. The elastic terms generalise to an anisotropic tensor without
+touching anything else (the gravity, coupling and fluid terms do not
+involve the moduli). The $\grad\grad\Phi_0$ term of the Eulerian coupling
+has been integrated by parts into the symmetrised form of the second line.
+
+\paragraph{The fluid volume term (F1).} Barotropy gives $\grad\rho =
+(\mathrm{d}\rho/\mathrm{d}\Phi_0)\grad\Phi_0$ in the fluid, so
+\begin{equation}
+  \rho'_F := \frac{\mathrm{d}\rho}{\mathrm{d}\Phi_0}
+         = \frac{\grad\rho\cdot\grad\Phi_0}{|\grad\Phi_0|^2}
+         \quad\Bigl( = g^{-1}\partial_r\rho \text{ for a radial model}\Bigr).
+  \label{eq:rhoprime}
+\end{equation}
+$\rho'_F < 0$ wherever density increases downward, so (F1) is a
+\emph{negative} mass term on the potential (\S\ref{sec:mixed-solvers}).
+
+\paragraph{Interface convention and physical content.} With $\vn$ the
+upward unit normal, $\vm\cdot\grad\Phi_0 = -g$ where
+the fluid is below and $+g$ where it is above, and (F2)--(F3) reproduce the
+published forms, which treat the two kinds of interface separately with
+opposite signs. Written with $\vm$ the code never classifies an interface:
+every interface integral uses the solid SubMesh's own outward normal, and
+the sign of $\vm\cdot\grad\Phi_0$ does the rest. Physically, the
+Lagrangian pressure perturbation on the fluid side is $p = -\rho_F(\phi +
+\vu\cdot\grad\Phi_0)$ with $\vu\cdot\grad\Phi_0 = (\vm\cdot\vu)
+(\vm\cdot\grad\Phi_0)$ on a level surface; the traction $-p\,\vm$ on the
+solid gives (F2) and the $\vu'$-half of (F3). The $\phi'$-half of (F3) is
+the surface mass $\rho_F(\vm\cdot\vu)$ displaced across the interface, and
+(F1) is the Eulerian density perturbation $\rho'_F\phi$ in the fluid.
+
+\paragraph{Rows and loads.} With the coupling form
+$c(\phi,\vu') = \int_{\MS}\rho\,\grad\phi\cdot\vu' - \int_{\SF}\rho_F\,\phi\,
+(\vm\cdot\vu')\dS$, $a$ the elastic-plus-gravity displacement form,
+$a_\Sigma = $ (F2), $m_F = $ (F1), and the surface-load forms
+$\ell_u(\vu') = -\int_{\partial M}\sigma\,\grad\Phi_0\cdot\vu'\dS$,
+$\ell_\phi(\phi') = -\int_{\partial M}\sigma\,\phi'\dS$:
+\begin{align}
+  a(\vu,\vu') + a_\Sigma(\vu,\vu') + c(\phi,\vu') &= \ell_u(\vu') - c(\psi,\vu'),\\
+  \frac{1}{4\pi G}\Bigl[\int_B\grad\phi\cdot\grad\phi' + \DtN(\phi,\phi')\Bigr]
+   + m_F(\phi,\phi') + c(\phi',\vu) &= \ell_\phi(\phi') - m_F(\psi,\phi') .
+\end{align}
+After discretisation, with $A_{uu}$ the matrix of $a$, $A_\Sigma$ that of
+(F2), $C$ that of $c$ (rows: displacement true dofs, columns: potential
+true dofs), $K$ the potential stiffness matrix $\int_B\grad\phi_i\cdot
+\grad\phi_j$, $\DtN$ also denoting the DtN matrix (\S\ref{sec:dtn}),
+$M_F$ the matrix of $m_F$, and $B_u$, $B_\phi$ the load vectors of
+$\ell_u$, $\ell_\phi$, the system is, in blocks,
+\begin{equation}
+  \begin{pmatrix} A_{uu} + A_\Sigma & C \\ C^T & A_{\phi\phi} \end{pmatrix}
+  \begin{pmatrix} \vu \\ \phi \end{pmatrix}
+  =
+  \begin{pmatrix} B_u - C\Psi \\ B_\phi - M_F\Psi \end{pmatrix},
+  \qquad
+  A_{\phi\phi} = \frac{K + \DtN}{4\pi G} + M_F ,
+  \label{eq:mixedblock}
+\end{equation}
+with $\Psi$ the interpolant of $\psi$ on the potential space: the tidal
+load is the same operators applied to $\Psi$, with no extra assembly.
+Without fluid regions the interface and $\rho'_F$ terms are absent and this
+is eq.~3 of \cite{Yu2025}. Gravity across interfaces ($[\phi] = 0$,
+$[\grad\phi\cdot\vn + 4\pi G\rho\,\vu\cdot\vn] = 0$) is natural in the
+weak form \cite{WoodhouseDeuss2007}.
+
+\subsection{Fluid regions and the ladder of CMB approximations}
+\label{sec:cmb}
+
+The terms (F1)--(F3) are the full Dahlen treatment of a fluid region
+\cite{Dahlen1974,DahlenTromp1998,AW10}. Published GIA codes do not use it:
+they reduce the core to an approximate boundary condition on the mantle
+side of the core--mantle boundary (CMB). This subsection states that
+condition as published, shows that it and its common variants are
+degenerate cases of (F1)--(F3), and defines the resulting ladder of
+approximations, which the library realises through the settings of
+\code{FluidRegion}.
+
+\subsubsection{The condition used in the GIA literature}
+
+Published GIA codes reduce the core to a boundary condition on the mantle
+side of the CMB for a \textbf{uniform, incompressible, inviscid} fluid
+core, in the lineage Wu \& Peltier \cite{WuPeltier1982} $\to$ Tromp \&
+Mitrovica \cite{TrompMitrovica1999} $\to$ Martinec \cite{Martinec2000}
+$\to$ Zhong et al.\ \cite{Zhong2003}. As published:
+\begin{itemize}
+\item Latychev et al.\ \cite{Latychev2005} (eqs.~11--12), citing Tromp \&
+  Mitrovica, in their notation ($T$ stress, $\vs$ displacement, $\Phi^0$
+  and $\Phi^1$ background and perturbed potential, superscript $+$ the
+  mantle side, $\hat{\bm{\nu}}$ the unit normal out of the mantle into the
+  core, $\rho_c$ the core density just below the CMB):
+  \begin{equation}
+    \hat{\bm{\nu}}\cdot T^+ = \rho_c\,(\vs^+\cdot\grad\Phi^0 + \Phi^1)\,
+      \hat{\bm{\nu}}, \qquad
+    \sigma_{\mathrm{CMB}} = -\rho_c\,\vs^+\cdot\hat{\bm{\nu}},
+  \end{equation}
+  traction = buoyancy + potential stress, and an apparent surface mass
+  density $\sigma_{\mathrm{CMB}}$ that is the core's \emph{only}
+  contribution to $\Phi^1$. Their time-marching additionally enforces
+  ``mass conservation at the CMB'' each step, standing in for the
+  incompressible core's volume constraint. They note the fluid-potential
+  alternative of Komatitsch \& Tromp \cite{KomatitschTromp2002} and do
+  not use it.
+\item A, Wahr \& Zhong \cite{AWahrZhong2013}: $\sigma_{ij}n_j = -\rho_c\phi\,
+  n_i + \rho_c g\,n_i u_jn_j$ (stress $\sigma$, normal $n$, potential
+  perturbation $\phi$) --- the same two terms, the sign convention
+  differing through the normal.
+\item Huang et al.\ \cite{Huang2023} (eqs.~2.3.3, 2.2.13):
+  $\tau^{\mathrm{CMB}}_{rr} = \rho_c\phi_1 + \rho_c g_0 u_r$ (radial normal
+  stress $\tau_{rr}$, potential perturbation $\phi_1$, background gravity
+  $g_0$, radial displacement $u_r$; ``potential stress'' plus ``Winkler
+  buoyancy''), shear-free; the potential sees the core only through the
+  surface density $\rho_c u_r$; ``an incompressible and uniform fluid core
+  which has no volumetric density perturbation under static
+  deformation''.
+\item CitcomSVE-3.0 \cite{CitcomSVE2025}: zero shear force, normal force
+  from the self-gravitational effect of a fluid incompressible core
+  (after Zhong et al.\ \cite{Zhong2003}); the core is otherwise not
+  considered.
+\item The spectral codes of the Martinec lineage \cite{Martinec1999,
+  Martinec2000}: a free-slip CMB on an unmeshed, incompressible core.
+\item The benchmark of Spada et al.\ \cite{Spada2011} fixes the Wu \& Ni
+  \cite{WuNi1996} solid--fluid conditions as those agreed in the
+  community; its reference solutions embed the same physics.
+\end{itemize}
+None of these codes solves for the potential inside a stratified core.
+
+\subsubsection{Translation into (F1)--(F3)}
+
+With $\vm$ the solid's outward normal, the Latychev/Huang condition is
+\emph{exactly} the interface pair (F2) [their buoyancy $\rho_c g u_r$] and
+(F3) [their potential stress, and the source $\sigma_{\mathrm{CMB}}$ in the
+potential row], with two approximations relative to the full Dahlen
+treatment:
+\begin{enumerate}
+\item[(i)] $\rho_F$ is a \emph{constant} (the core-top density) instead of
+  the model's fluid-side density on each interface;
+\item[(ii)] (F1) is absent: a uniform incompressible core has no interior
+  density perturbation, $\rho'_F \equiv 0$.
+\end{enumerate}
+What is \emph{not} approximate in any of these conditions: the core's
+\emph{background} density still generates $\Phi_0$ and enters the
+ball-wide Poisson solve, as it does in the published setups, where the
+core's background density participates in the zeroth-order gravity. Only
+the core's \emph{perturbation} physics is truncated.
+
+\subsubsection{The ladder}
+
+Each rung is a \code{FluidRegion} configuration of the mixed class; the
+Love-number benchmark exposes the ladder as its option \code{-cmb}
+(Dahlen path only).
+\begin{description}
+\item[\code{full}] (F1)+(F2)+(F3) with the model's own densities: the
+  complete Dahlen treatment of a stratified, barotropic fluid
+  \cite{Dahlen1974,AW10}. The fluid's Eulerian density perturbation
+  $\rho'_F\phi$ is kept, $\rho_F$ is the fluid-side density on each
+  interface. \code{FluidRegion} defaults: \code{density\_gradient} is
+  analytic or, when null, computed by
+  \code{BarotropicDensityGradientCoefficient} (\S\ref{sec:mixed}, assembly
+  table).
+\item[\code{nomass}] (F2)+(F3); (F1) dropped, $\rho'_F = 0$
+  (\code{density\_gradient} set to zero). Keeps the buoyancy and the
+  potential stress at each interface with the model's fluid-side density,
+  but the fluid interior no longer contributes a density perturbation to
+  the potential: the core perturbs gravity only through the displaced
+  interfaces. This is approximation (ii) alone.
+\item[\code{uniform}] As \code{nomass}, and in addition $\rho_F$ replaced
+  by one constant per fluid region, the fluid-side density at the region's
+  outermost interface (the core-top density), supplied as a constant
+  \code{interface\_density} and used on all of that region's interfaces.
+  This is approximations (i) and (ii) together: the standard unmeshed-core
+  condition of the GIA literature
+  \cite{Latychev2005,TrompMitrovica1999,AWahrZhong2013,Huang2023,
+  CitcomSVE2025}.
+\item[\code{winkler}] As \code{uniform}, and in addition both halves of
+  (F3) dropped (\code{interface\_potential\_coupling = false}; dropping
+  both keeps the operator symmetric). The core presses on the mantle
+  through the buoyancy (F2) alone and contributes nothing to the potential
+  perturbation (no potential stress, no $\sigma_{\mathrm{CMB}}$ source).
+  It is the variant Huang et al.\ \cite{Huang2023} call FEMIBF, for which
+  they find the potential force ``significant for low degree loads''.
+\end{description}
+Beyond the ladder, the \emph{gauged} treatment of \S\ref{sec:gauged}
+keeps the fluid's displacement and bulk modulus and is selected by
+construction rather than by a \code{FluidRegion} setting; it is the
+reference against which the rungs are judged at degree 0.
+
+\subsubsection{Degree 0 and the core's mass}
+\label{sec:cmb-deg0}
+
+For a spherical CMB the surface-density source $\rho_c(\vm\cdot\vu)$ has
+zero net mass only when $\oint\vm\cdot\vu\dS = 0$ --- the incompressible
+core's volume constraint, living entirely at degree 0 (Latychev et al.\
+\cite{Latychev2005} enforce it per step; other codes leave degree 0 to the
+surface-load convention). This is the free constant of (M4) \cite{AW10}:
+\emph{every} rung, full Dahlen included, misses the core's compressional
+physics at $l=0$ because eliminating the fluid discards its bulk modulus
+there. The gauged treatment (\S\ref{sec:gauged}) keeps it.
+
+\subsubsection{Love numbers, and the accuracy of the rungs}
+
+For a spherically symmetric body forced at spherical-harmonic degree $l$,
+the surface response is summarised by dimensionless \emph{Love numbers}:
+$h$ scales the radial displacement and $k$ the induced potential
+perturbation ($l$-Love numbers, scaling the tangential displacement, are
+not used here). \emph{Tidal} Love numbers $h_l, k_l$ refer to forcing by an
+external potential $\psi$ of degree $l$ (radial displacement $h_l\psi/g$
+and induced potential $k_l\psi$ at the surface); \emph{load} Love numbers
+$h'_l, k'_l$ refer to forcing by a surface mass load $\sigma$ of degree
+$l$, normalised by the potential of the load itself. Loading responses are
+concentrated near the surface; tidal responses sample the deep interior.
+
+The rungs have been compared with one another and with the independent
+radial code \code{pyslfp} on a PREM-like model with a stratified core
+(\code{doc/benchmarks.tex}, section ``The Love-number family'', subsection
+``The CMB approximations: results''). The qualitative conclusions are:
+\begin{itemize}
+\item for \emph{loading}, the standard condition (\code{uniform}) is
+  essentially harmless at $l\ge2$ for a PREM-like core and costs a little
+  at $l=1$, where the constant core-top density mis-weights the response
+  adjacent to the Slichter mode (the gravitationally restored translation
+  of the inner core, \S\ref{sec:mixed-null}); dropping the potential
+  stress (\code{winkler}) is not harmless, at the level of several percent
+  at $l=2$ and decaying with degree --- the reason ``potential stress +
+  buoyancy'' became the standard;
+\item every approximation costs roughly ten times more on \emph{tides} than
+  on loading: \code{nomass}/\code{uniform} become comparable to the
+  discretisation error of a production run, \code{winkler} reaches tens of
+  percent; $k$ is consistently more sensitive than $h$, being sourced by
+  the internal mass redistribution that the core treatment controls; and
+  \code{nomass} and \code{uniform} nearly coincide for $l\ge2$;
+\item the rotational feedback of sea-level calculations runs through the
+  degree-2, order-1 components: the centrifugal potential perturbation is a
+  degree-2 tidal-type forcing fed back through the degree-2 \emph{tidal}
+  response, so the tidal error budget is the relevant one. Scaled by the
+  feedback's share of the signal, \code{uniform}/\code{nomass} remain
+  harmless for the feedback, \code{winkler} does not; reusing a
+  loading-derived CMB condition for tidal computations imports a
+  percent-level systematic;
+\item at $l=0$ every rung is wrong, each differently, and no tuning of
+  the CMB condition repairs it (\S\ref{sec:cmb-deg0}); the gauged treatment
+  agrees with the radial reference there.
+\end{itemize}
+
+\subsection{Discretisation}
+
+\paragraph{One displacement field on a possibly disconnected SubMesh.} All
+solid regions form one \code{SubMesh::CreateFromDomain(parent,} $\{$solid
+attributes$\}$\code{)} with one $H^1$ vector space; materials vary by attribute
+through the rheology. Nothing in the implementation depends on
+connectivity, and BoomerAMG converges on the disconnected space as on a
+connected one. The fluid carries no displacement, so the solid regions
+never couple to each other directly. The potential $\phi$ is an $H^1$
+scalar field on the parent (ball) mesh.
+
+\subsubsection{Coupling forms across a mesh and its SubMesh}
+\label{sec:submesh}
+
+The coupling $c(\phi,\vv)$ involves a field on the parent and a field on
+the SubMesh, integrated over the SubMesh or its boundary. MFEM's
+\code{MixedBilinearForm} indexes trial and test by one element number, and
+\code{SubMesh::Transfer} provides no operator a Krylov method could see.
+The library's construction (\code{submesh.hpp}) is:
+
+\begin{itemize}
+\item \textbf{Principle.} Assemble on the SubMesh with MFEM's own
+  \code{MixedBilinearForm}, between the SubMesh space and a \emph{shadow}
+  of the parent space (the parent's collection placed on the SubMesh); then
+  re-index one side of the sparse matrix from shadow vdofs to parent vdofs.
+  The integrand only ever sees one mesh, so every integrator works
+  unchanged, including boundary integrators on the SubMesh boundary (the
+  interface terms).
+\item \textbf{The injection} $\mathcal{I}$ (a matrix of size: number of
+  parent vdofs $\times$ number of shadow vdofs, entries $\pm1$, one per
+  column; the sign carries orientation bookkeeping) is decoded from MFEM's
+  vdof-to-vdof map; sharing the collection \emph{object} guarantees
+  identical per-element dof layouts. $\mathcal{I}$ extends by zero,
+  $\mathcal{I}^T$ is the exact restriction, $\mathcal{I}^T\mathcal{I} = I$,
+  and $\mathcal{I}\mathcal{I}^T$ is the indicator of the parent dofs lying
+  in the SubMesh. The re-indexed coupling matrix is $\mathcal{I}C_{\mathrm{sh}}$
+  (or $C_{\mathrm{sh}}\mathcal{I}^T$) with $C_{\mathrm{sh}}$ the matrix
+  assembled against the shadow space; it is formed as an $O(\mathrm{nnz})$
+  re-indexing preserving sparsity, not as a sparse product.
+\item \textbf{The true-dof injection $\Pi$ in parallel.} Block operators act
+  on true dofs, so the parallel path needs $\Pi$: SubMesh true dofs $\to$
+  parent true dofs, as a distributed (hypre) matrix. The tempting
+  $\Pi = R_{\mathrm{parent}}\mathcal{I}P_{\mathrm{sub}}$ ($P_{\mathrm{sub}}$
+  the SubMesh prolongation, $R_{\mathrm{parent}}$ the restriction of the
+  parent L-vector to owned true dofs) is wrong: a shared parent dof on the
+  SubMesh boundary may be owned by a process whose local elements there all
+  lie outside the SubMesh, and the entry is silently lost (already on a
+  $4\times4$ quadrilateral mesh, two slab-partitioned processes, order 2).
+  Instead $\Pi^T$ is built row by row over \emph{owned SubMesh} true dofs,
+  whose owner always holds a SubMesh element containing them, using the
+  global parent true-dof number of the corresponding parent local dof.
+  $\Pi$ is Boolean, so $\Pi^T$ is at once the exact primal restriction and
+  the dual prolongation.
+\item \textbf{Restrictions} (refused by assertion): nonconforming parents,
+  variable order, spaces other than $H^1$ and $L^2$, assembly levels other
+  than legacy; interior-face integrators. Markers refer to SubMesh
+  attributes; cut boundaries receive attribute $\max(\text{parent bdr
+  attr})+1$.
+\end{itemize}
+
+\subsubsection{The Dirichlet-to-Neumann exterior condition}
+\label{sec:dtn}
+
+The \emph{Dirichlet-to-Neumann} (DtN) map of the exterior problem sends
+the boundary values of a potential on $\partial B$ to its normal derivative
+there, for the harmonic function outside $B$ that has those boundary values
+and decays at infinity. Its Galerkin form replaces the unbounded exterior
+in the term $\frac{1}{4\pi G}\int_{\R^3}\grad\phi\cdot\grad\phi'$, which
+is realised as $\frac{1}{4\pi G}[\int_B\grad\phi\cdot\grad\phi' +
+\DtN(\phi,\phi')]$ with $\DtN(\phi,\chi)$ the exterior Dirichlet energy
+$\int_{\R^3\setminus B}\grad\tilde\phi\cdot\grad\tilde\chi$ of the decaying
+harmonic continuations $\tilde\phi$, $\tilde\chi$ of the boundary traces
+(\code{PoissonDtNOperator}).
+
+\paragraph{Harmonic expansion (3-D).} Let $Y_{lm}$ be the real spherical
+harmonics of Dahlen \& Tromp \cite{DahlenTromp1998} (Appendix~B),
+orthonormal on the unit sphere, with polar angles measured about the
+centroid of $\partial B$. A boundary trace expands as $\phi|_{\partial B}
+= \sum_{lm}c_{lm}Y_{lm}$ and continues outside as $\tilde\phi =
+\sum_{lm}c_{lm}(b/r)^{l+1}Y_{lm}$. Since the outward normal of the exterior
+is $-\hat{\mathbf{r}}$ and $-\partial_r\tilde\phi|_{r=b} =
+\sum_{lm}\frac{l+1}{b}c_{lm}Y_{lm}$, Green's identity and the orthogonality
+$\int_{\partial B}Y_{lm}Y_{l'm'}\dS = b^2\delta_{ll'}\delta_{mm'}$ give
+\[
+  \int_{\R^3\setminus B}\grad\tilde\phi\cdot\grad\tilde\chi
+  = \int_{\partial B}\tilde\chi\,(-\partial_r\tilde\phi)\dS
+  = \sum_{lm}(l+1)\,b\,c_{lm}[\phi]\,c_{lm}[\chi].
+\]
+Writing the coefficients through the boundary moments
+$\phi_{lm} := \int_{\partial B}Y_{lm}\phi\dS = b^2c_{lm}$ and truncating at
+degree $L$,
+\begin{equation}
+  \DtN(\phi,\chi) = \frac{1}{b^3}\sum_{l=0}^{L}\sum_{m=-l}^{l}(l+1)\,
+     \phi_{lm}\chi_{lm}.
+  \label{eq:dtn3}
+\end{equation}
+In 2-D the expansion is in $\cos k\theta$, $\sin k\theta$, with
+arc-length moments $\phi_k = \int_{\partial B}\cos(k\theta)\,\phi\dS$
+($k<0$) and $\int_{\partial B}\sin(k\theta)\,\phi\dS$ ($k>0$), $\dS =
+b\,\mathrm{d}\theta$, and exterior continuation $(b/r)^{|k|}$. Since
+$\int_{\partial B}\cos^2k\theta\dS = \pi b$, the same argument gives
+\begin{equation}
+  \DtN(\phi,\chi) = \frac{1}{\pi b^2}\sum_{k\neq0}|k|\,\phi_k\chi_k ,
+\end{equation}
+which is independent of $b$ in terms of the expansion coefficients, as the
+2-D exterior Dirichlet energy must be. The $k = 0$ (constant) mode has no
+decaying continuation and contributes nothing.
+
+\paragraph{The matrix.} With $\{\phi_i\}$ the potential-space basis
+functions that do not vanish on $\partial B$, let $Y$ be the dense
+$n_h\times n_\partial$ matrix of boundary moments,
+\begin{equation}
+  Y_{(lm),i} = \int_{\partial B}Y_{lm}\,\phi_i\dS
+  \quad(\text{by boundary quadrature}), \qquad
+  \Lambda = \mathrm{diag}\Bigl(\frac{l+1}{b^3}\Bigr),
+  \label{eq:dtnmatrix}
+\end{equation}
+with $n_h = (L+1)^2$ retained harmonics in 3-D ($2L$ in 2-D, where the
+moments are the arc-length ones and $\Lambda = \mathrm{diag}(|k|/\pi b^2)$).
+Then the DtN
+matrix is $Y^T\Lambda Y$ on the boundary dofs, zero elsewhere: symmetric
+positive semi-definite, of rank at most $n_h$, coupling every pair of
+boundary dofs. Its action costs $O(n_hn_\partial)$: form the $n_h$ moments
+$Y x$, scale by $\Lambda$, and scatter back with $Y^T$. In parallel the
+moments are partial sums over each process's boundary faces followed by one
+global reduction (the operator enters the block system through an RAP
+product with the true-dof prolongation). Truncation means that boundary
+modes of degree $l > L$ receive no exterior energy (a natural, zero-flux
+condition for them); $L$ is the constructor argument \code{dtn\_degree}.
+Two consequences recur: (i) the constant has zero DtN energy in 2-D, so the
+constant potential is in the kernel of the 2-D Laplace--DtN block (a
+potential cannot be pinned at infinity), \S\ref{sec:mixed-2d}; (ii) under
+the mappings of \S\ref{sec:mappings} the DtN is untouched, because every
+mapping is the identity at and beyond the DtN sphere.
+
+\subsubsection{Assembly of the terms}
+
+\begin{center}
+\small
+\begin{tabular}{@{}P{2.4cm}P{4.4cm}P{7.4cm}@{}}
+\toprule
+Term & Lives on & Assembly \\
+\midrule
+elastic, gravity & solid SubMesh & rheology integrators; symmetrised gravity terms of \eqref{eq:mixedA} \\
+(F1) $m_F$ & parent, fluid attributes & \code{MassIntegrator}$(\rho'_F)$ with a domain marker, added to the potential block \\
+(F2) $a_\Sigma$ & SubMesh boundary, interface marker & \code{BoundaryNormalNormalIntegrator}$(q)$, $q = -\rho_F(\vm\cdot\grad\Phi_0)$ via \code{BoundaryNormalDotCoefficient}; part of the stiffness integrators \\
+(F3) coupling & \code{SubMeshMixed\-BilinearForm} $(\phi\to\vu)$ & \code{BoundaryNormal\-ScalarIntegrator}$(-\rho_F)$ beside the domain term $\rho\grad\phi\cdot\vv$; $C^T$ by transposition \\
+tidal load & both rows & $\Psi$ interpolated; $B_u \mathrel{-}= C\Psi$, $B_\phi \mathrel{-}= M_F\Psi$ \\
+$\Phi_0$ & parent & Poisson--DtN solve with the solid density (injected from the SubMesh) and fluid densities (on the parent), unless supplied as a coefficient \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent Details: (a) $\rho'_F$ is supplied analytically
+(\code{FluidRegion::density\_gradient}) or evaluated from an element-wise
+$L^2$ projection of the density and the discrete $\grad\Phi_0$
+(\code{BarotropicDensityGradientCoefficient}); it is assembled after
+$\Phi_0$. (b) The solid density is evaluated on the SubMesh; a fluid
+density is evaluated on the parent's fluid elements (for $\Phi_0$ and
+$\rho'_F$) \emph{and} on the SubMesh's boundary elements on $\SF$ (for
+(F2)--(F3)). A coefficient of position serves both; one keyed by domain
+attribute does not, since a boundary transformation carries the boundary
+attribute --- hence the separate \code{interface\_density}. (c) Interface
+integrators take the normal from the boundary transformation, which is
+outward from the SubMesh on interfaces inherited from the parent and on cut
+ones alike. (d) Under relaxation weights (\S\ref{sec:visco}) only the
+displacement block is reassembled (the interface term with it, harmlessly);
+potential block, coupling and DtN are built once.
+
+\subsection{Solvers}
+\label{sec:mixed-solvers}
+
+Write the system \eqref{eq:mixedblock} as
+\begin{equation}
+  \mathcal{K}\begin{pmatrix}X_u\\X_\phi\end{pmatrix}
+  = \begin{pmatrix}f_u\\f_\phi\end{pmatrix}, \qquad
+  \mathcal{K} = \begin{pmatrix} A & C\\ C^T & A_{\phi\phi}\end{pmatrix},
+  \qquad A := A_{uu} + A_\Sigma ,
+\end{equation}
+and let $P$ be the rigid-mode projector \eqref{eq:projector} on the
+displacement true dofs ($P_\phi$ its potential counterpart: the identity in
+3-D, the projector orthogonal to the constant in 2-D). The block
+factorisation
+\begin{equation}
+  \mathcal{K} = \begin{pmatrix} I & CA_{\phi\phi}^{-1}\\ 0 & I\end{pmatrix}
+  \begin{pmatrix} S & 0\\ 0 & A_{\phi\phi}\end{pmatrix}
+  \begin{pmatrix} I & 0\\ A_{\phi\phi}^{-1}C^T & I\end{pmatrix},
+  \qquad S := A - CA_{\phi\phi}^{-1}C^T ,
+  \label{eq:schurfact}
+\end{equation}
+organises both solvers. $S$ is the displacement Schur complement: the
+stiffness of the body once the potential has been eliminated (``the
+potential follows the displacement''). For a gravitationally stable body it
+is symmetric and positive on the complement of the rigid modes.
+
+\paragraph{Schur CG (reference).} Eliminate the potential and run projected
+CG on $S$:
+\begin{enumerate}
+\item solve $A_{\phi\phi}y = f_\phi$ (inner CG) and form the reduced load
+  $g = P(f_u - Cy)$;
+\item run projected CG (\S\ref{sec:projected}) on $PSP\,X_u = g$, each
+  application of $S$ costing one product with $A$, one with $C^T$, one inner
+  CG solve with $A_{\phi\phi}$ (cold-started, relative tolerance a hundredth
+  of the outer one and floored at $10^{-13}$, since CG's stopping criterion
+  is on the squared residual) and one product with $C$; the preconditioner
+  is the projected displacement preconditioner of $A$;
+\item recover $X_\phi = A_{\phi\phi}^{-1}(f_\phi - C^TX_u)$ (one more inner
+  solve).
+\end{enumerate}
+The nested inner solves make it roughly an order of magnitude slower than
+block MINRES; it is the reference
+against which MINRES is checked.
+
+\paragraph{Block MINRES (default).} MINRES on the whole symmetric system,
+with the projected block-diagonal preconditioner
+\begin{equation}
+  \mathcal{M} = \begin{pmatrix} P\mathcal{M}_uP & 0\\ 0 &
+     P_\phi\mathcal{M}_\phi P_\phi\end{pmatrix}, \qquad
+  \mathcal{M}_u\approx A^{-1}, \quad
+  \mathcal{M}_\phi\approx\Bigl(\frac{K + \eps_sM_\phi}{4\pi G}\Bigr)^{-1},
+\end{equation}
+where $\mathcal{M}_u$ and $\mathcal{M}_\phi$ are GS sweeps (serial) or
+BoomerAMG V-cycles (parallel; elasticity options for $\mathcal{M}_u$),
+$M_\phi$ is the potential mass matrix and $\eps_s = 10^{-3}$ a shift making
+the Laplacian definite. $M_F$ is deliberately left out of
+$\mathcal{M}_\phi$ (it may make $A_{\phi\phi}$ nearly singular, below),
+and so is the DtN (a preconditioner need only be spectrally equivalent).
+MINRES requires only a symmetric operator and a symmetric positive
+definite preconditioner, so it applies whatever the inertia of
+$\mathcal{K}$; by \eqref{eq:schurfact} that inertia is the inertia of $S$
+plus that of $A_{\phi\phi}$. One MINRES iteration costs one product with
+each block and one preconditioner application --- no inner solves.
+
+\paragraph{Block CG (diagnostic).} For a gravitationally stable body $S$ is
+positive on the complement of the rigid modes and $A_{\phi\phi}$ is
+positive (\S\ref{sec:mixed-solvers}, definiteness paragraph), so by
+\eqref{eq:schurfact} the projected block system is congruent to a
+positive-definite one: the saddle sign of the physical functional does not
+survive the symmetrised assembly. CG is therefore admissible on the same
+projected block system with the same preconditioner
+(\code{SolverType::BlockCG}); its cost is the same as MINRES's, and
+it is kept as a diagnostic (a CG breakdown would signal indefiniteness).
+
+\paragraph{Why the two agree.} The block solver iterates on
+$\mathrm{diag}(P,P_\phi)\,\mathcal{K}\,\mathrm{diag}(P,P_\phi)$ with
+$X_u\in\mathrm{range}(P)$, i.e.\ it solves
+\[
+  PAP\,X_u + PC\,X_\phi = Pf_u, \qquad C^TP\,X_u + A_{\phi\phi}X_\phi = f_\phi
+\]
+(3-D). Eliminating $X_\phi$ from the second equation gives exactly
+$P(A - CA_{\phi\phi}^{-1}C^T)P\,X_u = P(f_u - CA_{\phi\phi}^{-1}f_\phi)$,
+the projected Schur system of the reference solver. Both therefore return
+the same solution to solver tolerance, with no gauge correction
+(\S\ref{sec:mixed-null} explains why the projected vector is $(\vu_r, 0)$
+and not the coupled pair). Both solvers warm-start across solves.
+
+\paragraph{No segregated iteration.} The coupling is not weak,
+$\rho g R/\mu \approx 2.4$ for the Earth, so a block Gauss--Seidel iteration
+between $\vu$ and $\phi$ would need under-relaxation with a contraction
+factor depending on that ratio; it is not offered.
+
+\paragraph{Definiteness of the potential block.} $A_{\phi\phi} = (K +
+\DtN)/4\pi G + M_F$ with $M_F \le 0$. For a uniform fluid ball of radius
+$R$ the Laplace--DtN part first becomes singular against the mass term at
+$kR = \pi/2$, $k^2 = 4\pi G|\rho'_F|$. For PREM's outer core
+$k R_{\mathrm{CMB}} \approx 1.1$: positive for Earth-like models, but not
+by a wide margin, and not for much larger or steeper fluid bodies.
+\code{PotentialBlockMinEigenvalue()} (Lanczos) reports the margin; a
+negative value means the inner CG solves cannot be trusted. The proximity
+to the margin also makes (F1) far from negligible: for a PREM-like
+three-layer model dropping $\rho'_F$ changes $\norm{\vu}$ and
+$\norm{\phi}$ by a factor of about three.
+
+\subsection{Null space and gauge}
+\label{sec:mixed-null}
+
+\paragraph{Coupled near-null pairs.} $\vu_r = \mathbf{a} + \mathbf{b}\times
+\vx$ on $\MS$, paired with $\phi_r = -\vu_r\cdot\grad\Phi_0$ on all of space,
+is an exact null vector of the continuous $\mathcal{A}$. Discretely it is
+only near-null: \code{RigidModeResiduals()} gives $\sim10^{-3}$ at order 1
+and $\sim10^{-6}$ at order 2, decreasing with refinement. The system is
+therefore regularised by projection (\S\ref{sec:projected}).
+
+\paragraph{What is projected.} Both solvers solve the system restricted to
+displacements orthogonal to the rigid modes in the Euclidean true-dof inner
+product. The MINRES projector removes $(\vu_r, 0)$ (and $(0,1)$ in 2-D),
+\emph{not} the coupled pair $(\vu_r,\phi_r)$: the restricted block system
+then has exactly the Schur complement the Schur solver uses, so the two
+agree to solver tolerance with no gauge correction. Projecting the coupled
+pair and fixing the gauge afterwards injects a residual of size
+(rigid-mode residual)$\times$(rigid content of the iterate), which the soft
+Slichter mode amplifies into a percent-level disagreement. By default the
+displacement has no rigid component and the potential is the discrete
+solution of its equation for that displacement; with
+\code{SetMassWeightedGauge()} the mass-weighted representative is returned
+and the potential follows the re-gauged displacement (a rigid shift moves
+the body's potential with it). Every projected solve uses the projected
+preconditioner $P\mathcal{M}P$.
+
+\paragraph{Enclosed solid regions.} For a spherically symmetric model a
+rotation of a solid inner core alone is an exact null vector (no strain,
+$\vu\cdot\grad\Phi_0 = 0$, $\vm\cdot\vu = 0$, $\int\rho(\mathbf{b}\times\vx)
+\cdot\grad\phi' = 0$); for an aspherical core it is physically near-null
+with a restoring torque of the order of the asphericity.
+\code{AddRegionRotations()} projects these on request. A
+\emph{translation} of the enclosed region is \emph{not} null --- gravity
+restores it (the Slichter mode) --- and must never be projected. It is soft
+(Rayleigh quotient $x^TAx/x^Tx\sim10^{-4}\norm{A}$ in the test model), so
+discretisation error shows first as a spurious inner-core translation;
+refinement, not projection, is the remedy.
+
+\subsection{Two dimensions}
+\label{sec:mixed-2d}
+
+The constant potential is a null vector of the Laplace--DtN block
+(\S\ref{sec:dtn}). Potential loads are made compatible by subtracting a
+uniform flux through the outer boundary: with $\mathbf{1}$ the coefficient
+vector of the constant function and $\ell_i = \int_{\partial B}\phi_i\dS$
+(so that $\mathbf{1}^T\ell = |\partial B|$), $f_\phi\leftarrow f_\phi -
+(\mathbf{1}^Tf_\phi/|\partial B|)\,\ell$, after which
+$\mathbf{1}^Tf_\phi = 0$; every potential solve runs on $PA_{\phi\phi}P$ with
+the constant projected out, and the block solver restricts the potential
+likewise. With fluid regions this is a regularisation, not a null-space
+fact: the constant is not null once $M_F\neq0$, and the interface coupling
+$-\int\rho_F\phi\,(\vm\cdot\vv)$ is not invariant under a constant shift.
+The 2-D fluid problem is inconsistent at the level of a constant, the
+regularisation changes the answer at the percent level, and 2-D fluid runs
+are for cheap testing only. Three dimensions are unaffected.
+
+\subsection{Verification}
+
+Symmetry of the assembled block operator to round-off and decreasing
+rigid-mode and region-rotation residuals (a sign error in (F2) or either
+half of (F3) would leave them $O(1)$, so this is the sharpest check of the
+interface terms); a uniform tidal field $\psi = \mathbf{a}\cdot\vx$, which
+loads exactly a rigid mode in the continuum, gives a displacement of the
+order of the rigid-mode residual; Schur CG and block MINRES agree to
+$10^{-7}$ or better, with and without fluids, serial and parallel. Load
+and tidal $h, k$ of a homogeneous sphere against the incompressible
+formulas of Wu \& Peltier \cite{WuPeltier1982} with $\kappa/\mu = 200$
+agree to 0.1--0.7\,\% at degrees 2--4 on a fine order-2 mesh, the
+remainder being the finite bulk modulus. The load's own potential for
+$k'$ is taken from a solve for the load alone on the same mesh
+(\code{SolveLoadPotential()}: Laplace--DtN without the fluid mass term,
+which belongs to the body's response); subtracting the exact value instead
+leaves the direct potential's discretisation error in $k'$, a 30\,\% effect
+on a coarse 3-D mesh.
+
+%==========================================================================
+\section{The mixed problem with a gauged fluid}
+\label{sec:gauged}
+%==========================================================================
+
+The gauged treatment keeps the fluid displacement in a fully referential
+description and fixes the relabelling gauge by a small shear penalty whose
+bias is removed by iterated Tikhonov refinement (following Maitra \&
+Al-Attar \cite{MaitraAlAttar2024}, \S3.7.3). It is selected in the mixed
+class by construction: \emph{no} \code{FluidRegion}s; the fluid attributes
+join the displacement SubMesh, the rheology gives them $\kappa_f$ with zero
+shear, the density covers them, and \code{SetGaugedFluid()} adds the
+penalty. The machinery lives in the base class
+(\S\ref{sec:nograv}) and is reused by the referential and slip classes.
+
+\subsection{Model}
+
+\paragraph{The fluid as a solid without shear.} An inviscid fluid region
+carries a displacement with stiffness $\kappa_f(\divg\vu)(\divg\vu')$
+($\kappa_f$ the fluid's bulk modulus) and zero shear; the gravity, coupling
+and load terms are the solid's integrands (the elastic--gravitational form
+is structure-blind). What distinguishes a fluid is a symmetry. In a
+hydrostatic, barotropic fluid the level surfaces of the equilibrium
+potential, pressure and density coincide, and the linearised energy is
+unchanged by displacements that are divergence-free \emph{and} tangent to
+those level surfaces,
+\begin{equation}
+  \mathcal{K} = \{\vw \text{ on } \MF : \divg\vw = 0,\
+               \vw\cdot\grad\Phi_0 = 0 \text{ in } \MF,\
+               \vw\cdot\vm = 0 \text{ on the interfaces}\}:
+  \label{eq:relabelK}
+\end{equation}
+for $\vw\in\mathcal{K}$ the bulk term vanishes ($\divg\vw = 0$), the
+gravity terms vanish ($\vw\cdot\grad\Phi_0 = 0$), and the Eulerian density
+perturbation $-\divg(\rho\vw) = -\rho\divg\vw - \vw\cdot\grad\rho$ is zero,
+so no potential is generated. These are the \textbf{linearised
+relabellings} of the fluid (rearrangements of fluid particles that leave
+every referential material field unchanged to first order and have no
+Eulerian effect \cite{AlAttarCrawford2016}; compare the ``trivial
+displacements'' of Friedman \& Schutz \cite{FriedmanSchutz1978}); they are
+the \emph{gauge} directions, along which the fluid displacement is
+undetermined. The observables are the solid displacement, the potential,
+and in the fluid anything built from $\divg(\rho\vu)$ and the interface
+normal displacement (e.g.\ the pressure perturbation).
+
+\paragraph{Welding and tangential slip.} Using one continuous $H^1$ space
+over solid and fluid (the \emph{welded} formulation) imposes tangential
+continuity of the displacement at the fluid--solid interfaces. A
+tangential slip $\mathbf{j}$ of the fluid against the solid can be removed
+by relabelling only if it extends into the fluid as an element of
+$\mathcal{K}$ with tangential trace $\mathbf{j}$. On an interface that is a
+level surface of $\Phi_0$ this restricts the slip: for a spherical core
+the rigid rotations of the fluid are such fields, but a general tangential
+slip need not be (a field of $\mathcal{K}$ is divergence-free and tangent
+to every level sphere, so its trace on the interface is surface-divergence
+free). On an interface that is not a level surface (a general ellipse in
+an aspherical body) the level surfaces meet the interface and the
+construction generally fails. Tangential slip is therefore \emph{not}
+gauge in general, and welding is a modelling restriction, exact where the
+slip it suppresses is absent or removable by relabelling. The slipping-%
+interface formulation of \S\ref{sec:slip} is the general one: allowing a
+slip that is not needed costs nothing in correctness. The welded gauged
+formulation is used where it is exact, as for the spherically symmetric
+models of the benchmarks, where the welded and slipping formulations agree
+to discretisation level (\S\ref{sec:slip-verif}). A two-parameter fluid
+(one whose state depends on a second, independently advected label such as
+entropy or composition $s$) restricts the relabellings further by
+$\vw\cdot\grad s = 0$, and a non-linear slip map requires the slipping
+formulation in any case. Two consequences of welding: the tangential
+traction transmitted is the fluid's penalty shear stress, $O(\eps)$,
+removed by the refinement; and an inner-core rotation drags the fluid at
+$O(\eps)$ cost, so \code{AddRegionRotations()} must \emph{not} be used in
+this mode (the penalty owns those modes).
+
+\paragraph{Equivalence with Dahlen and the Adams--Williamson condition.}
+The two treatments describe the same physics iff the fluid is
+\emph{materially} barotropic (one thermodynamic parameter, so that the
+constitutive $\mathrm{d}\rho/\mathrm{d}p$ equals the background's). With
+$N^2$ the squared buoyancy (Brunt--V\"ais\"al\"a) frequency of the fluid,
+this is
+\begin{equation}
+  N^2 = 0 \iff \kappa_f = \frac{\rho^2|\grad\Phi_0|}{|\mathrm{d}\rho/\mathrm{d}r|}
+  \qquad\text{(Adams--Williamson)} .
+\end{equation}
+Then the static $\kappa$-response coincides with Dahlen's secular
+response. For $N^2\neq0$ the static response is the ``frozen'' elastic one
+and differs from Dahlen's by $O(N^2)$; the penalty still regularises the
+nearly neutral case. Benchmarks at $l\ge1$ against Dahlen or \code{pyslfp} must
+use neutrally stratified cores (PREM's outer core is Adams--Williamson by
+construction; a uniform-density core is not).
+
+\paragraph{Degree 0.} The treatments differ at degree 0 by design: Dahlen's
+fluid never sees $\kappa_f$, while the gauged fluid carries it at every
+degree, restoring the compressible degree-0 physics
+(\S\ref{sec:cmb-deg0}).
+
+\paragraph{What changes against Dahlen.}
+\begin{center}
+\small
+\begin{tabular}{@{}P{7.0cm}P{7.0cm}@{}}
+\toprule
+Dahlen (\S\ref{sec:mixed}) & Gauged \\
+\midrule
+displacement on the solid SubMesh & displacement on the whole body \\
+(F1): $A_{\phi\phi} = (K+\DtN)/4\pi G + M_F$, $M_F\le0$, near-indefinite for steep cores & no (F1): plain Laplace--DtN, SPD with margin \\
+interface terms (F2), (F3) & none: interface conditions are natural \\
+$c(\phi,\vv) = \int_{\MS}\rho\grad\phi\cdot\vv - \int_\Sigma\rho_F\phi(\vm\cdot\vv)$ & $c(\phi,\vv) = \int_M\rho\grad\phi\cdot\vv$ \\
+tidal load on the potential row, $-M_F\Psi$ & none (density perturbation is $-\divg(\rho\vu)$) \\
+2-D constant-mode inconsistency & consistent \\
+needs $\rho'_F$, level surfaces, interface conventions & needs $\kappa_f$ and the penalty \\
+well-conditioned displacement block & $1/\eps$ fluid near-kernel in the displacement block \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Assumptions}
+
+Those of \S\ref{sec:mixed-assume} except (M4) and (M6): the fluid is not
+eliminated; instead (G1) the fluid is inviscid, barotropic in the
+background and \emph{materially} barotropic (Adams--Williamson) when
+equivalence with Dahlen is wanted; (G2) the displacement is tangentially continuous at the
+interfaces (welded), which is exact only where the suppressed slip is
+absent or removable by relabelling (\S\ref{sec:gauged}, Model);
+(G3) no essential boundary conditions on gauged attributes (the penalty's
+column elimination is not folded into the loads).
+
+\subsection{Discretisation}
+
+The fluid attributes join the displacement SubMesh. The penalty is one
+deviatoric \code{ElasticityIntegrator}$(\eps\mu_g, -2/d, 1)$ on the marked
+attributes, i.e.\
+\begin{equation}
+  q(\vu,\vv) = \int_{\MF} 2\mu_g\,\dev\eps(\vu):\dev\eps(\vv),
+\end{equation}
+with $\mu_g$ a gauge shear scale (a coefficient) and $\eps$ a small
+dimensionless penalty factor, i.e.\ a fluid with shear modulus $\eps\mu_g$;
+$q$ vanishes identically on the physical (volumetric) fluid response.
+With $Q$ the matrix of $q$ on true dofs, assembly produces, beside the physical $A$ (which \code{SystemMatrix()}
+still returns), the penalty $\eps Q$ on true dofs and the regularised
+$A + \eps Q$ in one extra assembly (a form borrowing the physical
+integrators with the penalty appended). The solver and preconditioner are
+built on $A+\eps Q$. $\mu_g$ sets the scale; the fluid's own bulk modulus
+is a natural choice, and $\eps\sim10^{-2}$ the recommended penalty factor
+(\S\ref{sec:tikhonov}). Under a mapping (\S\ref{sec:mappings}) the
+penalty is assembled \emph{covariantly}, as the deviatoric tensor pulled
+back through \code{ElasticTensorIntegrator}$(C,\text{map})$, not through
+\code{MaterialStiffnessIntegrator} (\S\ref{sec:mappings},
+\S\ref{sec:ref-gauged}).
+
+\subsection{Gauge fixing by penalty and iterated Tikhonov refinement}
+\label{sec:tikhonov}
+
+After discretisation and rigid-mode projection the problem is $Ax = b$,
+$A = A^T\succeq0$ ($n\times n$), $b$ compatible (orthogonal to $\ker A$),
+with a large \emph{gauge subspace} $\mathcal{G}\subseteq\ker A$ (or nearly
+so) of dimension comparable to $n$, not aligned with any set of nodal dofs
+(so it cannot be removed by constraining dofs). Discretely the
+finite-element space does not contain $\mathcal{K}$ exactly: there is a
+large near-kernel of ``almost relabellings'' with eigenvalues of order a
+positive power of the element size $h$, and a Krylov method on the raw
+system amplifies their small load components into mesh-dependent fluid
+displacements polluting the solid through the coupling.
+
+\paragraph{Penalty: what one solve gives.} With $Q = Q^T\succeq0$ positive
+on $\mathcal{G}$ (assume for the analysis $Q\succ0$; on the complement of
+$\mathcal{G}$ any positive completion leaves the conclusions unchanged),
+solve $A_\eps x_\eps = b$, $A_\eps := A + \eps Q$. The generalised eigenpairs
+\begin{equation}
+  Av_i = \lambda_iQv_i, \qquad v_i^TQv_j = \delta_{ij}, \qquad
+  0\le\lambda_1\le\lambda_2\le\dots
+  \label{eq:gevp}
+\end{equation}
+diagonalise $A$ and $Q$ simultaneously ($V^TAV = \Lambda$, $V^TQV = I$).
+Gauge directions are the $\lambda_i = 0$ modes; the physical spectrum is
+$\{\lambda_i > 0\}$ with smallest member $\lambda_{\min}$. Expanding
+$x = \sum_iy_iv_i$ and $b_i := v_i^Tb$ (so $b = \sum_ib_iQv_i$, and
+$b_i = 0$ on gauge modes by compatibility), $A_\eps x_\eps = b$ reads
+$\sum_i(\lambda_i + \eps)y_{\eps,i}Qv_i = \sum_ib_iQv_i$, while $Ax = b$
+reads $\lambda_iy_i = b_i$:
+\begin{equation}
+  y_{\eps,i} = \frac{b_i}{\lambda_i + \eps}, \qquad
+  y_i = \frac{b_i}{\lambda_i}\ (\lambda_i > 0), \qquad
+  \frac{y_i - y_{\eps,i}}{y_i} = \frac{\eps}{\lambda_i + \eps}
+  \le\frac{\eps}{\lambda_{\min} + \eps} .
+\end{equation}
+So one penalised solve fixes the gauge exactly (zero component on every
+gauge mode: the representative minimising $x^TQx$) but biases each physical
+mode by $\eps/(\lambda_i + \eps)$. Shrinking $\eps$ shrinks the bias but
+sends the condition number $\kappa(A_\eps)\sim\lambda^A_{\max}/
+(\eps\lambda^Q_{\min})$ to infinity, degrading every preconditioner.
+
+\paragraph{Iterated refinement: the recurrence.} Keep $\eps$ moderate and
+iterate with the \emph{physical} residual:
+\begin{equation}
+  x^{(1)} = A_\eps^{-1}b, \qquad
+  r^{(k)} = b - Ax^{(k)}, \qquad
+  \delta^{(k)} = A_\eps^{-1}r^{(k)}, \qquad
+  x^{(k+1)} = x^{(k)} + \delta^{(k)} .
+  \label{eq:tikhonov}
+\end{equation}
+Two identities make it cheap and transparent.
+(i) \emph{The residual is the penalty applied to the last increment}:
+$r^{(k+1)} = r^{(k)} - A\delta^{(k)} = A_\eps\delta^{(k)} - A\delta^{(k)} =
+\eps Q\delta^{(k)}$ (and $r^{(1)} = \eps Qx^{(1)}$). After an exact solve no
+product with $A$ is needed: each refinement solves the regularised system
+against $\eps Q$ applied to the previous increment.
+(ii) \emph{The error contracts geometrically}: with $e^{(k)} = x^{(k)} - x$,
+\begin{equation}
+  e^{(k+1)} = e^{(k)} - A_\eps^{-1}Ae^{(k)}
+            = A_\eps^{-1}(A_\eps - A)e^{(k)}
+            = \eps A_\eps^{-1}Q\,e^{(k)},
+\end{equation}
+which in the basis \eqref{eq:gevp} is diagonal with factor
+$\eps/(\lambda_i + \eps)$. Starting from $e^{(1)}_i = -y_i\eps/(\lambda_i +
+\eps)$,
+\begin{equation}
+  \frac{y_i - y_i^{(k)}}{y_i} = \Bigl(\frac{\eps}{\lambda_i+\eps}\Bigr)^k,
+  \qquad
+  \rho_{\mathrm{contr}} = \frac{\eps}{\lambda_{\min}+\eps}\approx\frac{\eps}{\lambda_{\min}}
+\end{equation}
+after $k$ solves: the bias $O(\eps)$ of one solve becomes $O(\eps^k)$.
+Gauge modes ($\lambda_i = 0$, $b_i = 0$) have factor 1 and stay at their
+$Q$-minimal value zero: the iteration never un-fixes the gauge. The fixed
+point solves $Ax = b$ for every $\eps > 0$. This is stationary iterated
+Tikhonov regularisation \cite{Lardy1975,EnglHankeNeubauer} ($k$-times
+iterated Tikhonov has qualification $k$), equivalently defect correction
+with a deliberately perturbed operator. If the gauge were a constraint
+$Bx = 0$ with $Q = B^TWB$, \eqref{eq:tikhonov} would be the Hestenes--Powell
+multiplier iteration with fixed penalty
+\cite{Hestenes1969,Powell1969,FortinGlowinski} (\code{doc/slip\_interface.tex},
+section ``Constraint enforcement''); the gauge
+use is the mirror image (no constraint is wanted; the iteration removes the
+penalty's contamination of the physical modes).
+
+\paragraph{Algorithm (gauge refinement, \code{Solve} with a gauged fluid).}
+\begin{enumerate}
+\item Assemble $A$ and $\eps Q$; build the solver and preconditioner on
+  $A_\eps = A + \eps Q$ (\code{RegularizedMatrix()}); the physical $A$ is
+  kept for diagnostics.
+\item Solve $A_\eps x^{(1)} = b$, warm-started from the previous
+  solution with the absolute stopping test of \S\ref{sec:nograv}
+  ($\tau_{\mathrm{rel}}$ times the preconditioned norm of the
+  right-hand side); set $\delta \leftarrow x^{(1)}$.
+\item For $k = 1,\dots,K$ (\code{refinements}, default 2): form
+  $r = \eps Q\delta$ and record $\norm{r}$ (\code{GaugeResiduals()}); solve
+  $A_\eps\delta = r$ with the same solver and preconditioner,
+  \emph{cold-started} ($\delta = 0$ initially, since an increment has no
+  useful previous value); set $x\leftarrow x + \delta$.
+\item Check the contraction (the tripwire below).
+\end{enumerate}
+The ratio of consecutive recorded residuals is the observed contraction
+factor. The operator, its preconditioner and Krylov setup are built once,
+so refinements cost only additional Krylov solves.
+
+\paragraph{The spectral condition.} Everything rests on $\lambda_{\min}$
+being bounded away from zero \emph{uniformly in the discretisation}: on
+every physical mode the penalty must be dominated by the physical operator
+with a mesh- and order-independent margin. For the gauged fluid this
+holds: $Q$ is a deviatoric elasticity form and $A$ contains genuine elastic
+stiffness of the same differential order, both scaling identically under
+refinement, so $\lambda_{\min}\sim\mu_{\mathrm{solid}}/\mu_g$ and the
+observed contraction is $\approx\eps\mu_g/\mu_{\mathrm{solid}}$ per step,
+uniformly across meshes and orders. (The condition fails for the ball-wide
+vacuum extension of \S\ref{sec:vacuum}.)
+
+\paragraph{Semi-convergence and operating point.} Each application of
+$A_\eps^{-1}$ is a Krylov solve to tolerance $\tau$; a residual
+perturbation $\eta$ enters the next iterate as $A_\eps^{-1}\eta$, whose
+component on mode $i$ is $\eta_i/(\lambda_i + \eps)$ --- amplified by up
+to $1/\eps$ on gauge and near-gauge modes. The bias decays like $\rho^k$ only down to a
+noise floor of order $\tau/\eps$ (more precisely each step adds
+$O(h\text{-residual}/(\eps\mu_g))$ of near-kernel junk); the error as a
+function of $k$ is U-shaped. The recommended operating point is
+\begin{equation}
+  \eps\sim10^{-2}, \qquad k = 2\text{--}3
+  \text{ refinements}, \qquad \tau\lesssim10^{-10} .
+\end{equation}
+It is bounded on both sides. With $\eps$ much larger the $O(\eps)$ bias
+survives the refinement budget in the observables; with $\eps$ much
+smaller each solve becomes more expensive (the conditioning of $A_\eps$
+degrades like $1/\eps$) and, by $\eps\sim10^{-4}$, the iteration is
+semi-convergent: the gauge component escapes the refinements and
+pollutes the solution although every solve is nominally converged. The
+window is problem- and resolution-dependent in principle; it has been
+established at PREM structure, where the gauged solution agrees with an
+independent radial code (\code{doc/benchmarks.tex}, section ``The
+Love-number family'').
+
+\paragraph{Contraction-rate tripwire.} Since the refinement corrections
+contract at $\approx\eps/(\lambda + \eps)$, the ratio of the last two
+recorded residuals $\norm{\eps Q\delta}$ diagnoses the operating point.
+The base class's \code{WarnGaugeContraction()}, called at the end of
+every \code{GaugeRefine()} (base, mixed and referential classes), warns
+when the ratio exceeds $0.9$
+(the semi-convergence signature: $\eps$ too small for this mesh and model)
+and prints a note when it exceeds $0.2$ (a residual bias $\sim
+\text{rate}^k$ may remain: $\eps$ too large for the refinement budget, or
+too few refinements). It only reports; it changes nothing.
+Modes adjacent to the projected null space (near-rigid, Slichter-soft
+degree-1 responses) have small $\lambda_i$ of physical origin, converge
+slowly and dominate the residual diagnostics. The worst case is a load
+aligned with a near-null mode: a uniform tidal gradient leaks a
+percent-level fraction of a comparable physical response into the solid on
+a coarse mesh at the recommended operating point, growing like $k/\eps$;
+physical (degree-2) loads do not sit on the near-kernel.
+
+\paragraph{The coupled (block) version.} In the mixed class the recurrence
+runs on the block operator $\mathcal{K}$ of \S\ref{sec:mixed-solvers} with
+the penalty $\mathrm{diag}(\eps Q, 0)$ acting on the displacement only, so
+identity (i) becomes $r^{(k+1)} = [\eps Q\delta_u^{(k)};\,0]$
+(\code{GaugeRefine()} override): each refinement solves the regularised
+block system (block MINRES or Schur CG) with zero potential load and no
+tidal term, the potential increment is accumulated alongside the
+displacement increment (so the potential converges with the displacement
+rather than being recomputed), each increment solve is cold-started (the
+block iterate is zeroed), and the accumulated pair is left as the warm
+start of the next \code{Solve}.
+
+\subsection{Solvers and null space}
+
+The block solvers of \S\ref{sec:mixed-solvers} run unchanged on $A+\eps Q$,
+with a plain Laplace--DtN potential block. The global rigid modes are
+projected as before; inner-core rotations are not projected. The
+mass-weighted rigid gauge matters for comparisons against exact radial
+solutions: the Euclidean true-dof gauge leaves a mesh-asymmetry rigid
+translation ($\sim10^{-5}$ on the test meshes) that uniform refinement does
+not remove, and which dominates e.g.\ a Lam\'e comparison at the 0.5\,\%
+level.
+
+\subsection{The exact-gauge KKT alternative}
+\label{sec:gaugekkt}
+
+The gauge can also be fixed exactly: minimise $\frac12(Qu,u)$ subject to
+the full coupled equations $Au = f$, with $Q$ the \emph{unit}-scale
+deviatoric gauge form on the fluid attributes. There is then no $\eps$:
+the physical equations hold exactly, and the gauge is fixed as the
+minimum-$Q$-energy representative. With an auxiliary (multiplier) field
+$v$, determined only up to $\ker A$, which MINRES on the consistent system
+tolerates, the optimality system is the doubled saddle
+\begin{equation}
+  \begin{pmatrix} \mathrm{diag}(Q, 0) & A\\ A & 0\end{pmatrix}
+  \begin{pmatrix} u\\ v\end{pmatrix} =
+  \begin{pmatrix} 0\\ f\end{pmatrix},
+\end{equation}
+with the physical block operator $A$ of \S\ref{sec:mixed-solvers} in the
+constraint rows. It is available as \code{EnableGaugeKKT(fluid\_marker,
+mu\_gauge, mgw\_prec)} on the mixed class (block organisations only;
+internally the $A + Q$ assembly of \code{SetGaugedFluid()} at $\eps = 1$,
+with no refinements, preconditions both displacement slots; with
+\code{mgw\_prec} the multiplier slot is preconditioned by the composite of
+Murphy, Golub \& Wathen \cite{MurphyGolubWathen2000}), and
+\code{KKTResiduals()} reports the physical residual $\norm{Au - f}/\norm{f}$
+and the stationarity residual $\norm{Qu + Av}$ relative to $\norm{Qu}$.
+
+It is not the production path. The ``constraint'' operator $A$ is square
+and only approximately singular, so saddle-point preconditioning theory,
+which assumes a full-rank rectangular constraint, does not apply, and the
+near-kernel reappears wherever the scheme needs solves with $A$: under the
+block-diagonal preconditioners available, MINRES reaches mesh-level physics
+but does not converge algebraically at acceptable cost. A multiplier pays
+for a full-rank interface condition, such as the slip constraint
+(\code{doc/slip\_interface.tex}, section ``Constraint enforcement'');
+for selection over a near-kernel the penalty is the appropriate regularisation. The production gauge path is the
+$\eps$-penalty with iterated Tikhonov refinement of \S\ref{sec:tikhonov}.
+
+\subsection{Verification}
+\label{sec:gauged-verif}
+
+Gravity-free, exact references: a static fluid supports a uniform pressure,
+so its response condenses onto the solid as the rank-one cavity term
+$(\kappa_f/V)\,b(\vu)b(\vv)$, $b(\vv) = \oint\vv\cdot\vm\dS$; the gauged
+solution matches the Sherman--Morrison solve (the rank-one update formula
+for the inverse) of the condensed problem to $2\times10^{-3}$ under a
+degree-2 pressure, and the Lam\'e solution (the exact radially symmetric
+response to uniform pressure) with a
+fluid core to $3\times10^{-5}$ (2-D) and $5\times10^{-4}$ (3-D). Residual
+decay $\sim0.1$ per step at $\eps = 10^{-2}$, $\mu_g = \kappa_f$;
+observables agree to $10^{-4}$--$10^{-5}$ between $\eps = 10^{-2}$ and
+$10^{-3}$ after refinement. Against the Dahlen path on a three-layer model
+with an Adams--Williamson core: solid displacement and potential to
+$2\times10^{-2}$ (the two discretisations' own error) under a zero-mean
+load, the degree-0 difference present; Schur CG and block MINRES agree to
+$10^{-6}$; serial and parallel to $10^{-6}$. Against the independent radial
+code \code{pyslfp} on the PREM-like model \code{prem\_4}, at every degree
+including $l = 0$: \code{doc/benchmarks.tex}, section ``The Love-number
+family''.
+
+%==========================================================================
+\section{The fully referential self-gravitating problem}
+\label{sec:referential}
+%==========================================================================
+
+The class \code{LinearQuasiStaticReferentialSelfGravitatingProblem} treats
+a self-gravitating, arbitrarily pre-stressed elastic body about a general
+equilibrium of a general reference body. Both the displacement and the
+potential perturbation $\zeta^1$ are referential fields on the fixed
+reference body; the physics of shape lives in the equilibrium mapping
+$\varphi_e$.
+
+\subsection{Three gravity formulations, and the choice}
+
+With $\Phi_0$ the background potential:
+(1) \emph{mixed, Eulerian potential} (WD eqs.~21--22; \S\ref{sec:mixed});
+(2) \emph{mixed, referential potential} (Maitra \& Al-Attar
+\cite{MaitraAlAttar2024}, eq.~21): $\zeta = \Phi\circ\varphi$ extended over
+all space via a diffeomorphic extension of the motion, with Poisson operator
+$\frac{1}{4\pi G}\langle a\grad\zeta,\grad\chi\rangle$,
+\begin{equation}
+  a(F) = J F^{-1}F^{-T};
+\end{equation}
+(3) \emph{eliminated, non-local} (AC18 eqs.~99/122): a dense double
+integral, a theoretical device and never a good numerical formulation. The
+class implements (2). It costs only assembly, leaves the DtN untouched (the
+equilibrium mapping is the identity at and beyond the DtN sphere; the motion
+of the exterior is gauge), and is free of approximation (M5): the referential
+form's gravity enters through $D\vu$ and composition alone, with no bare
+displacement, and is indifferent to secular motion.
+
+\subsection{The linearised referential system}
+
+The static action \cite{MaitraAlAttar2024} is
+\begin{equation}
+  \mathcal{V}[\varphi,\zeta] = \int_M W(\vx,F)\dV + \int_M\rho\,\zeta\dV
+  + \frac{1}{8\pi G}\int_{\R^3}\langle a(F)\grad\zeta,\grad\zeta\rangle\dV,
+\end{equation}
+with the motion extended diffeomorphically to $\R^3$. Perturb $\varphi =
+\varphi_e + \vu$, $\zeta = \zeta^0 + \zeta^1$. With $H_u = F_e^{-1}D\vu$,
+$a_e = a(F_e)$, and $a'(\vu)$, $a''(\vu,\vv)$ the first and (polarised)
+second derivatives of $F\mapsto a(F)$ at $F_e$ in the directions $D\vu$,
+$D\vv$,
+\begin{align}
+  a'(\vu) &= (\tr H_u)\,a_e - H_ua_e - a_eH_u^T, \\
+  a''(\vu,\vv) &= [\tr H_u\tr H_v - \tr(H_uH_v)]\,a_e
+     - \tr H_u(H_va_e + a_eH_v^T) - \tr H_v(H_ua_e + a_eH_u^T) \nonumber\\
+  &\quad + (H_uH_v + H_vH_u)\,a_e + a_e(H_u^TH_v^T + H_v^TH_u^T)
+     + H_ua_eH_v^T + H_va_eH_u^T ,
+\end{align}
+symmetric in $\vu\leftrightarrow\vv$. The density is a fixed referential
+field and is never differentiated. With $\vg_0 = \grad\zeta^0$ and the
+referential gravity flux $\vw_0 = a_e\vg_0$, the linearised system in
+$(\vu,\zeta^1)$ with tests $(\vv,\chi)$ is
+\begin{align}
+  &a_{\mathrm{ref}}(\vu,\vv)
+   + \frac{1}{8\pi G}\int\langle a''(\vu,\vv)\vg_0,\vg_0\rangle\dV
+   + \frac{1}{4\pi G}\int\langle a'(\vv)\vg_0,\grad\zeta^1\rangle\dV
+   = \ell_u(\vv), \label{eq:refu}\\
+  &\frac{1}{4\pi G}\Bigl[\int_B\langle a_e\grad\zeta^1,\grad\chi\rangle\dV
+     + \DtN(\zeta^1,\chi)\Bigr]
+   + \frac{1}{4\pi G}\int\langle a'(\vu)\vg_0,\grad\chi\rangle\dV
+   = \ell_\zeta(\chi), \label{eq:refz}
+\end{align}
+with $a_{\mathrm{ref}}$ the material + geometric stiffness \eqref{eq:matgeo}
+and $\ell_u$, $\ell_\zeta$ the load forms (below).
+The coupling expands to
+$\langle a'(\vu)\vg_0,\grad\chi\rangle = (\tr H_u)(\vw_0\cdot\grad\chi)
+- (H_u\vw_0)\cdot\grad\chi - (H_u^T\vg_0)\cdot(a_e\grad\chi)$, and the
+gravity--gravity term reduces, for a vector basis function
+$\phi_a\mathbf{e}_k$ (scalar basis function $\phi_a$ times the $k$-th
+Cartesian unit vector)
+(for which $H$ is rank one), to products of per-dof scalars built from
+$F_e^{-T}\grad\phi_a$, $\grad\phi_a\cdot\vw_0$, $F_e^{-T}\vg_0$ and
+$F_e^{-1}\vw_0$: $O(d)$ work per dof pair, no fourth-order coefficient
+formed. The integrals of the gravity terms extend over the buffer as well
+as the body (\S\ref{sec:vacuum}).
+
+\paragraph{Structural remarks.}
+\begin{itemize}
+\item At $\varphi_e = \mathrm{id}$, hydrostatic: $H = D\vu$, $a_e =
+  \mathbf{1}$, $\vw_0 = \vg_0 = \grad\Phi_0$, and the coupling is
+  $\langle[(\divg\vu)\mathbf{1} - D\vu - D\vu^T]\grad\Phi_0,\grad\chi
+  \rangle/4\pi G$. The system is related to the Eulerian one by the
+  invertible change of variables
+  \begin{equation}
+    \zeta^1 = \phi + \vu\cdot\grad\Phi_0 :
+    \label{eq:zetaphi}
+  \end{equation}
+  congruent, not identical, so cross-checks map solutions, not operators.
+\item No gravity interface terms: $\rho$ is a fixed referential field, so
+  no $[\grad\phi\cdot\vn + 4\pi G\rho\vu\cdot\vn]$-type terms and no
+  $\grad\grad\Phi_0$ appear --- but see \S\ref{sec:vacuum}.
+\item Saddle structure as before: symmetric, elastic-positive in $\vu$,
+  Laplace-type in $\zeta^1$.
+\item Loads: a surface mass load $\sigma$ (per referential area) loads the
+  potential row alone, $\ell_\zeta(\chi) = -\int_{\partial M}\sigma\chi\dS$;
+  the Eulerian $-\int\sigma\grad\Phi_0\cdot\vv$ is absorbed by
+  \eqref{eq:zetaphi}.
+\item The background $\zeta^0$ solves the referential Poisson equation with
+  the fixed referential density (at construction, unless supplied).
+\end{itemize}
+
+\subsection{Assumptions and restrictions}
+
+\begin{enumerate}
+\item[(R1)] Linearised quasi-static, as throughout; rotation only through
+  the centrifugal background.
+\item[(R2)] General reference state $(\Ch,\Se,\varphi_e)$; $\Ch$ must be
+  the \emph{bare} tensor (\S\ref{sec:dictionary}), and $\Se$ must be an
+  equilibrium stress consistent with $\rho$ and the gravity (when generated
+  by the background module it is; a raw coefficient is the modeller's
+  responsibility).
+\item[(R3)] The equilibrium mapping must extend over the whole ball as a
+  diffeomorphism and be the identity at the DtN sphere (asserted, not
+  enforced). The extension inside the buffer is gauge, but a rule is
+  needed (\S\ref{sec:mappings}).
+\item[(R4)] Fluid regions in this class are treated by the welded gauged
+  formulation (\S\ref{sec:ref-gauged}); a genuinely slipping interface
+  needs \S\ref{sec:slip}.
+\end{enumerate}
+
+\subsection{Background states}
+\label{sec:background}
+
+The general form takes $T^0$ (or $\Se$) as data, but it must satisfy
+$\Div T^0 = \rho\grad\Phi_0$ with continuous tractions and be hydrostatic
+in fluid regions. The background module provides:
+\begin{itemize}
+\item \code{RadialHydrostaticBackground}: hydrostatic $g$ and $p^0$ by
+  cumulative quadrature for a radial model, the bare tensor from
+  seismological $(\kappa,\mu)$ via \eqref{eq:bare}, $\Se = -p^0\mathbf{1}$,
+  the identity mapping, and the assembled rheology;
+\item \code{RelabelledBackground}: the same physical equilibrium from a
+  relabelled reference body, owning the transformed chain
+  $\tilde\rho = J_\xi\,\rho\circ\xi$,
+  $\hat{\tilde C} = J_\xi\,Q_\xi^{-T}(\hat C\circ\xi)\,Q_\xi^{-1}$ (Mandel
+  form; $Q_\xi$ is the $n_s\times n_s$ Mandel matrix of the congruence
+  $e\mapsto F_\xi^TeF_\xi$, i.e.\ $Q_\xi\hat e = \widehat{F_\xi^TeF_\xi}$, the
+  $(\Ch,\Se)$ form of AC18 eq.~136, implemented by
+  \code{RelabelledElasticTensorCoefficient}),
+  $\tilde S = J_\xi F_\xi^{-1}(\Se\circ\xi)F_\xi^{-T}$, $\varphi_e = \xi$,
+  and the referential pressure $\tilde\pi = p^0\circ\xi$;
+\item the Al-Attar \& Woodhouse \cite{AW10} generators for general
+  aspherical $\Se$. Any two equilibrium stresses differ by an element of
+  $\ker\Div_0$, the space of symmetric stress fields that are
+  divergence-free in the body and traction-free on its surface. The minimum-norm
+  equilibrium stress solves a linear elastic boundary-value problem
+  (\code{MinimumNormEquilibriumStress}); the minimum-\emph{deviatoric} one
+  solves a steady incompressible Stokes problem
+  (\code{MinimumDeviatoricEquilibriumStress}), discretised with
+  Taylor--Hood elements (pressure one order below velocity; equal order
+  violates the inf--sup (Ladyzhenskaya--Babu\v{s}ka--Brezzi) stability
+  condition of mixed velocity--pressure spaces, producing spurious pressure
+  modes, and is refused). Both are matrix
+  coefficients usable directly as $\Se$, and both admit relabelling (the
+  generated $\Se$ is the second Piola--Kirchhoff pull-back
+  $J F^{-1}(T\circ\varphi)F^{-T}$, generated on the fixed reference body).
+  Solvability requires no net force or torque from body force and tractions
+  (AW10 eq.~58), the compatibility enforced by the projected solvers.
+\end{itemize}
+The difference between a generated equilibrium $\Se$ and its pressure
+part alone (the quasi-hydrostatic approximation of standard practice,
+which is not an equilibrium stress off sphericity) scales like the product
+of the body's ellipticity and the ratio of pressure to shear modulus: it is
+negligible at the Earth's non-hydrostatic figure and reaches the percent
+level in displacement for strongly elliptical bodies (the example
+\code{examples/prestress\_loading.cpp} computes the comparison).
+
+\subsection{The mapping (relabelling) layer}
+\label{sec:mappings}
+
+\paragraph{Conventions.} $\xi: B\to\tilde B$ is a diffeomorphism of the
+reference ball onto the physical domain, the identity on and outside the
+DtN sphere (so $\code{SurfaceHarmonics}$, the DtN and boundary harmonic
+analysis are unchanged; interface and surface topography live entirely in
+$\xi$, the reference interfaces staying spheres so that the SubMesh coupling
+is untouched). $F_{iA} = \partial\xi_i/\partial x_A$, $J = \det F > 0$.
+Fields pull back componentwise ($u_i(\vx) = \tilde u_i(\xi(\vx))$; no
+rotation of components). Three rules:
+\begin{equation}
+  \tilde\grad = F^{-T}\grad, \qquad
+  \mathrm{d}\xi = J\dV, \qquad
+  \tilde\vm\,\mathrm{d}\tilde S = \bnu\dS, \quad \bnu = JF^{-T}\vn
+  \ \ \text{(Nanson)} .
+\end{equation}
+Integrators take the \emph{physical} material fields expressed in
+reference coordinates ($\rho$ means $\tilde\rho\circ\xi$) with $J$, $F$
+explicit in the form; nothing is absorbed into relabelled densities, so
+with $\xi = \mathrm{id}$ every form reduces term-by-term.
+
+\paragraph{The pulled-back forms.}
+\begin{align*}
+  &\text{Poisson:} && \textstyle\int J F^{-1}F^{-T}\grad\phi\cdot\grad\phi' \\
+  &\text{elastic:} && \textstyle\int c'_{iAkB}\,\partial_Au_i\,\partial_Bu'_k,
+       \quad c'_{iAkB} = J\,c_{ijkl}F^{-1}_{Aj}F^{-1}_{Bl} \\
+  &\text{mass / advective:} && \textstyle\int J\rho\,\phi\phi', \quad
+       \int J\rho\,(F^{-T}\grad\phi)\cdot\vu' \\
+  &\text{divergence:} && \tilde\divg\tilde\vu = \tr(\grad\vu\,F^{-1}) \\
+  &\text{surface:} && \textstyle\int_\Sigma f\,(\tilde\vm\cdot\vu)(\tilde\vm\cdot\vu')
+       |\bnu|\dS,\quad \tilde\vm = \bnu/|\bnu| .
+\end{align*}
+$c'$ has only the major symmetry (45 components in 3-D) and is never
+formed. \textbf{One assembly recipe} implements every domain term: at each
+quadrature point replace $\mathrm{dshape}\to\mathrm{dshape}\cdot F^{-1}$
+and the weight $w\to Jw$, then run the standard assembly (for the elastic
+term: the usual Mandel $B$ matrix contracted with the referential
+21-component tensor, exact because $\tilde c$ has its minor symmetries in
+physical indices). Boundary terms use Nanson instead:
+\code{BoundaryNormalScalarIntegrator} maps $(\vm\cdot\vv)\dS\to
+(\bnu\cdot\vv)\dS$ (the $|\bnu|$ factors cancel), and
+\code{BoundaryNormalNormalIntegrator} maps $(\vm\cdot\vu)(\vm\cdot\vu')\dS
+\to(\bnu\cdot\vu)(\bnu\cdot\vu')/|\bnu|\dS$. Material symmetry survives:
+an isotropic body pulls back to $c'_{iAkB} = J[\lambda G_{iA}G_{kB} +
+\mu(\delta_{ik}(F^{-1}F^{-T})_{AB} + G_{kA}G_{iB})]$, $G = F^{-T}$
+(the ``apparent anisotropy of a specific form'' of
+\cite{AlAttarCrawford2016}, eq.~143).
+
+\paragraph{Mapping objects.} A \code{Diffeomorphism} supplies $\xi$ and $F$
+at a quadrature point: analytic (\code{CallableDiffeomorphism},
+\code{RadialDiffeomorphism}, exact $F$) or discrete
+(\code{GridFunctionDiffeomorphism}, $F = \mathbf{1} + \grad\mathbf{h}$). A
+body-only mapping is extended to the ball either by
+\code{TaperedDiffeomorphism} (blending an analytic ball-wide mapping to the
+identity through a cubic smoothstep, $C^1$ at both seams, $F = \mathbf{1}$
+at the DtN sphere) or by \code{NewHarmonicExtensionMapping} (nodal
+interpolant on the body, extended into the buffer by a vector Laplace solve
+with Dirichlet data on the body surface and zero on the DtN sphere).
+
+\paragraph{Exact and interpolated modes; the change-of-variables
+identity.} With exact $F$ the pulled-back solution converges to the mapped
+exact solution (a convergence statement). With the nodal interpolant
+$\xi_h$, assembling the standard integrators on the mapped mesh and the
+mapped integrators on the reference mesh gives the \emph{same element
+matrices to machine precision} (provided the same quadrature rule is used):
+every mapped integrator is certified against its standard counterpart on an
+arbitrarily deformed mesh. At solver level the identity holds to
+$\sim10^{-6}$, bounded by the DtN centring on the shifted mesh centroid,
+wherever every assembled term is covariant.
+
+\paragraph{Maps with a gradient kink require interpolated $F$.}
+\label{sec:shiftmaps}
+Mappings that move a fluid--solid interface (such as the interface-shift
+maps of the perturbation benchmark, used at $\pm\eps$ for
+central-difference derivatives with respect to interface position) are
+continuous but have a \emph{kink}: their gradient $F$ jumps across the
+moving interface. The one-sided slip-interface kernels (\S\ref{sec:slip})
+evaluate $F$ on the interface itself. An exact, analytically branching map
+then returns the gradient of whichever side the quadrature point happens
+to fall on: on curved facets the quadrature points sit $O(h^2)$ inside the
+analytic interface radius, so most of each facet systematically receives
+the \emph{fluid}-side slope where the solid-side value belongs, and the
+slip solution is corrupted. Such a map must therefore be supplied as a
+per-SubMesh nodal \emph{interpolant}: each SubMesh's interpolant samples
+only its own elements, so the gradient is side-consistent by
+construction, and the interpolation perturbs the represented model by
+$O(h^p)$ identically at both signs of a shift, which cancels in central
+differences. The perturbation benchmark enforces this
+(\code{benchmarks/perturbation/README.md}, ``What the driver does for a
+shift run''). Two diagnostics of the broken organisation,
+\code{SetBrokenConstraintGravity} (supplying the continuous physical
+gravity in place of the one-sided composition $\vb = F^{-T}\grad\zeta^0$
+in the scalar-jump kernels) and \code{ScaleBrokenGravityInterface}
+(scaling or dropping the $G_\Sigma$ block family, which changes the
+physical problem), exist for solver-structure comparisons only.
+
+\paragraph{Equilibrium mapping versus relabelling pull-back.} Two distinct
+uses of a mapping must not be confused. In \code{MaterialStiffnessIntegrator}
+the mapping is the \emph{equilibrium mapping} $\varphi_e$ (the form
+\eqref{eq:matgeo}); a relabelling composes into it and transforms the
+coefficients by \eqref{eq:relabel} (owned by the background layer), leaving
+the form unchanged. In the \code{Domain*}, \code{ElasticTensorIntegrator}
+and boundary integrators the mapping is the \emph{relabelling pull-back}
+with physical coefficients. The covariant fluid-gauge penalty must
+therefore use \code{ElasticTensorIntegrator}$(C,\text{map})$, the certified
+pull-back form, not \code{MaterialStiffnessIntegrator}, whose mapped form
+expects a relabelled tensor.
+
+\subsection{Discretisation: the vacuum extension}
+\label{sec:vacuum}
+
+The displacement lives on the body SubMesh, $\zeta^1$ on the ball. The
+gravity terms of the second variation live wherever $\grad\zeta^0\neq0$,
+the buffer included, through the \emph{extended} perturbation: as
+$\varphi_e$ needs a taper, the linearised motion must be extended from
+$\partial M$ to the DtN sphere, and $a'(\vu_{\mathrm{ext}})$,
+$a''(\vu_{\mathrm{ext}},\cdot)$ contribute there. The extension is gauge
+(observables are extension-independent; $\zeta^1$ itself is
+extension-dependent in the vacuum), but it cannot be omitted: truncating
+the gravity terms at $\partial M$ produces $O(1)$ errors. Options:
+\begin{enumerate}
+\item[(a)] \textbf{Ball-wide displacement} with a harmonic gauge penalty
+  $\eps\mu_g\int\grad\vu:\grad\vv$ on the buffer and Tikhonov refinement
+  (\code{SetVacuumExtension}). It works only in the \emph{biased} $O(\eps)$
+  regime: the spectral condition of \S\ref{sec:tikhonov} fails, because the
+  buffer has no physical stiffness (only the $L^2$-bounded zeroth-order
+  gravity terms) while the harmonic penalty's Rayleigh quotients grow like
+  $h^{-2}$; $\lambda\sim h^2\to0$ and refinement diverges with mesh or
+  order. It is not used for production solves.
+\item[(b)] \textbf{Prescribed linear extension} $\vu_{\mathrm{ext}} =
+  E\,\vu|_{\partial M}$ with the buffer blocks folded through $E$ by sparse
+  triple products (\code{SetPrescribedVacuumExtension}): exact (any $E$ is a
+  gauge choice), no extra unknowns, no near-kernel, no $\eps$. \textbf{The
+  route used.} \code{NewRadialVacuumExtension}: buffer dofs shared with the
+  body copy their values exactly through the SubMesh dof pairing; interior
+  buffer nodes at radius $r$ take $t(r)\,\vu(\vx_s)$ with
+  \begin{equation}
+    t(r) = \Bigl(\frac{r_{\mathrm{out}} - r}{r_{\mathrm{out}} - r_b}\Bigr)^2,
+  \end{equation}
+  so $t$ and $t'$ vanish at the DtN sphere (keeping $a = \mathbf{1}$
+  there), $\vx_s$ the radial projection onto the body surface. In parallel
+  the trace rows use the true-dof pairing and interior rows a query--reply
+  exchange; the folds use hypre RAP/ParMult.
+\end{enumerate}
+Different tapers agree in observables: the built-in gauge-invariance test.
+Note that the 2-D comparison with the Eulerian class must respect the
+constant gauge ($\zeta^1$ and $\phi$ are both projected orthogonal to
+constants, $\phi + \vu\cdot\grad\Phi_0$ is not).
+
+\subsection{Solver and null space}
+
+Block MINRES on the symmetric saddle system with the projected
+block-diagonal preconditioner (AMG/Gauss--Seidel on the displacement block
+and on the shifted \emph{mapped} Laplacian), serial and parallel in one
+class, warm-started (\code{ResetSolution()} zeroes the iterate between
+independent forcings, since the gauge refinement carries the previous
+solution's fluid-gauge component forward).
+
+\paragraph{Rigid modes have no potential partners.} $\zeta = \Phi\circ
+\varphi$ is invariant under rigid motions of the body, so the null pairs are
+$(\vt,0)$ for translations (every term vanishes identically; exact
+discretely) and $(W\varphi_e,0)$ for rotations ($\sym(F_e^TD\vu) =
+\sym(F_e^TWF_e) = 0$; geometric and gravity terms cancel by rotational
+invariance of the equilibrium energy; near-null discretely). Contrast the
+coupled pairs of \S\ref{sec:mixed-null}. Both are projected from the
+displacement in the true-dof inner product; the potential needs no
+projection (except the 2-D constant, as in \S\ref{sec:mixed-2d}).
+\code{NullPairResidual} evaluates any candidate pair $(\vu,0)$ under the
+full block operator.
+
+\subsection{Gauged fluids in the referential class}
+\label{sec:ref-gauged}
+
+The welded gauged treatment transfers with no new machinery: the fluid's
+inputs come from the background module (bare tensor with $\mu_b = p^0$,
+$\Se = -p^0\mathbf{1}$), and the base-class penalty and refinement act on
+the fluid attributes unchanged, with \code{GaugeRefine()} overridden as in
+\S\ref{sec:tikhonov} (zero potential load in refinement solves, potential
+accumulated). The deviatoric penalty is assembled covariantly through the
+rheology's equilibrium mapping by default: since the gauge subspace has
+stiffness $O(\eps)$, an $O(\eps A)$ difference in a non-covariant penalty
+produces $O(A)$ differences in the gauge representative.
+
+\paragraph{Verification.} (i) The joint relabelling-invariance identity: an
+azimuthal relabelling $\vw = \mathrm{curl}\,\psi$ supported in the core is
+annihilated by the displacement-row operator only \emph{jointly} --- the
+material $\mu_b = p^0$ term, the geometric $-p^0$ term and the gravity
+second variation cancelling through the equilibrium condition. With the
+bare dictionary the normalised energy along the orbit converges to zero
+(0.087, 0.0088, 0.0016 at orders 1--3); with seismological moduli used
+directly it converges to the finite defect $\int2p^0|\sym D\vw|^2\approx
+0.137$: an $85\times$ separation, the sharpest single test of
+\eqref{eq:bare}. (ii) Against the Eulerian gauged class on a two-layer
+fluid-core problem: agreement in mantle displacement and in
+$\phi + \vu\cdot\grad\Phi_0$ at the 2\,\% discretisation level on the coarse
+test mesh. (iii) The hydrostatic cross-check against the mixed class (same
+physical problem, solutions mapped through
+\eqref{eq:zetaphi}) with the prescribed
+vacuum extension: displacement and potential map onto the Eulerian
+solution at discretisation level, improving with order. (iv) Relabelled
+welded-gauged solver identity: the relabelled and unrelabelled problems
+give the same solution to solver tolerance (of order $10^{-7}$), which
+holds only because the penalty is covariant.
+
+%==========================================================================
+\section{The slipping-interface problem}
+\label{sec:slip}
+%==========================================================================
+
+The class \code{LinearQuasiStaticReferentialSelfGravitatingSlipProblem}
+carries a broken displacement pair $(\vv_{\mathrm{s}},\vv_{\mathrm{f}})$
+on solid and fluid SubMeshes of the ball with a genuinely slipping
+fluid--solid interface, in the referential formulation. The derivations
+summarised here are given in full in \code{doc/slip\_interface.tex}
+(sections ``Kinematics of the slip'', ``First variation: equilibrium and
+the multiplier'', ``The second variation'', and ``Constraint enforcement''
+for the AL and KKT solvers). Following that document, $\vv$ denotes the
+broken displacement, $M_{\mathrm{s}}$, $M_{\mathrm{f}}$ the reference solid
+and fluid regions, $\vN$ the \emph{referential} unit normal on $\Sigma$
+pointing \emph{out of the fluid}, and $\dS$ the referential measure.
+
+\subsection{When it is needed; assumptions}
+
+Tangential slip at a fluid--solid interface is not gauge in general
+(\S\ref{sec:gauged}, Model): the welded formulation suppresses it, which
+is exact only where the slip is absent or removable by relabelling. The
+slipping-interface formulation is the general and safe one --- allowing
+a slip that is not needed costs nothing in correctness --- and it is the
+formulation required for interfaces that are not level surfaces of the
+background potential, for two-parameter (stratified) fluids, and for a
+non-linear slip map. When the broken space is used on a pressurised
+background its interface terms are obligatory. Restrictions of the
+implementation: (S1) one fluid region inside a solid shell (nested shells
+with two-sided fluid extensions are not implemented); (S2) the
+single-valued organisation is assembled at $\varphi_e = \mathrm{id}$ only
+and refuses a non-identity mapping (\code{Diffeomorphism::IsIdentity}); the
+broken-$\zeta$ organisation (\code{EnableBrokenZeta}) is assembled mapped
+throughout and is the route for mapped and aspherical backgrounds; (S3)
+the fluid displacement is gauge (the relabellings \eqref{eq:relabelK}),
+fixed by the penalty and refinement of \S\ref{sec:tikhonov} in both
+enforcement paths, set with \code{SetFluidGauge}$(\mu_g,\eps)$ on the whole
+fluid space (the slip class refuses \code{SetGaugedFluid}, since its fluid
+has its own space); (S4) the KKT path is implemented for the single-valued
+organisation only (\code{EnableKKT} and \code{EnableBrokenZeta} are
+mutually exclusive).
+
+\paragraph{Set-up.} Before the first \code{Solve()} the class needs the
+fluid gauge (\code{SetFluidGauge}), the vacuum extension of
+\S\ref{sec:vacuum} (\code{SetPrescribedVacuumExtension}), and, in the
+single-valued organisation, the prescribed fluid extension
+(\code{SetFluidExtension}, from \code{NewRadialFluidExtension},
+\S\ref{sec:slip-disc}); the broken-$\zeta$ organisation does not need the
+fluid extension. \code{SetConstraint}$(\theta, K)$ sets the constraint
+penalty and the number of outer iterations (\S\ref{sec:slip-enforce}).
+
+\subsection{Kinematics and the constraint}
+
+With $\varphi_e$ on the ball, $F_e$, $J_e$, the unnormalised \textbf{Nanson
+normal}
+\begin{equation}
+  \bnu := \cof(F_e)\vN = J_eF_e^{-T}\vN, \qquad
+  \vn\,\mathrm{d}S_{\mathrm{phys}} = \bnu\dS, \qquad
+  |\bnu|\dS = \mathrm{d}S_{\mathrm{phys}} .
+\end{equation}
+The two conventions ``unit physical normal $\times$ physical measure'' and
+``Nanson normal $\times$ referential measure'' give the same pairing; the
+error mode is mixing them ($\vn$ against $\dS$ silently loses $|\bnu|$).
+Every surface integral carries $(\bnu,\dS)$ explicitly.
+
+The fluid stays attached but slips: $\varphi_{\mathrm{f}}|_\Sigma =
+\varphi_{\mathrm{s}}|_\Sigma\circ\sigma$, with slip map $\sigma_\eps =
+\mathrm{id} + \eps\vs + \tfrac{\eps^2}{2}\bm{\sigma}_2$, $\vs\in T\Sigma$.
+The second-order coefficient has a forced normal part,
+$\bm{\sigma}_2 = \vs_2 - \mathrm{II}(\vs,\vs)\vN$ ($\mathrm{II}$ the
+referential second fundamental form). To first order $\vv_{\mathrm{f}}
+|_\Sigma = \vv_{\mathrm{s}} + F_e\vs$, so with $\jump{\vv} :=
+\vv_{\mathrm{s}} - \vv_{\mathrm{f}} = -F_e\vs$,
+\begin{equation}
+  \boxed{\ \bnu\cdot\jump{\vv} = 0\ }, \qquad \vs = -F_e^{-1}\jump{\vv},
+  \label{eq:constraint}
+\end{equation}
+the normal-jump constraint with the \emph{mapped} normal. To second order
+the curvature enters and re-hides: by the Weingarten identity
+$\vN\cdot D\vs[\vs] = -\mathrm{II}(\vs,\vs)$ (the content of Valette's analysis
+\cite{Valette1986,Valette1991}), the $\bnu$-component of the fluid's
+second-order boundary datum is
+\begin{equation}
+  \bnu\cdot\mathbf{b}_2 = \bnu\cdot\grad_\Sigma(\vv_{\mathrm{s}}
+     + \vv_{\mathrm{f}})[\vs],
+\end{equation}
+tangential derivatives of the two traces only: neither curvature nor
+$D^2\varphi_e$ is ever assembled.
+
+\subsection{First variation: equilibrium and the multiplier}
+
+With the fluid stored energy $V(\vx,J)$ and the \emph{referential pressure}
+$\pi := -D_JV(\vx,J_e)$ ($= p^0\circ\varphi_e$), the fluid boundary
+traction per referential area is $P_{\mathrm{f}}\vN = -\pi\bnu$.
+Stationarity under constrained variations gives interior equilibrium and
+the \textbf{equilibrium consistency condition}
+\begin{equation}
+  P_{\mathrm{s}}\vN = P_{\mathrm{f}}\vN = -\pi\bnu \quad\text{on }\Sigma,
+\end{equation}
+a checkable property of a generated background, and identifies the
+multiplier of $\oint\lambda\,\bnu\cdot\jump{\vv}\dS$ as $\lambda = \pi$. In
+the \emph{linearised} solve, however, the converged multiplier is the
+first-order interface traction $\varpi^{(1)}$ (the multiplier of a
+\emph{mortar}, i.e.\ Lagrange-multiplier, coupling of the two traces), not
+$\pi$.
+
+\subsection{Second variation: the elastic interface form}
+
+The second variation along the constrained family is $\delta^2E +
+\delta E[(\mathbf{0},\mathbf{u}_2)]$; the second term collapses by interior
+equilibrium to $-\oint\pi\,\bnu\cdot\mathbf{b}_2\dS$, giving:
+\begin{proposition}[Interface form]
+The entire elastic interface contribution is
+\begin{equation}
+  B_\Sigma(\vv,\vv') = -\tfrac12\oint_\Sigma\pi\Bigl[
+     \bnu\cdot\grad_\Sigma(\vv_{\mathrm{s}}+\vv_{\mathrm{f}})[\vs']
+   + \bnu\cdot\grad_\Sigma(\vv'_{\mathrm{s}}+\vv'_{\mathrm{f}})[\vs]\Bigr]\dS,
+  \qquad \vs = -F_e^{-1}\jump{\vv},
+  \label{eq:BSigma}
+\end{equation}
+the mean-trace derivative against the jump; there are no other elastic
+interface terms.
+\end{proposition}
+The fluid volume Hessian, from $V(\vx,J)$ with $H = F_e^{-1}D\vv_{\mathrm{f}}$,
+is $\int[V_{JJ}J_e^2(\tr H)^2 - \pi J_e((\tr H)^2 - \tr H^2)]$, which equals
+the general material + geometric split with the \emph{bare} fluid moduli:
+$\mu_b = \pi$ follows from the fluid's constitutive class alone,
+independently confirming the dictionary \eqref{eq:bare}.
+
+\subsection{Gravity, single-valued organisation}
+
+Let $\tilde\varphi$ be the solid motion extended smoothly over
+$M_{\mathrm{f}}$ (and the buffer), $\zeta := \Phi\circ\tilde\varphi$
+single-valued on the ball (ordinary $H^1$, DtN untouched), and $\vw :=
+\vv_{\mathrm{f}} - \tilde\vv$ the fluid-versus-extension mismatch
+($\bnu\cdot\vw|_\Sigma = 0$ by \eqref{eq:constraint}). The fluid source
+composes through $\tilde\varphi^{-1}\circ\varphi_{\mathrm{f}} = \mathrm{id}
++ \eps F_e^{-1}\vw + \dots$.
+\begin{lemma}[No gravity interface terms]
+At first order the boundary term of the composed source is
+$\oint\rho_{\mathrm{f}}(\vw\cdot\bnu/J_e)\zeta\dS = 0$; at second order the
+by-parts boundary term is again proportional to $\bnu\cdot\vw = 0$. The
+slip's gravitational physics enters only through volume terms on
+$M_{\mathrm{f}}$.
+\end{lemma}
+With $\vb := F_e^{-T}\grad\zeta^0$, the additions to the operators of
+\S\ref{sec:referential} (acting with the extended field ball-wide) are, in
+Hessian normalisation,
+\begin{align}
+  H_{\zeta\vw} &= 2\int_{M_{\mathrm{f}}}\rho\,(F_e^{-1}\vw)\cdot\grad\zeta^1\dV
+     \qquad\text{(mismatch coupling)}, \\
+  H_{\vw\vw} &= -\int_{M_{\mathrm{f}}}\Div(\rho F_e^{-1}\vw)\,
+     \bigl((F_e^{-1}\vw)\cdot\grad\zeta^0\bigr)
+   - \int_{M_{\mathrm{f}}}\rho\,\vb\cdot D\vw[F_e^{-1}\vw]
+   - 2\int_{M_{\mathrm{f}}}\rho\,\vb\cdot D\tilde\vv[F_e^{-1}\vw],
+\end{align}
+all first-derivative volume forms (a $D^2\varphi_e$ term cancels
+identically, the volume analogue of the curvature collapse). Eliminating
+$\zeta^1$ at fixed motion contributes a negative-definite term
+($-\frac{1}{4\pi G}\int|\grad\zeta^{1*}|^2$): self-gravity destabilises.
+
+\subsection{\texorpdfstring{Gravity, broken-$\zeta$ organisation}{Gravity, broken-zeta organisation}}
+
+Alternatively compose region-wise with each region's own motion, $\zeta_r
+= \Phi\circ\varphi_r$ ($r$ = fluid; outer = solid with its vacuum
+continuation, whose buffer extension survives as gauge). The field energy
+splits over the deformed regions (a tiling), giving
+\begin{equation}
+  E_g = \operatorname{stat}\Bigl[\sum_r\frac{1}{8\pi G}\int_{M_r}
+    \langle a(F_r)\grad\zeta_r,\grad\zeta_r\rangle
+    + \sum_r\int_{M_r}\rho\,\zeta_r\Bigr]
+\end{equation}
+subject to $\zeta_{\mathrm{f}} = \zeta_{\mathrm{s}}\circ\sigma$ on
+$\Sigma$. Both sources are exact: the fluid extension, $\vw$ and the
+mismatch terms disappear identically. Linearising,
+\begin{equation}
+  \zeta^1_r = \varphi^1 + \vb\cdot\vv_r \quad\Longrightarrow\quad
+  \boxed{\ \jump{\zeta^1} = \vb\cdot\jump{\vv} = -\vs\cdot\grad_\Sigma\zeta^0\ },
+  \label{eq:zjump}
+\end{equation}
+imposed in the first form: a homogeneous linear constraint needing neither
+tangential projection nor the normal-jump constraint. With the background
+flux density $q := \frac{1}{4\pi G}\vb\cdot\bnu$:
+\begin{proposition}[Gravity interface form]
+\begin{equation}
+  G_\Sigma = \oint_\Sigma\Bigl[\frac{|\vb|^2}{8\pi G}\,\bnu\cdot
+     \grad_\Sigma(\vv_{\mathrm{s}}+\vv_{\mathrm{f}})[\vs]
+   + q\Bigl(\grad_\Sigma(\zeta^1_{\mathrm{s}}+\zeta^1_{\mathrm{f}})[\vs]
+     - \vb\cdot\grad_\Sigma(\vv_{\mathrm{s}}+\vv_{\mathrm{f}})[\vs]\Bigr)
+   \Bigr]\dS,
+\end{equation}
+used in symmetrised polarisation; coefficients $\bnu$, $\vb$, $q$ and
+tangential trace derivatives only.
+\end{proposition}
+The collected broken operator: unknowns $(\vv_{\mathrm{s}},\vv_{\mathrm{f}},
+\zeta^1_{\mathrm{o}},\zeta^1_{\mathrm{f}})$; per region the operators of
+\S\ref{sec:referential} with each region's own field (mapped Poisson block
+per region, DtN on the outer one); per interface $B_\Sigma$, $G_\Sigma$ and
+the two trace constraints $\bnu\cdot\jump{\vv} = 0$ and \eqref{eq:zjump}.
+Limits: welded ($\vs\equiv0$) gives the continuous-$\zeta$ welded problem;
+gravity off ($\vb = 0$) gives the sliding tests. Everything is
+per-interface, so topology scales trivially. The two organisations are
+exactly equivalent (a bijective change of variables) and share \emph{no}
+gravity-interface machinery, which makes their head-to-head a two-sided
+check.
+
+\subsection{Discretisation}
+\label{sec:slip-disc}
+
+\paragraph{Two spaces and the nodal pairing.} $\vv_{\mathrm{s}}$ and
+$\vv_{\mathrm{f}}$ live in independent $H^1$ spaces on two SubMeshes of one
+parent; the only broken surface is $\Sigma$ (no interior penalty, no
+skeleton terms). Each space has a signed dof injection into the parent
+space ($\mathcal{I}$ of \S\ref{sec:submesh}, written $\Pi_{\mathrm{s}}$,
+$\Pi_{\mathrm{f}}$ here), and
+\begin{equation}
+  J = \Pi_{\mathrm{s}}^T\Pi_{\mathrm{f}}
+  \qquad(\text{solid}\times\text{fluid dofs, entries }\pm1)
+\end{equation}
+identifies the interface dofs, orientation included, with no geometric
+matching (in parallel a hypre product of the true-dof injections, which
+handles interface dofs whose two sides are owned by different processes).
+Because the two trace spaces are the same discrete space in different
+coordinates, every interface form is assembled \textbf{once}, on the solid
+side's boundary elements. Strong nodal imposition of the normal constraint
+is not used: the discrete normal is ill-defined at the vertices of a
+faceted interface where the dofs sit; the weak form evaluates normals only
+at face-interior quadrature points.
+
+\paragraph{Interface blocks.} Let $U = (U_{\mathrm{s}}, U_{\mathrm{f}})$
+be the coefficient vectors of the broken pair, $B_n$ the matrix of the
+(mapped) normal--normal boundary form $\int_\Sigma(\bnu\cdot\vu)(\bnu\cdot
+\vu')/|\bnu|\dS$ on the solid side, $\tilde\vm = \bnu/|\bnu|$, and
+$\mathsf{D} = [I, -J]$ the jump map ($\mathsf{D}U = U_{\mathrm{s}} -
+JU_{\mathrm{f}}$, the discrete jump on solid-side dofs). With a penalty
+parameter $\theta > 0$ the normal-jump penalty is
+\begin{equation}
+  \theta P,\qquad P = \mathsf{D}^TB_n\mathsf{D}
+  = \begin{pmatrix} B_n & -B_nJ\\ -J^TB_n & J^TB_nJ\end{pmatrix},
+  \qquad \theta\,U^TPU = \theta\int_\Sigma\bigl((\vv_{\mathrm{s}}-\vv_{\mathrm{f}})
+     \cdot\tilde{\vm}\bigr)^2|\bnu|\dS ,
+\end{equation}
+positive semi-definite with kernel all fields of continuous normal trace
+(every tangential jump). $B_\Sigma$ is formed from the one-sided kernel
+$G_\pi$ of \code{SlipInterfacePressureIntegrator} (assembled on the solid
+side with coefficient $\pi$) with the sum map $\mathsf{S} = [I, J]$ and the
+jump map $\mathsf{D}$ as $B_\Sigma = -\frac12(\mathsf{S}^TG_\pi\mathsf{D} +
+\mathsf{D}^TG_\pi^T\mathsf{S})$ (the minus because $G_\pi$ uses the solid's
+outward normal, $-\vN$). $G_\Sigma$ is $\frac12(\mathsf{S}^TG_A\mathsf{D} +
+\mathsf{D}^TG_A^T\mathsf{S}) + [\frac12\mathsf{D}^TM_q\mathsf{S}_\zeta +
+\text{transpose}]$, with $G_A$ and $M_q$ the one-sided vector and
+scalar--vector kernels (\code{SlipInterfaceGravityIntegrator},
+\code{SlipInterfaceGravityScalarIntegrator}), $J_\zeta$ the scalar dof
+pairing and $\mathsf{S}_\zeta = [I, J_\zeta]$ (signs plus: both $\bnu$-linear coefficients flip
+with the normal, cancelling the minus of $\vs = -F_e^{-1}\jump{\vv}$).
+These sign conventions are pinned by discrete-versus-quadrature
+cross-checks. All these one-sided kernels evaluate $F_e$ on the interface
+itself, which is why an equilibrium mapping with a gradient kink at
+$\Sigma$ (an interface-shift map) must be supplied in the per-SubMesh
+interpolated form (\S\ref{sec:shiftmaps}).
+
+\paragraph{Single-valued gravity pieces.} The fluid extension $\tilde\vv =
+E_f\vv_{\mathrm{s}}$ is a prescribed sparse operator
+(\code{NewRadialFluidExtension}): interface trace rows copy the solid
+values exactly (to round-off, the property the vanishing lemmas need);
+interior rows take $t(r)\vv_{\mathrm{s}}(r_c\hat\vx)$, with $r_c$ the
+interface radius, $\hat\vx = \vx/|\vx|$ and $t = (r/r_c)^{p_t}$ vanishing at
+the centre (taper power $p_t = 2$ by default); the interior rule is gauge. At
+$\varphi_e = \mathrm{id}$ the volume pieces assemble from library
+integrators: $\int\rho\,\vw\cdot\grad\grad\zeta^0\,\vw'$ as a vector mass
+with the matrix coefficient $\rho\,\sym(D\vg_{0,h})$, where $\vg_{0,h}$ is
+the nodal projection of $\grad\zeta^0$ onto the fluid displacement space
+(equal to $\rho\grad\grad\zeta^0$ for an exact gradient; no second
+derivative of a potential is taken, and the pointwise symmetrisation keeps
+the matrix exactly symmetric); the mismatch coupling as a mixed
+vector--scalar-gradient form; and the $\tilde\vv$-term as the
+\emph{compensated} combination $G_{\mathrm{vg}} - M_{\mathrm{H}}$, with
+$G_{\mathrm{vg}}$ the library's vector--gradient--vector form and
+$M_{\mathrm{H}}$ the matrix-coefficient mass term just described: the
+former differentiates the nodally interpolated product
+$\grad\zeta^0\cdot\tilde\vv$ and so includes exactly the mass term
+already assembled. The solid row receives the fluid-region gravity folded
+through $E_f$ and the mismatch folds.
+
+\paragraph{Broken-$\zeta$ pieces.} Per-region potentials $(\zeta_o,
+\zeta_f)$ on the outer (solid + buffer) and fluid SubMeshes; the DtN stays
+on the ball space and is folded through the outer injection; the
+scalar-jump constraint uses the solid-side kernels $M_z$ (scalar boundary
+mass), $K_{vz} = \oint(\vb\cdot\vu)\zeta$ and $P_b$ (the $\vb\otimes\vb$
+vector boundary mass), assembled through the same one-sided pairings. The
+vacuum extension of \S\ref{sec:vacuum} is still required.
+
+\subsection{Constraint enforcement}
+\label{sec:slip-enforce}
+
+The normal-jump constraint \eqref{eq:constraint} (in the broken-$\zeta$
+organisation also the scalar-jump constraint \eqref{eq:zjump}) is
+enforced in one of two ways on the same assembly; the full treatment
+(contraction analysis, Schur-complement clustering, preconditioners,
+algorithms) is in \code{doc/slip\_interface.tex}, section ``Constraint
+enforcement''. The \emph{augmented-Lagrangian} path, the default and the
+only path of the broken-$\zeta$ organisation, adds the penalty
+$\theta P$ of \S\ref{sec:slip-disc} and runs $K$ block-MINRES sweeps,
+each followed by a multiplier update $w\leftarrow w + \theta PU$ and
+interleaved with the iterated Tikhonov refinement of the fluid gauge
+(\S\ref{sec:tikhonov}); its fixed point satisfies the constraint exactly
+(weakly) at finite $\theta$, and $w$ is the interface normal-traction
+perturbation paired with $\bnu$. The \emph{KKT} path (\code{EnableKKT},
+single-valued organisation only) makes the multiplier an unknown on a
+scalar space on the solid side of $\Sigma$ and solves one saddle system
+per outer step, with $\theta$-augmented blocks built from the
+constraint's own kernel (augmented-Lagrangian preconditioning in the
+sense of Golub and Greif \cite{GolubGreif2003}) and the multiplier block preconditioned by
+$\theta\hat M^{-1}$ ($\hat M$ the lumped interface mass of the multiplier
+space); the outer loop then contains only the gauge refinements, and the
+endpoint is independent of $\theta$. In both paths the fluid gauge stays
+a penalty.
+
+Defaults: $\theta = 100$ and $K = 8$ (\code{SetConstraint}$(\theta, K)$;
+$K$ bounds the gauge refinements in the KKT path); every sweep at full
+tolerance (\code{SetSweepTolerance(0)}), while the Love-number benchmark
+relaxes the early sweeps to $10^{-3}$ (\code{-sweep-tol}) except on
+interface-shift runs (\S\ref{sec:shiftmaps}). For the KKT multiplier one
+order below the displacement (the mortar-style choice
+\cite{Wohlmuth2001}) is recommended in 3-D, but is not robust in every
+configuration (doc/slip_interface.tex, ``The multiplier space''); the
+benchmark's default \code{-kkt-order 0} means equal order. The two paths agree within
+discretisation error. The AL path is the general choice (both
+organisations, cheapest with few sweeps); the KKT path is used when the
+multiplier is wanted as a solved-for field or a $\theta$-independent
+endpoint is needed, e.g.\ as a regression check on the constraint blocks.
+
+\subsection{Null space}
+\label{sec:slip-null}
+
+Common translations $(\vt,\vt,0)$ and \emph{independent} mapped rotations
+of shell and core (a frictionless axisymmetric interface transmits no
+torque), plus the 2-D potential constant. Translations of either component
+alone are not null (gravity couples them). With the tapered extensions the
+translations are near-null rather than exact. The rigid pairs are near-null
+under the full operator including both penalties, since $\bnu$ and $\vb$
+are radial against tangential rotations. On an elliptical interface the
+independent-rotation modes disappear (torque is transmitted through normal
+forces alone).
+
+\subsection{Verification}
+\label{sec:slip-verif}
+
+The interface form \eqref{eq:BSigma} matches the exact energy of
+constrained broken motions to $2\times10^{-4}$ (identity and curved radial
+$\varphi_e$; diagonal and polarised second differences); the gravity
+pieces to $\le3\times10^{-4}$ on families with a rigid, stress-free solid,
+including the jointly annihilated axisymmetric relabelling; $G_\Sigma$ to
+$3\times10^{-4}$, resolved at $30\times$ the residual. Solution-level, on
+the two-layer hydrostatic disc at order 2:
+\begin{itemize}
+\item single-valued slip versus the welded gauged solution (a spherically
+  symmetric model, for which the two formulations are expected to agree to
+  discretisation level, \S\ref{sec:gauged}):
+  $1.1\times10^{-3}$ (solid displacement), $7\times10^{-4}$ (solid-region
+  potential); two fluid extensions (taper powers 2, 3) agree to
+  $5\times10^{-6}$, the built-in gauge-invariance test;
+\item reduction to the Dahlen class under \eqref{eq:zetaphi}, degree-2 load:
+  $6\times10^{-3}$ (displacement), $5\times10^{-3}$ (potential) --- two
+  formulations sharing no interface machinery;
+\item gravity and pressure off: the gravity-free sliding interface, matching
+  the condensed cavity reference to $2\times10^{-5}$;
+\item broken versus single-valued head-to-head: $7\times10^{-5}$
+  (displacement), $5\times10^{-5}$ (potential), both constraints contracting
+  by $\sim10^2$.
+\end{itemize}
+Note that $\zeta^1 = \varphi^1 + \tilde\vv\cdot\grad\zeta^0$ carries the
+extension field off the solid, so it is an observable only on the solid
+region. The mapped broken solver reproduces the
+identity-description solution under an interface-fixing twist relabelling
+to $5\times10^{-4}$ and $2\times10^{-4}$. Serial and parallel agree at
+$10^{-5}$ on 1/2/4 ranks.
+
+\paragraph{Published treatments.} Checked against this derivation, the
+natural-configuration interface terms of AC18 \cite{AC18} (their eq.~121)
+are exactly \eqref{eq:BSigma} at $\varphi_e = \mathrm{id}$ with
+$\varpi^{(0)}$ identified with $\pi$; the linearised slip of Maitra \&
+Al-Attar \cite{MaitraAlAttar2024} agrees in its exact theory, but their
+linearised $\mathbf{Q}$-terms (eqs.~B5--B6) miss a factor $J^{(0)}$,
+invisible at a natural configuration.
+
+%==========================================================================
+\section{The viscoelastic time layer}
+\label{sec:visco}
+%==========================================================================
+
+This section summarises the layer; its full description (problem
+interface, steppers, internal variables, state-dependent relaxation times,
+composite rheologies) is \code{doc/viscoelasticity.md}, and its benchmarks
+are in \code{doc/benchmarks.tex}, section ``The viscoelastic family''.
+The layer models generalised Maxwell (Prony-series) bodies, isotropic or
+anisotropic: with strain $\eps$, a relaxed tensor $C_\infty$, and for each
+\emph{branch} $k$ a relaxable tensor $C_k$, a relaxation time $\tau_k$ and a
+symmetric-tensor internal variable $m_k$,
+\begin{equation}
+  \sigma = C_U\eps - \sum_k C_km_k, \qquad C_U = C_\infty + \sum_kC_k,
+  \qquad \dot m_k = (\eps - m_k)/\tau_k,\ m_k(0) = 0 ,
+\end{equation}
+$C_U$ being the unrelaxed (instantaneous) tensor. For the isotropic body
+$C_k = 2\mu_kP_{\mathrm{dev}}$ ($\mu_k$ the branch shear modulus,
+$P_{\mathrm{dev}}$ the projector onto deviatoric tensors) and the internal
+variables are trace-free; for an anisotropic body which part of $C$ relaxes
+is a modelling choice of the branch coefficient. The elastic operator is
+assembled with the \emph{unrelaxed} modulus and the branches appear only as
+forces through the problem interface of \S\ref{sec:common}:
+\begin{equation}
+  K_U\vu = f_{\mathrm{ext}}(t) + \sum_kB^T(C_km_k), \qquad
+  \dot m_k = (D\vu - m_k)/\tau_k,
+\end{equation}
+with $K_U$ the stiffness matrix assembled with $C_U$, $f_{\mathrm{ext}}$
+the external load, $\Phi_I$ the tensor-valued basis functions of the
+internal-variable space and $\phi_J$ the displacement basis functions,
+$B_{IJ} = \int\Phi_I:\eps(\phi_J)$ assembled once with unit coefficient
+(material weighting $C_km_k$ applied pointwise at the internal-variable
+nodes), and $D$ the strain map from displacement to internal-variable
+nodes (below). Self-gravitation, fluid cores and coupled unknowns live inside
+the problem, so the layer runs unchanged on coupled problems and never sees
+a potential; in the self-gravitating class only the displacement block is
+reassembled. \code{ReferentialElasticRheology} has no branches (its
+relaxation weights are no-ops), so the referential classes are elastic;
+the layer runs on the traction, clamped and mixed classes.
+
+\paragraph{Internal variables.} On an $L^2$ (discontinuous) nodal space of
+the displacement mesh; the strain map $D$ is either the Galerkin projection
+$(G_E^{-1}\otimes M_{L^2}^{-1})B$ (default; adjoint-consistent), with
+$M_{L^2}$ the scalar $L^2$ mass matrix (inverted exactly element by
+element) and $G_E$ the Frobenius metric $(G_E)_{cc'} = E_c:E_{c'}$ of the
+non-orthonormal basis tensors $E_c$ of the component convention, or nodal
+interpolation. The internal order must resolve $\eps(\vu)$ exactly ($p-1$
+on simplices, $p$ on tensor-product elements, $p$ the displacement order),
+so that the effective-modulus elimination is exact.
+
+\paragraph{Steppers.} With step $dt$, $h_k = dt/\tau_k$,
+$b_k = 1 - (1 - e^{-h_k})/h_k$ (the exponential-trapezoid weight of the end
+strain), $\gamma$ the SDIRK diagonal coefficient, and the \emph{relaxation
+weights} $\beta_k$ defining the effective modulus $C_\infty + \sum_k\beta_kC_k$
+of the solve:
+\begin{center}
+\small
+\begin{tabular}{@{}P{3.4cm}P{5.4cm}P{4.6cm}@{}}
+\toprule
+Scheme & elastic solve & order, stability \\
+\midrule
+explicit RK & one per stage, $K_U$ & RK order; $dt\lesssim2.8\tau_{\min}$ (RK4) \\
+ETD1 & one per step, $K_U$ & 1st; unconditionally stable \\
+exponential trapezoid & one per step, weights $\beta_k = 1 - b_k$ & 2nd; exact for strain linear in time \\
+backward Euler & weights $\beta_k = 1/(1+h_k)$ & 1st; L-stable \\
+SDIRK & as backward Euler, $\gamma dt$ per stage & 2nd--3rd \\
+\bottomrule
+\end{tabular}
+\end{center}
+(RK: Runge--Kutta; ETD1: first-order exponential time differencing;
+SDIRK: singly diagonally implicit Runge--Kutta; L-stable: stable with
+damping of infinitely stiff modes.) Implicit and exponential-trapezoid steps
+reassemble the stiffness with the effective modulus (pointwise weights,
+since $\tau_k$ varies in space), through \code{SetRelaxationWeights}; the
+preconditioner-reuse rule of \S\ref{sec:nograv} keeps the AMG setup across
+these reassemblies; Crank--Nicolson is
+deliberately absent (not L-stable). With stiff branches the
+two-stage, third-order SDIRK scheme (MFEM's \code{SDIRK23Solver}) is the most efficient fixed-step choice and the
+adaptive trapezoid the most efficient at tight tolerances (see the
+benchmarks).
+State-dependent relaxation times $\tau_k = \tau_{k0}F_k(\eps,\sigma,m_k)$
+($\tau_{k0}$ a reference time, $F_k$ a pointwise factor)
+(e.g.\ a power law, composite diffusion/dislocation creep, after Crawford et
+al.\ \cite{Crawford2017} and Simo \& Hughes \cite{SimoHughes}) keep every
+global solve linear: a predictor--corrector re-evaluates $\tau$ at the
+midpoint state, and adaptive stepping uses the embedded ETD1 companion as a
+(conservative) error estimate. \code{CompositeRheology} assigns different
+rheologies to different attribute regions of one displacement space, each
+branch living on its region's nodes only.
+
+%==========================================================================
+\begin{thebibliography}{99}
+%==========================================================================
+
+\bibitem{AWahrZhong2013}
+G.~A, J.~Wahr \& S.~Zhong, 2013.
+Computations of the viscoelastic response of a 3-D compressible Earth to
+surface loading: an application to Glacial Isostatic Adjustment in
+Antarctica and Canada, \emph{Geophys.\ J.\ Int.}, 192, 557--572.
+
+\bibitem{AC18}
+D.~Al-Attar, O.~Crawford, A.~P.~Valentine \& J.~Trampert, 2018.
+Hamilton's principle and normal mode coupling in an aspherical planet with
+a fluid core, \emph{Geophys.\ J.\ Int.}, 214, 485--507.
+
+\bibitem{AlAttarCrawford2016}
+D.~Al-Attar \& O.~Crawford, 2016.
+Particle relabelling transformations in elastodynamics,
+\emph{Geophys.\ J.\ Int.}, 205, 575--593.
+
+\bibitem{AlAttarTromp2014}
+D.~Al-Attar \& J.~Tromp, 2014.
+Sensitivity kernels for viscoelastic loading based on adjoint methods,
+\emph{Geophys.\ J.\ Int.}, 196, 34--77.
+
+\bibitem{AW10}
+D.~Al-Attar \& J.~H.~Woodhouse, 2010.
+On the parametrization of equilibrium stress fields in the Earth,
+\emph{Geophys.\ J.\ Int.}, 181, 567--576.
+
+\bibitem{Crawford2017}
+O.~Crawford, D.~Al-Attar, J.~Tromp \& J.~X.~Mitrovica, 2017.
+Forward and inverse modelling of post-seismic deformation,
+\emph{Geophys.\ J.\ Int.}, 208, 845--876.
+
+\bibitem{Dahlen1974}
+F.~A.~Dahlen, 1974.
+On the static deformation of an earth model with a fluid core,
+\emph{Geophys.\ J.\ R.\ astr.\ Soc.}, 36, 461--485.
+
+\bibitem{DahlenTromp1998}
+F.~A.~Dahlen \& J.~Tromp, 1998.
+\emph{Theoretical Global Seismology}, Princeton University Press.
+
+\bibitem{EnglHankeNeubauer}
+H.~W.~Engl, M.~Hanke \& A.~Neubauer, 1996.
+\emph{Regularization of Inverse Problems}, Kluwer.
+
+\bibitem{FortinGlowinski}
+M.~Fortin \& R.~Glowinski, 1983.
+\emph{Augmented Lagrangian Methods}, North-Holland.
+
+\bibitem{FriedmanSchutz1978}
+J.~L.~Friedman \& B.~F.~Schutz, 1978.
+Lagrangian perturbation theory of nonrelativistic fluids,
+\emph{Astrophys.\ J.}, 221, 937--957.
+
+\bibitem{GolubGreif2003}
+G.~H.~Golub \& C.~Greif, 2003.
+On solving block-structured indefinite linear systems,
+\emph{SIAM J.\ Sci.\ Comput.}, 24, 2076--2092.
+
+\bibitem{Hestenes1969}
+M.~R.~Hestenes, 1969.
+Multiplier and gradient methods, \emph{J.\ Optim.\ Theory Appl.}, 4,
+303--320.
+
+\bibitem{Huang2023}
+P.~Huang, R.~Steffen, H.~Steffen, V.~Klemann, P.~Wu, W.~van der Wal,
+Z.~Martinec \& Y.~Tanaka, 2023.
+A commercial finite element approach to modelling Glacial Isostatic
+Adjustment on spherical self-gravitating compressible earth models,
+\emph{Geophys.\ J.\ Int.}, 235, 2231--2256.
+
+\bibitem{Lardy1975}
+L.~J.~Lardy, 1975.
+A series representation for the generalized inverse of a closed linear
+operator, \emph{Atti Accad.\ Naz.\ Lincei Rend.\ Cl.\ Sci.\ Fis.\ Mat.\
+Natur.\ (8)}, 58, 152--157.
+
+\bibitem{KomatitschTromp2002}
+D.~Komatitsch \& J.~Tromp, 2002.
+Spectral-element simulations of global seismic wave propagation---I.
+Validation, \emph{Geophys.\ J.\ Int.}, 149, 390--412.
+
+\bibitem{Latychev2005}
+K.~Latychev, J.~X.~Mitrovica, J.~Tromp, M.~E.~Tamisiea, D.~Komatitsch \&
+C.~C.~Christara, 2005.
+Glacial isostatic adjustment on 3-D Earth models: a finite-volume
+formulation, \emph{Geophys.\ J.\ Int.}, 161, 421--444.
+
+\bibitem{MaitraAlAttar2021}
+M.~Maitra \& D.~Al-Attar, 2021.
+On the stress dependence of the elastic tensor,
+\emph{Geophys.\ J.\ Int.}, 225, 378--415.
+
+\bibitem{MaitraAlAttar2024}
+M.~Maitra \& D.~Al-Attar, 2024.
+On the elastodynamics of rotating planets,
+\emph{Geophys.\ J.\ Int.}, 237, 1301--1338.
+
+\bibitem{MarsdenHughes}
+J.~E.~Marsden \& T.~J.~R.~Hughes, 1983.
+\emph{Mathematical Foundations of Elasticity}, Prentice-Hall.
+
+\bibitem{Martinec1999}
+Z.~Martinec, 1999.
+Spectral, initial value approach for viscoelastic relaxation of a
+spherical earth with a three-dimensional viscosity---I. Theory,
+\emph{Geophys.\ J.\ Int.}, 137, 469--488.
+
+\bibitem{Martinec2000}
+Z.~Martinec, 2000.
+Spectral-finite element approach to three-dimensional viscoelastic
+relaxation in a spherical earth, \emph{Geophys.\ J.\ Int.}, 142, 117--141.
+
+\bibitem{MurphyGolubWathen2000}
+M.~F.~Murphy, G.~H.~Golub \& A.~J.~Wathen, 2000.
+A note on preconditioning for indefinite linear systems,
+\emph{SIAM J.\ Sci.\ Comput.}, 21, 1969--1972.
+
+\bibitem{Powell1969}
+M.~J.~D.~Powell, 1969.
+A method for nonlinear constraints in minimization problems, in
+R.~Fletcher (ed.), \emph{Optimization}, pp.~283--298, Academic Press,
+London.
+
+\bibitem{SimoHughes}
+J.~C.~Simo \& T.~J.~R.~Hughes, 1998.
+\emph{Computational Inelasticity}, Springer.
+
+\bibitem{Spada2011}
+G.~Spada, V.~R.~Barletta, V.~Klemann, R.~E.~M.~Riva, Z.~Martinec,
+P.~Gasperini, B.~Lund, D.~Wolf, L.~L.~A.~Vermeersen \& M.~A.~King, 2011.
+A benchmark study for glacial isostatic adjustment codes,
+\emph{Geophys.\ J.\ Int.}, 185, 106--132.
+
+\bibitem{TrompMitrovica1999}
+J.~Tromp \& J.~X.~Mitrovica, 1999.
+Surface loading of a viscoelastic earth---I. General theory,
+\emph{Geophys.\ J.\ Int.}, 137, 847--855.
+
+\bibitem{Valette1986}
+B.~Valette, 1986.
+About the influence of pre-stress upon adiabatic perturbations of the
+Earth, \emph{Geophys.\ J.\ R.\ astr.\ Soc.}, 85, 179--208.
+
+\bibitem{Valette1991}
+B.~Valette, 1991.
+Gravito-elastodynamics of a pre-stressed elastic earth,
+\emph{Geophys.\ J.\ Int.}, 104, 555.
+
+\bibitem{Wohlmuth2001}
+B.~I.~Wohlmuth, 2001.
+\emph{Discretization Methods and Iterative Solvers Based on Domain
+Decomposition}, Springer.
+
+\bibitem{WoodhouseDeuss2007}
+J.~H.~Woodhouse \& A.~Deuss, 2007.
+Theory and observations --- Earth's free oscillations, in
+G.~Schubert (ed.), \emph{Treatise on Geophysics}, vol.~1, \emph{Seismology
+and Structure of the Earth}, pp.~31--65, Elsevier, Amsterdam.
+
+\bibitem{WuNi1996}
+P.~Wu \& Z.~Ni, 1996.
+Some analytical solutions for the viscoelastic gravitational relaxation of
+a two-layer non-self-gravitating incompressible spherical earth,
+\emph{Geophys.\ J.\ Int.}, 126, 413--436.
+
+\bibitem{WuPeltier1982}
+P.~Wu \& W.~R.~Peltier, 1982.
+Viscous gravitational relaxation, \emph{Geophys.\ J.\ R.\ astr.\ Soc.}, 70,
+435--485.
+
+\bibitem{CitcomSVE2025}
+T.~Yuan, S.~Zhong \& G.~A, 2025.
+CitcomSVE-3.0: a three-dimensional finite-element software package for
+modeling load-induced deformation and glacial isostatic adjustment for an
+Earth with a viscoelastic and compressible mantle,
+\emph{Geosci.\ Model Dev.}, 18, 1445--1461.
+
+\bibitem{Yu2025}
+Z.~Yu, D.~Al-Attar, F.~Syvret \& A.~J.~Lloyd, 2025.
+Application of first- and second-order adjoint methods to glacial isostatic
+adjustment incorporating rotational feedbacks,
+\emph{Geophys.\ J.\ Int.}, 240, 329--348.
+
+\bibitem{Zhong2003}
+S.~Zhong, A.~Paulson \& J.~Wahr, 2003.
+Three-dimensional finite-element modelling of Earth's viscoelastic
+deformation: effects of lateral variations in lithospheric thickness,
+\emph{Geophys.\ J.\ Int.}, 155, 679--695.
+
+\end{thebibliography}
+
+\end{document}

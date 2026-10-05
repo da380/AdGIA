@@ -1,0 +1,11 @@
+[project]
+name = "adgia-meshes"
+version = "0.1.0"
+description = "Scripts that generate the gmsh meshes in ../data with planetmodel"
+requires-python = ">=3.12"
+dependencies = [
+    "planetmodel[meshing,mfem]>=1.2.3",
+]
+
+[tool.poetry]
+package-mode = false

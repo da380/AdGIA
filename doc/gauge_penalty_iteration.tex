@@ -1,0 +1,465 @@
+\documentclass[11pt]{article}
+
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage[margin=1.1in]{geometry}
+\usepackage{bm}
+\usepackage[colorlinks=true,linkcolor=blue,citecolor=blue]{hyperref}
+
+\newtheorem{proposition}{Proposition}
+\newtheorem{remark}{Remark}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\eps}{\varepsilon}
+\newcommand{\ip}[2]{\langle #1, #2\rangle}
+\newcommand{\norm}[1]{\lVert #1 \rVert}
+
+\title{Gauge fixing by penalty and iterated refinement:\\
+       the regularisation machinery of the gauged formulation}
+\author{AdGIA method notes}
+\date{}
+
+\begin{document}
+\maketitle
+
+\noindent
+Companion to \texttt{doc/gauged\_fluid.md} and to
+\texttt{doc/gravitating\_elasticity.md}, section ``The linearised
+referential system'', which state \emph{what} is gauged; this note
+explains \emph{how} the gauge freedom is handled numerically. The
+technique is a small-parameter penalty combined with what the
+inverse-problems literature calls \emph{iterated Tikhonov
+regularisation} \cite{Lardy1975,EnglHankeNeubauer}; the pieces are
+standard but scattered, and they are collected here with the spectral
+condition under which the method works, a case in the code where that
+condition fails (the ball-wide vacuum extension, \S\ref{sec:failure}),
+and the operating point used throughout the library. The constraint
+enforcement of the slipping fluid--solid interface, which uses the same
+family of iterations in its augmented-Lagrangian role, is in
+\texttt{doc/slip\_interface.tex}.
+
+\section{The problem: a gauged discrete system}
+
+After discretisation (and after projecting out the rigid-body null
+space, which is handled separately and exactly by the null-space
+projectors), the linear problems of interest have the form
+\begin{equation}
+  A\,x = b, \qquad A = A^{T} \succeq 0,
+  \label{eq:system}
+\end{equation}
+where $A \in \R^{n\times n}$ is the assembled physical operator and $b$
+is compatible, $b \perp \ker A$. The distinguishing feature is a large
+\emph{gauge subspace}
+\[
+  \mathcal{G} \;\subseteq\; \ker A
+  \quad\text{(or nearly so),}
+\]
+of dimension comparable to $n$ itself, along which the physics is
+indifferent: any two solutions differing by an element of $\mathcal{G}$
+represent the same physical state, and every observable is a
+gauge-invariant functional. Two instances in the code:
+
+\begin{itemize}
+\item \textbf{The gauged fluid.} In the relabelled fluid formulation the
+  fluid regions keep a displacement field, but only its volumetric
+  content (through $\kappa\,(\nabla\!\cdot u)$) and the gravity coupling
+  are physical; the deviatoric part of the fluid motion is pure
+  relabelling. $\mathcal{G}$ is (essentially) the space of
+  divergence-free fluid-supported fields --- huge, mesh-dependent, and
+  not aligned with any set of nodal degrees of freedom, so it cannot be
+  eliminated by constraining dofs.
+\item \textbf{The ball-wide vacuum extension.} In the referential
+  gravity formulation the linearised perturbation needs a displacement
+  extension through the buffer shell; the extension is entirely gauge
+  (any smooth field with the correct trace on $\partial B$ gives the
+  same observables), and if the extension is carried as unknowns, the
+  buffer block of $A$ has no stiffness at all.
+\end{itemize}
+
+Solving \eqref{eq:system} directly is unattractive: Krylov methods on a
+semi-definite operator with an $O(n)$-dimensional kernel converge to
+\emph{a} solution only if the preconditioner respects the kernel, and
+standard AMG/Gauss--Seidel preconditioners do not. The penalty route
+restores definiteness first and removes its bias afterwards.
+
+\section{Penalty regularisation}
+
+Choose a symmetric positive semi-definite \emph{penalty operator}
+$Q = Q^{T} \succeq 0$ that is positive definite on the gauge subspace,
+\begin{equation}
+  x \in \mathcal{G}, \; x \neq 0 \quad\Longrightarrow\quad x^{T} Q x > 0 ,
+\end{equation}
+and replace \eqref{eq:system} by
+\begin{equation}
+  A_{\eps}\, x_{\eps} = b, \qquad A_{\eps} := A + \eps\, Q ,
+  \label{eq:penalised}
+\end{equation}
+with a small parameter $\eps > 0$. In the code $Q$ is assembled from an
+ordinary bilinear form:
+\begin{itemize}
+\item \emph{Deviatoric penalty} (gauged fluid):
+  $q(u,v) = \int 2\mu_{g}\, \mathrm{dev}\,\varepsilon(u) :
+  \mathrm{dev}\,\varepsilon(v)$ on the fluid attributes. This is the
+  natural choice because it \emph{vanishes identically on the physical
+  (volumetric) fluid response}: the penalty is invisible to the physics
+  it accompanies, up to the coupling terms.
+\item \emph{Harmonic penalty} (extension fields):
+  $q(u,v) = \int \mu_{g}\, \nabla u : \nabla v$ on the buffer
+  attributes, which penalises everything --- there is no physical motion
+  in a vacuum buffer to spare.
+\end{itemize}
+The reference scale $\mu_{g}$ (a bulk or shear modulus of the adjacent
+solid) makes $\eps$ dimensionless.
+
+\subsection{What one penalised solve gives}
+\label{sec:onesolve}
+
+Assume for the analysis that $Q \succ 0$ on the whole space (in
+practice: on the complement of the projected rigid modes; on the
+orthogonal complement of $\mathcal{G}$ any spd completion works and
+none of the conclusions change). Introduce the generalised eigenpairs
+\begin{equation}
+  A\, v_{i} = \lambda_{i}\, Q\, v_{i}, \qquad
+  \lambda_{1} \le \lambda_{2} \le \dots , \qquad
+  v_{i}^{T} Q v_{j} = \delta_{ij} ,
+  \label{eq:gevp}
+\end{equation}
+which simultaneously diagonalise $A$ and $Q$. Gauge directions are the
+$\lambda_{i} = 0$ modes; the \emph{physical spectrum} is
+$\{\lambda_{i} > 0\}$, and its smallest member
+\begin{equation}
+  \lambda_{\min} := \min \{\, \lambda_{i} : \lambda_{i} > 0 \,\}
+  \label{eq:lmin}
+\end{equation}
+is the quantity the whole method hinges on. Expanding
+$x = \sum_i y_i v_i$, $b_i := v_i^T b$ (compatibility: $b_{i} = 0$ on
+gauge modes), the exact and penalised solutions are, mode by mode,
+\begin{equation}
+  y_{i} = \frac{b_{i}}{\lambda_{i}} \quad (\lambda_{i} > 0), \qquad
+  y_{\eps,i} = \frac{b_{i}}{\lambda_{i} + \eps} .
+\end{equation}
+Hence:
+\begin{proposition}
+  The penalised solution $x_{\eps}$ (i) fixes the gauge exactly: its
+  component along every gauge mode is zero, i.e.\ $x_\eps$ is the
+  representative of the physical solution that minimises the penalty
+  norm $x^{T} Q x$; and (ii) carries a relative bias on each physical
+  mode of
+  \begin{equation}
+    \frac{y_{i} - y_{\eps,i}}{y_{i}}
+      = \frac{\eps}{\lambda_{i} + \eps}
+      \;\le\; \frac{\eps}{\lambda_{\min} + \eps} .
+    \label{eq:bias}
+  \end{equation}
+\end{proposition}
+So a single solve of \eqref{eq:penalised} produces a perfectly
+gauge-fixed answer whose \emph{physics} is wrong by
+$O(\eps/\lambda_{\min})$. The classical dilemma follows immediately:
+shrinking $\eps$ shrinks the bias but sends the condition number
+$\kappa(A_{\eps}) \sim \lambda_{\max}^{A}/(\eps\,\lambda_{\min}^{Q})$ to
+infinity --- the preconditioner degrades exactly as the answer improves.
+This is Tikhonov regularisation in its ridge-regression form, and the
+dilemma is the textbook one.
+
+\section{Iterated refinement}
+
+The escape is to keep $\eps$ \emph{moderate} and remove the bias by
+iteration instead. Define
+\begin{equation}
+  x^{(1)} = A_{\eps}^{-1} b, \qquad
+  x^{(k+1)} = x^{(k)} + A_{\eps}^{-1}\bigl( b - A\, x^{(k)} \bigr),
+  \qquad k = 1, 2, \dots
+  \label{eq:iteration}
+\end{equation}
+Each step is one additional solve \emph{with the same operator}
+$A_{\eps}$ --- the factorisation or AMG hierarchy and the Krylov setup
+are built once and reused, so refinements are nearly free compared with
+the first solve. The residual is computed with the \emph{physical}
+operator $A$, which is the whole point: the iteration converges (where
+it converges) to a solution of \eqref{eq:system}, not of
+\eqref{eq:penalised}.
+
+\subsection{Convergence, mode by mode}
+
+Subtracting \eqref{eq:system} from \eqref{eq:iteration}, the error
+$e^{(k)} = x^{(k)} - x$ obeys
+\begin{equation}
+  e^{(k+1)} = \bigl( I - A_{\eps}^{-1} A \bigr)\, e^{(k)}
+            = \eps\, A_{\eps}^{-1} Q\, e^{(k)} ,
+  \label{eq:errrec}
+\end{equation}
+and in the eigenbasis \eqref{eq:gevp} the iteration matrix is diagonal:
+\begin{equation}
+  e^{(k+1)}_{i} = \frac{\eps}{\lambda_{i} + \eps}\; e^{(k)}_{i}
+  \qquad\Longrightarrow\qquad
+  \frac{y_{i} - y^{(k)}_{i}}{y_{i}}
+    = \Bigl( \frac{\eps}{\lambda_{i} + \eps} \Bigr)^{\!k} .
+  \label{eq:contraction}
+\end{equation}
+Three consequences:
+\begin{enumerate}
+\item On \textbf{physical modes} the relative bias after $k$ solves is
+  $\le (\eps/(\lambda_{\min}+\eps))^{k}$: with
+  $\lambda_{\min} = O(1)$ and $\eps = 10^{-2}$, two or three
+  refinements reach $10^{-4}$--$10^{-6}$, which is below discretisation
+  error. The contraction factor per step is
+  \begin{equation}
+    \rho \;=\; \frac{\eps}{\lambda_{\min} + \eps}
+    \;\approx\; \frac{\eps}{\lambda_{\min}} .
+    \label{eq:rho}
+  \end{equation}
+\item On \textbf{gauge modes} ($\lambda_{i} = 0$, $b_{i} = 0$) the
+  factor is $1$: whatever gauge value the first solve produced (namely
+  zero, the $Q$-minimal representative) is preserved unchanged. The
+  iteration never un-fixes the gauge.
+\item The fixed point on the physical subspace is the exact solution of
+  \eqref{eq:system}; the method is \emph{consistent} for every
+  $\eps > 0$.
+\end{enumerate}
+
+In the inverse-problems literature \eqref{eq:iteration} is
+\emph{(stationary) iterated Tikhonov regularisation}
+\cite{Lardy1975,EnglHankeNeubauer}: $k$-times-iterated Tikhonov has
+qualification $k$, i.e.\ bias $O(\eps^{k})$ instead of the single-step
+$O(\eps)$. Numerical analysts will equally recognise it as \emph{defect
+correction} (iterative refinement with a deliberately perturbed
+operator): $A_\eps$ plays the role of the ``approximate inverse'' and
+$A$ supplies the true residual. Both views are exact descriptions of
+the same three lines of code.
+
+\subsection{When it must fail: the spectral condition}
+\label{sec:failure}
+
+Everything above assumed \eqref{eq:lmin}: the smallest \emph{physical}
+generalised eigenvalue of $(A, Q)$ stays bounded away from zero,
+\emph{uniformly in the discretisation}. In words:
+\begin{quote}
+  \emph{On every physical mode, the penalty must be dominated by the
+  physical operator, with a mesh- and order-independent margin.}
+\end{quote}
+This is a structural property of the pair $(A, Q)$, not a tuning
+question, and the two applications in the code sit on opposite sides of
+it.
+
+\paragraph{Gauged fluid: the condition holds.}
+Here $Q$ is a deviatoric elasticity form with modulus $\mu_{g}$ and $A$
+contains genuine elastic stiffness (solid regions, and the fluid's own
+$\kappa$-volumetric term) of the same differential order. Both scale
+identically under mesh refinement, so the generalised spectrum is
+$h$-independent and $\lambda_{\min} \sim \mu_{\mathrm{solid}}/\mu_{g}$
+up to geometry-dependent constants. The observed contraction per
+refinement is $\rho \approx \eps\,\mu_{g}/\mu_{\mathrm{solid}}$,
+uniformly across meshes and orders --- the benign case.
+
+\paragraph{Ball-wide vacuum extension: the condition fails.}
+In the buffer the physical operator has \emph{no stiffness at all}:
+$A$ restricted there consists of the zeroth-order (undifferentiated)
+gravity couplings, which are $L^{2}$-bounded, while $Q$ is a harmonic
+(first-derivative) form whose Rayleigh quotients on fine-scale buffer
+modes grow like $h^{-2}$ (and with polynomial order). The generalised
+eigenvalues of buffer-dominated modes therefore behave like
+$\lambda \sim h^{2}$: $\lambda_{\min} \to 0$ under refinement, the
+contraction factor \eqref{eq:rho} tends to $1$ and the amplification of
+numerical error (below) blows up. Consequently the biased single-solve
+regime works (with $O(\eps)$ error), but refinement \emph{diverges}
+under mesh and order refinement (at order~2 on the test meshes). No
+choice of $\eps$ or $k$ repairs it, because the failure is in the
+spectrum of the pair, not in the parameters. The production referential
+class therefore replaces the buffer unknowns by a \emph{prescribed}
+extension operator (\texttt{doc/gravitating\_elasticity.md}, section
+``The linearised referential system'', option (b)), which removes the
+gauge unknowns instead of penalising them. The ball-wide penalised mode
+remains available (\texttt{SetVacuumExtension}) and is exercised in the
+biased single-solve regime only (zero refinements, \texttt{TestReferentialProblem}).
+
+\subsection{Semi-convergence and the operating point}
+\label{sec:semiconv}
+
+Formula \eqref{eq:contraction} is exact arithmetic. In practice each
+application of $A_{\eps}^{-1}$ is a Krylov solve to tolerance $\tau$,
+and the residual $b - A x^{(k)}$ is formed in floating point. A
+perturbation $\delta$ of the residual enters the next iterate as
+$A_{\eps}^{-1}\delta$, and on modes with small $\lambda_{i} + \eps$
+this is an amplification by up to $1/\eps$ (in the $Q$-normalised
+variables). The bias therefore decays like $\rho^{k}$ only down to a
+noise floor of order $\tau/\eps$, after which further refinements
+random-walk or grow: the error as a function of $k$ is U-shaped. This
+is the \emph{semi-convergence} familiar from iterative regularisation,
+and it is why the recommended operating point is
+\begin{equation}
+  \eps \sim 10^{-2}, \qquad k = 2\text{--}3 \ \text{refinements},
+  \qquad \tau \lesssim 10^{-10} ,
+\end{equation}
+rather than ``$\eps$ as small as possible'' (the library default is
+two refinements at a relative tolerance of $10^{-12}$). Further
+practical notes:
+\begin{itemize}
+\item Modes adjacent to the projected null space (the near-rigid,
+  Slichter-soft degree-1 responses) have small $\lambda_{i}$ of
+  \emph{physical} origin; they converge at the slow rate
+  $\eps/(\lambda_{i}+\eps)$ and dominate the residual diagnostics.
+  Assertions and quality checks are made at the recommended operating
+  point, not in the $\eps \to 0$ limit.
+\item Starting values: each refinement solve is for an
+  \emph{increment} and starts from zero (a cold start; the increments
+  shrink by the contraction factor from step to step, so zero is the
+  natural starting value); the first solve of a
+  \texttt{Solve()} is warm-started from the previous solution, and the
+  accumulated solution is left as the warm start of the next
+  \texttt{Solve()} (\S\ref{sec:algorithm}).
+\item The operating window is bounded on both sides in the
+  Love-number benchmarks: $\eps = 10^{-1}$ leaves an observable bias at
+  the percent level, while below $10^{-2}$ the cost of the solves grows
+  several-fold per decade of $\eps$ and by $\eps = 10^{-4}$ the solution
+  is semi-convergently polluted although each solver reports
+  convergence (\texttt{doc/benchmarks.tex}). The contraction-rate
+  tripwire of \S\ref{sec:algorithm} detects both ends.
+\end{itemize}
+
+\subsection{Relation to augmented Lagrangian methods}
+
+If the gauge were expressed as an explicit constraint $B x = 0$ and the
+penalty as $Q = B^{T} W B$, then \eqref{eq:iteration} is algebraically
+the Hestenes--Powell augmented-Lagrangian (multiplier) iteration with
+fixed penalty parameter \cite{Hestenes1969,Powell1969,FortinGlowinski}:
+the update $x^{(k+1)} - x^{(k)} = A_\eps^{-1}(b - A x^{(k)})$ is what a
+multiplier update on $Bx = 0$ induces on the primal variable. The
+slipping fluid--solid interface (\texttt{doc/slip\_interface.tex},
+section ``Constraint enforcement'') uses the same family in its usual
+role (driving a constraint violation to zero), interleaved with the
+gauge refinement of this note.
+The gauge-fixing use is the mirror image: there is no constraint we
+want enforced --- any gauge value is acceptable --- and the iteration's
+job is to remove the penalty's contamination of the \emph{physical}
+modes. The algebra is identical; only the interpretation of which modes
+matter is exchanged.
+
+The mirror image also explains why the gauge is not handled by a
+multiplier (KKT) formulation, although one is available for the mixed
+class (\texttt{EnableGaugeKKT}: minimise $\tfrac12 x^T Q x$ subject to
+$Ax = b$, a doubled saddle system with no $\eps$). There the
+``constraint'' operator $A$ is square and only approximately singular,
+so the saddle-point preconditioning theory, which assumes a full-rank
+rectangular constraint, does not apply, and the near-kernel reappears in
+every solve with $A$; the penalty with iterated refinement is the
+production path (\texttt{doc/slip\_interface.tex}, ``Why the fluid gauge
+stays a penalty'').
+
+\section{Algorithm and implementation map}
+\label{sec:algorithm}
+\sloppy
+
+\paragraph{Algorithm (as implemented in \texttt{GaugeRefine()}).}
+\begin{enumerate}
+\item Assemble the physical operator $A$ and the penalty $\eps Q$; build
+  the solver and preconditioner on $A_{\eps} = A + \eps Q$
+  (\texttt{RegularizedMatrix()}).
+\item Solve $A_{\eps} x^{(1)} = b$, warm-started from the solution of
+  the previous \texttt{Solve()} (the stopping test of these solves is
+  absolute: the relative tolerance times the preconditioned norm of the
+  right-hand side).
+\item For $k = 1, \dots, K$ ($K$ = the number of refinements): form the
+  physical residual. After an exact step it equals
+  $b - A x^{(k)} = \eps Q\,\delta^{(k)}$, with $\delta^{(k)}$ the last
+  increment ($\delta^{(1)} = x^{(1)}$), so it is computed as
+  $r = \eps Q\,\delta^{(k)}$ without a product with $A$, and its rows on
+  essential dofs are zeroed. Solve $A_{\eps}\, \delta^{(k+1)} = r$
+  \emph{cold-started} from $\delta = 0$, and set
+  $x^{(k+1)} = x^{(k)} + \delta^{(k+1)}$.
+\item Record $\norm{r}$ for each step (\texttt{GaugeResiduals()}); their
+  ratio is the observed contraction factor \eqref{eq:rho}, and
+  \texttt{WarnGaugeContraction()} warns when it exceeds $0.9$ (the
+  semi-convergence signature of \S\ref{sec:semiconv}: $\eps$ too small
+  for the mesh and model) and notes when it exceeds $0.2$ (a residual
+  bias $\sim\rho^{K}$ beyond the refinement budget).
+\end{enumerate}
+Forming $r = \eps Q\delta$ is algebraically identical to $b - Ax^{(k)}$
+of \eqref{eq:iteration} for exact inner solves; it avoids a second
+operator. For the block (self-gravitating and referential) systems the
+increment solve runs on the full block operator with the right-hand side
+$[\eps Q\,\delta_{u};\, 0]$ --- zero potential load and no tidal term ---
+the potential increments are accumulated alongside the displacement, and
+the accumulated pair is left as the warm start of the next
+\texttt{Solve()}, so the potential converges with the displacement rather
+than being recomputed.
+
+The slipping-interface class runs the same iteration in its equivalent
+fixed-point form, $A_{\eps} x^{(k+1)} = b + \eps Q\, x^{(k)}$ (the
+right-hand side carries the penalty applied to the current fluid iterate,
+and each solve is warm-started from that iterate), interleaved with the
+multiplier updates of its interface constraint; see
+\texttt{doc/slip\_interface.tex}, section ``Constraint enforcement''.
+
+\paragraph{Code pointers.}
+Base machinery in \texttt{quasi\_static\_problem.hpp} and
+\texttt{src/quasi\_static\_problem.cpp}:
+\begin{quote}\small\raggedright
+\texttt{SetGaugedFluid(const Array<int>\& fluid\_marker,
+Coefficient\& mu\_gauge, real\_t epsilon, int refinements = 2,
+GaugePenalty penalty = GaugePenalty::Deviatoric,
+Diffeomorphism* map = nullptr)}
+\end{quote}
+with $\mu_g$ a coefficient (not owned). \texttt{GaugePenalty::Deviatoric}
+assembles the deviatoric penalty of \S2 --- without a map as
+\texttt{ElasticityIntegrator}, and with a map (the identity included)
+\emph{covariantly} as \texttt{ElasticTensorIntegrator(C, map)}, $C$ the
+isotropic tensor with $\lambda = -2\eps\mu_g/d$, $\mu = \eps\mu_g$, pulled
+back through the map, so that the penalty of a relabelled problem is the
+exact pull-back of the unmapped one (\texttt{doc/mappings.md}).
+\texttt{GaugePenalty::Harmonic} assembles the harmonic penalty as
+\texttt{VectorDiffusionIntegrator} and refuses a non-identity map (it is
+gauge data, shared rather than mapped). Further:
+\texttt{GaugeRefine()}, \texttt{GaugeResiduals()},
+\texttt{WarnGaugeContraction()}, \texttt{SetGaugeEpsilon()},
+\texttt{SetGaugeRefinements()}, \texttt{ApplyGaugePenalty()},
+\texttt{ClearGaugedFluid()}. Block overrides of \texttt{GaugeRefine()}:
+\texttt{LinearQuasiStaticMixedSelfGravitatingProblem} in
+\texttt{src/mixed\_problem.cpp} (gauged fluid) and
+\texttt{LinearQuasiStaticReferentialSelfGravitatingProblem} in
+\texttt{src/referential\_problem.cpp} (gauged fluid, with the
+Deviatoric penalty mapped through the rheology's equilibrium mapping by
+default; and the ball-wide vacuum extension \texttt{SetVacuumExtension},
+the case of \S\ref{sec:failure}). The slipping-interface class sets its
+fluid penalty with \texttt{SetFluidGauge()}.
+Tests: \texttt{TestFluidGauge} (contraction, $\eps$-independence of the
+observables), \texttt{TestMixedProblemGauged} (contraction rates, the
+rigid-tidal semi-convergence guard), \texttt{TestReferentialProblem}
+(the ball-wide vacuum extension, run in the biased single-solve regime).
+The external check is the \texttt{gauged} method of the Love-number
+benchmark against \texttt{pyslfp} (\texttt{doc/benchmarks.tex}),
+including the degree-0 Love numbers that the Dahlen treatment cannot
+reproduce.
+
+\begin{thebibliography}{9}
+
+\bibitem{Lardy1975}
+L.~J. Lardy,
+\emph{A series representation for the generalized inverse of a closed
+linear operator},
+Atti Accad. Naz. Lincei Rend. Cl. Sci. Fis. Mat. Natur. (8) 58 (1975),
+152--157.
+(The origin of iterated Tikhonov.)
+
+\bibitem{EnglHankeNeubauer}
+H.~W. Engl, M.~Hanke, A.~Neubauer,
+\emph{Regularization of Inverse Problems},
+Kluwer, 1996. (Iterated Tikhonov and its qualification; semi-convergence
+of iterative regularisation.)
+
+\bibitem{Hestenes1969}
+M.~R. Hestenes,
+\emph{Multiplier and gradient methods},
+J. Optim. Theory Appl. 4 (1969), 303--320.
+
+\bibitem{Powell1969}
+M.~J.~D. Powell,
+\emph{A method for nonlinear constraints in minimization problems},
+in R.~Fletcher (ed.), \emph{Optimization}, Academic Press, 1969.
+
+\bibitem{FortinGlowinski}
+M.~Fortin, R.~Glowinski,
+\emph{Augmented Lagrangian Methods},
+North-Holland, 1983. (Penalty and multiplier iterations for constrained
+variational problems, including the fixed-parameter form used here.)
+
+\end{thebibliography}
+
+\end{document}

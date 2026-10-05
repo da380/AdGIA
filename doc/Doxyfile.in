@@ -1,0 +1,64 @@
+# Doxyfile.in - Doxygen configuration file template for CMake
+
+# Project-related settings
+PROJECT_NAME           = "AdGIA Project"
+PROJECT_BRIEF          = "MFEM-based Elasticity Solvers and Integrators"
+OUTPUT_DIRECTORY       = "@CMAKE_CURRENT_BINARY_DIR@/doc" # Output to build directory
+CREATE_SUBDIRS         = YES
+TAB_SIZE               = 4
+GENERATE_LATEX         = YES # Set to YES if you want PDF output (requires LaTeX)
+GENERATE_XML           = YES # Useful for other tools that consume Doxygen XML
+HTML_OUTPUT            = html
+
+USE_MATHJAX            = YES
+MATHJAX_EXTENSIONS     = mathjax/extensions/TeX/AMSmath.js, mathjax/extensions/TeX/AMSsymbols.js
+MATHJAX_CODEFILE       = doc/mathjax_config.js
+MATHJAX_RELPATH        =
+# The formula macros (\dd, \bvec, \grad, \jump, ...) are defined for MathJax
+# in mathjax_config.js; doc/macros.inc defines the same macros for the LaTeX
+# notes. FORMULA_MACROFILE would only apply to LaTeX-rendered formulas.
+
+HAVE_MAINPAGE = YES
+
+# Input settings
+INPUT                  = "@CMAKE_SOURCE_DIR@/include/AdGIA" \
+                         "@CMAKE_SOURCE_DIR@/doc/mainpage.dox" \
+                         "@CMAKE_SOURCE_DIR@/src" 
+
+FILE_PATTERNS          = *.h \
+                         *.hpp \
+                         *.cpp \
+                         *.cxx \
+                         *.dox
+RECURSIVE              = YES
+EXCLUDE_PATTERNS       =
+EXCLUDE_SYMBOLS        =
+
+# Source code Browse
+STRIP_CODE_COMMENTS    = YES
+REFERENCED_BY_RELATION = YES
+REFERENCES_RELATION    = YES
+VERBATIM_HEADERS       = NO
+
+# Configuration for documentation generation
+EXTRACT_ALL            = YES # Extract all entities, even undocumented ones
+EXTRACT_STATIC         = YES
+EXTRACT_LOCAL_CLASSES  = YES
+EXTRACT_LOCAL_METHODS  = YES
+HIDE_UNDOC_MEMBERS     = YES
+HIDE_UNDOC_CLASSES     = YES
+BRIEF_MEMBER_DESC      = YES
+REPEAT_BRIEF           = YES
+ALWAYS_DETAILED_SEC    = NO
+FULL_PATH_NAMES        = YES
+SHORT_NAMES            = NO
+JAVADOC_AUTOBRIEF      = NO
+QT_AUTOBRIEF           = NO
+MULTILINE_CPP_IS_BRIEF = YES
+INHERIT_DOCS           = YES
+SEPARATE_MEMBER_PAGES  = YES
+# ... more documentation generation options
+
+# Preprocessor definitions (crucial for ifdefs)
+# This will be replaced by CMake
+PREDEFINED             = @DOXYGEN_PREDEFINED_MACROS@

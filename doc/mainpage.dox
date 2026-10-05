@@ -1,0 +1,193 @@
+/**
+ * @mainpage AdGIA
+ *
+ * @section intro Introduction
+ * An open-source finite-element library, built on
+ * <a href="https://mfem.org">MFEM</a>, for modelling glacial isostatic
+ * adjustment and related processes such as post-seismic deformation, with
+ * the forward problem and its first- and second-order adjoints. The
+ * solid-Earth part of the forward problem is in place: quasi-static
+ * deformation of a self-gravitating elastic or viscoelastic body, with fluid
+ * regions, general (non-hydrostatic, non-natural) reference states and
+ * slipping fluid–solid interfaces. The sea-level equation, rotational
+ * feedbacks and the adjoints are planned for the near future. Serial and
+ * parallel (MPI) paths are provided throughout, normally in one class.
+ *
+ * @section contents Library contents
+ *
+ * @subsection sec_index Component ordering
+ * `index.hpp` fixes the component ordering and the node/component indexing
+ * of vector, matrix, symmetric and trace-free symmetric tensor fields
+ * (SymmetricComponentOrder, VectorIndex, MatrixIndex, SymmetricMatrixIndex,
+ * TraceFreeSymmetricMatrixIndex). Every integrator, interpolator and
+ * coefficient below follows it.
+ *
+ * @subsection sec_integrators Integrators, interpolators and coefficients
+ * `bilininteg.hpp` and `lininteg.hpp` hold:
+ * - mixed integrators between vector, scalar and tensor nodal spaces (the
+ *   non-standard terms of the self-gravitating weak form and the
+ *   internal-variable couplings of viscoelasticity) and the strain
+ *   interpolators;
+ * - ElasticTensorIntegrator for general anisotropic elasticity;
+ * - the initial-stress (total-Lagrangian) stiffness split
+ *   MaterialStiffnessIntegrator / GeometricStiffnessIntegrator, and the
+ *   referential gravity terms ReferentialGravityIntegrator /
+ *   ReferentialGravityCouplingIntegrator;
+ * - the boundary integrators of the fluid–solid interface terms
+ *   (BoundaryNormalNormalIntegrator, BoundaryNormalScalarIntegrator) and of
+ *   slipping interfaces (SlipInterfacePressureIntegrator,
+ *   SlipInterfaceGravityIntegrator, SlipInterfaceGravityScalarIntegrator);
+ * - TransformedDiffusionIntegrator for Poisson problems posed on a
+ *   reference domain.
+ *
+ * Most of them have constructors taking a Diffeomorphism and then assemble
+ * the form pulled back through it (see `mappings.hpp` below).
+ * `coefficient.hpp` holds general-purpose coefficients, and
+ * `elastic_tensor.hpp` the elastic tensor coefficients in the Mandel
+ * convention of SymmetricTensorBasis: isotropic, transversely isotropic,
+ * Voigt, rotated, deviatoric projection, the relabelling transformation
+ * (RelabelledElasticTensorCoefficient) and the conversion of seismological
+ * (PREM) moduli to the bare tensor (BareElasticTensorCoefficient). The
+ * mathematical formulation of each is in its class documentation.
+ *
+ * @subsection sec_poisson Exterior Poisson problems and harmonics
+ * `poisson.hpp` provides the matrix-free Dirichlet-to-Neumann operator on a
+ * spherical outer boundary (PoissonDtNOperator) and the multipole
+ * operators (PoissonMultipoleOperator, PoissonLinearisedMultipoleOperator),
+ * built on the real orthonormal harmonics of `spherical_harmonics.hpp`
+ * (SurfaceHarmonics), which also synthesises fields from coefficients
+ * (HarmonicExpansionCoefficient) and analyses finite-element fields on
+ * spherical boundaries (BoundaryHarmonicCoefficients). `mesh.hpp` has the
+ * mesh queries: attribute markers, centroids, spherical-boundary detection.
+ *
+ * @subsection sec_submesh Coupling a mesh and its SubMesh
+ * `submesh.hpp`: SubMeshDofInjection, the signed dof injection of a space on
+ * a SubMesh into the corresponding space on the parent mesh; the dof
+ * pairing of two sibling SubMeshes (NewSubMeshPairingMatrix); and
+ * SubMeshMixedBilinearForm / ParSubMeshMixedBilinearForm, mixed forms whose
+ * two spaces live on a mesh and one of its SubMeshes.
+ *
+ * @subsection sec_problems Quasi-static problems and rheologies
+ * LinearQuasiStaticProblem (`quasi_static_problem.hpp`) is the interface of
+ * a linear quasi-static equilibrium problem; LinearQuasiStaticProblemBase
+ * implements it on a serial or parallel displacement space, including the
+ * gauge penalty of a gauged fluid region (SetGaugedFluid), with
+ * LinearQuasiStaticTractionProblem and LinearQuasiStaticClampedProblem as
+ * reference problems. The material is a Rheology (`rheology.hpp`): elastic
+ * or generalised Maxwell, isotropic or anisotropic, optionally with
+ * state-dependent relaxation times (RelaxationLaw, `relaxation_law.hpp`),
+ * and different in different regions of the body (CompositeRheology).
+ *
+ * @subsection sec_selfgrav Self-gravitation
+ * - LinearQuasiStaticMixedSelfGravitatingProblem (`mixed_problem.hpp`)
+ *   couples the displacement on a SubMesh of the body to the Eulerian
+ *   potential perturbation on the enclosing ball, with the DtN outer
+ *   condition. Fluid regions are treated either in Dahlen's way
+ *   (FluidRegion) or as gauged fluids in the displacement space. It
+ *   requires a hydrostatic, natural reference state.
+ * - LinearQuasiStaticReferentialSelfGravitatingProblem
+ *   (`referential_problem.hpp`) is the fully referential formulation about
+ *   a general reference state (bare elastic tensor, equilibrium stress and
+ *   equilibrium mapping, ReferentialElasticRheology), with a prescribed
+ *   vacuum extension of the displacement into the buffer.
+ * - LinearQuasiStaticReferentialSelfGravitatingSlipProblem adds a slipping
+ *   fluid–solid interface: a broken displacement pair constrained by
+ *   normal continuity, enforced by penalty with augmented-Lagrangian
+ *   iterations or by a KKT system, with a single-valued or broken
+ *   referential potential.
+ *
+ * All three implement LinearQuasiStaticProblem, so the viscoelastic layer
+ * runs on them unchanged.
+ *
+ * @subsection sec_background Background states
+ * `background.hpp` generates the reference state the referential classes
+ * consume: the hydrostatic state of a radial model (RadialHydrostaticState,
+ * RadialHydrostaticBackground), the same state seen from a relabelled
+ * reference body (RelabelledBackground), the equilibrium stress fields of
+ * minimum norm and minimum deviatoric norm for aspherical bodies
+ * (MinimumNormEquilibriumStress, MinimumDeviatoricEquilibriumStress), and
+ * the harmonic extension of a body mapping into the buffer
+ * (NewHarmonicExtensionMapping).
+ *
+ * @subsection sec_mappings Mappings
+ * `mappings.hpp` is the relabelling layer: Diffeomorphism and its concrete
+ * classes (IdentityDiffeomorphism, CallableDiffeomorphism,
+ * RadialDiffeomorphism, TaperedDiffeomorphism, GridFunctionDiffeomorphism),
+ * the free functions Interpolate, MappedMesh and MaxIdentityDeviation, and
+ * the pull-back and Nanson coefficients (JacobianCoefficient,
+ * PullbackDiffusionCoefficient, PullbackGradientCoefficient,
+ * PullbackStressCoefficient, NansonAreaCoefficient,
+ * MappedBoundaryNormalDotCoefficient, the Transformed*FunctionCoefficient
+ * family).
+ *
+ * @subsection sec_visco Viscoelasticity
+ * ViscoelasticOperator (`viscoelastic.hpp`) evolves the internal variables
+ * of a generalised Maxwell body around any LinearQuasiStaticProblem, with
+ * explicit, implicit and exponential time stepping (ExponentialEulerSolver,
+ * ExponentialTrapezoidSolver, AdaptiveExponentialTrapezoidSolver).
+ *
+ * @subsection sec_null_space Null-space projection
+ * NullSpaceProjector (`null_space.hpp`) holds an orthonormal basis of a
+ * (near-)null space, and ProjectedSolver / ProjectedOperator run a Krylov
+ * method on the projected system @f$P A P@f$ with the projected
+ * preconditioner @f$P M P@f$. MakeRigidModeProjector() builds the projector
+ * for the rigid modes of a displacement space (RigidTranslation,
+ * RigidRotation, and MappedRotation for a mapped reference body); this is
+ * how problems with traction boundary conditions are solved (see
+ * `examples/quasi_static_elasticity.cpp`).
+ *
+ * @subsection sec_manifest Mesh manifests
+ * MeshManifest (`mesh_manifest.hpp`) reads the JSON manifest that
+ * planetmodel writes beside a mesh into the attribute lists and markers the
+ * problems take, and opens the mesh and the model fields it names.
+ *
+ * @section docs Documentation index
+ * Paths are relative to the source tree.
+ *
+ * Reference (how the library works and why):
+ * - `doc/quasi_static_models.tex` (PDF beside it): every problem class —
+ *   model, assumptions, discretisation, solvers, verification.
+ * - `doc/gravitating_elasticity.md`: the linearised theory of
+ *   self-gravitating, pre-stressed elasticity behind the referential
+ *   classes and the background module.
+ * - `doc/self_gravitation.md`: the mixed problem with Dahlen fluid regions,
+ *   its fluid–solid interface conditions and CMB approximations.
+ * - `doc/gauged_fluid.md`: the gauged treatment of fluid regions.
+ * - `doc/slip_interface.tex`: the slipping fluid–solid interface —
+ *   derivation, discretisation, constraint enforcement, verification.
+ * - `doc/gauge_penalty_iteration.tex`: gauge penalties and their iterated
+ *   refinement.
+ * - `doc/mappings.md`: the mapping (relabelling) layer.
+ * - `doc/submesh_coupling.md`, `doc/viscoelasticity.md`,
+ *   `doc/elastic_tensors.md`, `doc/null_space.md`, `doc/mfem_notes.md`:
+ *   SubMesh coupling, rheologies and time stepping, elastic tensors,
+ *   projected solvers, MFEM facts and pitfalls.
+ * - `doc/benchmarks.tex`: the benchmark families and their results.
+ * - `doc/BenchmarkPapers/code_survey.md`: a survey of the published 3-D
+ *   GIA codes and benchmarks, set against the library's treatments.
+ * - `INSTALL.md`, `examples/README.md`, `meshes/README.md`,
+ *   `benchmarks/README.md`.
+ *
+ * Planning (open issues and future work, not a description of the code):
+ * `doc/planning/`, indexed by its `README.md` — `open_issues.md`,
+ * `solvers.md`, `future_work.md`, `equilibrium_figures.md`.
+ *
+ * @section install Installation
+ * MFEM must be built first, serial or parallel. Configuration is with CMake;
+ * in-source builds are refused. `INSTALL.md` lists the prerequisites and
+ * every build option (`USE_MPI`, `BUILD_EXAMPLES`, `BUILD_TESTS`,
+ * `BUILD_BENCHMARKS`, `BUILD_DOCS`, mesh generation) with its default.
+ *
+ * @section proj_structure Project structure
+ * - `include/`, `src/`: the library (`include/AdGIA.hpp` includes
+ *   every public header).
+ * - `examples/`: example programs (`BUILD_EXAMPLES`).
+ * - `tests/`: googletest suite and MPI test programs (`BUILD_TESTS`).
+ * - `benchmarks/`: comparisons with independent reference solutions
+ *   (`BUILD_BENCHMARKS`, MPI builds only).
+ * - `meshes/`: Python scripts generating the gmsh meshes into the build
+ *   tree's `data/`.
+ * - `data/`: small MFEM-format meshes copied to the build tree.
+ * - `doc/`: Doxygen configuration, this page, and the documents listed
+ *   above.
+ */

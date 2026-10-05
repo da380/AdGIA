@@ -1,0 +1,34 @@
+**/*build*
+**/install
+**/*~
+CMakeFiles/
+Testing/
+*.log
+*.pdf
+*.gf
+*.mesh.*
+refined.mesh
+
+# gmsh meshes are generated into the build tree by meshes/
+data/*.msh
+data/*.json
+
+# benchmark output
+benchmarks/**/runs/
+**/__pycache__/
+
+# figures copied into the benchmark note from the build tree (regenerate
+# with the box and sphere studies, benchmarks/viscoelastic/*/README.md)
+doc/figures/benchmarks/box_*.png
+doc/figures/benchmarks/sphere_*.png
+
+# LaTeX build artefacts of the notes in doc/ (the PDFs are built from the
+# .tex sources)
+doc/*.aux
+doc/*.log
+doc/*.out
+doc/*.toc
+doc/*.pdf
+doc/*.fls
+doc/*.fdb_latexmk
+doc/*.synctex.gz

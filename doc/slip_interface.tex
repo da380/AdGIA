@@ -1,0 +1,1753 @@
+\documentclass[11pt]{article}
+
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage[margin=1.1in]{geometry}
+\usepackage{bm}
+\usepackage{seqsplit}
+\usepackage{array}
+\usepackage[colorlinks=true,linkcolor=blue,citecolor=blue]{hyperref}
+
+\newtheorem{lemma}{Lemma}
+\newtheorem{proposition}{Proposition}
+\newtheorem{remark}{Remark}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\eps}{\varepsilon}
+\newcommand{\Bs}{B_{\mathrm{s}}}
+\newcommand{\Bf}{B_{\mathrm{f}}}
+\newcommand{\bnu}{\bm{\nu}}
+\newcommand{\bN}{\mathbf{N}}
+\newcommand{\bs}{\mathbf{s}}
+\newcommand{\bv}{\mathbf{v}}
+\newcommand{\bw}{\mathbf{w}}
+\newcommand{\bx}{\mathbf{x}}
+\newcommand{\jump}[1]{[\![#1]\!]}
+\newcommand{\dS}{\,\mathrm{d}S}
+\newcommand{\dV}{\,\mathrm{d}V}
+\newcommand{\tr}{\operatorname{tr}}
+\newcommand{\cof}{\operatorname{cof}}
+\newcommand{\Div}{\operatorname{Div}}
+\newcommand{\norm}[1]{\lVert #1 \rVert}
+
+\title{The slipping fluid--solid interface in the referential\\
+       formulation: kinematics, second variation, interface terms,\\
+       discretisation and constraint enforcement}
+\author{AdGIA method notes}
+\date{}
+
+\begin{document}
+\maketitle
+\sloppy
+
+\noindent
+This note is the reference for the slipping fluid--solid interface of
+\texttt{\seqsplit{LinearQuasiStaticReferentialSelfGravitatingSlipProblem}}. The
+general framework --- the referential description, the elastic tensor
+dictionary, the gravity formulations and the volume operators of the
+linearised referential system --- is
+\texttt{doc/gravitating\_elasticity.md}; below, ``the referential
+operators'' means the volume operators of its section ``The linearised
+referential system''. The gauge penalty and its iterated refinement are
+\texttt{doc/gauge\_penalty\_iteration.tex}; the welded alternative is
+\texttt{doc/gauged\_fluid.md}; the per-class summary of the
+implementation is \texttt{doc/quasi\_static\_models.tex}.
+
+The question: when a fluid--solid interface slips, what does the
+linearised static operator acquire on the interface, and how is the
+slip discretised and its constraint enforced? Sections
+\ref{sec:conv}--\ref{sec:collect} derive the second variation of the
+total referential energy over the broken displacement space with the
+linearised slip map, keeping every Jacobian factor explicit;
+\S\ref{sec:disc} discretises the broken space; \S\ref{sec:enforce}
+enforces the normal-jump constraint; \S\ref{sec:impl} and
+\S\ref{sec:verif} describe the implementation and its verification;
+Appendix~\ref{sec:verdict} compares the result with the published
+treatments.
+
+\emph{When these terms matter.} A tangential slip is gauge (removable
+by relabelling the fluid) only if it extends into the fluid as a
+relabelling field --- for a hydrostatic fluid, a field that is
+divergence-free and tangent to the level surfaces of the equilibrium
+potential, pressure and density. On an interface that is itself a level
+surface this restricts the slip (rigid rotations of a spherical core
+qualify, a general tangential slip need not); on an interface that is
+not a level surface the construction generally fails. Tangential slip
+is therefore not gauge in general (\texttt{doc/gauged\_fluid.md},
+section ``Tangential slip and the welded space''). The slipping
+formulation of this note is the general one: it allows a tangential
+jump and enforces only normal continuity, and allowing a slip that is
+not needed costs nothing in correctness. The welded (continuous-space)
+gauged formulation is used where the slip it suppresses is absent or
+removable, as for spherically symmetric models, where the two agree to
+discretisation level (\S\ref{sec:verif}). Whenever the broken space is
+used on a pressurised background the interface terms below are
+obligatory: they vanish only where the equilibrium pressure does, as in
+the gravity-free sliding tests.
+
+\section{Conventions, and one warning}
+\label{sec:conv}
+
+Reference body $B = \Bs \cup \Bf$ with interface $\Sigma$; $\bN$ the
+\emph{referential} unit normal on $\Sigma$, pointing out of the fluid;
+$\dS$ the referential surface measure. Equilibrium mapping
+$\varphi_e$ on the ball, $F_e = D\varphi_e$, $J_e = \det F_e$, and the
+unnormalised \textbf{Nanson normal}
+\begin{equation}
+  \bnu := \cof(F_e)\,\bN = J_e F_e^{-T}\bN,
+  \qquad
+  \hat{\mathbf{n}}\,\mathrm{d}S_{\mathrm{phys}} = \bnu \dS,
+  \qquad
+  |\bnu|\dS = \mathrm{d}S_{\mathrm{phys}} .
+  \label{eq:nanson}
+\end{equation}
+
+\begin{remark}[The Jacobian warning]\label{rem:jacobian}
+By \eqref{eq:nanson} the two conventions ``unit physical normal
+$\times$ physical measure'' and ``Nanson normal $\times$ referential
+measure'' give the \emph{same} surface pairing. The error mode is
+mixing them: $\hat{\mathbf{n}}$ against $\dS$ silently loses a factor
+$|\bnu|$. Maitra \& Al-Attar (2024) drop exactly such a factor in
+their fluid--solid boundary operator $Q$ --- an oversight, not a
+choice of convention (harmless in their static applications, where the
+term does not act). The working rule here: at this level of
+complexity, \emph{explicit is better} --- every surface integral below
+carries $(\bnu, \dS)$ with all factors written out, and no operator is
+allowed to absorb a Jacobian tacitly.
+\end{remark}
+
+Motions $\varphi_{\mathrm{s}}$ on $\Bs$, $\varphi_{\mathrm{f}}$ on
+$\Bf$. Stored energies: solid $W_{\mathrm{s}}(\bx, F)$; fluid
+$W_{\mathrm{f}} = V(\bx, J)$ (bulk response only), with the referential
+pressure
+\begin{equation}
+  \pi(\bx) := -\,D_J V(\bx, J_e)
+  \qquad (= p^0 \circ \varphi_e \ \text{in Eulerian terms}),
+\end{equation}
+so the fluid first Piola--Kirchhoff stress at equilibrium is
+$P_{\mathrm{f}} = -\pi\,\cof F_e$ and the fluid boundary traction per
+referential area is $P_{\mathrm{f}}\bN = -\pi\,\bnu$: the
+pressure--Nanson pairing appears by itself, Jacobian included.
+
+Gravitational energy of the broken configuration, in the form that will
+carry the whole derivation:
+\begin{equation}
+  E_g[\varphi_{\mathrm{s}}, \varphi_{\mathrm{f}}]
+  = \operatorname{stat}_{\Phi}
+    \Bigl[\, +\frac{1}{8\pi G}\int_{\R^d} |\nabla\Phi|^2 \dV
+    \;+\; \sum_{r \in \{\mathrm{s,f}\}} \int_{B_r} \rho\,
+          \Phi\circ\varphi_r \dV \Bigr],
+  \label{eq:Eg}
+\end{equation}
+(the $+$ sign so that stationarity gives $\nabla^2\Phi = 4\pi G\varrho$
+in our convention and the value is $\tfrac12\int\varrho\Phi$; the
+sign is pinned by the gravity finite differences of \S\ref{sec:verif}).
+A related point that motivates the whole construction: the
+\emph{spatial} $\Phi$ is continuous ($C^1$) across the deformed
+interface, but a referential potential composed \emph{region-wise with
+each region's own motion} would not be --- at $\bx \in \Sigma$ the two
+compositions evaluate $\Phi$ at the two distinct physical points
+$\varphi_{\mathrm{s}}(\bx)$ and $\varphi_{\mathrm{f}}(\bx)$, so it
+would jump by $\Phi(\varphi_{\mathrm{s}}) - \Phi(\varphi_{\mathrm{f}})
+\approx \nabla\Phi_0\cdot(\text{slip})$ at linear order. Our $\zeta$
+is single-valued \emph{by fiat}: it composes with the one globally
+smooth extension $\tilde\varphi$, never with the fluid's own motion,
+inheriting $\Phi$'s continuity (ordinary $H^1$ space, DtN untouched);
+the price is the fluid-source mismatch below, which is the better
+trade. All of these formulations --- Eulerian $\Phi$, referential
+$a$-form with any smooth extension, single-valued or region-wise
+$\zeta$ --- are \emph{exactly} equivalent, related by bijective changes
+of variables in the stationary problem; the choices here are about
+discretisation convenience only, and the extension-invariance is
+asserted numerically at the solver level. Why start Eulerian rather than from the referential
+$\tfrac{1}{8\pi G}\langle a(F)\nabla\zeta, \nabla\zeta\rangle$ form of
+MA24? \emph{Not} because the $a$-form requires one composition map ---
+it does not: the spatial field energy splits over the images of the
+material regions (the attached broken motion tiles $\R^d$; the
+attachment forbids gaps and overlaps), each piece transforms with its
+\emph{own} motion, and the result is precisely the region-wise
+$a(F_r)$-form in the broken variables $\zeta_r = \Phi\circ\varphi_r$
+--- which \emph{is} the broken-$\zeta$ formulation, with the
+continuity of $\Phi$, automatic Eulerian, resurfacing as the interface
+compatibility $\zeta_{\mathrm{f}} = \zeta_{\mathrm{s}}\circ\sigma$ on
+$\Sigma$ (composition on the side that $\sigma$ maps into, matching
+$\varphi_{\mathrm{f}}|_\Sigma = \varphi_{\mathrm{s}}|_\Sigma\circ\sigma$;
+linearised, this is the jump condition of \S\ref{sec:brokenzeta}). The reason to start Eulerian is derivational: keeping $\Phi$
+spatial while varying makes its continuity and the gauge status of
+the extension manifest, so the single-valued route's mismatch terms
+and the broken route's jump condition are \emph{derived} rather than
+posited; substituting $\Phi = \zeta\circ\tilde\varphi^{-1}$ afterwards
+produces the $a(\tilde F)$-form \emph{plus} the fluid source composed
+through $\tilde\varphi^{-1}\circ\varphi_{\mathrm{f}}$ --- which is
+where the mismatch terms live. An $a$-form with a silently chosen
+composition map would hide exactly this bookkeeping. Note that
+in \eqref{eq:Eg} the Eulerian potential $\Phi$ is composed with
+\emph{each region's own motion}, and its first variation is a pure
+volume integral in each region
+($\delta E_g = \sum_r \int \rho\, (\nabla\Phi\circ\varphi_r)\cdot
+\bm{\eta}_r$): \textbf{gravity contributes no interface flux}, a fact
+used repeatedly.
+
+\section{Kinematics of the slip}
+\label{sec:kin}
+
+The fluid stays attached but slips:
+$\varphi_{\mathrm{f}}(\Sigma) = \varphi_{\mathrm{s}}(\Sigma)$ as
+surfaces. Parameterise
+$\varphi_{\mathrm{f}}|_\Sigma = \varphi_{\mathrm{s}}|_\Sigma \circ
+\sigma$ with a slip map $\sigma : \Sigma \to \Sigma$,
+\begin{equation}
+  \sigma_\eps = \mathrm{id} + \eps\,\bs + \tfrac{\eps^2}{2}\,\bm{\sigma}_2
+  + O(\eps^3),
+  \qquad \bs \in T\Sigma .
+\end{equation}
+The first-order coefficient is tangential, but the second-order one is
+\emph{not} free to be: a family of maps that stays on a curved surface
+has the forced normal component
+\begin{equation}
+  \bN\cdot\bm{\sigma}_2 = -\,\mathrm{II}(\bs, \bs),
+  \qquad
+  \bm{\sigma}_2 = \bs_2 - \mathrm{II}(\bs,\bs)\,\bN,
+  \quad \bs_2 \in T\Sigma \ \text{free},
+  \label{eq:sigma2}
+\end{equation}
+with $\mathrm{II}$ the referential second fundamental form of $\Sigma$
+(circle of radius $r$, outward $\bN$: $\bN\cdot\bm{\sigma}_2 =
+-|\bs|^2/r$, as an exact rotation family shows). Taking
+$\bm{\sigma}_2$ tangential would lose the curvature term below; the
+finite-$\eps$ verification families of \S\ref{sec:verif} resolve it.
+Expand $\varphi_{\mathrm{s},\eps} = \varphi_e + \eps\,\bv_{\mathrm{s}}$
+(a straight path; the second-order freedom sits in $\sigma$ and in the
+fluid's interior). Composing and Taylor-expanding $\varphi_e$ and
+$\bv_{\mathrm{s}}$ along the surface,
+\begin{equation}
+  \varphi_{\mathrm{f},\eps}\big|_\Sigma
+  = \varphi_e
+  + \eps\,\bigl(\bv_{\mathrm{s}} + F_e \bs\bigr)
+  + \frac{\eps^2}{2}\,\underbrace{\bigl(
+      2\,D\bv_{\mathrm{s}}[\bs] + D^2\varphi_e[\bs,\bs] + F_e \bs_2
+    \bigr)}_{=:\ \mathbf{b}_2} + O(\eps^3).
+  \label{eq:expand}
+\end{equation}
+
+\textbf{First order.} The fluid trace is
+$\bv_{\mathrm{f}}|_\Sigma = \bv_{\mathrm{s}} + F_e\bs$, i.e.\ the jump
+$\jump{\bv} := \bv_{\mathrm{s}} - \bv_{\mathrm{f}} = -F_e\bs$ lies in
+$F_e(T\Sigma)$. Since $\bnu\cdot F_e\mathbf{t} = J_e\,\bN\cdot\mathbf{t}
+= 0$ for $\mathbf{t}\in T\Sigma$, this is exactly
+\begin{equation}
+  \boxed{\ \bnu\cdot\jump{\bv} = 0 \ }
+  \qquad\text{with}\qquad
+  \bs = -F_e^{-1}\jump{\bv} .
+  \label{eq:constraint}
+\end{equation}
+The normal-jump constraint of the sliding interface, with the
+\emph{mapped} normal: at $\varphi_e \neq \mathrm{id}$ the constraint
+normal is $\bnu$ --- which is what \texttt{Diffeomorphism::MapNormal}
+and the mapped \texttt{BoundaryNormalNormalIntegrator} supply.
+
+\textbf{Second order.} The datum forced on the fluid's second-order
+boundary displacement is $\mathbf{b}_2$ of \eqref{eq:expand} with
+$\bs_2$ replaced by $\bm{\sigma}_2$. Its $\bnu$-component: the free
+tangential part $\bs_2$ drops ($\bnu \perp F_e T\Sigma$), while the
+forced normal part contributes $\bnu\cdot F_e\bN\cdot(-\mathrm{II}) =
+-J_e\,\mathrm{II}(\bs,\bs)$ (using $\bnu\cdot F_e\bN = J_e$), so
+\begin{equation}
+  \bnu\cdot\mathbf{b}_2
+  = 2\,\bnu\cdot D\bv_{\mathrm{s}}[\bs]
+  + \bnu\cdot D^2\varphi_e[\bs,\bs]
+  - J_e\,\mathrm{II}(\bs,\bs).
+  \label{eq:b2n}
+\end{equation}
+
+\begin{remark}[The curvature enters, and immediately re-hides]
+\label{rem:wein}
+For a tangent field $\bs$ on $\Sigma$, differentiating
+$\bN\cdot\bs = 0$ gives $\bN\cdot D\bs[\bs] = -\mathrm{II}(\bs,\bs)$
+--- Valette's (1986, 1991) Weingarten-operator content. Combined with
+$D(F_e\bs)[\bs] = D^2\varphi_e[\bs,\bs] + F_e D\bs[\bs]$, the last two
+terms of \eqref{eq:b2n} collapse:
+\begin{equation}
+  \bnu\cdot D^2\varphi_e[\bs,\bs] - J_e\,\mathrm{II}(\bs,\bs)
+  = \bnu\cdot D(F_e\bs)[\bs]
+  = -\,\bnu\cdot \nabla_\Sigma\jump{\bv}\,[\bs],
+  \label{eq:collapse}
+\end{equation}
+since $F_e\bs = -\jump{\bv}$ and only tangential derivatives act.
+Hence
+\begin{equation}
+  \bnu\cdot\mathbf{b}_2
+  = 2\,\bnu\cdot \nabla_\Sigma\bv_{\mathrm{s}}[\bs]
+  - \bnu\cdot \nabla_\Sigma\jump{\bv}[\bs]
+  = \bnu\cdot \nabla_\Sigma(\bv_{\mathrm{s}} + \bv_{\mathrm{f}})[\bs]:
+  \label{eq:b2clean}
+\end{equation}
+tangential derivatives of the two \emph{traces} only. Neither the
+curvature nor $D^2\varphi_e$ is ever assembled --- the referential
+analogue of the volume terms needing no $\nabla\nabla\Phi_0$ --- and
+the interface integrator needs only surface shape-function derivatives
+and $\bnu$.
+\end{remark}
+
+\section{First variation: equilibrium and the multiplier}
+\label{sec:first}
+
+For an unconstrained broken variation $\bm{\eta} = (\bm{\eta}_{\mathrm{s}},
+\bm{\eta}_{\mathrm{f}})$, with outward normals $-\bN$ for $\Bs$ and
+$+\bN$ for $\Bf$ on $\Sigma$,
+\begin{equation}
+  \delta E[\bm{\eta}]
+  = \sum_r \int_{B_r} (\text{EL}_r)\cdot\bm{\eta}_r \dV
+  + \oint_\Sigma \bigl[ (P_{\mathrm{f}}\bN)\cdot\bm{\eta}_{\mathrm{f}}
+                      - (P_{\mathrm{s}}\bN)\cdot\bm{\eta}_{\mathrm{s}}
+                 \bigr] \dS + (\text{outer terms}),
+  \label{eq:firstvar}
+\end{equation}
+where $\text{EL}_r$ is the region's full (elastic + gravitational)
+Euler--Lagrange density. Inserting the constrained variations
+$\bm{\eta}_{\mathrm{f}} = \bm{\eta}_{\mathrm{s}} + F_e\mathbf{t}$
+($\mathbf{t} \in T\Sigma$ arbitrary) and demanding stationarity:
+\begin{align}
+  \text{EL}_r &= 0 \quad\text{in } B_r
+  &&\text{(interior equilibrium)},\\
+  P_{\mathrm{s}}\bN &= P_{\mathrm{f}}\bN = -\pi\,\bnu \quad\text{on }
+  \Sigma
+  &&\text{(traction continuity; purely normal)}.
+  \label{eq:tract}
+\end{align}
+The second line is the \emph{equilibrium consistency condition} on any
+generated background: the solid side must hand the interface a normal
+traction of density $-\pi\bnu$ per referential area. Writing the
+constraint \eqref{eq:constraint} with a multiplier,
+$\oint \lambda\, \bnu\cdot\jump{\bv} \dS$, the same computation
+identifies
+\begin{equation}
+  \boxed{\ \lambda = \pi \ }
+\end{equation}
+(the referential pressure; by Remark~\ref{rem:jacobian} the
+per-physical-area convention gives the same $\lambda$). This is the
+multiplier of the \emph{nonlinear} (first-variation) problem: it states
+the equilibrium traction condition \eqref{eq:tract}, which can be
+checked directly on a generated background. The \emph{linearised}
+problem solved by the library imposes the linearised constraint
+\eqref{eq:constraint} on the perturbation; its multiplier is the
+first-order interface normal traction $\varpi^{(1)}$ paired with
+$\bnu$ (the traction \emph{perturbation}), not $\pi$. That is what the
+augmented-Lagrangian multiplier and the KKT multiplier of
+\S\ref{sec:enforce} converge to; $\pi$ itself enters the linearised
+operator only through the background coefficients of $B_\Sigma$ and the
+fluid Hessian below.
+
+\section{The second variation}
+\label{sec:second}
+
+Differentiate $E(\eps) := E[\varphi_{\mathrm{s},\eps},
+\varphi_{\mathrm{f},\eps}]$ twice along the constrained family of
+\S\ref{sec:kin}:
+\begin{equation}
+  \frac{d^2 E}{d\eps^2}\Big|_0
+  = \delta^2 E[(\bv_{\mathrm{s}}, \bv_{\mathrm{f}}),
+               (\bv_{\mathrm{s}}, \bv_{\mathrm{f}})]
+  \;+\; \delta E[(\mathbf{0}, \mathbf{u}_2)],
+  \label{eq:d2E}
+\end{equation}
+where $\mathbf{u}_2$ is the fluid's second-order displacement (interior
+values free, trace $\mathbf{b}_2$ forced). By \eqref{eq:firstvar} with
+the equilibrium conditions, the second term collapses to a single
+surface integral --- the interior part dies on $\text{EL} = 0$
+(gravity's contribution included), the free interior values of
+$\mathbf{u}_2$ therefore drop out (as they must: they are
+parameterisation gauge), and
+\begin{equation}
+  \delta E[(\mathbf{0},\mathbf{u}_2)]
+  = \oint_\Sigma (P_{\mathrm{f}}\bN)\cdot\mathbf{b}_2 \dS
+  = -\oint_\Sigma \pi\; \bnu\cdot\mathbf{b}_2 \dS .
+\end{equation}
+With \eqref{eq:b2n} and $\bs = -F_e^{-1}\jump{\bv}$:
+
+\begin{proposition}[The interface form]\label{prop:BSigma}
+The entire interface contribution to the second variation is, by
+\eqref{eq:b2clean},
+\begin{equation}
+  B_\Sigma(\bv, \bv)
+  = -\oint_\Sigma \pi\;
+      \bnu\cdot \nabla_\Sigma(\bv_{\mathrm{s}} + \bv_{\mathrm{f}})[\bs]
+    \dS,
+  \qquad \bs = -F_e^{-1}\jump{\bv}
+  \label{eq:BSigma}
+\end{equation}
+--- the mean-trace derivative against the jump --- used in its
+symmetrised polarisation
+\begin{equation}
+  B_\Sigma(\bv, \bv')
+  = -\tfrac12\oint_\Sigma \pi \Bigl[
+      \bnu\cdot \nabla_\Sigma(\bv_{\mathrm{s}} + \bv_{\mathrm{f}})[\bs']
+    + \bnu\cdot \nabla_\Sigma(\bv_{\mathrm{s}}' + \bv_{\mathrm{f}}')[\bs]
+    \Bigr] \dS .
+  \label{eq:BSigmaPol}
+\end{equation}
+There are \emph{no other} elastic interface terms: the volume Hessians
+$\delta^2 E$ are straight-path second derivatives of volume integrals
+and generate none.
+\end{proposition}
+
+In particular there is no separate ``flux-variation $\times$ jump''
+term: such a term arises only in a non-minimal organisation of the
+same computation. Every coefficient of \eqref{eq:BSigma} --- the
+curvature content of \eqref{eq:b2n} included --- is checked against
+exact finite-$\eps$ slip families (\S\ref{sec:verif}).
+
+\subsection{The volume Hessians, and the fluid dictionary re-derived}
+
+The solid part of $\delta^2 E$ is the referential operator of
+\texttt{doc/gravitating\_elasticity.md}, with the solid's own field. The fluid part, from $V(\bx, J)$ with
+$H := F_e^{-1} D\bv_{\mathrm{f}}$, $\delta J = J_e \tr H$, and
+$\delta^2 J = J_e[(\tr H)^2 - \tr(H^2)]$ along straight paths:
+\begin{equation}
+  \delta^2 E_{\mathrm{f}}
+  = \int_{\Bf} \Bigl[ V_{JJ} J_e^2 (\tr H)^2
+    \;-\; \pi J_e \bigl( (\tr H)^2 - \tr(H^2) \bigr) \Bigr] \dV .
+  \label{eq:fluidhess}
+\end{equation}
+
+\begin{lemma}[$\mu_b = \pi$ from $V(\bx,J)$ alone]\label{lem:mub}
+Expression \eqref{eq:fluidhess} equals the general material +
+geometric split with the \emph{bare} fluid moduli: using
+$\tr(H^2) = 2|\mathrm{sym}\,H|^2 - |H|^2$,
+\[
+  \eqref{eq:fluidhess}
+  = \int_{\Bf} \Bigl[ \underbrace{\kappa_b (\tr H)^2
+      + 2\pi\,|\mathrm{sym}\,H|^2}_{\text{material, } \mu_b = \pi}
+      \;\underbrace{-\;\pi\,|H|^2}_{\text{geometric, } S_e = -\pi
+      \text{-Piola}} \Bigr] J_e\text{-weighted} \dV
+\]
+with $\kappa_b$ the corresponding bulk combination of $V_{JJ}$ and
+$\pi$. The pressure-induced shear rigidity $\mu_b = \pi$ of the elastic
+tensor dictionary (\texttt{doc/gravitating\_elasticity.md}, section
+``The elastic tensor dictionary'') is thus forced by the fluid's
+constitutive class alone --- independently confirming the conversion
+that the relabelling-invariance test
+(\texttt{TestReferentialProblem}, \texttt{FluidRelabellingNullPair})
+verifies numerically.
+\end{lemma}
+
+\subsection{\texorpdfstring{Gravity: single-valued $\zeta$, and two vanishing results}{Gravity: single-valued zeta, and two vanishing results}}
+\label{sec:grav}
+
+Let $\tilde\varphi$ be the solid motion extended smoothly over $\Bf$
+(and the buffer), $\zeta := \Phi\circ\tilde\varphi$ single-valued on
+the ball, and $\bw := \bv_{\mathrm{f}} - \tilde{\bv}$ the
+fluid-vs-extension mismatch ($\bw|_\Sigma = -\jump{\bv} = F_e\bs$, so
+$\bnu\cdot\bw|_\Sigma = 0$ by \eqref{eq:constraint}). Substituting
+$\Phi = \zeta\circ\tilde\varphi^{-1}$ in \eqref{eq:Eg}: the field term
+becomes the mapped $a(\tilde F)$-form of the referential operators;
+the solid source is
+$\int_{\Bs}\rho\,\zeta$; the fluid source composes through
+$\psi_\eps := \tilde\varphi_\eps^{-1}\circ\varphi_{\mathrm{f},\eps}
+= \mathrm{id} + \eps F_e^{-1}\bw + O(\eps^2)$:
+\begin{equation}
+  \int_{\Bf} \rho\; \zeta\circ\psi_\eps \dV
+  = \int_{\Bf} \rho\,\zeta
+  + \eps \int_{\Bf} \rho\,(F_e^{-1}\bw)\cdot\nabla\zeta
+  + O(\eps^2).
+  \label{eq:source}
+\end{equation}
+
+\begin{lemma}[First order: no gravity interface term]\label{lem:noflux}
+Integrating the $O(\eps)$ term of \eqref{eq:source} by parts, the
+boundary contribution is
+$\oint_\Sigma \rho_{\mathrm{f}}\,(\bw\cdot\bnu/J_e)\,\zeta \dS = 0$
+by the constraint. The welded result --- no gravity interface terms
+--- survives the slip at first order; the volume remainder
+$-\int \Div(\rho F_e^{-1}\bw)\,\zeta$ is the fluid relabelling source
+(gauge for admissible $\bw$, physical otherwise), exactly as in the
+gauged-fluid analysis.
+\end{lemma}
+
+\begin{lemma}[Second order: gravity stays volume-only]\label{lem:vol}
+At $O(\eps^2)$ the composed source generates (i) terms linear in the
+second-order data, which are precisely the $\delta E[\ddot\varphi]$
+contributions already accounted in \eqref{eq:d2E} --- counting them
+again would double-book; and (ii) the quadratic term
+$\tfrac12\int\rho\, (F_e^{-1}\bw)\cdot \nabla\nabla\zeta\,
+(F_e^{-1}\bw)$, whose second derivative of $\zeta$ is removed by the
+standard by-parts, with boundary term proportional to
+$\bnu\cdot\bw|_\Sigma = 0$ again. Hence the slip's gravitational
+physics enters \emph{only} through volume terms on $\Bf$: the mismatch
+coupling $\int_{\Bf}\rho\,(F_e^{-1}\bw)\cdot\nabla\zeta^1$ and the
+$a'/a''$-machinery of the referential operators evaluated with the
+extended field --- no
+gravity interface integrals at any order kept.
+\end{lemma}
+
+There is no gravity interface coupling in the single-valued
+organisation. The extension $\tilde{\bv}$ is gauge; the assembled operator's
+independence of it (given the constraint) is the built-in invariance
+test, exactly as for the vacuum extension.
+
+\subsection{The gravity Hessian of the broken motion, explicitly}
+\label{sec:gravhess}
+
+For implementation the volume-only content of Lemma~\ref{lem:vol} must
+be written out. Expanding $\psi_\eps = \tilde\varphi_\eps^{-1}\circ
+\varphi_{\mathrm{f},\eps} = \mathrm{id} + \eps\,\mathbf{g}_1 +
+\tfrac{\eps^2}{2}\mathbf{g}_2$ by composing the two motions
+($\tilde\varphi = \varphi_e + \eps\tilde{\bv}$ straight):
+\begin{equation}
+  \mathbf{g}_1 = F_e^{-1}\bw, \qquad
+  \mathbf{g}_2 = F_e^{-1}\bigl( \mathbf{u}_2
+    - D^2\varphi_e[\mathbf{g}_1, \mathbf{g}_1]
+    - 2\,D\tilde{\bv}[\mathbf{g}_1] \bigr),
+  \qquad \bw := \bv_{\mathrm{f}} - \tilde{\bv} .
+\end{equation}
+The $\mathbf{u}_2$ piece of $\mathbf{g}_2$ is the already-booked
+path-curvature contribution of \eqref{eq:d2E} (interior EL $\times$
+$\mathbf{u}_2$ plus the boundary term that became $B_\Sigma$) and must
+\emph{not} be counted again; the genuinely quadratic remainder,
+together with the $\nabla\nabla\zeta^0$ term of the source expansion,
+gives the extra gravity Hessian on $\Bf$. Killing
+$\nabla\nabla\zeta^0$ by parts (boundary term $\propto
+\mathbf{g}_1\cdot\bN = \bw\cdot\bnu/J_e = 0$) produces a
+$\nabla_{\mathbf{g}_1}\mathbf{g}_1$ remainder that \textbf{cancels the
+$D^2\varphi_e$ term identically} (via $\nabla_{\mathbf{g}_1}(F_e
+\mathbf{g}_1) = D^2\varphi_e[\mathbf{g}_1,\mathbf{g}_1] +
+F_e\nabla_{\mathbf{g}_1}\mathbf{g}_1$) --- the volume analogue of the
+curvature collapse \eqref{eq:collapse}. With $\mathbf{b} :=
+F_e^{-T}\nabla\zeta^0$, the additions to the referential operators
+(which act
+with the \emph{extended} field $\tilde{\bv}$ ball-wide) are, in
+Hessian normalisation, the mismatch coupling $H_{\zeta\bw}$ and the
+extra displacement Hessian $H_{\bw\bw}$,
+\begin{align}
+  H_{\zeta\bw}
+  &= 2\int_{\Bf} \rho\,(F_e^{-1}\bw)\cdot\nabla\zeta^1 \dV ,
+  \label{eq:mismatch}\\
+  H_{\bw\bw}
+  &= -\int_{\Bf} \Div(\rho F_e^{-1}\bw)\,
+      \bigl((F_e^{-1}\bw)\cdot\nabla\zeta^0\bigr) \dV
+   \;-\;\int_{\Bf} \rho\,\mathbf{b}\cdot D\bw[F_e^{-1}\bw] \dV
+   \nonumber\\
+  &\qquad\;-\;2\int_{\Bf} \rho\,\mathbf{b}\cdot
+      D\tilde{\bv}[F_e^{-1}\bw] \dV,
+  \label{eq:wextra}
+\end{align}
+all first-derivative volume forms (in the discrete realisation the
+$\Div(\rho\,\cdot)$ form may be traded against a gradient of the
+projected $\nabla\zeta^0$ field to avoid density gradients). The
+$\tilde{\bv}$-dependence of \eqref{eq:wextra} and of the referential
+operators
+is extension gauge: the assembled operator is invariant under changes
+of the extension for constrained fields --- the built-in invariance
+test, as for the vacuum extension.
+
+When $\zeta^1$ is eliminated at fixed motion, its stationary
+contribution to the Hessian is \textbf{negative definite}
+($-\tfrac{1}{4\pi G}\int|\nabla\zeta^{1*}|^2$): the induced potential
+perturbation always lowers the energy --- self-gravity destabilises,
+as it must.
+
+\textbf{Verification} (\texttt{TestSlipInterface},
+\texttt{GravityHessianIdentity}, at $\le 3\times10^{-4}$ relative):
+with a rigid,
+stress-free solid ($\rho_{\mathrm{s}} = 0$, $\pi(r_c) = 0$ hydrostatic
+fluid, so $B_\Sigma$ and the $\tilde{\bv}$-terms switch off and
+\eqref{eq:mismatch}--\eqref{eq:wextra} are isolated), exact
+disc-preserving families give the total energy exactly --- the
+gravitational part in closed 1-D form by the shell theorem, since the
+families' densities stay radial. Verified: the radial-squeeze identity
+(which pins the sign of the eliminated-$\zeta^1$ part: the opposite
+sign misses the exact energy by twice the stationary value); a $\theta$-dependent azimuthal family (not
+volume-preserving, hence \emph{not} a relabelling --- the assembled
+prediction matched the exact energy to $4\times10^{-6}$ anyway); the
+\emph{axisymmetric} rotation, which is the true relabelling and is
+jointly annihilated with gravity on (elastic $\pi(r)$-terms,
+$\nabla\nabla\zeta^0$-term and stationary part cancelling); the mixed
+family; and the vanishing of the gravity--slip cross terms demanded by
+Lemma~\ref{lem:vol}.
+
+\textbf{Discrete realisation} (same file,
+\texttt{DiscreteGravityPiecesMatchQuadrature}, against the same analytic
+quadrature; order~1 at $\sim\!4\times10^{-2}$, order~2 at
+$2$--$5\times10^{-4}$ relative on every piece). The extension is a
+prescribed sparse operator $\tilde{\bv} = E\,\bv_{\mathrm{s}}$
+(\texttt{NewRadialFluidExtension}): interface trace rows copy the
+solid values exactly through the SubMesh dof pairing --- to round-off,
+the property the mismatch $\bw = \bv_{\mathrm{f}} - \tilde{\bv}$ and
+the vanishing lemmas rely on --- and interior rows take
+$t(r)\,\bv_{\mathrm{s}}(r_c\hat{\bx})$ with $t = (r/r_c)^2$ vanishing
+at the centre, where the radial direction is undefined; the interior
+rule is gauge. The volume pieces at $\varphi_e = \mathrm{id}$ assemble
+from the library integrators: the
+$\int\rho\,\bw\cdot\nabla\nabla\zeta^0\,\bw'$ term as a vector mass
+matrix $M$ with matrix coefficient $\rho\nabla\nabla\zeta^0$
+($= 2\pi G\rho^2\,\mathbf{1}$ inside a uniform disc); the mismatch
+coupling $2\int\rho\,\bw\cdot\nabla\zeta^1$ as the mixed
+vector--scalar-gradient form with coefficient $\rho$; and the
+$\tilde{\bv}$-term $-2\int\rho\,\nabla\zeta^0\cdot D\tilde{\bv}[\bw]$
+as the \emph{compensated combination} $G - M$: the library's
+vector--gradient--vector form interpolates the scalar
+$\nabla\zeta^0\cdot\tilde{\bv}$ nodally and differentiates the
+\emph{product}, so $G$ realises
+$\int\rho\,\bw\cdot\nabla(\nabla\zeta^0\cdot\tilde{\bv})$ and the
+excess $\int\rho\,\bw^T(\nabla\nabla\zeta^0)\,\tilde{\bv}$ is exactly
+the mass term already assembled. The uncompensated form is wrong by
+a quantity of the size of the target (on the test fields it cancels the
+target almost entirely), so the compensation is essential, and the
+discrete-versus-quadrature cross-check is what guards such
+library-form semantics.
+
+\begin{remark}[Topology, the extension, and the broken-$\zeta$
+alternative]
+With a solid inner core the fluid shell has two solid boundaries and
+the extension interpolates between two \emph{independent} solid
+motions (a spherical ICB/CMB pair even leaves the inner core's
+rotation free --- known null-space bookkeeping). Nothing in the theory
+changes: the constraint gives $\bnu\cdot\bw = 0$ on \emph{each
+component} of $\partial\Bf$, the vanishing lemmas hold
+interface-by-interface, and $B_\Sigma$ appears once per interface;
+only the extension rule must interpolate two-sided data. Oceans are the
+degenerate case: constraint at the seafloor only. The implemented
+single-valued organisation supports one fluid region inside a solid
+shell, with the one-sided radial extension of \S\ref{sec:impl}; for
+aspherical fluid regions a prescribed geometric extension has no
+natural recipe. A \emph{broken}-$\zeta$ formulation (region-wise
+composition; jump condition $\jump{\zeta^1} =
+-\bs\cdot\nabla_\Sigma\zeta^0$ per interface, and no fluid extension at
+all) is exactly equivalent and scales trivially with topology: it is
+the self-benchmark of the mismatch terms and the organisation used for
+mapped and aspherical backgrounds. It is derived in full in
+\S\ref{sec:brokenzeta}.
+
+A third organisation, by superposition of \emph{sources}:
+$\Phi = \sum_r \Phi_r$ with $\Phi_r$ generated by region $r$'s density
+alone, so the energy splits into the pairwise interactions
+$\tfrac12\sum_{r,r'}\int\rho_r\,\Phi_{r'}$ and each part can be
+computed separately --- at evaluation level this is used by the
+verification (its shell-theorem references are exactly such interaction
+integrals). As a \emph{formulation} its cost is one
+ball-wide potential block (with its own DtN) per region, and the extra
+solves do not remove the interface structure: what breaks $\zeta$ is
+not any discontinuity of the field --- each $\Phi_r$ is globally $C^1$
+--- but the \emph{composition with the broken motion}, and each split
+potential faces the same choice as the total one: composed region-wise
+it jumps on every interface (with the partial field's gradient,
+$\jump{\zeta_r^1} = -\bs\cdot\nabla_\Sigma\zeta_r^0$, summing back to
+the total condition), composed through a single smooth extension it
+generates mismatch terms per region pair. Its natural use is therefore
+diagnostic --- region-wise attribution of the induced potential ---
+not primary.
+\end{remark}
+
+\begin{remark}[Stratification]
+For a two-parameter fluid the energy carries the additional advected
+scalar; its second variation contributes the interface-adjacent
+$N^2$-type stability term through the \emph{volume} density
+$\rho(\bx)$-class terms restricted by the smaller relabelling class
+--- again no new surface integral, but a genuine change to which
+$\bw$'s are gauge. That bookkeeping belongs to a two-parameter
+constitutive model, not to the interface; the library's rheologies carry
+no second advected parameter.
+\end{remark}
+
+\subsection{\texorpdfstring{Gravity: the broken-$\zeta$ organisation}{Gravity: the broken-zeta organisation}}
+\label{sec:brokenzeta}
+
+The alternative anticipated above, in full. Compose the potential
+region-wise with each region's \emph{own} motion, $\zeta_r :=
+\Phi\circ\varphi_r$, where $r$ runs over the smoothness components of
+the broken motion: each fluid region with its own motion, and each
+solid component together with its vacuum continuation where it abuts
+the buffer (the outer region's composition map must be smooth across
+the free surface and equal the identity at the DtN sphere, so the
+\emph{vacuum} extension of the welded problem survives, gauge as
+always; the \emph{fluid} extension does not). Splitting the Eulerian
+field energy of \eqref{eq:Eg} over the deformed regions --- a tiling:
+the attachment forbids gaps and overlaps --- and transforming each
+piece with its own motion,
+\begin{equation}
+  E_g = \operatorname{stat}
+  \Bigl[\, \sum_r \frac{1}{8\pi G}\int_{B_r}
+  \langle a(F_r)\nabla\zeta_r, \nabla\zeta_r\rangle \dV
+  \;+\; \sum_r \int_{B_r}\rho\,\zeta_r \dV \Bigr],
+  \label{eq:Ebroken}
+\end{equation}
+stationary over the broken $\zeta$ subject to the compatibility
+$\zeta_{\mathrm{f}} = \zeta_{\mathrm{s}}\circ\sigma$ on $\Sigma$ (the
+continuity of $\Phi$ at the deformed interface, \S\ref{sec:conv}).
+Both sources in \eqref{eq:Ebroken} are \emph{exact}: no composition
+is ever expanded, so the entire mismatch machinery of
+\S\ref{sec:gravhess} --- the fluid extension, $\bw$, and
+\eqref{eq:mismatch}--\eqref{eq:wextra} --- disappears identically.
+Its place is taken by the compatibility condition and one new
+interface form.
+
+\textbf{Linearisation.} The background $\zeta^0 = \Phi_0\circ\varphi_e$
+stays single-valued ($\varphi_e$ is globally smooth); only the
+perturbation breaks. With $\varphi^1 := \Phi_1\circ\varphi_e$
+(single-valued) and $\mathbf{b} := F_e^{-T}\nabla\zeta^0 =
+\nabla\Phi_0\circ\varphi_e$ (continuous across $\Sigma$, since
+$\Phi_0$ is $C^1$) as in \S\ref{sec:gravhess},
+\begin{equation}
+  \zeta_r^1 = \varphi^1 + \mathbf{b}\cdot\bv_r
+  \qquad\Longrightarrow\qquad
+  \boxed{\ \jump{\zeta^1} = \mathbf{b}\cdot\jump{\bv}
+        = -\,\bs\cdot\nabla_\Sigma\zeta^0 \ }
+  \quad\text{on each } \Sigma,
+  \label{eq:zjump}
+\end{equation}
+using $\jump{\bv} = -F_e\bs$ and $\mathbf{b}\cdot F_e\bs =
+\nabla\zeta^0\cdot\bs$, tangential because $\bs$ is. The first form
+$\jump{\zeta^1} = \mathbf{b}\cdot\jump{\bv}$ is the one to impose: a
+homogeneous linear constraint pairing the scalar-trace jump with the
+displacement-trace jump, needing neither tangential projection nor
+the normal-jump constraint --- it joins $\bnu\cdot\jump{\bv} = 0$ in
+the same penalty + augmented-Lagrangian machinery, through the same
+trace pairing $J = \Pi_{\mathrm{s}}^T\Pi_{\mathrm{f}}$.
+
+\textbf{Second variation.} Differentiating \eqref{eq:Ebroken} twice
+along the constrained families of \S\ref{sec:kin}, two new interface
+items appear relative to the single-valued route, and only these ---
+the sources are linear in $\zeta$ and carry no motion. (i) The
+second-order compatibility forces a jump on $\zeta^2$,
+\begin{equation}
+  \jump{\zeta^2}
+  = -\bigl( \nabla\zeta^0\cdot\bm{\sigma}_2
+          + \nabla\nabla\zeta^0[\bs,\bs]
+          + 2\,\nabla_\Sigma\zeta_{\mathrm{s}}^1[\bs] \bigr),
+\end{equation}
+whose energy pairing, after the per-region background equation kills
+the interior (the envelope structure of $\mathbf{u}_2$ again: free
+interior values are gauge, the forced jump is physics), is the flux
+term $\oint_\Sigma q\,(-\jump{\zeta^2}) \dS$ with the continuous
+background flux density
+\begin{equation}
+  q := \frac{1}{4\pi G}\,(a_e\nabla\zeta^0)\cdot\bN
+     = \frac{1}{4\pi G}\,\mathbf{b}\cdot\bnu .
+\end{equation}
+(ii) The fluid's second-order boundary datum $\mathbf{b}_2$ of
+\eqref{eq:expand} now pairs not only with the elastic traction
+$P_{\mathrm{f}}\bN = -\pi\bnu$ (giving $B_\Sigma$ exactly as before)
+but also with the gravitational Piola--Maxwell stress of the
+$a$-form,
+\begin{equation}
+  T_g := \frac{J_e}{8\pi G}\Bigl[\,|\mathbf{b}|^2 F_e^{-T}
+        - 2\,\mathbf{b}\otimes(F_e^{-1}\mathbf{b})\Bigr],
+  \qquad
+  \Div T_g = -\rho\,\mathbf{b},
+  \qquad
+  T_g\bN = \frac{|\mathbf{b}|^2}{8\pi G}\,\bnu - q\,\mathbf{b},
+\end{equation}
+since in this organisation the gravity--motion coupling sits in the
+field term: $\tfrac{1}{8\pi G}\langle a'(\bm{\eta})\nabla\zeta^0,
+\nabla\zeta^0\rangle = T_g : D\bm{\eta}$, and the divergence identity
+is what re-assembles the interior equilibrium ($\Div(P + T_g) = 0$)
+so that the free interior of $\mathbf{u}_2$ still drops. In the sum
+of (i) and (ii) the parameterisation freedom cancels twice over: the
+\emph{entire} $\bm{\sigma}_2$-dependence --- free tangential part
+$\bs_2$ and forced curvature part alike --- cancels between the
+$\nabla\zeta^0\cdot\bm{\sigma}_2$ of the jump datum and the
+$\mathbf{b}\cdot F_e\bm{\sigma}_2$ of the Maxwell traction, and the
+remaining second derivatives collapse by the mechanism of
+Remark~\ref{rem:wein} together with the change of variables
+\eqref{eq:zjump}. (The first variation performs the same
+cancellation one order down: $\oint (T_g\bN)\cdot F_e\bs$ against the
+first-order jump flux $\oint q\,\bs\cdot\nabla_\Sigma\zeta^0$ ---
+equilibrium is preserved in the broken organisation, as it must be.)
+
+\begin{proposition}[The gravity interface form]\label{prop:GSigma}
+In the broken-$\zeta$ organisation the entire gravitational interface
+contribution to the second variation is, in Hessian normalisation,
+\begin{equation}
+  G_\Sigma
+  = \oint_\Sigma \Bigl[\,
+      \frac{|\mathbf{b}|^2}{8\pi G}\,
+        \bnu\cdot\nabla_\Sigma(\bv_{\mathrm{s}} + \bv_{\mathrm{f}})[\bs]
+      + q\,\Bigl( \nabla_\Sigma(\zeta_{\mathrm{s}}^1
+                          + \zeta_{\mathrm{f}}^1)[\bs]
+      - \mathbf{b}\cdot\nabla_\Sigma(\bv_{\mathrm{s}}
+                          + \bv_{\mathrm{f}})[\bs] \Bigr)
+    \Bigr] \dS,
+  \qquad \bs = -F_e^{-1}\jump{\bv},
+  \label{eq:GSigma}
+\end{equation}
+used, like \eqref{eq:BSigmaPol}, in its symmetrised polarisation over
+the product space (contributing $(\bv,\bv')$-, $(\zeta^1,\bv')$- and
+$(\bv,\zeta^{1\prime})$-blocks). Coefficients: $\bnu$, $\mathbf{b}$,
+$q$ --- background data and \emph{tangential} derivatives of the four
+traces only; no curvature, no $D^2\varphi_e$, no $\nabla\nabla\zeta^0$.
+The vector--vector part is $B_\Sigma$-shaped (mean trace-derivative
+against the slip) with $-\pi\bnu$ replaced by
+$\tfrac{|\mathbf{b}|^2}{8\pi G}\bnu - q\,\mathbf{b}$; the
+scalar--vector part, the mean scalar trace-derivative against the
+slip, is the interface footprint of the vanished mismatch coupling
+\eqref{eq:mismatch}.
+\end{proposition}
+
+Two derivations of \eqref{eq:GSigma} agree: the referential collapse
+sketched above, and substituting $\zeta_r^1 = \varphi^1 +
+\mathbf{b}\cdot\bv_r$ to reach the Eulerian intermediate form
+$\oint q\,[\,2\nabla_\Sigma\varphi^1[\bs] +
+D\mathbf{b}[\bs]\cdot(\bv_{\mathrm{s}}+\bv_{\mathrm{f}})\,] +
+\oint \tfrac{|\mathbf{b}|^2}{8\pi G}\bnu\cdot\nabla_\Sigma(\bv_{\mathrm{s}}
++ \bv_{\mathrm{f}})[\bs]$ and converting back.
+
+\textbf{The collected broken operator.} Unknowns
+$(\bv_{\mathrm{s}}, \bv_{\mathrm{f}}, \zeta_{\mathrm{s}}^1,
+\zeta_{\mathrm{f}}^1)$ (the outer scalar field living on solid +
+buffer). Volume: the referential operators \emph{per region with each
+region's own field} --- elastic/geometric blocks, the mapped Poisson
+block per region with the DtN on the outer one, and the
+$a'$-coupling $c_r(\zeta_r^1, \bv_r)$ --- no mismatch terms, no
+$\rho\nabla\nabla\zeta^0$ mass term, no extension terms off the
+buffer. Interface, \emph{per interface}: $B_\Sigma$ unchanged,
+$G_\Sigma$ of \eqref{eq:GSigma}, and the two trace constraints
+$\bnu\cdot\jump{\bv} = 0$ and $\jump{\zeta^1} =
+\mathbf{b}\cdot\jump{\bv}$, both through the same one-sided pairing.
+Limits: welded ($\bs \equiv 0$) gives $G_\Sigma = 0$ and
+$\jump{\zeta^1} = 0$ --- the continuous-$\zeta$ welded problem
+exactly; gravity off ($\mathbf{b} = 0$) gives $G_\Sigma = 0$,
+$\jump{\zeta^1} = 0$ and the potential decouples --- the sliding
+tests. Topology: everything above is per-interface and no
+interpolation between independent solid motions ever arises --- the
+trivial scaling promised. The organisation is exactly equivalent to
+the single-valued one (bijective change of variables in the
+stationary problem), and a solve run both ways is a genuinely
+two-sided check --- the two share \emph{no} gravity-interface
+machinery: mismatch volume terms + extension on one side, $G_\Sigma$
++ jump condition on the other.
+
+\section{The collected operator}
+\label{sec:collect}
+
+Unknowns $(\bv_{\mathrm{s}}, \bv_{\mathrm{f}}, \zeta^1)$ with the
+constraint \eqref{eq:constraint}, enforced as in \S\ref{sec:enforce};
+this is the single-valued organisation, the broken-$\zeta$ alternative
+being collected at the end of \S\ref{sec:brokenzeta}:
+\begin{itemize}
+\item volume: the referential operators per region with each region's
+  own field (fluid dictionary by Lemma~\ref{lem:mub}), the mapped
+  Poisson $\zeta$-block and DtN untouched (single-valued $\zeta$,
+  $\varphi_e = \mathrm{id}$ at the sphere);
+\item the fluid-mismatch gravity coupling of Lemma~\ref{lem:vol},
+  assembled with the extension field (extension = gauge; invariance
+  testable);
+\item the single interface bilinear form $B_\Sigma$ of
+  Proposition~\ref{prop:BSigma}: coefficients $\pi$, $\bnu$, $F_e$ and
+  \emph{tangential} derivatives of the two traces only (surface
+  shape-function derivatives suffice; no $D^2\varphi_e$, no curvature),
+  assembled once on the solid side through the pairing of
+  \S\ref{sec:disc}, like the constraint itself.
+\end{itemize}
+
+Four reductions follow from the construction, and each is checked at
+solution level in \S\ref{sec:verif} (in addition to the
+finite-difference verification of every coefficient against the exact
+broken-motion energy, for which the constrained parameterisation of
+\S\ref{sec:kin} satisfies the attachment exactly at finite $\eps$):
+(a) spherical hydrostatic reference $\to$ the F1--F3 interface terms
+of \texttt{doc/self\_gravitation.md} under the change of variables
+$\zeta^1 = \varphi^1 + \bv\cdot\nabla\Phi_0$, and the forms of AC18
+(eqs.~121/137) \cite{AC18} and Valette \cite{Valette1986,Valette1991};
+(b) welded limit $\bs = 0$: $B_\Sigma = 0$, $\bw$ interior-gauge --- the
+welded referential problem of \texttt{doc/gravitating\_elasticity.md}
+exactly; (c) gravity and pressure off: the gravity-free sliding
+interface; (d) the broken-$\zeta$ organisation of
+\S\ref{sec:brokenzeta} against the single-valued solve, head to head
+--- the mismatch self-benchmark.
+
+\section{Discretisation of the slipping interface}
+\label{sec:disc}
+
+\subsection{The broken space}
+
+The discrete displacement is sought in the \emph{broken} space
+\begin{equation}
+  V_{\mathrm{s}} \times V_{\mathrm{f}}, \qquad
+  V_{\mathrm{s}} \subset H^{1}(\Bs)^{d}, \quad
+  V_{\mathrm{f}} \subset H^{1}(\Bf)^{d},
+\end{equation}
+two independent $H^{1}$ spaces on the two subdomains --- the
+discontinuity costs nothing to represent because nothing couples the
+spaces yet. The physics then requires exactly one interface condition on
+the displacement, the normal constraint \eqref{eq:constraint}, with the
+tangential jump free (the slip). It is a \emph{constraint}, enforced
+weakly (\S\ref{sec:enforce}); the tangential freedom needs no action at
+all. In contrast with a DG discretisation there is no interior-penalty
+stabilisation, no mesh-skeleton terms and no consistency issue: inside
+each subdomain the space is conforming, and the only broken surface is
+$\Sigma$ itself. In the broken-$\zeta$ organisation the potential is
+broken the same way, $(\zeta_o, \zeta_{\mathrm{f}})$ on the outer (solid
++ buffer) and fluid regions, with the scalar-jump constraint
+\eqref{eq:zjump}.
+
+\subsection{The nodal pairing \texorpdfstring{$J$}{J}}
+
+Enforcing \eqref{eq:constraint} weakly needs the two interface traces in
+one bilinear form, i.e.\ a dictionary between fluid-side and solid-side
+interface dofs. Both $\Bs$ and $\Bf$ are SubMeshes of one parent mesh,
+and each space carries a signed dof injection into a parent-mesh space
+(\texttt{SubMeshDofInjection}),
+\begin{equation}
+  \Pi_{\mathrm{s}} : V_{\mathrm{s}} \to V_{\mathrm{parent}}, \qquad
+  \Pi_{\mathrm{f}} : V_{\mathrm{f}} \to V_{\mathrm{parent}},
+\end{equation}
+sparse Boolean-up-to-sign matrices (the signs carry the orientation
+bookkeeping of vector-valued nodal bases). A dof of $V_{\mathrm{s}}$ and
+a dof of $V_{\mathrm{f}}$ describe \emph{the same interface node} exactly
+when their parent images coincide, so the product
+\begin{equation}
+  J \;=\; \Pi_{\mathrm{s}}^{T}\, \Pi_{\mathrm{f}}
+  \qquad (\text{solid dofs} \times \text{fluid dofs, entries } \pm 1)
+  \label{eq:pairing}
+\end{equation}
+is the complete identification: it is zero except on interface dofs,
+where it pairs each fluid trace dof with its solid counterpart,
+orientation included. Nothing geometric is computed --- no point
+matching, no tolerance --- because the identification is inherited from
+the parent's connectivity (\texttt{NewSubMeshPairingMatrix}). In
+parallel the same formula runs on \emph{true} dofs as a hypre sparse
+product (\texttt{NewSubMeshPairingTrueDofMatrix}); an interface node
+whose solid-side and fluid-side owners are different MPI ranks is
+handled by the product's communication with no special casing
+(\texttt{doc/submesh\_coupling.md}, section ``Pairing two sibling
+submeshes''). The broken-$\zeta$ organisation uses the scalar pairing
+$J_\zeta$ built the same way.
+
+Because the two trace spaces sit on the same parent faces with the same
+nodal basis, they are the \emph{same} discrete trace space in different
+coordinates, and $J$ is (up to sign) a permutation between them. That is
+what lets every interface bilinear form be assembled \textbf{once}, on
+one side only.
+
+\subsection{Why the coupling is weak, not nodal}
+
+Given \eqref{eq:pairing} one is tempted to impose \eqref{eq:constraint}
+\emph{strongly}: constrain the normal component of each paired dof. This
+fails at the first corner: on a faceted (or isoparametric) interface the
+discrete normal is single-valued on element faces but \emph{ill-defined
+at the nodes} where faces meet --- exactly where the dofs sit. Any nodal
+choice of normal is arbitrary at the vertices, and the resulting
+constraint is inconsistent by $O(h)$. The weak form avoids the issue,
+because it only evaluates the normal at quadrature points in face
+interiors, where it is unambiguous. With $B_n$ the normal--normal
+boundary form on the solid side, built with the Nanson normal
+\eqref{eq:nanson} (\texttt{BoundaryNormalNormalIntegrator} with the
+equilibrium mapping, which applies \texttt{Diffeomorphism::MapNormal}),
+\begin{equation}
+  (B_n)_{ij} = \oint_{\Sigma} (\bm{\phi}_{i}\cdot\bnu)
+               (\bm{\phi}_{j}\cdot\bnu) \dS ,
+\end{equation}
+the penalty on the normal jump of the paired field expands, via
+$\bv_{\mathrm{f}}|_{\Sigma} = $ ($J$-image of the fluid dofs), into the
+$2\times 2$ block matrix
+\begin{equation}
+  \theta\, P, \qquad
+  P \;=\;
+  \begin{pmatrix}
+    B_n & -B_n J \\
+    -J^{T} B_n & \;J^{T} B_n J
+  \end{pmatrix},
+  \qquad
+  \theta\, U^{T} P\, U
+  \;=\; \theta \oint_{\Sigma} \bigl( \bnu\cdot\jump{\bv} \bigr)^{2} \dS .
+  \label{eq:penaltyblock}
+\end{equation}
+$P$ is symmetric positive semi-definite by construction; its kernel
+contains every field with continuous normal trace --- and every purely
+tangential jump, which is the point.
+
+\subsection{One-sided assembly of the interface forms}
+
+The interface forms are assembled the same way. With $G$ the one-sided
+kernel of \texttt{SlipInterfacePressureIntegrator} on the solid
+boundary elements, $S = [I, J]$ the sum map and $D = [I, -J]$ the jump
+map, the polarised form \eqref{eq:BSigmaPol} is
+\begin{equation}
+  B_\Sigma = -\tfrac12\,(S^T G D + D^T G^T S),
+\end{equation}
+the minus because $G$ is assembled with the solid SubMesh's outward
+boundary normal, which is $-\bN$ of the derivation
+(\texttt{NewSlipInterfaceMatrix}). The broken-$\zeta$ form
+\eqref{eq:GSigma} combines the vector kernel of
+\texttt{SlipInterfaceGravityIntegrator} and the scalar--vector kernel of
+\texttt{SlipInterfaceGravityScalarIntegrator} in the same way, with a
+plus sign (both $\bnu$-linear coefficients flip with the normal,
+cancelling the minus of $\bs = -F_e^{-1}\jump{\bv}$), and the scalar
+pairing on the potential slots (\texttt{NewSlipGravityInterfaceMatrix}).
+Every builder has a parallel overload forming the blocks by hypre
+products with the true-dof pairings.
+
+\subsection{The enlarged null space}
+
+A frictionless axisymmetric interface transmits no torque: with the
+discontinuity active, the shell and the core rotate
+\emph{independently}, so the rigid null space is larger than the welded
+problem's --- common translations $(\mathbf{t}, \mathbf{t}, 0)$ and the
+independent (mapped) rotations of shell and core, plus the potential
+constant in 2-D --- and all such modes are projected. (Translations of
+either component alone are \emph{not} null: gravity couples them.) The
+constraints vanish on these pairs, since $\bnu$ and $\mathbf{b}$ are
+physically radial against tangential rotations. With the tapered fluid
+extension of the single-valued organisation the translations are
+near-null rather than exact, as for the vacuum extension. On an
+interface that is not axisymmetric (an ellipse) the relative rotation is
+a stiff physical mode, because the interface transmits torque through
+the normal forces alone (\texttt{examples/sliding\_fluid\_ellipse.cpp}).
+
+\section{Constraint enforcement}
+\label{sec:enforce}
+
+The interface constraint $\bnu\cdot\jump{\bv} = 0$ (in the broken
+organisation also $\jump{\zeta^1} = \mathbf{b}\cdot\jump{\bv}$) is a
+genuine, full-rank condition on the interface traces. Two enforcement
+paths are implemented on the same assembly: penalty plus augmented
+Lagrangian (AL), the default and the only path of the broken
+organisation; and a monolithic KKT (saddle-point) solve with an
+explicit multiplier, for the single-valued organisation. The fluid
+displacement is in addition determined only up to linearised
+relabellings; that indeterminacy is an underdetermination, not an
+interface condition, and in \emph{both} paths it is handled by the
+gauge penalty $\eps Q$ (\texttt{SetFluidGauge}, the covariant
+deviatoric penalty on the fluid space) with iterated Tikhonov
+refinement, as in \texttt{doc/gauge\_penalty\_iteration.tex}.
+
+\paragraph{The discrete constrained problem.} Collect the single-valued
+problem as follows: $U = (U_{\mathrm{s}}, U_{\mathrm{f}}, Z)$, the
+coefficient vectors of $\bv_{\mathrm{s}}$, $\bv_{\mathrm{f}}$ and
+$\zeta^1$; $A$ the symmetric physical block operator of
+\S\ref{sec:collect} (elastic, geometric, gravity, mismatch and
+$B_\Sigma$ blocks); $f$ the load; $\eps Q$ the fluid-gauge penalty on
+the $U_{\mathrm{f}}$ block; and $P = D^{T}B_nD$ the constraint penalty
+\eqref{eq:penaltyblock} on the displacement blocks, with $D = [I, -J]$
+the jump map of \S\ref{sec:disc}. The physical problem is: find $U$ and
+a multiplier (a dual vector) $w^*\in\mathrm{range}(P)$ with
+\begin{equation}
+  A\,U + w^* = f, \qquad P\,U = 0 .
+  \label{eq:constrained}
+\end{equation}
+$w^*$ is the discrete interface normal-traction perturbation paired with
+$\bnu$ (\S\ref{sec:first}).
+
+\subsection{Penalty and augmented Lagrangian, interleaved with the gauge
+refinement}
+\label{sec:al}
+
+A pure penalty, $(A + \theta P)U = f$, enforces $PU = 0$ only as
+$\theta \to \infty$, where $A + \theta P$ becomes arbitrarily
+ill-conditioned --- the dilemma of a single penalised solve
+(\texttt{doc/gauge\_penalty\_iteration.tex}, section ``What one
+penalised solve gives'') in its constraint-enforcing guise --- and the
+same escape applies: iterate rather than stiffen
+\cite{Hestenes1969,Powell1969,FortinGlowinski}.
+
+\paragraph{The multiplier iteration.} The augmented-Lagrangian
+(Uzawa-type) iteration keeps $\theta$ moderate and updates a running
+multiplier $w$:
+\begin{equation}
+  (A + \theta P)\,U^{(k+1)} = f - w^{(k)}, \qquad
+  w^{(k+1)} = w^{(k)} + \theta P\,U^{(k+1)}, \qquad w^{(0)} = 0 .
+  \label{eq:alplain}
+\end{equation}
+At a fixed point the update stalls, so $PU = 0$, and then
+$AU + w = f$: the fixed point is \eqref{eq:constrained}, exact at
+finite $\theta$ and independent of it.
+
+\paragraph{Contraction rate.} Let $(U^*, w^*)$ solve
+\eqref{eq:constrained}; since $PU^* = 0$, $(A + \theta P)U^* = f - w^*$.
+Subtracting, the errors $e_U^{(k)} = U^{(k)} - U^*$,
+$e_w^{(k)} = w^{(k)} - w^*$ obey
+\[
+  (A + \theta P)\,e_U^{(k+1)} = -e_w^{(k)}, \qquad
+  e_w^{(k+1)} = e_w^{(k)} + \theta P e_U^{(k+1)}
+  = \bigl(I - \theta P(A + \theta P)^{-1}\bigr)e_w^{(k)} .
+\]
+For the analysis factor $P = R^{T}R$ (e.g.\ $R = B_n^{1/2}D$; never
+formed), assume $A$ invertible (on the complement of the projected null
+pairs of \S\ref{sec:disc}), and write $e_w = R^{T}\mu$ (all multipliers
+lie in $\mathrm{range}(P) = \mathrm{range}(R^{T})$). The
+Sherman--Morrison--Woodbury identity gives, with the constraint-space
+Schur complement $\hat S := RA^{-1}R^{T}$,
+\begin{equation}
+  R(A + \theta R^{T}R)^{-1}R^{T} = \hat S(I + \theta\hat S)^{-1},
+  \label{eq:woodbury}
+\end{equation}
+hence
+\begin{equation}
+  e_w^{(k+1)} = R^{T}\bigl[I - \theta\hat S(I + \theta\hat S)^{-1}\bigr]\mu^{(k)}
+             = R^{T}(I + \theta\hat S)^{-1}\mu^{(k)} .
+\end{equation}
+On an eigenvector of $\hat S$ with eigenvalue $\sigma_j$ the multiplier
+error is multiplied per sweep by
+\begin{equation}
+  \frac{1}{1 + \theta\sigma_j} = \frac{\sigma_j^{-1}}{\sigma_j^{-1} + \theta}
+  \;\le\; \frac{\norm{A_{\mathrm{S}}}}{\norm{A_{\mathrm{S}}} + \theta},
+  \qquad A_{\mathrm{S}} := \hat S^{-1},
+\end{equation}
+so $A_{\mathrm{S}}$ is the stiffness that the constraint ``sees'', and
+the slowest mode is the constraint direction along which $A$ is
+stiffest. The constraint violation
+$RU^{(k+1)} = Re_U^{(k+1)} = -\hat S(I + \theta\hat S)^{-1}\mu^{(k)}$
+contracts at the same rate. Larger $\theta$ contracts faster per sweep
+but worsens the conditioning of $A + \theta P$, i.e.\ the cost of each
+sweep: moderate $\theta$ and a few sweeps replace a stiff penalty, on
+the same amortised-solver economics as the gauge refinement (one
+operator, one preconditioner, several solves).
+
+\paragraph{Interleaving with the gauge refinement.} The multiplier
+update and the fluid-gauge refinement run in a single loop:
+\begin{equation}
+  \bigl( A + \eps Q + \theta P \bigr)\, U^{(k+1)}
+     = f \;-\; w^{(k)} \;+\; \eps\, Q\, U^{(k)} ,
+  \qquad
+  w^{(k+1)} = w^{(k)} + \theta\, P\, U^{(k+1)} ,
+  \label{eq:alupdate}
+\end{equation}
+starting from $w^{(0)} = 0$ and $U^{(0)}$ the previous solution, with
+$Q$ acting on the fluid block only; each sweep is one block-MINRES solve,
+warm-started from the current iterate. The added $\eps QU^{(k)}$ is the
+Tikhonov correction. At a fixed point of \eqref{eq:alupdate} the
+multiplier update stalls, which forces $P U = 0$ --- the normal jump
+vanishes \emph{exactly} (in the discrete weak sense) at finite
+$\theta$ --- and the gauge term cancels, so $U$ solves
+\eqref{eq:constrained} with neither $\theta$ nor $\eps$ contaminating
+the observables. The running multiplier $w$ is the discrete constraint
+reaction, i.e.\ the first-order normal traction paired with $\bnu$
+(\S\ref{sec:first}; \texttt{ConstraintMultiplier()}). Each part
+contracts at its own rate in isolation; the combined loop contracts the
+normal jump by about two orders of magnitude over the default sweeps,
+to a floor set by the interleaved gauge source and the solver
+tolerance, $\theta$-independent relative to the trace, while the
+tangential jump remains $O(1)$: the slip the welded space cannot
+represent.
+
+The penalty $\theta$ also conditions the solve: it regularises the
+otherwise near-null relative normal motion at the interface, so too
+small a $\theta$ degrades the solves as well. Below $\theta \approx 100$
+the block solves degrade markedly, above it the cost is flat
+(\texttt{doc/benchmarks.tex}, ``Solver settings: measured behaviour'');
+$\theta = 100$ with eight sweeps is the default
+(\texttt{SetConstraint(theta, sweeps)}), a compromise between the
+contraction per sweep and the conditioning of each sweep.
+
+\paragraph{Algorithm (AL path, \texttt{SetConstraint}$(\theta, K)$).}
+\begin{enumerate}
+\item Assemble $A$, $\eps Q$, $P$; build the solver blocks
+  $A + \eps Q + \theta P$ and the block-diagonal preconditioner (the
+  problem's own preconditioners rebuilt on the penalised blocks:
+  algebraic multigrid with systems options on the fluid block in
+  parallel, Gauss--Seidel serially; the shifted mapped Laplacian on
+  $Z$); build the projector of the null pairs (\S\ref{sec:disc}).
+\item Set $w\leftarrow0$ and take $U$ from the previous solution (warm
+  start; \texttt{ResetSolution()} zeroes it).
+\item For $k = 0,\dots,K-1$ ($K$ the sweep count, default 8):
+  \begin{enumerate}
+  \item form the right-hand side $f - w + \eps QU$;
+  \item solve with projected block MINRES, starting from the current
+    $U$, to the sweep tolerance of \S\ref{sec:sweeps}, giving the new
+    $U$;
+  \item update $w\leftarrow w + \theta PU$;
+  \item record the normal-jump energy $(j^{T}B_nj)^{1/2}$,
+    $j = U_{\mathrm{s}} - JU_{\mathrm{f}}$ (\texttt{NormalJumpHistory()}).
+  \end{enumerate}
+\item Return $U$ and $w$ (\texttt{ConstraintMultiplier()}).
+\end{enumerate}
+
+\paragraph{The broken-$\zeta$ organisation.} The scalar-jump constraint
+$c := \jump{\zeta^1} - \mathbf{b}\cdot\jump{\bv} = 0$ joins the loop
+with its own penalty $\theta_\zeta P_\zeta$,
+\[
+  U^{T}P_\zeta U = \oint_\Sigma c^2 \dS ,
+\]
+assembled from the interface scalar mass $M_z$, the mixed kernel
+$K_{vz} = \oint_\Sigma(\mathbf{b}\cdot\bv)\,\zeta\dS$ and the
+$\mathbf{b}\otimes\mathbf{b}$ vector mass $P_b$, all on the solid side
+through the pairings $J$ and $J_\zeta$, and its own multiplier, updated
+in step 3(c) alongside $w$ and sharing the sweep count. The four-block
+system $(U_{\mathrm{s}}, U_{\mathrm{f}}, Z_o, Z_{\mathrm{f}})$ is solved
+by projected MINRES in the same way, and the per-sweep scalar-jump
+energies are recorded (\texttt{ZetaJumpHistory()}).
+
+\subsection{KKT enforcement}
+\label{sec:kkt}
+
+\paragraph{The system.} \texttt{EnableKKT()} makes the multiplier an
+unknown: $\lambda$, a coefficient vector on the interface boundary dofs
+of a scalar space on the solid SubMesh. With $N$ the one-sided flux
+kernel $\oint_\Sigma \lambda\,(\bnu\cdot\bv)\dS$ on the solid side, the
+constraint row is
+\[
+  C\,U = N^{T}\bigl(U_{\mathrm{s}} - J\,U_{\mathrm{f}}\bigr)
+\]
+restricted to those dofs (zero on the potential block). With
+$\hat M = \mathrm{diag}(\hat m_i)$ the diagonal of the interface mass
+matrix of the multiplier space, one MINRES per outer step solves
+\begin{equation}
+  \begin{pmatrix} S_\theta & C^{T} \\ C & 0 \end{pmatrix}
+  \begin{pmatrix} U \\ \lambda \end{pmatrix}
+  =
+  \begin{pmatrix} b \\ 0 \end{pmatrix},
+  \qquad
+  S_\theta := A_\eps + \theta\, C^{T}\hat M^{-1}C,
+  \quad A_\eps := A + \eps Q ,
+  \label{eq:kkt}
+\end{equation}
+with $b$ the gauge-refinement right-hand side (below). ($S_\theta$, the
+augmented operator block, is not the sum map $S$ of \S\ref{sec:disc}.)
+The outer loop then consists of the fluid-gauge refinements alone, in
+the fixed-point form of \eqref{eq:alupdate} without the multiplier
+update; \texttt{SetConstraint()}'s iteration count bounds it.
+
+\paragraph{The constraint row is covariant by construction.} $N$ is
+assembled by \texttt{BoundaryNormalScalarIntegrator} with the
+equilibrium mapping and expanded over $(\bv_{\mathrm{s}},
+\bv_{\mathrm{f}})$ with $J$. Nanson's relation \eqref{eq:nanson} makes
+flux-type boundary forms exact under mappings --- every area factor
+cancels --- so the constraint row is exactly the pull-back of its
+unmapped counterpart.
+
+\paragraph{The augmentation does not change the solution.} Any solution
+of \eqref{eq:kkt} has $CU = 0$, so the augmentation term
+$\theta C^{T}\hat M^{-1}CU$ vanishes and $(U,\lambda)$ solves the
+unaugmented system, for every $\theta$; $\theta$ affects only the
+conditioning. The KKT endpoint is therefore independent of $\theta$ to
+solver precision, whereas the AL endpoint moves with $\theta$ through
+its constraint floor. This makes $\theta$-independence a sharp
+regression check on the constraint blocks.
+
+\paragraph{The multiplier is physical.} By \S\ref{sec:first}, $\lambda$
+is the interface normal-traction perturbation paired with $\bnu$
+(\texttt{KKTMultiplier()}), and a cross-check against the AL path's
+accumulated \texttt{ConstraintMultiplier()}.
+
+\paragraph{Enforcement is weak.} $CU = 0$ zeroes the jump against the
+multiplier space, so the $L^2$ jump of the solution is the projection
+remainder --- the discrete constraint floor, the same level a converged
+AL iteration reaches. The KKT jump is not expected below the AL one; the
+two paths differ in route, not destination.
+
+\paragraph{The multiplier space.} The space is passed to
+\texttt{EnableKKT()}. Equal order with the displacement is the
+strictest constraint space (used by the serial cross-check test). One
+order lower is the mortar-style choice, as in mortar methods, where the
+multiplier space is chosen coarser than the trace space
+\cite{Wohlmuth2001}: it improves the inf-sup margin of the trace
+pairing and shrinks the multiplier block, and it is cheaper at an
+endpoint shift well below the mesh error --- a change of constraint
+discretisation. It is the recommended choice in 3-D. (The Love-number
+benchmark's \texttt{-kkt-order 0}, its default, means equal order;
+\texttt{-kkt-order 1} with linear displacements is the recommended
+setting.) It is not robust in every configuration: in the 2-D
+\texttt{examples/slipping\_interface.cpp}, a multiplier one order
+below quadratic displacements makes the gauge refinements diverge (the
+normal jump grows by orders of magnitude per refinement), while equal
+order converges. When using a lower-order multiplier, check that the
+normal-jump history decreases.
+
+\paragraph{The augmented blocks, and why their kernel must match.}
+Keeping a $\theta$-penalty inside $S_\theta$ (augmented-Lagrangian
+preconditioning in the sense of Golub \& Greif \cite{GolubGreif2003})
+serves two purposes: it regularises the near-null relative normal motion
+at the interface --- the same role as in the AL path, and the reason
+lowering $\theta$ makes MINRES worse even though the multiplier owns the
+constraint --- and it shapes the constraint Schur complement.
+Eliminating $U$ from \eqref{eq:kkt} gives the multiplier Schur
+complement $\mathcal{S} = C S_\theta^{-1} C^{T}$. Write
+$R = \hat M^{-1/2}C$, so that the augmentation is $\theta R^{T}R$, and
+now $\hat S = RA_\eps^{-1}R^{T}$. The Woodbury identity
+\eqref{eq:woodbury} (with $A_\eps$ in place of $A$) gives
+\begin{equation}
+  \hat M^{-1/2}\,\mathcal{S}\,\hat M^{-1/2} = R S_\theta^{-1}R^{T}
+  = \hat S(I + \theta\hat S)^{-1},
+\end{equation}
+whose eigenvalues are $\sigma_j/(1 + \theta\sigma_j)\in(0, 1/\theta)$,
+$\sigma_j$ those of $\hat S$. Equivalently, the preconditioned Schur
+complement $(\theta\hat M^{-1})\,\mathcal{S}$ is similar to
+$\theta\hat S(I + \theta\hat S)^{-1}$, with eigenvalues
+\begin{equation}
+  \frac{\theta\sigma_j}{1 + \theta\sigma_j}\in(0,1),
+  \qquad \to 1 \ \text{ as } \theta\sigma_j\to\infty
+\end{equation}
+(and exactly 1 on constraint directions where $A_\eps$ is singular, the
+Golub--Greif setting \cite{GolubGreif2003}). Constraint directions on
+which $A_\eps$ is soft ($\sigma_j$ large) are therefore clustered at 1:
+the Schur complement clusters at $\hat M/\theta$. Only directions with
+$\theta\sigma_j\lesssim1$ spread the spectrum, and raising $\theta$
+moves them towards 1, so the iteration count falls as $\theta$ grows
+even though the multiplier, not the penalty, enforces the constraint;
+larger values than the default $\theta = 100$ (shared with the AL path)
+gain little. The argument needs the augmentation to be built from
+\emph{the same} $C$ and $\hat M$ as the constraint row and its
+preconditioner. Augmenting instead with $\theta P$ (the AL penalty's
+kernel: the full $L^2$ trace form, not its projection onto the
+multiplier space) leaves a kernel mismatch of the size of the gap
+between the equal-order trace space and the multiplier space, the
+identity above no longer holds, and the solve costs markedly more
+iterations. The consistent augmentation is assembled like the $B_n$
+folds, as $N\hat M^{-1}N^{T}$ on the interface dofs (the other columns
+of $N$ are zero) expanded over $(\bv_{\mathrm{s}}, \bv_{\mathrm{f}})$
+with $J$, by serial sparse products or hypre
+\texttt{ParMult}/\texttt{RAP}.
+
+\paragraph{The preconditioner.} Block-diagonal and symmetric positive
+definite, as MINRES requires:
+\begin{equation}
+  \mathcal{M}_{\mathrm{KKT}} = \mathrm{diag}\bigl(\mathcal{M}_{S},\;
+     P_\lambda\bigr), \qquad P_\lambda = \theta\, \hat M^{-1}
+  \qquad (\text{entries } \theta/\hat m_i),
+\end{equation}
+with $\mathcal{M}_S$ the problem's own block preconditioners rebuilt on
+the consistently augmented blocks of $S_\theta$ (algebraic multigrid
+with systems options on the fluid block in parallel, Gauss--Seidel
+serially; the shifted mapped Laplacian on $\zeta$), and $P_\lambda$ the
+\emph{inverse} of the Schur approximation $\hat M/\theta$. With exact
+$\mathcal{M}_S = S_\theta^{-1}$ and an exact Schur inverse the
+preconditioned KKT matrix would have only the three eigenvalues $1$ and
+$(1\pm\sqrt5)/2$ \cite{MurphyGolubWathen2000}; the approximations spread
+these into clusters. The dimensional check matters: interface mass
+entries scale like $h^{d-1}$, so applying $\theta\hat M$ in place of
+$\theta\hat M^{-1}$ mis-scales the multiplier block by
+$\theta^2\hat m^2$ --- orders of magnitude at benchmark resolution ---
+and multiplies the iteration count while still converging, the endpoint
+moving only at solver tolerance. A preconditioner change must leave the
+endpoint unchanged at solver tolerance; that, together with the
+iteration count, is the test of any change to this block. The null
+pairs are the rigid pairs of \S\ref{sec:disc} extended by a zero
+multiplier component; the constraint row annihilates them.
+
+\paragraph{Algorithm (KKT path).}
+\begin{enumerate}
+\item Assemble $A$, $\eps Q$, the kernel $N$ and $\hat M$; form $C$ and
+  the augmented blocks $S_\theta$; build $\mathcal{M}_{\mathrm{KKT}}$
+  and the projector.
+\item For $k = 0,\dots,K-1$ ($K$ the count set by
+  \texttt{SetConstraint}): solve \eqref{eq:kkt} with
+  $b = f + \eps Q\,U^{(k)}$ for $(U^{(k+1)}, \lambda^{(k+1)})$ by
+  projected MINRES, starting from the current iterate ($U^{(0)}$ and the
+  starting iterate taken from the previous solution), to the sweep
+  tolerances of \S\ref{sec:sweeps}; record the normal-jump energy as a
+  diagnostic. This is the iterated Tikhonov refinement of the gauge in
+  its non-incremental form (the added $\eps QU^{(k)}$ cancels the
+  penalty at the fixed point), with the constraint exact in every
+  solve.
+\item Return $U$ and $\lambda$ (\texttt{KKTMultiplier()}).
+\end{enumerate}
+
+\subsection{The sweep schedule}
+\label{sec:sweeps}
+
+Both paths repeat a block solve several times: the AL multiplier sweeps
+and the KKT gauge refinements. Only the last sweep determines the
+endpoint to full accuracy: an error $\eta$ left by an inexact solve in
+sweep $k$ enters $w$ as $\theta P\eta$ and is then contracted by the
+remaining sweeps like any multiplier error. \texttt{SetSweepTolerance}
+$(\tau_{\mathrm{loose}})$ exploits this. With $\tau$ the solver's
+relative tolerance, $\tau_\ell = \max(\tau_{\mathrm{loose}},\tau)$, $K$
+sweeps and $N_0$ the initial residual norm of the first sweep (in the
+solver's own norm), sweep $k = 0,\dots,K-1$ runs to
+\begin{align}
+  k = 0&: \text{ relative tolerance } \tau_\ell; \nonumber\\
+  1\le k<K-1&: \text{ absolute tolerance }
+    \max\bigl(\tau,\ \tau_\ell\,d^{\,k}\bigr)\,N_0,
+  \qquad d = (\tau/\tau_\ell)^{1/(K-2)};
+\end{align}
+and the last sweep $k = K-1$ always runs to $\tau N_0$ (to relative
+tolerance $\tau$ when $K = 1$). The tolerance thus tightens
+geometrically from $\tau_\ell$ to $\tau$ across the sweeps, and every
+requested sweep runs. The design reasons:
+\begin{itemize}
+\item an early sweep need only be solved roughly, because the next
+  multiplier update perturbs its right-hand side anyway, and the late
+  accurate sweeps let the AL contraction wash out the early sweeps'
+  multiplier error;
+\item the later sweeps use an \emph{absolute} target anchored to $N_0$
+  because they are warm-started: a relative target would chase each
+  sweep's shrinking initial residual;
+\item the schedule is fixed in advance, not adaptive: an inner
+  tolerance coupled to the measured jump would deadlock (the measured
+  jump cannot fall below the solver-error floor that the loose
+  tolerance itself sets, while the multiplier error is amplified by
+  $\theta$);
+\item there is no plateau-based early exit: it triggers falsely on the
+  same measurement noise and truncates the multiplier updates the AL
+  contraction needs.
+\end{itemize}
+The library default $\tau_{\mathrm{loose}} = 0$ runs every sweep at full
+tolerance --- the reproducible-endpoint mode, mandatory for
+finite-difference (shift) studies and strict solver comparisons. The
+inexact schedule shifts the endpoint an order below the mesh error at
+benchmark resolution and roughly halves the cost; the Love-number
+benchmark uses it by default (\texttt{-sweep-tol 1e-3}) and forces exact
+mode on \texttt{-map-shift} runs.
+
+\subsection{Choosing between the two paths}
+
+Both paths are kept and solve the same discrete problem: they agree
+within discretisation error (at degree 0 to solver tolerance;
+\S\ref{sec:verif}; the Love-number benchmark, \texttt{doc/benchmarks.tex},
+section ``The Love-number family''), and endpoint differences between
+sweep counts and paths sit below the mesh error. At benchmark
+resolution their costs are comparable: the AL path with few sweeps is
+the cheapest, and the KKT path with a one-order-lower multiplier and the
+inexact schedule is cheaper than the AL path at its default eight
+full-tolerance sweeps. The AL path is the default and serves both
+organisations; the KKT path is single-valued only (\texttt{EnableKKT}
+and \texttt{EnableBrokenZeta} are mutually exclusive) and provides the
+multiplier as a solved-for field with a $\theta$-independent endpoint.
+
+\subsection{Why the fluid gauge stays a penalty}
+\label{sec:gaugekkt}
+
+The KKT idea applies in principle to the fluid gauge as well: minimise
+$\tfrac12 (Q\bv, \bv)$ subject to the full coupled equations
+$A\bv = f$, with $Q$ the unit-scale deviatoric gauge form --- no $\eps$
+anywhere, the gauge fixed as the minimum-$Q$-energy representative, and
+the physics exact. It is available on the mixed class
+(\texttt{\seqsplit{LinearQuasiStaticMixedSelfGravitatingProblem}::EnableGaugeKKT},
+the doubled saddle $[\mathrm{diag}(Q,0), A;\, A, 0]$ with the clean $A$
+in the constraint rows), but it is not competitive. Its iterates reach
+mesh-level physics early and satisfy the stationarity condition, but
+MINRES does not converge algebraically under block-diagonal
+preconditioning (Gauss--Seidel or algebraic multigrid) nor under the
+Murphy--Golub--Wathen composite on the multiplier slot
+\cite{MurphyGolubWathen2000}, at a cost far above the penalty path
+(\texttt{doc/benchmarks.tex}). The structural reason: the
+``constraint'' operator is square and only approximately singular, so
+saddle-point preconditioning theory --- which assumes a full-rank
+rectangular constraint --- does not apply, and the near-kernel
+reappears wherever the scheme needs solves with $A$. KKT pays for a
+full-rank interface constraint, as above; for selection over a
+near-kernel, the penalty with iterated refinement is the appropriate
+regularisation, and it is the production path for the gauge
+(\texttt{doc/gauge\_penalty\_iteration.tex}).
+
+\section{Implementation}
+\label{sec:impl}
+
+\paragraph{The class.}
+\texttt{\seqsplit{LinearQuasiStaticReferentialSelfGravitatingSlipProblem}}
+(\texttt{referential\_problem.hpp}, \texttt{src/referential\_problem.cpp})
+derives from the referential self-gravitating problem. Its constructor
+takes the solid displacement space (on a SubMesh of the ball; the base
+class's displacement space), the fluid displacement space (on a SubMesh
+of the same parent, sharing the solid space's finite element
+collection), the scalar potential space on the ball, the referential
+rheology (position-based coefficients valid on both regions; a fluid
+region carries $\mu_b = \pi$ through the bare conversion of
+Lemma~\ref{lem:mub}), the referential density, the interface pressure
+$\pi$, the interface boundary attributes on the \emph{solid} SubMesh,
+$G$, the DtN degree, and optionally the background $\zeta^0$ (otherwise
+solved from the density over solid and fluid). Serial and parallel run
+in one class: in parallel every block is a hypre product on true dofs
+with the cross-rank pairing and extension operators.
+
+\paragraph{Set-up.}
+\begin{itemize}
+\item \texttt{SetPrescribedVacuumExtension} (base class): the vacuum
+  extension of the outer region through the buffer, required in both
+  organisations.
+\item \texttt{SetFluidExtension(E)}: the prescribed fluid extension
+  $\tilde{\bv} = E\,\bv_{\mathrm{s}}$ of the single-valued organisation,
+  normally \texttt{NewRadialFluidExtension} --- interface trace rows copy
+  the solid values exactly through the pairing, interior rows take
+  $t(r)\,\bv_{\mathrm{s}}(r_c\hat{\bx})$ with $t = (r/r_c)^p$ (default
+  $p = 2$). The interior rule is gauge; two extensions giving the same
+  observables is the built-in invariance test.
+\item \texttt{SetFluidGauge(mu\_gauge, epsilon)}: the fluid gauge
+  penalty, assembled covariantly as
+  \texttt{ElasticTensorIntegrator(C, map)} with the pulled-back
+  deviatoric tensor and the rheology's equilibrium mapping. The
+  base-class \texttt{SetGaugedFluid()} is refused (the fluid has its own
+  space here).
+\item \texttt{SetConstraint(theta, iterations)}: the penalty $\theta$
+  (default $100$) and the number of AL sweeps or KKT gauge refinements
+  per \texttt{Solve()} (default $8$).
+\item \texttt{EnableKKT(fes\_scalar\_solid)}: the KKT path of
+  \S\ref{sec:kkt}; single-valued organisation only.
+\item \texttt{EnableBrokenZeta(fes\_zeta\_outer, theta\_zeta)}: the
+  broken-$\zeta$ organisation, with $(\zeta_o, \zeta_{\mathrm{f}})$ on
+  the outer region (a shadow space covering every attribute except the
+  fluid) and the fluid; the DtN stays on the ball space and is folded
+  through the outer injection; no fluid extension is needed.
+\item \texttt{SetSweepTolerance(loose)}: the inexact sweep schedule of
+  \S\ref{sec:sweeps}.
+\end{itemize}
+
+\paragraph{Usage} (single-valued, KKT):
+\begin{verbatim}
+slip.SetPrescribedVacuumExtension(fes_buffer, *Evac);
+slip.SetFluidExtension(*Ef);          // NewRadialFluidExtension
+slip.SetFluidGauge(mu_gauge, 1e-2);
+slip.SetConstraint(100.0, 3);         // theta; outer iterations
+slip.EnableKKT(&fes_scalar_solid);    // one order below u recommended
+slip.SetSweepTolerance(0.0);          // 0 = reproducible endpoint
+\end{verbatim}
+In the Love-number benchmark: \texttt{-method slip} (single-valued) or
+\texttt{-method slip\_broken}, with \texttt{-theta}, \texttt{-al},
+\texttt{-sweep-tol}, and for the KKT path \texttt{-kkt -kkt-order 1}.
+\texttt{examples/slipping\_interface.cpp} exposes every option of the
+class on one problem (a two-layer self-gravitating body under a surface
+load, spherical or relabelled onto an aspherical reference mesh), prints
+the constraint histories and the surface harmonic analysis including the
+leakage into other degrees, compares with the welded and Dahlen
+solutions, and shows the fields in GLVis.
+
+\paragraph{Restrictions.}
+\begin{itemize}
+\item The single-valued organisation assembles its gravity
+  \emph{mismatch} pieces (\S\ref{sec:gravhess}) at
+  $\varphi_e = \mathrm{id}$ only, and refuses a non-identity equilibrium
+  mapping (\texttt{Diffeomorphism::IsIdentity}), pointing to the broken
+  organisation; its elastic, $B_\Sigma$ and referential gravity terms are
+  fully mapped. The broken organisation is assembled mapped throughout
+  and is the route for mapped and aspherical backgrounds.
+\item One fluid region inside a solid shell: the radial fluid extension
+  is one-sided (no nested shells with two-sided extensions).
+\item The KKT path is single-valued only.
+\end{itemize}
+
+\paragraph{Observables.} The solid displacement, and in the fluid the
+quantities built from $\mathrm{div}(\rho\bv_{\mathrm{f}})$ and the
+interface normal displacement; the fluid displacement itself is gauge.
+In the single-valued organisation $\zeta^1 = \varphi^1 +
+\tilde{\bv}\cdot\nabla\zeta^0$ carries the extension field off the
+solid, so it is extension-invariant (an observable) only on the solid
+region; comparisons elsewhere must first convert to the Eulerian
+$\varphi^1$. The multipliers (\texttt{ConstraintMultiplier()},
+\texttt{KKTMultiplier()}) are the first-order interface normal traction
+paired with $\bnu$, not $\pi$ (\S\ref{sec:first}).
+
+\paragraph{Diagnostics.} \texttt{NormalJumpHistory()} and
+\texttt{ZetaJumpHistory()} (per-sweep constraint energies),
+\texttt{SlipRigidPairResiduals()} and \texttt{BlockNullPairResidual()}
+(the null pairs under the assembled operator),
+\texttt{FluidDisplacement()}, \texttt{OuterPotential()} and
+\texttt{FluidPotential()} (broken mode), and, for the change-of-variables
+identity of \texttt{doc/mappings.md}, per-block and per-kernel probes of
+the broken operator (\texttt{ApplyBrokenBlock()},
+\texttt{ApplyBrokenKernel()}).
+
+\section{Verification}
+\label{sec:verif}
+
+Each identity below is asserted by a test; the quoted levels are those
+measured at the test settings (the assertions are looser bounds).
+Energy identities use exact constrained broken-motion families on a
+circular referential $\Sigma$ (rotational slip: the attachment holds
+exactly at finite $\eps$, and the family's own curvature exercises the
+$\bm{\sigma}_2$ correction), with the gravitational part of the exact
+energy in closed form by the shell theorem (plus the exact $m = 1$
+multipole energy in the broken case). Solution-level checks use the
+two-layer hydrostatic disc, where $\pi(r_c) > 0$, so $B_\Sigma$ and the
+gravity interface or mismatch pieces act.
+
+\medskip
+\noindent
+{\small
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.38\textwidth}>{\raggedright\arraybackslash}p{0.31\textwidth}>{\raggedright\arraybackslash}p{0.25\textwidth}@{}}
+\hline
+Identity & Test & Level \\
+\hline
+$d^2E/d\eps^2 = Q_{\mathrm{vol}} + B_\Sigma$ at $\varphi_e =
+\mathrm{id}$ and a curved radial $\varphi_e$ (non-trivial $\bnu$, $J_e$),
+diagonal and polarised & \texttt{\seqsplit{TestSlipInterface}}:
+\texttt{\seqsplit{SecondVariationIdentity}}, \texttt{\seqsplit{SecondVariationMapped}} &
+$2\times10^{-4}$ relative; $B_\Sigma$ resolved $>50\times$ the residual \\
+discrete $B_\Sigma$ against its quadrature form &
+\texttt{\seqsplit{DiscreteMatrixMatchesQuadrature}} & converges with order; welded
+pairs annihilated to round-off \\
+single-valued gravity Hessian \eqref{eq:mismatch}--\eqref{eq:wextra}:
+radial squeeze, azimuthal, axisymmetric relabelling, mixed families,
+vanishing gravity--slip cross terms & \texttt{\seqsplit{GravityHessianIdentity}} &
+$\le 3\times10^{-4}$ \\
+discrete mismatch pieces against quadrature &
+\texttt{\seqsplit{DiscreteGravityPiecesMatchQuadrature}} & order 1:
+$\sim4\times10^{-2}$; order 2: $2$--$5\times10^{-4}$ \\
+$d^2E/d\eps^2$ in the broken organisation, $G_\Sigma$ included; joint
+annihilation of the axisymmetric relabelling &
+\texttt{\seqsplit{BrokenZetaGravityIdentity}} & $3\times10^{-4}$ \\
+discrete $G_\Sigma$ against quadrature, at the identity and a curved
+radial $\varphi_e$ & \texttt{\seqsplit{DiscreteGravityInterfaceMatchesQuadrature}}
+& converges with order; welded pairs annihilated to round-off \\
+pairing $J$: nodal trace identification, $J^TJ = I$ on paired dofs &
+\texttt{\seqsplit{TestSlidingInterface}}: \texttt{\seqsplit{PairingIdentities}} & machine
+precision \\
+gravity-free sliding cavity against the condensed rank-one reference;
+normal jump contracts, tangential jump free &
+\texttt{\seqsplit{CavityMatchesCondensedWithFreeSlip}},
+\texttt{\seqsplit{TestSlidingInterfacePar}} & $<5\times10^{-3}$; normal jump
+$<10^{-4}$ of the trace \\
+reduction (b): slipping against welded gauged solution (spherical,
+barotropic); two fluid extensions (taper powers 2, 3) &
+\texttt{\seqsplit{TestSlipProblem}}: \texttt{\seqsplit{TwoLayerBarotropicCrossCheck}} &
+$1.1\times10^{-3}$ ($u_s$), $7\times10^{-4}$ ($\zeta^1$ on the solid),
+order 2; extensions agree to $5\times10^{-6}$ \\
+reduction (a): Dahlen-class solution (F1--F3) under
+$\zeta^1 = \varphi^1 + \bv\cdot\nabla\Phi_0$, degree-2 load &
+\texttt{\seqsplit{ReducesToDahlenOnSphere}} & $6\times10^{-3}$ ($u_s$),
+$5\times10^{-3}$ (potential), order 2 \\
+reduction (c): massless, pressure-free background $\to$ gravity-free
+sliding cavity & \texttt{\seqsplit{PressureFreeReducesToSlidingCavity}} &
+$2\times10^{-5}$; potential decouples to zero \\
+KKT against AL & \texttt{\seqsplit{KKTMatchesAugmentedLagrangian}} & displacement
+within $10^{-3}$; KKT jump at the AL floor \\
+reduction (d): broken against single-valued organisation &
+\texttt{\seqsplit{BrokenZetaHeadToHead}} & $7\times10^{-5}$ ($u_s$),
+$5\times10^{-5}$ ($\zeta^1$ on the solid) \\
+null pairs under the full operator, both penalties included, at the
+identity and under a relabelling & \texttt{\seqsplit{RigidPairsNearNull}} &
+near-null \\
+mapped broken solver: interface-fixing relabelling
+$\xi = f(r)\,\mathrm{Rot}(\alpha(r))\,x$ with a twist across $\Sigma$
+(non-radial $F_e$ on the interface), against the identity description &
+\texttt{\seqsplit{BrokenZetaRelabelledEquilibrium}} & $5\times10^{-4}$ ($u_s$),
+$2\times10^{-4}$ ($\zeta^1$ on the solid), two orders below the map
+amplitude \\
+serial against parallel (single-valued and broken; 1, 2, 4 ranks;
+orders 1, 2) & \texttt{\seqsplit{TestReferentialProblemPar}} & $10^{-5}$ \\
+\hline
+\end{tabular}}
+
+\medskip
+The mapped broken check is the slipping-interface instance of the
+discrete change-of-variables identity of \texttt{doc/mappings.md}
+(section ``The discrete change-of-variables identity''): every mapped
+piece (per-region $a$-forms and Poisson blocks, couplings, $B_\Sigma$,
+$G_\Sigma$, $\mathbf{b}$, the jump constraint) is load-bearing in it.
+The two organisations share \emph{no} gravity-interface machinery
+(mismatch volume terms and extension on one side, $G_\Sigma$ and jump
+condition on the other), and reduction (a) shares no interface
+machinery with the Dahlen formulation, so these are two-sided checks.
+Externally, the \texttt{slip} and \texttt{slip\_broken} methods of the
+Love-number benchmark are compared with \texttt{pyslfp} and with the
+welded methods (\texttt{doc/benchmarks.tex}), which also records the
+measured cost of the AL and KKT paths.
+
+\appendix
+
+\section{Assessment of the published treatments}
+\label{sec:verdict}
+
+Checked against the derivation above, at the fluid--solid interface:
+
+\textbf{Al-Attar, Crawford, Valentine \& Trampert (2018)
+\cite{AC18} [AC18]: correct.} Their natural-configuration quadratic action (their eq.~121)
+carries the interface terms
+$-\!\int\varpi^{(0)}\langle\nabla\sigma\otimes\jump{\bm{\varphi}},
+D\bm{\varphi}_1\rangle + \tfrac12\!\int\varpi^{(0)}\langle
+\nabla\nabla\sigma\,\jump{\bm{\varphi}}, \jump{\bm{\varphi}}\rangle$;
+doubling (their $\mathcal{S}^{(2)}$ is one half of the Hessian) and
+applying the collapse \eqref{eq:collapse} in reverse, this is
+\emph{exactly} \eqref{eq:BSigma} at $\varphi_e = \mathrm{id}$ with
+$\varpi^{(0)}$ identified with the referential pressure $\pi$ ---
+factor of two, curvature term ($\nabla\nabla\sigma = \mathrm{II}$ for
+their distance-type $\sigma$) and all. Their general-configuration
+operators $(\mathbf{Q}_1^{(0)}, \mathbf{S}_1^{(0)})$ (their
+eqs.~107/109) are the pre-collapse form of the same object, and their
+own reduction to Woodhouse \& Dahlen (1978) \cite{WoodhouseDahlen1978}
+stands. Since our
+derivation is independent (constrained-family route, no level-set
+machinery), the agreement is a genuine two-sided check.
+
+\textbf{Maitra \& Al-Attar (2024) \cite{MA24} [MA24]: exact theory
+correct;
+one identified oversight in the linearisation.} Their nonlinear
+treatment carries every Jacobian explicitly: the weak slip term (their
+eq.~170) pairs against $J\mathbf{F}^{-T}\hat{\mathbf{n}} = \bnu$, the
+multiplier identification (their eq.~174) gives the traction
+$-\varpi\,\bnu$, i.e.\ $\varpi = \pi$ in agreement with
+\S\ref{sec:first}, and the finite-slip traction continuity (their
+eq.~176) even displays the surface Jacobian $J_\chi$ with commentary.
+The linearised slip vector (their eq.~B3) and constraint (B4) agree
+with \S\ref{sec:kin} (the latter is ours divided by $J^{(0)}$ --- the
+same constraint set). The oversight sits in their eqs.~(B5)--(B6):
+expanding (170) exactly, the $O(\eps)$ terms inherit the factor
+$J^{(0)}$ from $\delta(J\mathbf{F}^{-T})$, but their operator
+$\mathbf{Q}\,\mathbf{a} = \mathbf{F}^{(0)-T}[\hat{\mathbf{n}}\otimes
+\mathbf{a}]\mathbf{F}^{(0)-T} = (\mathbf{F}^{-T}\hat{\mathbf{n}})
+\otimes(\mathbf{F}^{-1}\mathbf{a})$ carries no $J^{(0)}$ while their
+$O(1)$ term keeps it: \textbf{the two $\mathbf{Q}$-terms of (B6), and
+hence the linearised momentum equation using them, are missing a
+factor $J^{(0)}$}. (Their simultaneous dropping of the
+$\tr(\mathbf{F}^{-1}D\mathbf{u})$-term is, by contrast, legitimate:
+it multiplies $\langle\jump{\mathbf{w}},
+\mathbf{F}^{(0)-T}\hat{\mathbf{n}}\rangle$, which vanishes on their
+constrained test space (B7a).) The oversight is invisible in the
+natural configuration ($J^{(0)} = 1$) --- hence in all their stated
+applications --- and consistent with the general rule of
+Remark~\ref{rem:jacobian}: an oversight, not a convention.
+
+Organisationally the two papers differ: AC18's final weak form
+(their eqs.~118--120) imposes the slip constraint on the configuration
+space and \emph{eliminates} the first-order multiplier
+$\varpi^{(1)}$, so their linearised equations carry only the
+\emph{given} background field $\varpi^{(0)}$ (their footnote relates
+$-\varpi^{(0)}$ to Woodhouse--Dahlen's $\pi_0$; the identification
+with our $\pi$ is up to that sign convention, which nothing here
+relies on). MA24 instead imposes the test-function constraint weakly
+with a multiplier field $\varpi$ (their eq.~170) --- a mixed
+formulation. Our $B_\Sigma$ is AC18's organisation --- background
+data only, constraint on the space (via penalty + AL in practice) ---
+plus the collapse to trace-only tangential derivatives, which is what
+makes the implementation curvature-free.
+
+\begin{thebibliography}{99}
+
+\bibitem{AC18}
+D.~Al-Attar, O.~Crawford, A.~P. Valentine, J.~Trampert,
+\emph{Hamilton's principle and normal mode coupling in an aspherical
+planet with a fluid core},
+Geophys. J. Int. 214 (2018), 485--507.
+
+\bibitem{MA24}
+M.~Maitra, D.~Al-Attar,
+\emph{On the elastodynamics of rotating planets},
+Geophys. J. Int. 237 (2024), 1301--1338.
+
+\bibitem{Valette1986}
+B.~Valette,
+\emph{About the influence of pre-stress upon adiabatic perturbations of
+the Earth},
+Geophys. J. R. astr. Soc. 85 (1986), 179--208.
+
+\bibitem{Valette1991}
+B.~Valette, on the gravito-elastodynamics of a pre-stressed elastic
+Earth, Geophys. J. Int. 104 (1991), 555.
+
+\bibitem{WoodhouseDahlen1978}
+J.~H. Woodhouse, F.~A. Dahlen,
+\emph{The effect of a general aspherical perturbation on the free
+oscillations of the Earth},
+Geophys. J. R. astr. Soc. 53 (1978), 335--354.
+
+\bibitem{Hestenes1969}
+M.~R. Hestenes,
+\emph{Multiplier and gradient methods},
+J. Optim. Theory Appl. 4 (1969), 303--320.
+
+\bibitem{Powell1969}
+M.~J.~D. Powell,
+\emph{A method for nonlinear constraints in minimization problems},
+in R.~Fletcher (ed.), \emph{Optimization}, Academic Press, 1969.
+
+\bibitem{FortinGlowinski}
+M.~Fortin, R.~Glowinski,
+\emph{Augmented Lagrangian Methods},
+North-Holland, 1983.
+
+\bibitem{GolubGreif2003}
+G.~H. Golub, C.~Greif,
+\emph{On solving block-structured indefinite linear systems},
+SIAM J. Sci. Comput. 24 (2003), 2076--2092.
+
+\bibitem{MurphyGolubWathen2000}
+M.~F. Murphy, G.~H. Golub, A.~J. Wathen,
+\emph{A note on preconditioning for indefinite linear systems},
+SIAM J. Sci. Comput. 21 (2000), 1969--1972.
+
+\bibitem{Wohlmuth2001}
+B.~I. Wohlmuth,
+\emph{Discretization Methods and Iterative Solvers Based on Domain
+Decomposition},
+Springer, 2001.
+
+\end{thebibliography}
+
+\end{document}
