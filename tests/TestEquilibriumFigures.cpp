@@ -22,6 +22,11 @@
   plateau; the tolerances allow for the quadrature differences between
   the load assembly inside the saddle and the derivative's own assembly
   on the curved elements.
+
+  The 2-D tests cover the dimension's singular Laplace-DtN operator
+  (compatible loads, projected solves; the header's 2-D note), the
+  three-mode rigid border, and the two-layer (no inner core) model
+  whose fluid reaches the centre.
 */
 
 namespace {
@@ -359,6 +364,157 @@ TEST(EquilibriumFigures, HessianActionMatchesFDAndIsSymmetric) {
   const double fde = fd * e;
   EXPECT_NEAR(fde, hde, 2e-4 * std::max(std::abs(fde), std::abs(hde)))
       << "fd " << fde << " vs H " << hde;
+}
+
+TEST(EquilibriumFigures, TwoDimensionsDerivativeMatchesFD) {
+  // The 2-D certificate: the Laplace-DtN operator is singular in the
+  // constant and a net-mass load inconsistent until the library's
+  // uniform-flux compatibility correction (equilibrium_figures.hpp);
+  // the FD check validates the projected potential and adjoint solves
+  // end to end, derivative included, on the three-layer disc.
+  Mesh parent(ThreeLayerMeshFile(2), 1, 1);
+  auto fluid = SubMesh::CreateFromDomain(parent, Array<int>({2}));
+
+  H1_FECollection h1_phi(2, 2), h1_u(2, 2), h1_p(1, 2);
+  L2_FECollection l2(2, 2);
+  FiniteElementSpace fes_phi(&parent, &h1_phi);
+  FiniteElementSpace fes_u(&fluid, &h1_u, 2);
+  FiniteElementSpace fes_p(&fluid, &h1_p);
+  FiniteElementSpace fes_rho(&fluid, &l2);
+  FiniteElementSpace fes_rho_parent(&parent, &l2);
+
+  Array<int> ess(fluid.bdr_attributes.Max());
+  ess = 1;
+
+  ProblemSetup s{&parent,   &fluid,   &fes_phi,       &fes_u, &fes_p,
+          &fes_rho,  &fes_rho_parent, Array<int>({2}), nullptr, &ess};
+  Vector dual;
+  CheckDerivative(s, 1e-3, 2e-5, 2, dual);
+}
+
+TEST(EquilibriumFigures, TwoDimensionsRigidCoreCertificate) {
+  // The enclosed-solid border in 2-D: three modes per group (two
+  // translations and the in-plane rotation), the border loads, and the
+  // adjoint's core extension, validated by the enrichment inequality
+  // and an FD check of the enriched derivative.
+  Mesh parent(ThreeLayerMeshFile(2), 1, 1);
+  auto fluid = SubMesh::CreateFromDomain(parent, Array<int>({2}));
+
+  H1_FECollection h1_phi(2, 2), h1_u(2, 2), h1_p(1, 2);
+  L2_FECollection l2(2, 2);
+  FiniteElementSpace fes_phi(&parent, &h1_phi);
+  FiniteElementSpace fes_u(&fluid, &h1_u, 2);
+  FiniteElementSpace fes_p(&fluid, &h1_p);
+  FiniteElementSpace fes_rho(&fluid, &l2);
+  FiniteElementSpace fes_rho_parent(&parent, &l2);
+
+  Array<int> ess(fluid.bdr_attributes.Max());
+  ess = 1;
+
+  std::vector<RigidComponent> rigid(1);
+  rigid[0].fluid_bdr_marker.SetSize(fluid.bdr_attributes.Max());
+  rigid[0].fluid_bdr_marker = 0;
+  rigid[0].fluid_bdr_marker[0] = 1;  // the ICB
+  rigid[0].parent_attributes.SetSize(1);
+  rigid[0].parent_attributes[0] = 1;  // the inner core
+
+  ModelDensity rho;
+  DensityFeasibilityProblem clamped(fes_phi, 8, kGravG, Array<int>({2}),
+                                    fes_u, fes_p, nullptr, &ess);
+  DensityFeasibilityProblem enriched(fes_phi, 8, kGravG, Array<int>({2}),
+                                     fes_u, fes_p, nullptr, &ess, &rigid);
+  auto j_clamped = clamped.Evaluate(rho.Get(), rho.Get());
+  auto j_enriched = enriched.Evaluate(rho.Get(), rho.Get());
+  EXPECT_GE(j_enriched->Value(), j_clamped->Value() * (1.0 - 1e-10));
+  EXPECT_GT(j_enriched->Value(), j_clamped->Value() * 1.001);
+  EXPECT_EQ(j_enriched->RigidCoefficients().Size(), 3);
+  EXPECT_GT(j_enriched->RigidCoefficients().Norml2(), 0.0);
+
+  std::mt19937 gen(31);
+  std::uniform_real_distribution<double> dist(-1.0, 1.0);
+  GridFunction d(&fes_rho), d_parent(&fes_rho_parent);
+  for (int i = 0; i < d.Size(); i++) {
+    d[i] = dist(gen);
+  }
+  d_parent = 0.0;
+  SubMesh::Transfer(d, d_parent);
+  GridFunctionCoefficient dc(&d), dc_parent(&d_parent);
+
+  Vector dual;
+  j_enriched->Derivative(fes_rho, dual);
+  const double step = 1e-3;
+  auto at = [&](double eps) {
+    ProductCoefficient scaled_f(eps, dc);
+    ProductCoefficient scaled_p(eps, dc_parent);
+    SumCoefficient rp(rho.Get(), scaled_p);
+    SumCoefficient rs(rho.Get(), scaled_f);
+    return enriched.Evaluate(rp, rs)->Value();
+  };
+  const double fd = (at(step) - at(-step)) / (2.0 * step);
+  const double predicted = dual * d;
+  EXPECT_NEAR(fd, predicted,
+              2e-5 * std::max(std::abs(fd), std::abs(predicted)))
+      << "fd " << fd << " vs dual.d " << predicted;
+}
+
+TEST(EquilibriumFigures, TwoLayerModelDerivativeMatchesFD) {
+  // The two-layer disc (no inner core): the fluid region reaches the
+  // centre, its SubMesh boundary is the CMB alone, and the layer
+  // attributes shift (1 fluid, 2 mantle, 3 buffer) — the no-core path
+  // of the examples, FD-validated.
+  Mesh parent(TwoLayerMeshFile(2), 1, 1);
+  auto fluid = SubMesh::CreateFromDomain(parent, Array<int>({1}));
+
+  H1_FECollection h1_phi(2, 2), h1_u(2, 2), h1_p(1, 2);
+  L2_FECollection l2(2, 2);
+  FiniteElementSpace fes_phi(&parent, &h1_phi);
+  FiniteElementSpace fes_u(&fluid, &h1_u, 2);
+  FiniteElementSpace fes_p(&fluid, &h1_p);
+  FiniteElementSpace fes_rho(&fluid, &l2);
+  FiniteElementSpace fes_rho_parent(&parent, &l2);
+
+  Array<int> ess(fluid.bdr_attributes.Max());
+  ess = 1;
+
+  // The two-layer density by attribute (the fluid field is regular at
+  // the origin).
+  FunctionCoefficient fluid_rho(FluidRho);
+  ConstantCoefficient mantle(1.0), buffer(0.0);
+  PWCoefficient rho0;
+  rho0.UpdateCoefficient(1, fluid_rho);
+  rho0.UpdateCoefficient(2, mantle);
+  rho0.UpdateCoefficient(3, buffer);
+
+  std::mt19937 gen(93);
+  std::uniform_real_distribution<double> dist(-1.0, 1.0);
+  GridFunction d(&fes_rho), d_parent(&fes_rho_parent);
+  for (int i = 0; i < d.Size(); i++) {
+    d[i] = dist(gen);
+  }
+  d_parent = 0.0;
+  SubMesh::Transfer(d, d_parent);
+  GridFunctionCoefficient dc(&d), dc_parent(&d_parent);
+
+  DensityFeasibilityProblem problem(fes_phi, 8, kGravG, Array<int>({1}),
+                                    fes_u, fes_p, nullptr, &ess);
+  auto base = problem.Evaluate(rho0, rho0);
+  EXPECT_GT(base->Value(), 0.0);
+
+  Vector dual;
+  base->Derivative(fes_rho, dual);
+  const double step = 1e-3;
+  auto at = [&](double eps) {
+    ProductCoefficient scaled_f(eps, dc);
+    ProductCoefficient scaled_p(eps, dc_parent);
+    SumCoefficient rp(rho0, scaled_p);
+    SumCoefficient rs(rho0, scaled_f);
+    return problem.Evaluate(rp, rs)->Value();
+  };
+  const double fd = (at(step) - at(-step)) / (2.0 * step);
+  const double predicted = dual * d;
+  EXPECT_NEAR(fd, predicted,
+              2e-5 * std::max(std::abs(fd), std::abs(predicted)))
+      << "fd " << fd << " vs dual.d " << predicted;
 }
 
 TEST(EquilibriumFigures, RigidCoreCertificate) {

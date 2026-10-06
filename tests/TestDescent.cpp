@@ -172,3 +172,49 @@ TEST(Descent, PriorScalesTheQuadraticSolution) {
   diff -= scaled;
   EXPECT_LT(diff.Norml2() / scaled.Norml2(), 1e-5);
 }
+
+TEST(Descent, StopPredicateEndsBothLoops) {
+  Mesh mesh("../data/elastogravity_two_layer_2d.msh", 1, 1);
+  L2_FECollection l2(1, 2);
+  FiniteElementSpace fes(&mesh, &l2);
+
+  BilinearForm m(&fes);
+  m.AddDomainIntegrator(new MassIntegrator());
+  m.Assemble();
+  m.Finalize();
+
+  FunctionCoefficient fc(
+      [](const Vector& x) { return 1.0 + x[0] + std::sin(2.0 * x[1]); });
+  LinearForm flf(&fes);
+  flf.AddDomainIntegrator(new DomainLFIntegrator(fc));
+  flf.Assemble();
+  Vector f(flf);
+
+  Toy toy{&fes, &m.SpMat(), &f};
+  L2RieszMap riesz(fes);
+  ConstrainedMetric metric(riesz);
+
+  // The predicate sees the accepted iterates (after the monitor) and
+  // ends the loop, reported as converged, at the iteration it names —
+  // the first, before the loops' own floors can intervene.
+  auto run = [&](bool gauss_newton) {
+    DescentOptions options;
+    options.max_iterations = 50;
+    options.tolerance = 0.0;
+    int monitored = 0;
+    options.monitor = [&](int it, double, double) { monitored = it; };
+    options.stop = [&](int it, double) { return it >= 1; };
+    Vector c(fes.GetTrueVSize());
+    c = 0.0;
+    const auto r =
+        gauss_newton
+            ? LevenbergMarquardt(toy.Functional(), metric, m.SpMat(), c,
+                                 options)
+            : NonlinearCG(toy.Functional(), metric, c, options);
+    EXPECT_EQ(r.iterations, 1) << (gauss_newton ? "lm" : "cg");
+    EXPECT_EQ(monitored, 1) << (gauss_newton ? "lm" : "cg");
+    EXPECT_TRUE(r.converged) << (gauss_newton ? "lm" : "cg");
+  };
+  run(false);
+  run(true);
+}

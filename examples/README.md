@@ -179,23 +179,53 @@ hydrostatic equilibrium. Shows: the minimum-deviatoric pressure, and
 `-e 0`.
 
 **`equilibrium_density`**: density restoration, the first milestone of
-the equilibrium-figures programme (`doc/equilibrium_figures.tex`): the
-fluid outer core of the three-layer model starts non-barotropic, and the
-fluid-only feasibility functional is driven to its floor by nonlinear CG
-in a choosable metric (`-metric l2|h1|h2`, `-length`, `-prior`), by
-Levenberg–Marquardt Gauss–Newton (`-loop gn`, the fast route), or by
-the advection flow (`-loop advect`). The inner core's force and torque
-balance joins the certificate by default (`-core rigid`): the run
-prints the core's multiplier motion and the clamped functional beside
-J, whose initial gap is the core imbalance the connected-solid
-certificate cannot see, closing as balance is restored. The CSVs plot
-J, the dimensionless |dev T|/|p|, the energy and the core motion by
-iteration, and the (Phi, rho) scatter before and after — restored
-barotropy is the scatter collapsed onto one curve. Shows: the initial
-and final fluid density, the initial relaxation flow, and the
-|dev T|/p infeasibility map before and after.
-`./equilibrium_density`, `./equilibrium_density -loop gn -prior 1e-7`,
-`./equilibrium_density -core clamped`
+the equilibrium-figures programme (`doc/equilibrium_figures.tex`): a
+layered model starts without a static state, and the fluid-only
+feasibility functional is driven to its floor — by default the study's
+measured recipe, Levenberg–Marquardt Gauss–Newton with a roughness
+prior, stopped where the dimensionless |dev T|/|p| stagnates (`-eta`
+sets an explicit threshold instead); `-loop cg` descends in a choosable
+metric (`-metric l2|h1|h2`, `-length`), `-loop advect` runs the
+advection flow. The model: by default the GEOMETRY denies equilibrium —
+`-shape flat` flattens every interface, `-shape cmb` puts oscillatory
+topography on the CMB (prior off there: its correction is oscillatory),
+and the restoration generates the container's non-spherical equilibrium
+density from a radial start (`-shape bump`, one Gaussian CMB bump, is
+the strongest and best-behaved geometric signal); `-shape sphere` uses
+the spherical meshes with the `-amp` lateral density term instead, and
+`-blob` fixes a Gaussian density anomaly in the mantle whose gravity
+stresses the solid and moves the core. `-dim 2` (default; order 3, so the weak geometric
+signal clears the floor) or `-dim 3` (order 2 for cost — aspherical
+shapes there need `-o 3`); `-ic` (default) for the three-layer Earth
+with a solid inner core, `-no-ic` for the two-layer one. With a core,
+its force and torque balance joins the certificate by default
+(`-core rigid`): the run prints the core's multiplier motion and the
+clamped functional beside J, whose initial gap is the core imbalance
+the connected-solid certificate cannot see, closing as balance is
+restored. The CSVs plot J, the dimensionless |dev T|/|p|, the energy
+and the core motion by iteration, and the (Phi, rho) scatter before and
+after — restored barotropy is the scatter collapsed onto one curve.
+Shows five windows: the whole-body density and |dev T|/p_rms before and
+after (|dev T| against the RMS of the PHYSICAL fluid pressure, anchored
+by the recovered datum — a single scalar, since any pointwise pressure
+crosses zero somewhere: the gauged field inside the fluid, the physical
+one at the free surface — so map values read as fractions of the actual
+pressure), and the initial relaxation flow on the fluid. The initial stress window is the
+unweighted GLOBAL minimiser — the one equilibrium stress field the body
+admits away from feasibility, its fluid share carrying the solid's
+leakage, quantified by the printed split; the final one is the exact
+two-piece recovery (the certificate's own stress in the fluid; per
+solid component its minimum-deviatoric generator, loaded on its fluid
+interface by the certificate's pressure with the pressure datum
+recovered by minimising the deviatoric norm over the gauge constant), a
+genuine equilibrium field to numerical convergence since the neglected
+viscous interface traction is O(sqrt J). The relaxed fluid goes quiet
+while the aspherical solid keeps its unavoidable share; the run prints
+the fluid/mantle/core ||dev T|| split and the datum. The stress maps
+are elementwise, since |dev T| genuinely jumps at the CMB and ICB —
+refine the mesh (equilibrium_bodies.py --scale) for a finer image.
+`./equilibrium_density -vis`, `./equilibrium_density -shape cmb`,
+`./equilibrium_density -blob 0.5 -vis`, `./equilibrium_density -no-ic`
 
 **`prestress_loading`**: does the deviatoric part of the pre-stress matter
 for loading? Full against quasi-hydrostatic pre-stress on ellipses of

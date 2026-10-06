@@ -102,6 +102,58 @@ tolerances 1e-11).
   basic method is demonstrated, move it into a small library module
   (beside `riesz.hpp`) so the stage-2 and joint loops reuse it.
 
+- ~~**A principled stopping rule / usable example defaults.**~~ Done:
+  the example's defaults are now the measured recipe — Levenberg–
+  Marquardt Gauss–Newton with the roughness prior (1e-7) — stopped
+  where the dimensionless eta = |dev T|/|p| stagnates (two consecutive
+  accepted iterations improving it by under 0.1%, counted only after a
+  10% fall so the damped LM warm-up cannot trip it; `-eta` is an
+  explicit discrepancy threshold instead, `-tol` the old relative-J
+  stop). On the three-layer ball this stops at 16 of the former
+  60-iteration grind at the same floor; the stop predicate is
+  `DescentOptions::stop`, serial and parallel. The example also gained
+  `-dim 2` (the disc models, an order of magnitude cheaper — the
+  library's Poisson solves handle the 2-D singular constant by the
+  uniform-flux compatibility correction and a zero-boundary-mean
+  gauge, which keeps the envelope formulas discretely exact; FD-tested
+  to the 3-D tolerances) and `-ic`/`-no-ic` (the three- or two-layer
+  model; `elastogravity_two_layer_3d.msh` added to the build). The 2-D
+  advection loop runs straight into the known off-manifold growth and
+  is held by the J ceiling — further evidence for the semi-Lagrangian
+  upgrade below.
+
+- ~~**Geometry-driven defaults** (David's suggestion)~~. Done: the
+  example's default model is now ASPHERICAL with a purely radial
+  starting density — `equilibrium_bodies.py` builds
+  `{flattened,cmb_topo}_{two,three}_layer_{2,3}d.mesh` (planetmodel
+  stretch mappings, smoothstep-tapered across the buffer so the DtN
+  keeps a spherical outer boundary; a quadratic taper folds elements at
+  f = 0.1) — so the restoration generates the container's non-spherical
+  equilibrium density; `-shape sphere` keeps the lateral-term
+  experiment, `-blob` adds a fixed mantle anomaly, and `-vis` gained
+  whole-body windows: the stress recovered EXACTLY in two solves — the
+  fluid certificate's own T, and per solid component a
+  minimum-deviatoric generator loaded by the certificate's interface
+  pressure, the fluid pressure datum recovered by minimising the
+  deviatoric norm over the gauge constant (a constant inner pressure on
+  the mantle's partly-free boundary is real Lamé stress; on the fully
+  loaded core it is dev-invariant). The weighted (scaled-viscosity)
+  recovery is dropped: approximate at any contrast, and its leakage
+  buries the fluid's share. Verification oracle: on the spherically
+  symmetric model every piece sits at the discretisation floor and
+  the recovered datum is the free-surface value. Measured
+  calibration: the geometric signal is weak — eta roughly 8e-3 x
+  flattening in 2-D, the degree-2 potential perturbation decaying
+  inward — so it sits BELOW the order-2 floor (2e-3) and the default
+  order is 3 on a disc (floor 2e-4; the flattened disc then starts at
+  eta 8e-4 and J falls 18x in 16 iterations) but 2 on a ball for cost
+  (3-D aspherical runs need `-o 3`). The wavy CMB demands an
+  oscillatory, boundary-following correction that the H1 prior BLOCKS
+  (189 iterations stuck with it, 29 to the floor without), so the
+  prior's default is 0 for that shape — the first measured case where
+  the smooth prior is the wrong selection, worth remembering for
+  stage 2.
+
 - **Per-component pressure constants.** The fluid-only solve removes
   one pressure constant; several fluid regions enclosed by solid need
   one per component (`background.cpp`, the clamped null-space branch).

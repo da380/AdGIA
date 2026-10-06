@@ -16,6 +16,7 @@ void ConstrainedMetric::SetConstraint(const Vector& ell) {
   ell_scale_ = riesz_->Pair(ell_, ell_gradient_);
   MFEM_VERIFY(ell_scale_ > 0.0,
               "ConstrainedMetric: the constraint's metric norm vanishes.");
+  has_constraint_ = true;
 }
 
 void ConstrainedMetric::SetPrior(const Operator& K, real_t weight) {
@@ -57,7 +58,10 @@ void ConstrainedMetric::Gradient(const Vector& dual, Vector& g) const {
 }
 
 void ConstrainedMetric::Project(Vector& v) const {
-  if (ell_.Size() == 0) {
+  // The flag, not ell_.Size(): Pair is collective, and a rank whose
+  // local control is empty must enter it with the rest (the header's
+  // note).
+  if (!has_constraint_) {
     return;
   }
   const real_t along = riesz_->Pair(ell_, v);
@@ -151,6 +155,10 @@ DescentResult NonlinearCG(const DescentFunctional& f,
                 << "\n";
     }
     if (options.tolerance > 0 && raw < options.tolerance * result.initial) {
+      result.converged = true;
+      break;
+    }
+    if (options.stop && options.stop(it, raw)) {
       result.converged = true;
       break;
     }
@@ -253,7 +261,10 @@ DescentResult LevenbergMarquardt(const DescentFunctional& f,
       cg->SetRelTol(1e-2);  // inexact Newton: the model is local anyway
       cg->SetAbsTol(0.0);
       cg->SetMaxIter(30);
-      cg->SetPrintLevel(0);
+      // Silence the non-convergence warning too: the iteration cap is
+      // part of the truncated-Newton design (the acceptance test and
+      // the damping police the step), not a failure.
+      cg->SetPrintLevel(-1);
       Vector mj(j);
       mj *= -1.0;
       Vector step(c.Size());
@@ -289,6 +300,10 @@ DescentResult LevenbergMarquardt(const DescentFunctional& f,
                 << lambda << "\n";
     }
     if (options.tolerance > 0 && raw < options.tolerance * result.initial) {
+      result.converged = true;
+      break;
+    }
+    if (options.stop && options.stop(it, raw)) {
       result.converged = true;
       break;
     }

@@ -49,6 +49,7 @@
 #include <memory>
 
 #include "AdGIA.hpp"
+#include "visualisation.hpp"
 
 using namespace mfem;
 using namespace AdGIA;
@@ -136,17 +137,12 @@ void StressNorms(MatrixCoefficient& S, Mesh& mesh, int order, double& full,
   dev = std::sqrt(GlobalSum(dev2));
 }
 
+// One GLVis window per field, through the shared GLVisWindow: it skips
+// the ranks a SubMesh leaves empty, which an unconditional
+// "parallel <size> <rank>" header does not survive (visualisation.hpp).
 void Show(Mesh& mesh, const GridFunction& f, const char* title) {
-  char vishost[] = "localhost";
-  socketstream sock(vishost, 19916);
-  sock.precision(8);
-#ifdef MFEM_USE_MPI
-  sock << "parallel " << Mpi::WorldSize() << " " << Mpi::WorldRank() << "\n";
-#endif
-  sock << "solution\n"
-       << mesh << f << "window_title '" << title << "'"
-       << "\nkeys Rjlbc\n"
-       << std::flush;
+  examples::GLVisWindow window(title, "Rjlbc");
+  window.Send(mesh, f);
 }
 
 }  // namespace

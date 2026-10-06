@@ -4,8 +4,11 @@
   on a ParMesh. Run with 1, 2 and 4 ranks; a standalone MPI program
   that exits non-zero if any check fails. Checks: both loops satisfy
   the constrained optimality system (constraint at round-off, projected
-  gradient at the floor), and the K = M prior scales the
-  Levenberg-Marquardt solution by 1/(1 + lambda).
+  gradient at the floor), the K = M prior scales the
+  Levenberg-Marquardt solution by 1/(1 + lambda), the stop predicate
+  ends both loops, and the constrained metric survives a rank owning no
+  control dofs (an explicitly partitioned SubMesh control — the
+  collective-projection regression).
 */
 
 #include <mpi.h>
@@ -143,6 +146,72 @@ int main(int argc, char* argv[]) {
     Check(std::sqrt(GlobalDot(diff, diff)) /
               std::sqrt(GlobalDot(scaled, scaled)),
           1e-5, "prior scales the solution by 1/(1 + lambda)");
+  }
+  {
+    // The stop predicate ends both loops at the iteration it names,
+    // reported as converged (all ranks see the same accepted values,
+    // so the collective solves stay in step).
+    ConstrainedMetric metric(riesz);
+    metric.SetConstraint(ell);
+    DescentOptions stopping = options;
+    stopping.stop = [](int it, double) { return it >= 1; };
+    Vector c(fes.GetTrueVSize());
+    c = 0.0;
+    auto r = NonlinearCG(toy, metric, c, stopping);
+    Check(std::abs(r.iterations - 1), 0.5, "cg: stop predicate at 1");
+    Check(r.converged ? 0.0 : 1.0, 0.5, "cg: stop reports converged");
+    c = 0.0;
+    r = LevenbergMarquardt(toy, metric, *M.Ptr(), c, stopping);
+    Check(std::abs(r.iterations - 1), 0.5, "lm: stop predicate at 1");
+    Check(r.converged ? 0.0 : 1.0, 0.5, "lm: stop reports converged");
+  }
+  {
+    // Empty-rank regression: a control space on a SubMesh whose region
+    // is owned entirely by rank 0 (an explicit partitioning, so the
+    // emptiness is deterministic, not METIS's whim). SetConstraint and
+    // Project are collective through the Riesz pairings, and a rank
+    // with zero local control dofs must enter them with the rest —
+    // "constraint set" is a flag, never ell.Size() != 0 (the measured
+    // 8-rank deadlock of the density example).
+    Mesh full("../data/elastogravity_two_layer_2d.msh", 1, 1);
+    Array<int> partition(full.GetNE());
+    int next = 0;
+    for (int e = 0; e < full.GetNE(); e++) {
+      if (full.GetAttribute(e) == 1) {
+        partition[e] = 0;  // the fluid: rank 0 alone
+      } else {
+        partition[e] = next;  // the rest: round-robin
+        next = (next + 1) % Mpi::WorldSize();
+      }
+    }
+    ParMesh parent(MPI_COMM_WORLD, full, partition.GetData());
+    full.Clear();
+    auto fluid = ParSubMesh::CreateFromDomain(parent, Array<int>({1}));
+    H1_FECollection h1(1, 2);
+    ParFiniteElementSpace cfes(&fluid, &h1);
+
+    L2RieszMap criesz(cfes);
+    ConstrainedMetric cmetric(criesz);
+    ConstantCoefficient cone(1.0);
+    ParLinearForm clf(&cfes);
+    clf.AddDomainIntegrator(new DomainLFIntegrator(cone));
+    clf.Assemble();
+    Vector cell(cfes.GetTrueVSize());
+    clf.ParallelAssemble(cell);
+    cmetric.SetConstraint(cell);
+
+    FunctionCoefficient probe(
+        [](const Vector& x) { return 0.3 + x[0] - 0.5 * x[1]; });
+    ParGridFunction v_gf(&cfes);
+    v_gf.ProjectCoefficient(probe);
+    Vector v(cfes.GetTrueVSize());
+    v_gf.GetTrueDofs(v);
+    cmetric.Project(v);
+    // Reaching here at every rank count IS the regression; the
+    // projection then annihilates the constraint.
+    const double mass_norm = std::sqrt(GlobalDot(cell, cell));
+    Check(std::abs(GlobalDot(cell, v)) / mass_norm, 1e-10,
+          "empty-rank submesh: projection annihilates the constraint");
   }
 
   if (Mpi::Root()) {

@@ -130,6 +130,46 @@ RelabelledBackground::RelabelledBackground(RadialHydrostaticBackground& base,
 
 namespace {
 
+// A pressure signed per boundary element so that it always pairs with
+// the mesh's OUTWARD normal: a SubMesh inherits its interface boundary
+// elements with the parent's stored orientation, which points outward
+// of the region on ONE side only (measured: centre-outward on the
+// layered meshes — the inner core's outward normal, the mantle's inward
+// one). The sign compares the stored normal with the line from the
+// adjacent element's centre to the face's.
+class OutwardSignedCoefficient : public Coefficient {
+ public:
+  OutwardSignedCoefficient(Mesh& mesh, Coefficient& p) : p_(&p) {
+    const int dim = mesh.SpaceDimension();
+    signs_.SetSize(mesh.GetNBE());
+    Vector nor(dim), fc(dim), ec(dim);
+    for (int b = 0; b < mesh.GetNBE(); b++) {
+      int el, info;
+      mesh.GetBdrElementAdjacentElement(b, el, info);
+      ElementTransformation* bt = mesh.GetBdrElementTransformation(b);
+      const IntegrationPoint& bip =
+          Geometries.GetCenter(mesh.GetBdrElementGeometry(b));
+      bt->SetIntPoint(&bip);
+      CalcOrtho(bt->Jacobian(), nor);
+      bt->Transform(bip, fc);
+      ElementTransformation* et = mesh.GetElementTransformation(el);
+      et->Transform(Geometries.GetCenter(mesh.GetElementGeometry(el)), ec);
+      fc -= ec;
+      signs_[b] = (nor * fc) >= 0.0 ? 1.0 : -1.0;
+    }
+  }
+
+  real_t Eval(ElementTransformation& T, const IntegrationPoint& ip) override {
+    // Boundary integrators evaluate on the boundary element's own
+    // transformation, whose ElementNo is the boundary index.
+    return signs_[T.ElementNo] * p_->Eval(T, ip);
+  }
+
+ private:
+  Coefficient* p_;
+  Vector signs_;
+};
+
 // True-dof assembly of a linear form: B = P^T L (the parallel reduction;
 // the identity in serial).
 void AssembleTrueRHS(FiniteElementSpace& fes, LinearForm& lf, Vector& B) {
@@ -751,13 +791,17 @@ MinimumDeviatoricEquilibriumStress::MinimumDeviatoricEquilibriumStress(
     FiniteElementSpace& fes_u, FiniteElementSpace& fes_p,
     VectorCoefficient& body_force, Coefficient* mu, Diffeomorphism* map,
     const Array<int>* essential_bdr, const StokesSaddleSolver* solver,
-    const Vector& rigid_rhs, Vector* rigid_coefficients)
+    const Vector& rigid_rhs, Vector* rigid_coefficients,
+    Coefficient* interface_pressure, const Array<int>* interface_bdr)
     : MatrixCoefficient(fes_u.GetMesh()->SpaceDimension()),
       fes_u_(&fes_u),
       fes_p_(&fes_p),
       mu_(mu),
       map_(map),
       half_(0.5) {
+  MFEM_VERIFY(!(map && interface_pressure),
+              "MinimumDeviatoricEquilibriumStress: the interface pressure "
+              "is not available in mapped mode.");
   if (!solver) {
     own_solver_ = std::make_unique<StokesSaddleSolver>(fes_u, fes_p, mu, map,
                                                        essential_bdr);
@@ -773,6 +817,26 @@ MinimumDeviatoricEquilibriumStress::MinimumDeviatoricEquilibriumStress(
     lf.AddDomainIntegrator(new VectorDomainLFIntegrator(*fJ));
   } else {
     lf.AddDomainIntegrator(new VectorDomainLFIntegrator(body_force));
+  }
+  std::unique_ptr<OutwardSignedCoefficient> signed_p;
+  if (interface_pressure) {
+    // The pressure load T n = -p n against the OUTWARD normal: the
+    // stored boundary orientation is per-element corrected
+    // (OutwardSignedCoefficient), and the saddle's weak form carries
+    // the boundary term with the sign that makes the (f, v . n)
+    // integrator at s = +1 the load for T n = -p n — pinned by the
+    // interface-continuity check (an enclosed solid's hydrostatic
+    // pressure must EQUAL the loading fluid's at the interface, not
+    // its negative).
+    signed_p = std::make_unique<OutwardSignedCoefficient>(
+        *fes_u.GetMesh(), *interface_pressure);
+    auto* integrator = new VectorBoundaryFluxLFIntegrator(*signed_p, 1.0);
+    if (interface_bdr) {
+      lf.AddBoundaryIntegrator(integrator,
+                               const_cast<Array<int>&>(*interface_bdr));
+    } else {
+      lf.AddBoundaryIntegrator(integrator);
+    }
   }
   Vector F;
   AssembleTrueRHS(fes_u, lf, F);

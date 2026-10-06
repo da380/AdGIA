@@ -64,9 +64,20 @@ namespace AdGIA {
  * same field (an analytic coefficient may simply be passed twice).
  *
  * In two dimensions the exterior problem carries the logarithmic
- * infrared structure documented in doc/self_gravitation.md ("2-D
- * caveats"); the class is written for, and verified in, three
- * dimensions.
+ * infrared structure of doc/self_gravitation.md §5: the constant
+ * potential is null for the Laplace–DtN operator, so the Poisson loads
+ * are made compatible by subtracting a uniform flux through the outer
+ * boundary (exactly the monopole's flux — the interior gradient is
+ * unaffected) and the solves run with the constant projected out. The
+ * potentials are returned in the zero-boundary-mean gauge, in which
+ * the envelope formulas are discretely exact as they stand: the flux
+ * correction would otherwise add @f$(\oint w / |\partial\Omega|)\,m@f$
+ * to the pairing of the dual with a direction of mass @f$m@f$, and the
+ * gauge makes that term vanish (@f$J@f$ itself reads only
+ * @f$\nabla\Phi@f$). Unlike the mixed problem's fluid coupling,
+ * nothing here pairs a potential value with the density non-linearly
+ * in the gauge, so the 2-D certificate is consistent, not merely
+ * regularised — the FD tests hold to the 3-D tolerances.
  */
 class DensityFeasibility;
 

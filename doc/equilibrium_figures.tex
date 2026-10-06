@@ -70,7 +70,8 @@ shows that the equilibrium mapping may be taken continuous;
 \S\ref{sec:functional} defines the feasibility functionals --- a naive
 one that fails, an exact fluid-only one, and a weighted whole-body one
 that approaches it --- and characterises their zero sets;
-\S\ref{sec:dual} derives their common Stokes (dual) structure;
+\S\ref{sec:dual} derives their common Stokes (dual) structure and, from
+it, the exact recovery of the body's stress field;
 \S\ref{sec:derivative} derives the derivative with respect to density
 and the Hessian action; \S\ref{sec:energy} interprets the functional as
 the squared gradient of the gravitational energy and derives the
@@ -302,6 +303,11 @@ barotropic fluid in general must carry deviatoric stress, and the
 naive minimiser leaks part of it into the fluid. In a spherically
 symmetric hydrostatic model $\dev T' = 0$ everywhere and there is
 nothing to leak, which is why spherical tests cannot detect the defect.
+The same mechanism is the reason the body's stress field is not
+recovered by whole-body minimisation, weighted or not
+(\S\ref{sec:recovery}): the minimiser places part of the solid's
+unavoidable deviatoric stress in the fluid, where a valid state has
+none.
 
 The whole-body value $\Jh := Q(T_m)$ is meaningful in its own right:
 $\Jh = 0$ iff the \emph{whole} body admits a hydrostatic state, which is
@@ -401,7 +407,7 @@ of $J_\infty$; in particular at a feasible model
 $\Jmu = O(1/\mu_{\mathrm{s}})$.
 (iii) $\Jmu \to J_\infty$ as $\mu_{\mathrm{s}} \to \infty$, and the
 minimisers converge to the minimiser of $J_\infty$ whose solid
-deviatoric norm is least; in particular the solid stress output
+deviatoric norm is least; in particular the solid stress
 $\dev T = 2\mu_{\mathrm{s}}\eps(\bu)$ (\S\ref{sec:dual}) stays bounded
 and converges, while $\eps(\bu) = O(1/\mu_{\mathrm{s}})$ in the solid.
 \end{proposition}
@@ -440,6 +446,14 @@ $\mu_{\mathrm{s}}/\mu_{\mathrm{f}}$ degrades the preconditioner (a
 block-diagonal preconditioner with a viscosity-weighted pressure mass
 matrix is the minimum requirement), so the contrast cannot be taken
 arbitrarily large.
+
+$\Jmu$ serves as a certificate and as an upper-bound family for $\JF$
+(the cross-check of \S\ref{sec:verification}); its minimiser is not a
+recovery of the body's stress field. At any finite contrast the fluid
+part of the minimiser still carries the residual leak bounded in (ii),
+and removing it requires exactly the contrast that conditions the
+saddle. The limit field of (iii) is obtained exactly, with no contrast
+in any operator, by the construction of \S\ref{sec:recovery}.
 
 \subsection{The zero sets}
 \label{sec:zeroset}
@@ -625,7 +639,9 @@ dissipation $\int 2\mu|\eps(\bu)|^2$. (This factor reappears in
   region, since $\int\div\bv = \int_{\partial}\bv\cdot\bn = 0$ for every
   $\bv\in V_{\mathrm{F}}$ there; physically the absolute pressure in a
   sealed container is not fixed by equilibrium. $J$ does not depend on it,
-  and it is fixed by a mean-zero constraint per enclosed region.
+  and it is fixed by a mean-zero constraint per enclosed region. (The
+  body's stress field does depend on it; its selection is part of
+  \S\ref{sec:recovery}.)
 \item $\Jmu$ and $\Jh$: traction-free on $\partial B$, $\bu$ continuous
   across interfaces, $\div\bu = 0$ in the solid as well. The kernel of
   $a$ on $U$ is the global rigid motions (\,$\eps(\bu)=0$ on each region
@@ -674,6 +690,122 @@ $g(\tilde\bu)$. The derivative of \S\ref{sec:derivative} is linear in
 $\bu$ and carries a first-order error; the saddle tolerance must be set
 accordingly.
 
+\subsection{Recovering the body's stress field}
+\label{sec:recovery}
+
+The certificate measures infeasibility; the stress field of the whole
+body is a separate output. It is recovered exactly by two kinds of solve:
+one for the fluid, which is the certificate itself, and one per
+connected solid component --- two solves for a fluid shell inside a
+mantle, three with an inner core.
+
+\paragraph{Why not a whole-body minimiser.} At uniform weight the
+whole-body minimiser leaks the solid's unavoidable deviatoric stress into
+the fluid (Proposition~\ref{prop:leakage}). The weighted minimiser of
+\eqref{eq:Jmu} reduces the leak to $O(1/\mu_{\mathrm{s}})$
+(Proposition~\ref{prop:Jmu}(ii)) but never removes it, and the contrast
+that would remove it conditions the saddle (\S\ref{sec:Jmu}). Neither is
+used. The construction below delivers the $\mu_{\mathrm{s}}\to\infty$
+limit of Proposition~\ref{prop:Jmu}(iii) directly: the fluid part is the
+certificate's minimiser, and the solid part minimises the solid's
+deviatoric norm given that fluid --- the hierarchical selection of the
+limit.
+
+\paragraph{The fluid.} The fluid's stress is the certificate's own
+minimiser,
+\begin{equation}
+  T = -p\,1 + 2\mu_{\mathrm{f}}\,\eps(\bu) \quad\text{in } \Bf ,
+\end{equation}
+from the fluid-only generator (Proposition~\ref{prop:duality}), with the
+rigid border of Remark~\ref{rem:innercore} when there is an inner core.
+At feasibility $\dev T\to0$ there and $p$ is the hydrostatic pressure of
+\eqref{eq:hydrostatic}, determined up to one constant per enclosed fluid
+component; the solver projects the constant mode, so $p$ is returned in
+the mean-zero gauge.
+
+\paragraph{Each solid component.} Let $\Omega_{\mathrm{s}}$ be a
+connected component of $\Bs$, $\bn$ its outward normal,
+$\Sigma_{\mathrm{s}} = \partial\Omega_{\mathrm{s}}\cap\Sigma$ its fluid
+interfaces and $\Gamma_{\mathrm{s}} = \partial\Omega_{\mathrm{s}}\cap
+\partial B$ its share of the free surface. Its stress is the
+minimum-deviatoric field of the component alone, loaded by the fluid's
+pressure:
+\begin{equation}
+  \min\ \tfrac12\int_{\Omega_{\mathrm{s}}}|\dev T|^{2}\dV
+  \quad\text{subject to}\quad
+  \Div T = \rho\nabla\Phi \ \text{in } \Omega_{\mathrm{s}}, \quad
+  T\bn = -p\,\bn \ \text{on } \Sigma_{\mathrm{s}}, \quad
+  T\bn = 0 \ \text{on } \Gamma_{\mathrm{s}} .
+  \label{eq:solid-recovery}
+\end{equation}
+This is \texttt{MinimumDeviatoricEquilibriumStress}
+(\texttt{background.hpp}) on the component's SubMesh, with its optional
+interface-pressure load, which is applied against the outward normal of
+the component regardless of the orientation the boundary elements
+inherit from the parent mesh. The load is the pressure part of the fluid
+traction; the viscous part $2\mu_{\mathrm{f}}\eps(\bu)\bn$ is
+$O(J^{1/2})$ and vanishes at feasibility. Solving per component gives
+each component its own rigid-mode projection, which is required: with an
+inner core the solid is disconnected, and each component's loads must
+balance on their own. At a restored state they do. On the mantle this is
+the computation of Proposition~\ref{prop:completion}; on the inner core
+it is exactly the content of the rigid-border certificate
+(Remark~\ref{rem:innercore}), whose six extra equations are the core's
+force and torque balance. Away from feasibility the rigid-mode
+projection removes the residual imbalance, which is of the order of the
+fluid's residual.
+
+\paragraph{The pressure gauge.} The constant $c$ of an enclosed fluid's
+pressure is a genuine parameter of the equilibrium family: $p\mapsto
+p + c$ leaves the fluid's balance and its deviatoric stress unchanged and
+adds the load $-c\,\bn$ on $\Sigma_{\mathrm{s}}$. Its effect on the solid
+depends on how much of $\partial\Omega_{\mathrm{s}}$ the fluid covers.
+\begin{itemize}
+\item \emph{Entirely fluid-loaded boundary} (the inner core,
+  $\partial\Omega_{\mathrm{s}} = \Sigma_{\mathrm{s}}$). A uniform pressure
+  on a closed surface exerts no net force or torque, and $T - c\,1$ solves
+  \eqref{eq:solid-recovery} with $p + c$: the gauge shifts the stress
+  isotropically and $\dev T$ is invariant.
+\item \emph{Partly free boundary} (the mantle: fluid interface plus free
+  surface). A constant interface pressure against a traction-free outer
+  surface is not carried isotropically; its response is the thick-shell
+  Lam\'e solution, which has genuine deviatoric stress. The gauge
+  matters.
+\end{itemize}
+The generator's own principle resolves it. Let $T_0$ solve
+\eqref{eq:solid-recovery} with the gauged pressure, and $L$ with zero body
+force and unit interface pressure ($L\bn = -\bn$ on $\Sigma_{\mathrm{s}}$,
+$L\bn = 0$ on $\Gamma_{\mathrm{s}}$). The generator is linear in its data
+and its deviatoric output is unique, so $T(c) = T_0 + c\,L$ is the
+equilibrium family in $c$. Minimising $\norm{\dev T(c)}^{2}$ over $c$,
+\begin{equation}
+  c^{\star} = -\frac{(\dev T_0, \dev L)}{\norm{\dev L}^{2}} ,
+  \label{eq:gauge-recovery}
+\end{equation}
+with $(\cdot,\cdot)$ the $L^2$ deviatoric pairing over
+$\Omega_{\mathrm{s}}$: one extra solve. Minimising over $T$ at fixed $c$
+and then over $c$ is the joint minimum, so $T(c^\star)$ is the
+component's minimum-deviatoric field with the gauge free. The recovered
+$c^\star$ is the physical pressure datum the free surface imposes: in a
+hydrostatic configuration it is the constant that makes the interface
+pressure continuous with the solid's lithostatic pressure, which
+vanishes at the free surface. With several enclosed fluid components, or
+several partly free components sharing one fluid, the constants form a
+vector and \eqref{eq:gauge-recovery} becomes a small least-squares
+problem; in the inner core, fluid shell and mantle configuration only
+the mantle sees the constant, and the scalar formula is the whole of it.
+
+\paragraph{A verification fact.} On a spherically symmetric configuration
+with a barotropic fluid the valid state has $\dev T = 0$ everywhere, and
+the recovery finds it: every component's deviatoric norm sits at the
+discretisation floor (any $c \ne c^\star$ would leave the mantle with the
+Lam\'e shear $|c - c^\star|\,\norm{\dev L}$). The fluid's norm is exactly
+$(2J)^{1/2}$ at $\mu_{\mathrm{f}} = \tfrac12$, by the value-function
+identity \eqref{eq:value}: $J = \int_{\Bf}|\dev T|^2/(4\mu_{\mathrm{f}})
+= \tfrac12\norm{\dev T}^2_{L^2(\Bf)}$. The whole-body map of
+\texttt{examples/equilibrium\_density.cpp} is assembled from these
+pieces, on the common scale of \S\ref{sec:stopping}.
+
 % ======================================================================
 \section{The derivative with respect to density}
 \label{sec:derivative}
@@ -707,14 +839,38 @@ truncated at some degree; the truncated form is still symmetric, which
 is all that is used below). Write $\Phi[\rho]$ for the solution operator;
 it is linear.
 
-\begin{remark}[Two dimensions]
-The 2-D DtN form has no degree-zero term, so $b$ is singular on
-constants, the potential is determined up to a constant, and solvability
-of $b(\cdot,\chi) = \ell(\chi)$ requires $\ell(1) = 0$. For the adjoint
-below the load is $\int\rho\bu\cdot\nabla\chi$, which vanishes at
-$\chi = 1$, so the adjoint is always solvable; its solution is defined up
-to a constant, which pairs to zero with every mass-preserving density
-perturbation --- precisely the admissible ones. Nothing below changes.
+\begin{remark}[Two dimensions]\label{rem:2d}
+The 2-D DtN form has no degree-zero term (the exterior harmonic of
+degree zero is the logarithm, which does not decay), so the
+Laplace--DtN form $b$ is singular in the constant: the potential is
+determined up to a constant, and $b(\cdot,\chi) = \ell(\chi)$ is solvable
+only if $\ell(1) = 0$. The forward load violates this whenever the body
+has net mass $m = \int_B\rho\dV$: the exterior monopole is logarithmic,
+its flux through $\partial D$ is not zero, and a closure without a
+degree-zero term cannot carry it. The load is made compatible by
+subtracting the mass as a uniform flux through the outer boundary,
+\begin{equation}
+  b(\Phi,\chi) = -\int_B\rho\,\chi\dV
+  + \frac{m}{|\partial D|}\int_{\partial D}\chi\dS ,
+\end{equation}
+which is exactly the monopole's flux (uniform on the circle), so the
+interior gradient is unchanged and only the constant is left open.
+Solutions --- the potential, its perturbations and the adjoint --- are
+taken in the zero-boundary-mean gauge $\int_{\partial D}\Phi\dS = 0$.
+The adjoint load $\int\rho\bu\cdot\nabla\chi$ vanishes at $\chi = 1$ and
+needs no correction. In this gauge the envelope formulas below hold
+discretely without correction. In any other gauge they do not: the
+perturbed forward problem carries the flux term of $\delta m =
+\int_B\delta\rho$, and the pairing of the adjoint against a direction of
+mass $\delta m$ acquires the extra term
+\begin{equation}
+  \frac{1}{|\partial D|}\Bigl(\int_{\partial D} w\dS\Bigr)\,\delta m .
+\end{equation}
+It vanishes on mass-preserving directions, but not in the dual vector,
+which the loops pair with arbitrary directions before the mass
+projection and in Hessian products. $J$ itself reads only $\nabla\Phi$
+and is gauge-free. (The Poisson solver of \texttt{equilibrium\_figures.hpp}
+projects the constant and returns the zero-boundary-mean gauge.)
 \end{remark}
 
 \subsection{Differentiating the value function}
@@ -1906,7 +2062,8 @@ method. The remedies are those of regularisation theory:
 \begin{itemize}
 \item stop at the discretisation floor (the discrepancy principle,
   \cite{EnglHankeNeubauer}), estimated from the unperturbed model or by
-  refinement;
+  refinement, or located without being known by the stagnation of the
+  dimensionless infeasibility (\S\ref{sec:stopping});
 \item add a prior that changes the problem into a well-posed one, after
   which $\lambda\to0$ is safe and the iteration converges \emph{onto} the
   regularised minimiser.
@@ -1920,6 +2077,18 @@ $\lambda_pK$ is exact and is added to the model, so the inner system is
 \begin{equation}
   (H_{\mathrm{GN}} + \lambda M + \lambda_p K)\,s = -(j + \lambda_pK(\rho - \rho_0)) .
 \end{equation}
+
+\paragraph{Choice of prior.} The $H^1$-seminorm prior selects the smooth
+member of the near-null family, and is the right default when the
+disequilibrium is smooth and so is the correction it requires. It is not
+a universal safeguard. When the required correction is oscillatory ---
+the density rearrangement that follows a wavy fluid--solid interface
+topography, whose equipotentials undulate with the interface --- the
+prior penalises exactly the correction that is needed and blocks
+convergence entirely. There the Levenberg--Marquardt damping alone must
+serve as the semi-convergence protection, with the stopping rule of
+\S\ref{sec:stopping} ending the iteration at the floor. The choice of
+prior is a statement about the expected correction.
 
 \paragraph{Adapting the damping.} The implemented rule is multiplicative:
 solve, project the step onto the mass plane, evaluate; on a decrease of
@@ -2025,17 +2194,47 @@ feasibility. Nodal bounds imply pointwise bounds only at order one (or in
 a Bernstein basis).
 
 \subsection{Stopping diagnostic}
+\label{sec:stopping}
 
 $J$ is dimensional, and its floor depends on mesh and model. The
-implemented diagnostic is the dimensionless ratio
+implemented diagnostic is the dimensionless global infeasibility
 \begin{equation}
   \eta = \frac{\norm{\dev T_{\min}}_{L^2(\Bf)}}{\norm{p}_{L^2(\Bf)}}
        = \frac{(2J)^{1/2}}{\norm{p}_{L^2(\Bf)}}
   \qquad(\mu_{\mathrm{f}} = \tfrac12),
+  \label{eq:eta}
 \end{equation}
-how far from fluid the minimum-deviatoric state is. Barotropy itself is
+how far from fluid the minimum-deviatoric state is. The loops stop on
+it in one of two ways: at an explicit threshold on $\eta$ --- the
+discrepancy rule of \S\ref{sec:lm} --- or where $\eta$ stagnates, which
+locates the discretisation floor without knowing it. Barotropy itself is
 read off the $(\Phi,\rho)$ scatter over the fluid, which collapses onto a
 curve at a barotropic state, and its within-equipotential spread.
+
+\paragraph{The pointwise map.} Where the fluid is out of balance is read
+from
+\begin{equation}
+  \eta(\bx) = \frac{|\dev T(\bx)|}{p_{\mathrm{rms}}} ,
+  \qquad
+  p_{\mathrm{rms}} = \frac{\norm{p - \bar p}_{L^2(\Bf)}}{|\Bf|^{1/2}} ,
+\end{equation}
+with $\bar p$ the mean of $p$ over $\Bf$: the scale is the RMS pressure
+variation, a single gauge-invariant number. The pointwise ratio
+$|\dev T|/|p|$ is not usable: an enclosed fluid's pressure is gauged, the
+gauged $p$ crosses zero, and the ratio is singular on its zero set,
+displaying the gauge rather than the imbalance. In the solver's
+mean-zero gauge $\norm{p} = \norm{p - \bar p}$, so the map's $L^2$ norm is
+\begin{equation}
+  \norm{\eta(\cdot)}_{L^2(\Bf)} = \frac{(2J)^{1/2}}{p_{\mathrm{rms}}}
+  = \eta\,|\Bf|^{1/2} ,
+\end{equation}
+the global $\eta$ of \eqref{eq:eta} up to the volume factor. The solid
+components' $|\dev T|$ recovered in \S\ref{sec:recovery} are mapped on
+the same scale, so the whole-body picture is comparable across regions:
+at a restored state the fluid's map sits at the floor while an
+aspherical solid keeps its unavoidable share. Since $\dev T$ in the fluid
+is built from $\eps(\bu_h)$, which is discontinuous across elements, the
+fluid map is projected elementwise.
 
 \subsection{Verification}
 \label{sec:verification}
@@ -2065,10 +2264,24 @@ Still to come:
 core, fluid outer core, solid mantle, buffer), with fluid density
 $\rho_0 = 1.2 - 0.3r^2 + 0.1\,x_2/r$. The base is barotropic; the
 degree-one lateral part of amplitude $0.1$ is not. The functional is
-$\JF$ with $\bu = 0$ on both fluid boundaries. With two solid components
-this omits the inner core's force and torque balance
-(Remark~\ref{rem:innercore}), so $\JF = 0$ certifies the fluid but not the
-inner core.
+$\JF$ with $\bu = 0$ on both fluid boundaries, enriched by the inner
+core's force and torque balance through the rigid border of
+Remark~\ref{rem:innercore} (the enriched certificate is the
+implementation's default; the measurements below that predate the
+border were taken with the clamped $\JF$, whose value a restored state
+rejoins to within a fraction of a percent).
+
+\paragraph{The geometric family.} Disequilibrium can also be produced by
+the geometry alone, without a hand-inserted lateral density term. In an
+aspherical container --- flattened interfaces, or topography on the
+fluid--solid interface --- the potential is aspherical and its level sets
+are not spheres, so a purely radial, non-uniform starting density is not
+constant on them and, by Proposition~\ref{prop:barotropic}, the model
+has no static state at that density. The signal is linear in the shape
+amplitude (the non-barotropic part of the load, the flow $\bu$ and
+$J^{1/2}$, hence $\eta$, are all first order in it), so a small amplitude
+competes with the discretisation floor, and the discretisation order must
+put the floor below the signal.
 
 \paragraph{The floor dominates.} The unperturbed base model, an exact
 equilibrium in the continuum, evaluates to $J_h = 9.4\times10^{-9}$. That

@@ -15,7 +15,8 @@ surface, outer). The examples recognise the layering from the number of
 domain attributes. Order-2 elements.
 
 Files: elastogravity_two_layer_2d.msh, elastogravity_three_layer_2d.msh,
-elastogravity_three_layer_3d.msh; `--all` builds the three of them.
+elastogravity_two_layer_3d.msh, elastogravity_three_layer_3d.msh; `--all`
+builds the four of them.
 
 Used by: elastogravity_layered, gauged_fluid_cavity,
 self_gravitating_relaxation, self_gravitating_solvers,
@@ -72,7 +73,7 @@ def main() -> None:
     args = p.parse_args()
 
     if args.all:
-        for layers, dim in [(2, 2), (3, 2), (3, 3)]:
+        for layers, dim in [(2, 2), (3, 2), (2, 3), (3, 3)]:
             build(layers, dim, args)
     else:
         build(args.layers, args.dim, args)

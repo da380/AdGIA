@@ -389,6 +389,15 @@ class MinimumDeviatoricEquilibriumStress : public mfem::MatrixCoefficient {
    * border right-hand side (the enclosed components' loads), passed
    * through to StokesSaddleSolver::Solve; @p rigid_coefficients
    * returns the modes' coefficients when given.
+   * @param interface_pressure Optional pressure load on the boundary
+   * marked by @p interface_bdr (all of it when null): the natural
+   * condition becomes @f$\mathbf{T}\hat{\mathbf{n}} =
+   * -p\,\hat{\mathbf{n}}@f$ with @f$\hat{\mathbf{n}}@f$ the mesh's
+   * outward normal — a solid component loaded by the pressure of the
+   * fluid outside that boundary. A constant added to @f$p@f$ on a
+   * CLOSED marked boundary has no net force or torque and shifts the
+   * stress isotropically, so the deviatoric field does not see the
+   * enclosed fluid's pressure gauge. Not available in mapped mode.
    */
   MinimumDeviatoricEquilibriumStress(
       mfem::FiniteElementSpace& fes_u, mfem::FiniteElementSpace& fes_p,
@@ -397,7 +406,9 @@ class MinimumDeviatoricEquilibriumStress : public mfem::MatrixCoefficient {
       const mfem::Array<int>* essential_bdr = nullptr,
       const StokesSaddleSolver* solver = nullptr,
       const mfem::Vector& rigid_rhs = mfem::Vector(),
-      mfem::Vector* rigid_coefficients = nullptr);
+      mfem::Vector* rigid_coefficients = nullptr,
+      mfem::Coefficient* interface_pressure = nullptr,
+      const mfem::Array<int>* interface_bdr = nullptr);
 
   void Eval(mfem::DenseMatrix& K, mfem::ElementTransformation& T,
             const mfem::IntegrationPoint& ip) override;

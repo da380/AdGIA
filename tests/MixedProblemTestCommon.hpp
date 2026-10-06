@@ -103,6 +103,11 @@ inline std::string ThreeLayerMeshFile(int dim) {
                   : "../data/elastogravity_three_layer_3d.msh";
 }
 
+inline std::string TwoLayerMeshFile(int dim) {
+  return dim == 2 ? "../data/elastogravity_two_layer_2d.msh"
+                  : "../data/elastogravity_two_layer_3d.msh";
+}
+
 inline double SolidDensity(const Vector& x) {
   return x.Norml2() < 0.5 * (kRIcb + kRCmb) ? 1.3 : 1.0;
 }

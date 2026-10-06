@@ -52,6 +52,22 @@ real_t GlobalSum(FiniteElementSpace& fes, real_t v) {
 
 // The whole-mesh Poisson operator with the DtN closure, kept assembled
 // so that the potential and the adjoint solves share it.
+//
+// In two dimensions the operator is singular — the 2-D DtN has no
+// degree-zero term, so the constant potential is null — and a load with
+// net mass is inconsistent (the exterior monopole grows
+// logarithmically). As in the mixed problem (doc/self_gravitation.md
+// §5), the load is made compatible by subtracting its mass as a uniform
+// flux through the outer boundary — exactly the monopole's flux, so the
+// interior gradient is unaffected — and the solve runs with the
+// constant projected out. The solution is returned in the
+// ZERO-BOUNDARY-MEAN gauge: with the flux correction, pairing the
+// adjoint with a load of mass m picks up the extra term
+// (int_outer w / |outer|) m, so fixing the boundary mean of every
+// potential to zero makes the envelope formulas (which read 4 pi G w
+// against arbitrary directions) discretely exact with no extra terms —
+// the adjoint sources themselves pair gradients and are exactly
+// compatible already.
 class PoissonSolver {
  public:
   PoissonSolver(FiniteElementSpace& fes, int dtn_degree) : fes_(&fes) {
@@ -95,14 +111,49 @@ class PoissonSolver {
     cg_->SetAbsTol(0.0);
     cg_->SetMaxIter(10000);
     cg_->SetPrintLevel(0);
+
+    if (fes.GetMesh()->Dimension() == 2) {
+      // The compatibility data: the constant and the outer-boundary
+      // functional, on true dofs.
+      auto ones = detail::MakeGridFunction(&fes);
+      *ones = 1.0;
+      ones_.SetSize(fes.GetTrueVSize());
+      ones->GetTrueDofs(ones_);
+      one_ = std::make_unique<ConstantCoefficient>(1.0);
+      auto marker = ExternalBoundaryMarker(fes.GetMesh());
+      auto l = detail::MakeLinearForm(&fes);
+      l->AddBoundaryIntegrator(new BoundaryLFIntegrator(*one_), marker);
+      AssembleTrueRHS(fes, *l, L_outer_);
+      outer_length_ = GlobalSum(fes, L_outer_ * ones_);
+      MFEM_VERIFY(outer_length_ > 0.0,
+                  "DensityFeasibility: empty outer boundary.");
+#ifdef MFEM_USE_MPI
+      if (auto* pfes = dynamic_cast<ParFiniteElementSpace*>(&fes)) {
+        ortho_ = std::make_unique<OrthoSolver>(pfes->GetComm());
+      }
+#endif
+      if (!ortho_) {
+        ortho_ = std::make_unique<OrthoSolver>();
+      }
+      ortho_->SetSolver(*cg_);
+    }
   }
 
   // Solves (K + DtN) x = B for the true-dof vector B; returns the
-  // iteration count.
+  // iteration count. In 2-D the load is first made compatible, the
+  // constant is projected, and the solution is gauged to zero boundary
+  // mean (the class comment).
   int Solve(const Vector& B, GridFunction& x) const {
     Vector X(fes_->GetTrueVSize());
     X = 0.0;
-    cg_->Mult(B, X);
+    if (ortho_) {
+      Vector Bc(B);
+      Bc.Add(-GlobalSum(*fes_, B * ones_) / outer_length_, L_outer_);
+      ortho_->Mult(Bc, X);
+      X.Add(-GlobalSum(*fes_, L_outer_ * X) / outer_length_, ones_);
+    } else {
+      cg_->Mult(B, X);
+    }
     MFEM_VERIFY(cg_->GetConverged(),
                 "DensityFeasibility: the Poisson solve did not converge.");
     x.SetFromTrueDofs(X);
@@ -121,6 +172,12 @@ class PoissonSolver {
 #endif
   std::unique_ptr<SumOperator> op_;
   std::unique_ptr<CGSolver> cg_;
+
+  // The 2-D compatibility data and the projected solver (null in 3-D).
+  Vector ones_, L_outer_;
+  real_t outer_length_ = 0.0;
+  std::unique_ptr<ConstantCoefficient> one_;
+  std::unique_ptr<OrthoSolver> ortho_;
 };
 
 }  // namespace

@@ -9,7 +9,9 @@
   rank on the full mesh; the envelope-theorem derivative paired with a
   deterministic (function-projected) direction matches a central finite
   difference of the parallel value; and that directional derivative
-  equals the serial one.
+  equals the serial one. A 2-D leg repeats the value and FD checks on
+  the three-layer disc, exercising the singular Laplace-DtN operator's
+  compatible, projected solves in parallel.
 */
 
 #include <mpi.h>
@@ -53,9 +55,11 @@ double FluidRho(const Vector& x) {
 }
 
 // The FD direction: deterministic in space, so that the serial and the
-// parallel runs perturb the same density.
+// parallel runs perturb the same density (dimension-safe for the 2-D
+// leg).
 double Direction(const Vector& x) {
-  return std::sin(3.0 * x[0]) * std::cos(2.0 * x[1]) + 0.3 * x[2];
+  return std::sin(3.0 * x[0]) * std::cos(2.0 * x[1]) +
+         (x.Size() == 3 ? 0.3 * x[2] : 0.0);
 }
 
 // The density by attribute (as in TestEquilibriumFigures.cpp).
@@ -275,6 +279,57 @@ int main(int argc, char* argv[]) {
           "parallel rigid-core derivative equals serial");
     Check(std::abs(ar - ar_serial) / ar_serial, 1e-6,
           "parallel rigid coefficients equal serial");
+  }
+
+  // The 2-D leg: the singular Laplace-DtN operator's compatible,
+  // projected solves (the header's 2-D note) in parallel — the value
+  // against the serial one, and the derivative against FD.
+  double j2_serial = 0.0, dd2_serial = 0.0;
+  {
+    Mesh parent(ThreeLayerMeshFile(2), 1, 1);
+    auto fluid = SubMesh::CreateFromDomain(parent, Array<int>({2}));
+    H1_FECollection h1_phi(2, 2), h1_u(2, 2), h1_p(1, 2);
+    L2_FECollection l2(2, 2);
+    FiniteElementSpace fes_phi(&parent, &h1_phi);
+    FiniteElementSpace fes_u(&fluid, &h1_u, 2);
+    FiniteElementSpace fes_p(&fluid, &h1_p);
+    FiniteElementSpace fes_rho(&fluid, &l2);
+    Array<int> ess(fluid.bdr_attributes.Max());
+    ess = 1;
+    j2_serial = Evaluate(fes_phi, fes_u, fes_p, fes_rho, ess, 0.0,
+                         direction, &dd2_serial);
+  }
+  {
+    Mesh serial(ThreeLayerMeshFile(2), 1, 1);
+    ParMesh parent(MPI_COMM_WORLD, serial);
+    serial.Clear();
+    auto fluid = ParSubMesh::CreateFromDomain(parent, Array<int>({2}));
+    H1_FECollection h1_phi(2, 2), h1_u(2, 2), h1_p(1, 2);
+    L2_FECollection l2(2, 2);
+    ParFiniteElementSpace fes_phi(&parent, &h1_phi);
+    ParFiniteElementSpace fes_u(&fluid, &h1_u, 2);
+    ParFiniteElementSpace fes_p(&fluid, &h1_p);
+    ParFiniteElementSpace fes_rho(&fluid, &l2);
+    Array<int> ess(fluid.bdr_attributes.Max());
+    ess = 1;
+
+    double dd = 0.0;
+    const double j0 =
+        Evaluate(fes_phi, fes_u, fes_p, fes_rho, ess, 0.0, direction, &dd);
+    Check(std::abs(j0 - j2_serial) / j2_serial, 1e-8,
+          "2-D: parallel J equals serial J");
+    // A touch looser than the 3-D check: the 2-D dual's pairing sits
+    // closer to the projected solves' floor.
+    Check(std::abs(dd - dd2_serial) / std::abs(dd2_serial), 1e-6,
+          "2-D: parallel directional derivative equals serial");
+
+    const double jp =
+        Evaluate(fes_phi, fes_u, fes_p, fes_rho, ess, kStep, direction);
+    const double jm =
+        Evaluate(fes_phi, fes_u, fes_p, fes_rho, ess, -kStep, direction);
+    const double fd = (jp - jm) / (2.0 * kStep);
+    Check(std::abs(fd - dd) / std::max(std::abs(fd), j0), 2e-5,
+          "2-D: derivative matches the central difference");
   }
 
   if (Mpi::Root()) {

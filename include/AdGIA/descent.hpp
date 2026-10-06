@@ -91,6 +91,12 @@ class ConstrainedMetric {
   RieszMap* riesz_;
   const mfem::Operator* prior_ = nullptr;
   mfem::real_t weight_ = 0.0;
+  // Whether a constraint is set is a flag, NOT ell_.Size() != 0: the
+  // local true-dof count is legitimately zero on a rank owning no
+  // elements of the control space, and an early return there deserts
+  // the collective pairing the other ranks enter (measured deadlock at
+  // 8 ranks on a submesh control).
+  bool has_constraint_ = false;
   mfem::Vector ell_, ell_gradient_;
   mfem::real_t ell_scale_ = 0.0;
 };
@@ -108,6 +114,13 @@ struct DescentOptions {
   mfem::real_t tolerance = 1e-3;
   bool print = false;
   std::function<void(int, mfem::real_t, mfem::real_t)> monitor;
+  /** Optional stopping predicate, consulted after each accepted
+   * iteration (after the monitor, so it may read the functional's
+   * state at the accepted iterate): return true to stop, reported as
+   * converged. This is how a discrepancy-style rule — stop at a
+   * dimensionless infeasibility floor rather than at a fraction of the
+   * starting value — reaches the loops (reference document §9). */
+  std::function<bool(int, mfem::real_t)> stop;
 };
 
 struct DescentResult {
