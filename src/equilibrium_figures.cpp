@@ -302,6 +302,96 @@ void DensityFeasibility::Derivative(FiniteElementSpace& fes_rho,
   AssembleTrueRHS(fes_rho, *lf, dual);
 }
 
+void DensityFeasibility::HessianAction(
+    Coefficient& rho_parent, Coefficient& rho_stokes,
+    Coefficient& drho_parent, Coefficient& drho_stokes,
+    FiniteElementSpace& fes_rho, Vector& dual, bool gn_only) const {
+  const DensityFeasibilityProblem::Impl& s = *problem_->impl_;
+  MFEM_VERIFY(fes_rho.GetMesh() == s.fes_u->GetMesh(),
+              "DensityFeasibility: the control space must live on the "
+              "Stokes mesh.");
+  const real_t four_pi_G = 4.0 * std::numbers::pi * s.G;
+  Array<int>& marker = const_cast<Array<int>&>(s.stokes_marker);
+
+  // The potential's sensitivity: (K + DtN) dPhi = -4 pi G (drho, v).
+  auto dphi = detail::MakeGridFunction(s.fes_phi);
+  {
+    auto b = detail::MakeLinearForm(s.fes_phi);
+    b->AddDomainIntegrator(new DomainLFIntegrator(drho_parent));
+    Vector B;
+    AssembleTrueRHS(*s.fes_phi, *b, B);
+    B *= -four_pi_G;
+    s.poisson->Solve(B, *dphi);
+  }
+  auto dphi_sub = detail::MakeGridFunction(s.fes_phi_sub.get());
+  Transfer(*dphi, *dphi_sub);
+
+  // The state's sensitivity: the saddle with the load derivative
+  // dF = (drho grad Phi + rho grad dPhi, v).
+  auto du = detail::MakeGridFunction(s.fes_u);
+  auto dp = detail::MakeGridFunction(s.fes_p);
+  {
+    GradientGridFunctionCoefficient grad_phi(phi_sub_.get());
+    GradientGridFunctionCoefficient grad_dphi(dphi_sub.get());
+    ScalarVectorProductCoefficient term_a(drho_stokes, grad_phi);
+    ScalarVectorProductCoefficient term_b(rho_stokes, grad_dphi);
+    VectorSumCoefficient df(term_a, term_b);
+    auto lf = detail::MakeLinearForm(s.fes_u);
+    lf->AddDomainIntegrator(new VectorDomainLFIntegrator(df));
+    Vector F;
+    AssembleTrueRHS(*s.fes_u, *lf, F);
+    s.saddle->Solve(F, *du, *dp);
+  }
+
+  // The Gauss-Newton dual is the gradient assembly with (u, w)
+  // replaced by (du, dw): by the saddle identity
+  // du2^T A du1 = -du2 . dF(d1). The residual term -u^T d2F[., d]
+  // adds -(., u . grad dPhi) and its own adjoint potential; the two
+  // adjoint sources are linear, so one Poisson solve carries their sum
+  // — a full product costs one saddle and two Poisson solves, the same
+  // as a Gauss-Newton one.
+  auto du_parent = detail::MakeGridFunction(s.fes_u_parent.get());
+  *du_parent = 0.0;
+  Transfer(*du, *du_parent);
+  auto w_adj = detail::MakeGridFunction(s.fes_phi);
+  {
+    VectorGridFunctionCoefficient du_coeff(du_parent.get());
+    ScalarVectorProductCoefficient rho_du(rho_parent, du_coeff);
+    auto r = detail::MakeLinearForm(s.fes_phi);
+    r->AddDomainIntegrator(new DomainLFGradIntegrator(rho_du), marker);
+    // The residual term's source, int drho u . grad v, merged in.
+    VectorGridFunctionCoefficient up_coeff(u_parent_.get());
+    ScalarVectorProductCoefficient drho_u(drho_parent, up_coeff);
+    if (!gn_only) {
+      r->AddDomainIntegrator(new DomainLFGradIntegrator(drho_u), marker);
+    }
+    Vector R;
+    AssembleTrueRHS(*s.fes_phi, *r, R);
+    s.poisson->Solve(R, *w_adj);
+  }
+  auto w_adj_sub = detail::MakeGridFunction(s.fes_phi_sub.get());
+  Transfer(*w_adj, *w_adj_sub);
+
+  VectorGridFunctionCoefficient du_stokes(du.get());
+  GradientGridFunctionCoefficient grad_phi(phi_sub_.get());
+  InnerProductCoefficient gn_advective(du_stokes, grad_phi);
+  GridFunctionCoefficient w_adj_coeff(w_adj_sub.get());
+  SumCoefficient gn_integrand(gn_advective, w_adj_coeff, -1.0, four_pi_G);
+
+  auto lf = detail::MakeLinearForm(&fes_rho);
+  lf->AddDomainIntegrator(new DomainLFIntegrator(gn_integrand));
+
+  VectorGridFunctionCoefficient u_coeff(&stress_->Auxiliary());
+  GradientGridFunctionCoefficient grad_dphi_sub(dphi_sub.get());
+  InnerProductCoefficient res_advective(u_coeff, grad_dphi_sub);
+  ProductCoefficient res_negated(-1.0, res_advective);
+  if (!gn_only) {
+    lf->AddDomainIntegrator(new DomainLFIntegrator(res_negated));
+  }
+
+  AssembleTrueRHS(fes_rho, *lf, dual);
+}
+
 void DensityFeasibility::DerivativeOnParent(FiniteElementSpace& fes,
                                             Vector& dual) const {
   const DensityFeasibilityProblem::Impl& s = *problem_->impl_;

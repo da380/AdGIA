@@ -119,6 +119,42 @@ double Evaluate(FiniteElementSpace& fes_phi, FiniteElementSpace& fes_u,
   return J.Value();
 }
 
+// (H d) . d at the base state, with the same deterministic direction:
+// the Gauss-Newton machinery's serial-parallel agreement check.
+double HessianPairing(FiniteElementSpace& fes_phi,
+                      FiniteElementSpace& fes_u, FiniteElementSpace& fes_p,
+                      FiniteElementSpace& fes_rho, const Array<int>& ess,
+                      Coefficient& direction) {
+  ModelDensity rho0;
+  DensityFeasibility base(fes_phi, kDtNDegree, kGravG, rho0.Get(),
+                          Array<int>({2}), fes_u, fes_p, rho0.Get(),
+                          nullptr, &ess);
+  // The direction's parent twin vanishes off the fluid.
+  PWCoefficient d_parent;
+  d_parent.UpdateCoefficient(2, direction);
+  Vector Hd;
+  base.HessianAction(rho0.Get(), rho0.Get(), d_parent, direction, fes_rho,
+                     Hd);
+
+  std::unique_ptr<GridFunction> d;
+  auto* pfes = dynamic_cast<ParFiniteElementSpace*>(&fes_rho);
+  if (pfes) {
+    d = std::make_unique<ParGridFunction>(pfes);
+  } else {
+    d = std::make_unique<GridFunction>(&fes_rho);
+  }
+  d->ProjectCoefficient(direction);
+  Vector d_true(fes_rho.GetTrueVSize());
+  d->GetTrueDofs(d_true);
+  double dot = Hd * d_true;
+  if (pfes) {
+    double global = 0.0;
+    MPI_Allreduce(&dot, &global, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    dot = global;
+  }
+  return dot;
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -128,7 +164,7 @@ int main(int argc, char* argv[]) {
   FunctionCoefficient direction(Direction);
 
   // Every rank: the serial problem on the full mesh.
-  double j_serial = 0.0, dd_serial = 0.0;
+  double j_serial = 0.0, dd_serial = 0.0, hdd_serial = 0.0;
   {
     Mesh parent(ThreeLayerMeshFile(3), 1, 1);
     auto fluid = SubMesh::CreateFromDomain(parent, Array<int>({2}));
@@ -143,6 +179,8 @@ int main(int argc, char* argv[]) {
     j_serial =
         Evaluate(fes_phi, fes_u, fes_p, fes_rho, ess, 0.0, direction,
                  &dd_serial);
+    hdd_serial =
+        HessianPairing(fes_phi, fes_u, fes_p, fes_rho, ess, direction);
   }
 
   // The parallel problem.
@@ -175,6 +213,11 @@ int main(int argc, char* argv[]) {
     const double fd = (jp - jm) / (2.0 * kStep);
     Check(std::abs(fd - dd) / std::max(std::abs(fd), j0), 2e-5,
           "derivative matches the central difference");
+
+    const double hdd =
+        HessianPairing(fes_phi, fes_u, fes_p, fes_rho, ess, direction);
+    Check(std::abs(hdd - hdd_serial) / std::abs(hdd_serial), 1e-6,
+          "parallel Hessian pairing equals serial");
   }
 
   if (Mpi::Root()) {

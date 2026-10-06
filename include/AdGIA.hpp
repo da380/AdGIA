@@ -4,6 +4,7 @@
 #include "AdGIA/background.hpp"
 #include "AdGIA/bilininteg.hpp"
 #include "AdGIA/coefficient.hpp"
+#include "AdGIA/descent.hpp"
 #include "AdGIA/elastic_tensor.hpp"
 #include "AdGIA/equilibrium_figures.hpp"
 #include "AdGIA/index.hpp"

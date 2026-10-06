@@ -81,7 +81,18 @@ tolerances 1e-11).
    start); a semi-Lagrangian or flux-form transport step is the known
    upgrade. The exact rearrangement prediction (reference document §5)
    remains to be tested against an upgraded transport step.
-5. **Stage 2**: interface-shape parameters, moving-domain terms,
+5. ~~**Gauss–Newton**~~ — done: `DensityFeasibility::HessianAction`
+   (the GN/residual split of the reference document §8; the GN dual is
+   the gradient assembly with (u, w) replaced by the sensitivities;
+   one saddle + two Poisson solves per product, three with the residual
+   term), validated by FD against the gradient, symmetry and the
+   serial–parallel pairing check. The example's `-loop gn` is
+   Levenberg–Marquardt on it: with the roughness prior it reaches the
+   best physical restoration of the study (within-equipotential spread
+   3.4e-2 → 1.4e-2) in 15 iterations — an order of magnitude fewer
+   than CG — converging onto the regularised solution; undamped it
+   overfits past the floor like every other loop, measured.
+6. **Stage 2**: interface-shape parameters, moving-domain terms,
    gradient checks against the shift-derivative benchmark; rotation.
 
 ## Open items

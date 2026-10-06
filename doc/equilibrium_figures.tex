@@ -78,7 +78,8 @@ alternative advection route; \S\ref{sec:sobolev} turns derivatives into
 gradients by Sobolev metrics; \S\ref{sec:stage2} admits the shape as a
 control; \S\ref{sec:second} derives second derivatives and
 Newton--Krylov steps for density and shape; \S\ref{sec:algorithms}
-collects algorithms and verification.
+explains the implemented algorithms (nonlinear CG, Levenberg--Marquardt)
+and records what has been measured.
 
 \paragraph{Sign convention.} Throughout, as in the rest of the library,
 \begin{equation}
@@ -970,6 +971,79 @@ distribution function, and the advective form the reverse; an
 exactly divergence-free reconstruction of $\bu_h$ (an $H(\div)$
 post-processing) restores both.
 
+\subsection{The discrete advection step: a caution}
+\label{sec:advection-caution}
+
+The advection route looks like the safest loop: it is the physical
+relaxation, it needs no line search on $J$, and its energy decreases at
+the known rate $2J$. A direct Eulerian discretisation nevertheless fails,
+in a way worth understanding, because the failure is structural rather
+than a matter of tuning.
+
+\paragraph{Acceptance on $J$ rejects the true flow.} $J$ need not
+decrease along the gradient flow of $E$. One dimension shows why: for
+$f(x) = \cos x$ started near the maximum $x = 0$, the gradient flow
+descends $f$ while $\tfrac12 f'(x)^2 = \tfrac12\sin^2x$ \emph{grows} until
+the inflection point. In general $J = \tfrac12\norm{\operatorname{grad}_aE}_a^2$
+changes along the flow at the rate $-\ip{\operatorname{grad}_aE}
+{\operatorname{Hess}_aE\,\operatorname{grad}_aE}_a$, up to terms
+proportional to $\operatorname{grad}_aE$ itself. So $J$ grows wherever the
+flow runs along negative curvature of $E$ --- leaving an unstable
+arrangement, or overturning. A step test on $J$ therefore rejects
+legitimate steps of the flow. The correct test is on $E$, Armijo-style,
+using the exact rate $\mathrm{d}E/\mathrm{d}t = -2J$.
+
+\paragraph{Acceptance on $E$ admits collapse.} The implemented Eulerian
+step is the weak form of $\partial_t\rho = -\div(\rho\bu)$,
+\begin{equation}
+  (\delta\rho_h, v) = \Delta t\int_{\Bf}\rho_h\,\bu_h\cdot\nabla v\dV
+  \qquad\forall\,v ,
+  \label{eq:weak-advection}
+\end{equation}
+which moves the derivative onto the test function (the control is never
+differentiated) and conserves mass exactly ($v = 1$; $\bu_h = 0$ on
+$\Sigma$). It is not a rearrangement, for two reasons.
+\begin{itemize}
+\item $\bu_h$ is divergence-free only weakly, against the pressure space.
+  Integrating \eqref{eq:weak-advection} by parts exposes the source
+  $-\rho\,\div\bu_h$: a compression, not a transport.
+\item Even for an exactly divergence-free $\bu$, the explicit step is not
+  range-preserving. With $\delta = -\Delta t\,\Pi(\bu\cdot\nabla\rho)$,
+  $\Pi$ the $L^2$ projection, $(\delta,\rho) = \Delta t\int\bu\cdot\nabla
+  (\rho^2/2) = -\Delta t\int\tfrac12\rho^2\div\bu = 0$. Hence
+  $\norm{\rho + \delta}^2 = \norm{\rho}^2 + \norm{\delta}^2$: each step
+  raises the amplitude at $O(\Delta t^2)$. Mass is conserved; the
+  distribution function is not.
+\end{itemize}
+Off the rearrangement manifold $E$ is unbounded below at fixed mass:
+concentrating mass toward the centre sends $\norm{\nabla\Phi}^2$ to
+infinity. Along any ray $E$ is a \emph{concave} quadratic,
+\begin{equation}
+  E(\rho + t\delta) = E(\rho) + t\int\delta\,\Phi
+  - \frac{t^2}{8\pi G}\norm{\nabla\Phi[\delta]}^2 ,
+\end{equation}
+so an energy-decrease test with step growth rewards long steps, and long
+explicit steps are exactly where the off-manifold amplitude lives. The
+step control thus selects the amplitude channel, and the loop runs into
+\emph{discrete gravitational collapse}: $E$ falls, $J$ rises, density
+piles up. Capping the step by a CFL condition slows the drift but cannot
+stop it. CFL governs the stability of the transport discretisation, and
+this is a consistency defect --- a leak out of the constraint manifold
+--- which the objective rewards.
+
+\paragraph{As implemented, and the structural fix.} The implemented loop
+accepts on $E$ (Armijo with $\mathrm{d}E/\mathrm{d}t = -2J$), caps the
+step by CFL, and enforces an absolute ceiling on $J$ (twice its starting
+value). With the ceiling it stalls rather than collapses, which is the
+honest outcome. The structural fix is a range-preserving step: a
+semi-Lagrangian composition $\rho^{n+1} = \rho^{n}\circ X_n^{-1}$ along
+the discrete flow map, or better $\rho^n = \rho^0\circ(X_n\circ\cdots\circ
+X_1)^{-1}$ with the composed map carried as the unknown. Values are then
+resampled, never combined, so bounds and (up to the map's discrete volume
+error) the distribution function are preserved. The composed map is a
+relabelling-type map, which connects the advection route to the mapping
+layer.
+
 % ======================================================================
 \section{Derivatives are not gradients: Sobolev metrics}
 \label{sec:sobolev}
@@ -1660,91 +1734,403 @@ validates gradients therefore validates Hessian products the same way:
 \end{itemize}
 
 % ======================================================================
-\section{Algorithms and verification}
+\section{Algorithms, implementation and measured behaviour}
 \label{sec:algorithms}
 
-\subsection{Optimisation loop}
+This section describes the stage-1 machinery as implemented
+(\texttt{equilibrium\_figures.hpp}, \texttt{riesz.hpp},
+\texttt{descent.hpp}, \texttt{examples/equilibrium\_density.cpp}). It
+explains each algorithm from its model problem, because the behaviour
+measured on the first test problem is only intelligible through that
+model.
 
-Nonlinear conjugate gradients (Polak--Ribi\`ere with restart,
-\cite{PolakRibiere1969,NocedalWright}) in the chosen metric:
-$d_k = -g_k + \beta_k d_{k-1}$, with
+\subsection{Persistent solvers and the cost unit}
+
+In stage~1 no operator depends on the density (\S\ref{sec:hessian}). The
+Poisson system (Laplacian plus DtN on the ball) and the Taylor--Hood
+saddle are therefore assembled and preconditioned once
+(\texttt{DensityFeasibilityProblem}, with its internal Poisson and
+\texttt{StokesSaddleSolver} objects), and every evaluation, gradient and
+Hessian product only assembles right-hand sides and calls the same
+solvers. The unit of cost is a solve:
+\begin{center}
+\begin{tabular}{l c c}
+  & saddle & Poisson \\ \hline
+  value $J$ & 1 & 1 \\
+  value and gradient & 1 & 2 \\
+  Gauss--Newton product & 1 & 2 \\
+  full Hessian product (as implemented) & 1 & 3
+\end{tabular}
+\end{center}
+The Gauss--Newton product has a cheap assembly because of an identity.
+By the saddle relation of \S\ref{sec:hessian},
+$\delta\bu_2^{T}\mathsf{A}\,\delta\bu_1 = -\delta\bu_2^{T}\partial
+\mathsf{f}[d_1]$: the Gauss--Newton dual is the \emph{gradient assembly}
+\eqref{eq:gradient} with $(\bu, w)$ replaced by the sensitivities
+$(\delta\bu, \delta w)$, $\delta w$ being the Poisson adjoint sourced by
+$\rho\,\delta\bu$. The residual term needs one more Poisson solve (the
+adjoint sourced by $d\,\bu$). By linearity the two adjoints can be merged
+into one solve, as in \eqref{eq:hessvec}, which would bring the full
+product to the Gauss--Newton cost.
+
+\subsection{Metric quantities without Gram matrices}
+
+The Riesz maps of \S\ref{sec:sobolev} are implemented as operators taking
+a dual $j$ to a gradient $g$: the $L^2$ map (a mass solve), and the
+Sobolev map $\tilde A = \alpha M + \beta K$ with a homogeneous Dirichlet
+condition on the outer boundary of the extension domain, applied $s$
+times with mass products between ($s = 2$ the default). Vector-valued
+spaces get the component-wise metric, for later use with mapping
+controls. No Gram inner product is ever assembled. Every metric quantity
+the loops need is a pairing of a dual with a field, since
+$\ip{g}{h}_G = (Gg)^{T}h = j^{T}h$ for $g = G^{-1}j$: the squared gradient
+norm is $j^{T}g$, the slope along $d$ is $j^{T}d$, and the mass
+projection scalar is $\mathsf{m}^{T}g$.
+
+\subsection{Projected nonlinear conjugate gradients}
+
+\paragraph{The constrained gradient.} Let $T = \{\delta : \mathsf{m}^{T}\delta
+= 0\}$ be the fixed-mass plane, $r = G^{-1}\mathsf{m}$ the cached
+representative of the mass functional, and
 \begin{equation}
-  \beta_k = \max\Bigl(0,\ \frac{\ip{g_k}{g_k - g_{k-1}}_G}{\ip{g_{k-1}}{g_{k-1}}_G}\Bigr),
-  \qquad \ip{g}{h}_G = j^{T}h \ \ (j = Gg),
+  \Pi = I - \frac{r\,\mathsf{m}^{T}}{\mathsf{m}^{T}r} .
 \end{equation}
-so no product with $G$ is needed. Step lengths by Armijo backtracking
-\cite{Armijo1966}. Without bounds an exact line search is cheap in
-stage~1: $\ell_{\rho+\tau d}$ is quadratic in $\tau$, so
-$\bu(\tau) = \bu_0 + \tau\bu_1 + \tau^2\bu_2$ with $\bu_1$, $\bu_2$ the
-saddle solutions for the loads $-\ip{d\nabla\Phi + \rho\nabla\Phi[d]}{\cdot}$
-and $-\ip{d\nabla\Phi[d]}{\cdot}$; with $a(\bu_i,\bu_k) = \ell_i(\bu_k)$,
-$J(\tau)$ is an explicit quartic, minimised by solving a cubic --- one
-Poisson and two saddle solves per line search.
+$\Pi$ is idempotent ($\Pi r = 0$, $\Pi\delta = \delta$ on $T$) and
+$G$-self-adjoint: $G\Pi = G - \mathsf{m}\mathsf{m}^{T}/\mathsf{m}^{T}r$ is
+symmetric, using $Gr = \mathsf{m}$. Hence the projected gradient
+$g_\Pi = \Pi G^{-1}j$ is the Riesz representative of $j$ \emph{restricted
+to} $T$: for $\delta\in T$, $\ip{g_\Pi}{\delta}_G = j^{T}G^{-1}(G\Pi)\delta
+= j^{T}\Pi\delta = j^{T}\delta$. Pairings of raw duals with projected
+fields are therefore the inner products of the constrained problem, e.g.\
+$\norm{g_\Pi}_G^2 = j^{T}g_\Pi$.
 
-In the tail, once nonlinear CG has brought $J$ down, the Newton--Krylov
-(Gauss--Newton) step of \S\ref{sec:newton-krylov} replaces the CG
-direction, with the same line search; for joint density--shape steps
-see \S\ref{sec:shape-second}.
+\paragraph{Why the gradient, not the direction, is projected.} At a
+constrained minimiser $j = \mu\,\mathsf{m}$ (the mass multiplier), so the
+unprojected gradient tends to $\mu r \ne 0$. A loop that projects only
+its search direction computes the Polak--Ribi\`ere coefficient
+\begin{equation}
+  \beta_k = \max\Bigl(0,\ \frac{j_k^{T}(g_k - g_{k-1})}{j_{k-1}^{T}g_{k-1}}\Bigr)
+\end{equation}
+from gradients dominated, near convergence, by this non-vanishing normal
+component. The ratio then measures the wrong thing and the conjugacy is
+lost. With $g = g_\Pi$ throughout, $\beta_k$ is the Polak--Ribi\`ere
+coefficient of the problem on $T$, and the method is genuinely
+conjugate-gradient-like there. In the measured runs this change alone
+cut the iteration count by roughly an order of magnitude.
+$d_k = -g_k + \beta_kd_{k-1}$ stays in $T$. If $j_k^{T}d_k \ge 0$ (a stale
+direction), the loop restarts with $-g_k$; if the restarted direction does
+not descend either, the constrained minimum has been reached to solver
+accuracy.
 
-\subsection{Bounds and mass}
+\paragraph{Line search.} Along a ray $\rho + t d$ the functional is an
+exact quartic in $t$ (\S\ref{sec:derivative}; the quadratic prior keeps it
+quartic). The implemented search is \emph{forward tracking}: start from
+the previous accepted step (warm start), halve until $J$ decreases, then
+double while it keeps decreasing. If the doubling phase advanced at least
+once and the quartic is unimodal on the ray, the accepted $t$ satisfies
+$J(t/2) > J(t) \le J(2t)$, which brackets the ray minimiser in
+$(t/2, 2t)$: within a factor two. If the halving phase ends the search,
+only $t^\star < 2t$ is guaranteed. Acceptance is on simple decrease; the
+exact quartic line search of \S\ref{sec:second} (one Poisson and two
+saddle solves) is the available upgrade.
 
-Pointwise bounds $\rho_{\min}\le\rho\le\rho_{\max}$ together with the mass
-constraint make the projection a singly linearly constrained,
+\subsection{Levenberg--Marquardt Gauss--Newton}
+\label{sec:lm}
+
+\paragraph{The Gauss--Newton model.} $J = \tfrac12\norm{r(\rho)}^2$ is a
+nonlinear least-squares problem with residual $r = (2\mu)^{1/2}\eps(\bu)$
+(\S\ref{sec:hessian}). Linearising the residual, $r(\rho + s) \approx r +
+Ls$ with $L = \partial r$, gives the quadratic model
+\begin{equation}
+  m(s) = \tfrac12\norm{r + Ls}^2
+       = J + j^{T}s + \tfrac12 s^{T}H_{\mathrm{GN}}s,
+  \qquad j = L^{T}r,\quad H_{\mathrm{GN}} = L^{T}L .
+\end{equation}
+Minimising the model gives the Gauss--Newton step $H_{\mathrm{GN}}s = -j$.
+It uses only first derivatives of the residual, yet near a zero-residual
+solution it behaves like Newton's method, because the neglected Hessian
+term is $O(\norm{r})$ (\S\ref{sec:hessian}). Taken raw, it is useless
+here: $H_{\mathrm{GN}}$ is compact (order $-2$) and exactly singular along
+the barotropic family, so $s$ is dominated by the poorly determined
+directions and leaves the region where the model is valid.
+
+\paragraph{Damping: two equivalent views.} Levenberg
+\cite{Levenberg1944} and Marquardt \cite{Marquardt1963} replace the step
+by
+\begin{equation}
+  (H_{\mathrm{GN}} + \lambda D)\,s = -j ,
+  \label{eq:lm-step}
+\end{equation}
+with $D$ symmetric positive definite (implemented: the mass matrix $M$ of
+the control space) and $\lambda > 0$.
+\begin{itemize}
+\item \emph{Trust region.} \eqref{eq:lm-step} with
+  $\lambda \ge 0$, $\lambda(\norm{s}_D - \Delta) = 0$ is exactly the
+  optimality system of $\min m(s)$ subject to $\norm{s}_D \le \Delta$
+  (Mor\'e \cite{More1978}). $\lambda$ is the multiplier of the trust
+  region: large $\lambda$ means a small region. As $\lambda\to\infty$,
+  $s \approx -\lambda^{-1}D^{-1}j$ is a short steepest-descent step in the
+  $D$-metric; as $\lambda\to0$ it is the Gauss--Newton step. LM
+  interpolates between the robust and the fast method.
+\item \emph{Tikhonov on the step.} \eqref{eq:lm-step} minimises
+  $\tfrac12\norm{r + Ls}^2 + \tfrac\lambda2\norm{s}_D^2$: each step is a
+  Tikhonov-regularised solution of the linearised problem.
+\end{itemize}
+
+\paragraph{Damping as iterated Tikhonov, and semi-convergence.} For a
+linear residual $r(\rho) = r_0 + L\rho$, repeated LM steps with fixed
+$\lambda$ are $\rho_{k+1} = \rho_k - (L^TL + \lambda D)^{-1}L^Tr(\rho_k)$.
+That is the stationary iterated Tikhonov iteration of
+\texttt{doc/gauge\_penalty\_iteration.tex}, with $A = L^TL$ and $Q = D$.
+In the generalised singular basis of $(L, D)$, with values $\sigma_i$, the
+component of the least-squares error along mode $i$ contracts per step by
+\begin{equation}
+  \frac{\lambda}{\sigma_i^2 + \lambda} .
+\end{equation}
+Modes with $\sigma_i^2 \gg \lambda$ are fitted at once; modes with
+$\sigma_i^2 \ll \lambda/k$ are still essentially untouched after $k$
+steps. The damping is thus the regularisation parameter of an iterative
+regularisation method, with effective strength $\lambda/k$ (Hanke
+\cite{Hanke1997} analyses LM in exactly this role).
+
+This matters because the discrete functional $J_h$ is not the continuum
+$J$. Its small-$\sigma$ modes include directions that lower $J_h$ by
+fitting the \emph{discretisation} imbalance rather than the physical one:
+densities whose discrete force happens to be nearly a discrete gradient.
+These are rough and unphysical. Fitting the physical imbalance first and
+the discretisation error later is semi-convergence: the distance to the
+physical solution falls and then rises, while $J_h$ falls throughout.
+Damping is what holds the late modes back. Letting $\lambda\to0$ removes
+the protection, and the iteration then overfits like any unregularised
+method. The remedies are those of regularisation theory:
+\begin{itemize}
+\item stop at the discretisation floor (the discrepancy principle,
+  \cite{EnglHankeNeubauer}), estimated from the unperturbed model or by
+  refinement;
+\item add a prior that changes the problem into a well-posed one, after
+  which $\lambda\to0$ is safe and the iteration converges \emph{onto} the
+  regularised minimiser.
+\end{itemize}
+The implemented prior is the roughness of the correction,
+$\tfrac{\lambda_p}2(\rho - \rho_0)^{T}K(\rho - \rho_0)$ with $K$ the
+$H^1$-seminorm Gram and $\rho_0$ the starting density. It annihilates
+constants, so it does not fight the mass constraint, and among
+near-equivalent densities it selects the smoothest correction. Its Hessian
+$\lambda_pK$ is exact and is added to the model, so the inner system is
+\begin{equation}
+  (H_{\mathrm{GN}} + \lambda M + \lambda_p K)\,s = -(j + \lambda_pK(\rho - \rho_0)) .
+\end{equation}
+
+\paragraph{Adapting the damping.} The implemented rule is multiplicative:
+solve, project the step onto the mass plane, evaluate; on a decrease of
+the objective accept and set $\lambda\leftarrow\lambda/3$, otherwise
+reject, set $\lambda\leftarrow4\lambda$ and re-solve (at most eight tries).
+This is a poor man's trust region. A proper trust-region method compares
+the actual reduction with the reduction predicted by the model,
+$\varrho = (J(\rho) - J(\rho+s))/(m(0) - m(s))$, and enlarges or shrinks
+the region according to $\varrho$ \cite{More1978,NocedalWright}. The
+multiplicative rule uses only the sign of the actual reduction. Its
+standard behaviour:
+\begin{itemize}
+\item $\lambda$ is large far from the solution (short, gradient-like
+  steps) and decays geometrically once the model is trustworthy
+  (Gauss--Newton steps);
+\item the asymmetric factors make a reject--accept cycle increase
+  $\lambda$ by $4/3$, so oscillation drifts toward caution rather than
+  cycling.
+\end{itemize}
+The ratio test is the refinement to adopt if step rejections become
+frequent.
+
+\paragraph{Inexact inner solves.} \eqref{eq:lm-step} is solved by
+preconditioned CG with matrix-free products, to relative tolerance
+$10^{-2}$ and at most 30 iterations: a truncated (inexact) Newton method
+\cite{DemboEisenstatSteihaug1982}. The loose tolerance costs nothing:
+\begin{itemize}
+\item The model is only a local approximation of $J$; solving it more
+  accurately than it approximates $J$ buys nothing.
+\item Inexact Newton theory: with relative residual $\eta_k$ the local
+  convergence is linear with rate about $\eta_k$, and superlinear if
+  $\eta_k\to0$; $10^{-2}$ is already a fast linear rate.
+\item CG from $s = 0$ decreases the model monotonically, and its iterates
+  grow monotonically in the energy norm (Steihaug \cite{Steihaug1983}).
+  Every truncated iterate is therefore a descent step for the model, and
+  early truncation shortens the step --- truncation is itself a
+  regularisation, of the same kind as the damping.
+\end{itemize}
+The step is projected onto the mass plane after the inner solve. This is a
+simplification: the exact constrained model step would run the inner CG
+with the projected preconditioner of \S\ref{sec:newton-krylov}.
+
+\paragraph{Spectrum and preconditioning.} $H_{\mathrm{GN}} = L^TL$ is
+positive semi-definite, so CG is well defined on
+\eqref{eq:lm-step} for any $\lambda > 0$. Its convergence is governed by
+the spectrum of the preconditioned operator. Implemented, the
+preconditioner is the mass solve $M^{-1}$:
+\begin{equation}
+  M^{-1}(H_{\mathrm{GN}} + \lambda M + \lambda_pK)
+  = \lambda I + M^{-1}H_{\mathrm{GN}} + \lambda_p M^{-1}K .
+\end{equation}
+\begin{itemize}
+\item \emph{Without the prior} this is $\lambda I$ plus a compact operator
+  (order $-2$). Its eigenvalues cluster at $\lambda$ with finitely many
+  outliers above any threshold, independently of the mesh. CG then
+  converges superlinearly, with iteration counts governed by the number of
+  outliers above about $\lambda$, a number that does not grow under
+  refinement but does grow as $\lambda\to0$.
+\item \emph{With the prior} the term $\lambda_pM^{-1}K$ is
+  \emph{unbounded}. Its eigenvalues reach $O(\lambda_ph^{-2})$, the
+  condition number grows like $\lambda_ph^{-2}/\lambda$, and CG
+  iterations like $h^{-1}(\lambda_p/\lambda)^{1/2}$: mesh-dependent, and
+  worse as $\lambda$ decays. With the iteration cap of 30 this shows up as
+  earlier truncation, not divergence. The mesh-independent choice is the
+  Riesz map of the regularised metric itself, any fixed Sobolev map
+  $(\alpha M + \beta K)^{-1}$ with $\alpha,\beta > 0$. It is spectrally
+  equivalent to $\lambda M + \lambda_pK$ with constants
+  $\max(\lambda/\alpha, \lambda_p/\beta)/\min(\lambda/\alpha,
+  \lambda_p/\beta)$, independent of $h$, and the preconditioned operator
+  is that bounded, well-conditioned part plus a compact perturbation from
+  $H_{\mathrm{GN}}$.
+\end{itemize}
+
+\paragraph{At the floor.} The residual term neglected by Gauss--Newton is
+$O(\norm{r}) = O(J^{1/2})$. On the regularised problem the residual at the
+minimiser is small but not zero, so Gauss--Newton converges locally
+linearly, with a rate proportional to that residual: fast when the
+residual is small, quadratic only in the zero-residual limit. With the
+prior the model Hessian $H_{\mathrm{GN}} + \lambda_pK$ is non-singular on
+the mass plane (the prior controls everything but constants, which the
+mass constraint removes). $\lambda$ can then decay to zero safely, and
+the iteration converges onto the regularised minimiser in few outer
+steps. This is what is measured.
+
+\subsection{The advection loop}
+
+Poisson for $\Phi$, saddle for $\bu$, the weak-form step
+\eqref{eq:weak-advection} capped by CFL, acceptance on $E$ with the exact
+rate $-2J$, and the absolute ceiling on $J$. Its measured fate and the
+structural fix are in \S\ref{sec:advection-caution}.
+
+\subsection{Bounds}
+
+Not implemented. Pointwise bounds $\rho_{\min}\le\rho\le\rho_{\max}$ with
+the mass constraint make the projection a singly linearly constrained,
 box-constrained quadratic program. MFEM's \texttt{SLBQPOptimizer} solves
 $\min\norm{x - x_t}_2$ subject to $w^Tx = a$, $x_{\mathrm{lo}}\le x\le
 x_{\mathrm{hi}}$ in the Euclidean coefficient norm, which is the $L^2$
-projection for a lumped (diagonal) mass after the scaling
-$x \mapsto M_L^{1/2}x$. Projection with bounds in a non-diagonal metric
-$G$ is a genuine QP; the practical compromise is the metric for the
-direction and the lumped-$L^2$ projection for feasibility. Nodal bounds
-imply pointwise bounds only for order one (or a Bernstein basis).
+projection for a lumped mass after scaling by $M_L^{1/2}$. Projection with
+bounds in a non-diagonal metric is a genuine QP; the practical compromise
+is the metric for the direction and lumped-$L^2$ projection for
+feasibility. Nodal bounds imply pointwise bounds only at order one (or in
+a Bernstein basis).
 
-\subsection{Advection loop}
+\subsection{Stopping diagnostic}
 
-Poisson for $\Phi$, saddle for $\bu$, then a transport step of
-\eqref{eq:advection} with a time step limited by the CFL condition and by
-the energy decrease $\Delta E \approx -2J\Delta t$, with the discrete
-divergence handled as in \S\ref{sec:energy}.
+$J$ is dimensional, and its floor depends on mesh and model. The
+implemented diagnostic is the dimensionless ratio
+\begin{equation}
+  \eta = \frac{\norm{\dev T_{\min}}_{L^2(\Bf)}}{\norm{p}_{L^2(\Bf)}}
+       = \frac{(2J)^{1/2}}{\norm{p}_{L^2(\Bf)}}
+  \qquad(\mu_{\mathrm{f}} = \tfrac12),
+\end{equation}
+how far from fluid the minimum-deviatoric state is. Barotropy itself is
+read off the $(\Phi,\rho)$ scatter over the fluid, which collapses onto a
+curve at a barotropic state, and its within-equipotential spread.
 
 \subsection{Verification}
 \label{sec:verification}
 
+Implemented tests (\texttt{TestEquilibriumFigures}, serial and parallel):
 \begin{itemize}
-\item \emph{Finite differences}: $(J_h(\rho + \eta\delta) - J_h(\rho -
-  \eta\delta))/2\eta$ against $j^{T}\delta$ for random and structured
-  $\delta$; the Taylor remainder $|J_h(\rho+\eta\delta) - J_h(\rho) -
-  \eta j^T\delta| = O(\eta^2)$. Being the exact discrete gradient, the
-  agreement is limited by solver tolerances only.
-\item \emph{Euler identity} \eqref{eq:euler}: $\int_B\rho J' = 4J$ with
-  the derivative evaluated on the whole density (solid included).
-\item \emph{Hessian}: the symmetry, gradient-difference and residual-scaling
-  checks of \S\ref{sec:second}.
-\item \emph{Cross-check of the functionals}: $\Jmu$ against $\JF$ over a
-  sweep of $\mu_{\mathrm{s}}/\mu_{\mathrm{f}}$, expecting
-  $\Jmu - \JF = O(1/\mu_{\mathrm{s}})$ and convergence of the solid stress
-  output (Proposition~\ref{prop:Jmu}); $\Ja > 0$ at a feasible aspherical
-  model as the leakage control (Proposition~\ref{prop:leakage}).
-\item \emph{Stage 2}: gradients against the interface-shift benchmark,
-  and the gauge orthogonality $j^T(\Div(\rho\bfeta), F_e\bfeta) \approx 0$
-  as a discretisation diagnostic.
+\item the fluid-only derivative against central differences;
+\item the whole-body derivative and the Euler identity \eqref{eq:euler};
+\item agreement of the derivative assembled on the parent mesh with the
+  one on the Stokes SubMesh;
+\item the persistent problem against the one-shot evaluation;
+\item Hessian products against differences of the gradient, and their
+  symmetry.
+\end{itemize}
+Still to come:
+\begin{itemize}
+\item the cross-check of $\Jmu$ against $\JF$ over a contrast sweep
+  (Proposition~\ref{prop:Jmu}) and the leakage control $\Ja > 0$
+  (Proposition~\ref{prop:leakage});
+\item the stage-2 gradient and gauge checks of \S\ref{sec:second}.
 \end{itemize}
 
-\paragraph{Milestone.} Fixed-shape density restoration on the fluid-core
-model (spherical fluid core, spherical solid mantle, buffer): start from
-a deliberately non-barotropic fluid density (the hydrostatic profile plus
-a mass-free lateral perturbation) and drive $J$ to the discretisation
-floor. The two routes have different, known targets. With the prior
-$\rho_{\mathrm{ref}}$ the hydrostatic profile, the optimisation route
-must recover $\rho_{\mathrm{ref}}$ (it is a zero of $J$ and of the
-prior). The advection route must reach a stable rearrangement of the
-starting material; the global minimiser of $E$ among rearrangements is
-the symmetric decreasing rearrangement $\rho^*$ of the starting density
-(\S\ref{sec:energy}; by Remark~\ref{rem:shell} the spherical mantle
-exerts no force in the cavity), computable directly from the distribution
-function. The first measured study compares $L^2$, $H^1$ and $H^2$
-metrics (iteration counts against mesh refinement; a proper metric
-should give mesh-independent counts), and the optimisation against the
-advection route; then $\JF$ against $\Jmu$ on an aspherical model.
+\subsection{Measured behaviour: density restoration}
+\label{sec:measured}
+
+\paragraph{Set-up.} The three-layer model of the test meshes (solid inner
+core, fluid outer core, solid mantle, buffer), with fluid density
+$\rho_0 = 1.2 - 0.3r^2 + 0.1\,x_2/r$. The base is barotropic; the
+degree-one lateral part of amplitude $0.1$ is not. The functional is
+$\JF$ with $\bu = 0$ on both fluid boundaries. With two solid components
+this omits the inner core's force and torque balance
+(Remark~\ref{rem:innercore}), so $\JF = 0$ certifies the fluid but not the
+inner core.
+
+\paragraph{The floor dominates.} The unperturbed base model, an exact
+equilibrium in the continuum, evaluates to $J_h = 9.4\times10^{-9}$. That
+is two thirds of the perturbed start, $1.4\times10^{-8}$: most of the
+starting value is the discretisation imbalance of the radial state, not
+the lateral perturbation. A reduction of $J_h$ by more than a factor of
+about $1.5$ is therefore not progress toward the physical answer but
+fitting of discretisation error. The success measures are the
+within-equipotential density spread, the scatter, and the physical range
+of the density; $J_h$ itself is not one.
+
+\paragraph{Results.}
+\begin{center}
+\begin{tabular}{p{0.3\textwidth} p{0.6\textwidth}}
+  run & outcome \\ \hline
+  NCG, $L^2$ metric, no prior &
+    $J_h$ down by a factor $9$ while the density runs to
+    $[-4.5,\ 8.4]$: semi-convergence, deep into the overfitting regime. \\
+  NCG, $H^1$ metric &
+    iterates stay bounded but roughen. \\
+  NCG, $H^2$ metric &
+    stays physical; over a 400-iteration run $J_h$ falls below the base
+    floor and the within-equipotential spread grows again
+    (late-stage semi-convergence). \\
+  LM--GN, no prior &
+    $J_h$ at $0.236$ of the start in 15 iterations; once $\lambda\to0$ it
+    overfits like the unregularised descent. \\
+  LM--GN, prior $\lambda_p = 10^{-7}$ &
+    the best restoration of the study: spread $3.4\times10^{-2}\to
+    1.37\times10^{-2}$, density within $[1.09,\ 1.22]$, in 15 iterations ---
+    an order of magnitude fewer than NCG with the same prior --- converging
+    onto the regularised solution.
+\end{tabular}
+\end{center}
+
+\paragraph{Reading.} The Sobolev order is a regularisation that delays
+semi-convergence ($L^2$, then $H^1$, then $H^2$, in increasing
+robustness) but does not prevent it: a descent on $J_h$ alone eventually
+fits the discretisation. The prior changes the problem. With it, the
+second-order method does what the theory of \S\ref{sec:lm} predicts:
+Gauss--Newton exact at the floor, $\lambda\to0$ safe, and convergence onto
+the regularised minimiser in few steps. The remaining spread
+($1.37\times10^{-2}$) is the regularised answer at this mesh and prior
+weight. Its dependence on $\lambda_p$ and $h$, together with the targets
+of the milestone below, is the next study.
+
+\paragraph{Milestone targets.} With a prior centred on the barotropic
+base, the optimisation route should recover the base (a zero of $J$ and
+of the prior). The implemented roughness prior is centred on the start,
+which selects the smoothest feasible correction instead. The advection
+route, once range-preserving, should reach a stable rearrangement of the
+starting material. Its target is explicit here. The spherical mantle
+exerts no force in the cavity (Remark~\ref{rem:shell}). The inner core is
+uniform (density $1.3$) and at least as dense as any fluid value. Applying
+the Riesz rearrangement inequality to the combined density (inner core
+plus fluid), whose symmetric decreasing rearrangement keeps the inner
+core in place, gives the global minimiser of $E$ among fluid
+rearrangements: the radially decreasing rearrangement $\rho^{*}$ of the
+start within the fluid shell. $\rho^{*}$ can be computed directly from the
+distribution function. Further studies: iteration counts of the metrics and of LM
+under refinement, optimisation against advection, then $\JF$ against
+$\Jmu$ on an aspherical model.
 
 % ======================================================================
 \begin{thebibliography}{99}
@@ -1844,6 +2230,41 @@ SIAM J. Sci. Comput. 23 (2001), 1376--1395.
 M.~C. Delfour, J.-P. Zol\'esio,
 \emph{Shapes and Geometries: Metrics, Analysis, Differential Calculus,
 and Optimization}, 2nd ed., SIAM, 2011.
+
+\bibitem{Levenberg1944}
+K.~Levenberg,
+\emph{A method for the solution of certain non-linear problems in least
+squares},
+Quart. Appl. Math. 2 (1944), 164--168.
+
+\bibitem{Marquardt1963}
+D.~W. Marquardt,
+\emph{An algorithm for least-squares estimation of nonlinear parameters},
+J. Soc. Indust. Appl. Math. 11 (1963), 431--441.
+
+% TODO: verify pages.
+\bibitem{More1978}
+J.~J. Mor\'e,
+\emph{The Levenberg--Marquardt algorithm: implementation and theory},
+in G.~A. Watson (ed.), \emph{Numerical Analysis}, Lecture Notes in
+Math. 630, Springer, 1978, 105--116.
+
+% TODO: verify volume/pages.
+\bibitem{Hanke1997}
+M.~Hanke,
+\emph{A regularizing Levenberg--Marquardt scheme, with applications to
+inverse groundwater filtration problems},
+Inverse Problems 13 (1997), 79--95.
+
+\bibitem{DemboEisenstatSteihaug1982}
+R.~S. Dembo, S.~C. Eisenstat, T.~Steihaug,
+\emph{Inexact Newton methods},
+SIAM J. Numer. Anal. 19 (1982), 400--408.
+
+\bibitem{EnglHankeNeubauer}
+H.~W. Engl, M.~Hanke, A.~Neubauer,
+\emph{Regularization of Inverse Problems},
+Kluwer, 1996.
 
 \bibitem{NocedalWright}
 J.~Nocedal, S.~J. Wright,

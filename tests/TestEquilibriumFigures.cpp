@@ -275,3 +275,78 @@ TEST(EquilibriumFigures, PersistentProblemMatchesOneShot) {
   diff -= d2;
   EXPECT_LT(diff.Norml2() / d2.Norml2(), 1e-10);
 }
+
+TEST(EquilibriumFigures, HessianActionMatchesFDAndIsSymmetric) {
+  Mesh parent(ThreeLayerMeshFile(3), 1, 1);
+  auto fluid = SubMesh::CreateFromDomain(parent, Array<int>({2}));
+
+  H1_FECollection h1_phi(2, 3), h1_u(2, 3), h1_p(1, 3);
+  L2_FECollection l2(2, 3);
+  FiniteElementSpace fes_phi(&parent, &h1_phi);
+  FiniteElementSpace fes_u(&fluid, &h1_u, 3);
+  FiniteElementSpace fes_p(&fluid, &h1_p);
+  FiniteElementSpace fes_rho(&fluid, &l2);
+  FiniteElementSpace fes_rho_parent(&parent, &l2);
+
+  Array<int> ess(fluid.bdr_attributes.Max());
+  ess = 1;
+  ProblemSetup s{&parent,   &fluid,   &fes_phi,       &fes_u, &fes_p,
+          &fes_rho,  &fes_rho_parent, Array<int>({2}), nullptr, &ess};
+
+  // The base state and two random directions with their coefficient
+  // pairs (fluid, and the exact L2 transfer to the parent).
+  ModelDensity rho0;
+  DensityFeasibility base(fes_phi, 8, kGravG, rho0.Get(),
+                          Array<int>({2}), fes_u, fes_p, rho0.Get(),
+                          nullptr, &ess);
+
+  std::mt19937 gen(7);
+  std::uniform_real_distribution<double> dist(-1.0, 1.0);
+  auto random_direction = [&](GridFunction& d, GridFunction& d_parent) {
+    for (int i = 0; i < d.Size(); i++) {
+      d[i] = dist(gen);
+    }
+    d_parent = 0.0;
+    SubMesh::Transfer(d, d_parent);
+  };
+  GridFunction d(&fes_rho), d_parent(&fes_rho_parent);
+  GridFunction e(&fes_rho), e_parent(&fes_rho_parent);
+  random_direction(d, d_parent);
+  random_direction(e, e_parent);
+  GridFunctionCoefficient dc(&d), dc_parent(&d_parent);
+  GridFunctionCoefficient ec(&e), ec_parent(&e_parent);
+
+  Vector Hd, He, Hd_gn;
+  base.HessianAction(rho0.Get(), rho0.Get(), dc_parent, dc, fes_rho, Hd);
+  base.HessianAction(rho0.Get(), rho0.Get(), ec_parent, ec, fes_rho, He);
+  base.HessianAction(rho0.Get(), rho0.Get(), dc_parent, dc, fes_rho,
+                     Hd_gn, /*gn_only=*/true);
+
+  // Symmetry: (H d) . e = (H e) . d, and likewise for Gauss-Newton.
+  const double hde = Hd * e;
+  const double hed = He * d;
+  EXPECT_NEAR(hde, hed, 1e-8 * std::abs(hde));
+
+  // The residual term is present (the state is infeasible, J > 0).
+  Vector res_part(Hd);
+  res_part -= Hd_gn;
+  EXPECT_GT(res_part.Norml2(), 1e-12 * Hd.Norml2());
+
+  // Central finite difference of the GRADIENT along d pairs with e as
+  // the full Hessian does.
+  const double step = 1e-3;
+  GridFunction cp(&fes_rho), cm(&fes_rho);
+  cp = d;
+  cp *= step;
+  cm = d;
+  cm *= -step;
+  Vector jp, jm;
+  Evaluate(s, cp, &jp);
+  Evaluate(s, cm, &jm);
+  Vector fd(jp);
+  fd -= jm;
+  fd *= 1.0 / (2.0 * step);
+  const double fde = fd * e;
+  EXPECT_NEAR(fde, hde, 2e-4 * std::max(std::abs(fde), std::abs(hde)))
+      << "fd " << fde << " vs H " << hde;
+}

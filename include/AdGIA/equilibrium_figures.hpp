@@ -186,6 +186,32 @@ class DensityFeasibility {
   void DerivativeOnParent(mfem::FiniteElementSpace& fes,
                           mfem::Vector& dual) const;
 
+  /**
+   * @brief The Hessian action @f$H\,\delta\rho@f$ as a dual against
+   * @p fes_rho (doc/equilibrium_figures.tex §8). The product splits as
+   * Gauss–Newton plus residual,
+   * @f[
+   *   H[\cdot,\delta] = \delta u^T\!A\,\delta u_1
+   *                     \;-\; u^T\partial^2 F[\cdot,\delta] ,
+   * @f]
+   * and by the saddle identity the Gauss–Newton dual is the gradient
+   * assembly with @f$(\mathbf{u}, w)@f$ replaced by the sensitivities
+   * @f$(\delta\mathbf{u}, \delta w)@f$: one saddle solve and two
+   * Poisson solves with the problem's assembled operators; the residual
+   * term (which vanishes at @f$J = 0@f$, making Gauss–Newton exact at
+   * the tail) costs one further Poisson solve. The density and the
+   * direction are supplied as coefficient pairs like the constructor's
+   * (the state does not retain the constructor's coefficients).
+   * @param gn_only Drop the residual term: the positive-semidefinite
+   * Gauss–Newton model, the Levenberg–Marquardt loop's operator.
+   */
+  void HessianAction(mfem::Coefficient& rho_parent,
+                     mfem::Coefficient& rho_stokes,
+                     mfem::Coefficient& drho_parent,
+                     mfem::Coefficient& drho_stokes,
+                     mfem::FiniteElementSpace& fes_rho, mfem::Vector& dual,
+                     bool gn_only = false) const;
+
  private:
   friend class DensityFeasibilityProblem;
   /** The state constructor the problem's Evaluate uses: the heavy

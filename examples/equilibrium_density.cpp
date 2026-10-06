@@ -14,8 +14,9 @@
 // unbalanced buoyancy would drive. The example drives J to its floor by
 // moving the fluid density, two ways:
 //
-//   -loop cg      nonlinear conjugate gradients (Polak-Ribiere+, Armijo
-//                 backtracking) on the density, the derivative by the
+//   -loop cg      nonlinear conjugate gradients (Polak-Ribiere+, a
+//                 forward-tracking line search) on the density, the
+//                 derivative by the
 //                 envelope theorem (DensityFeasibility) and the gradient
 //                 through a choosable Riesz map:
 //                   -metric l2   the L2 identification on the fluid
@@ -25,6 +26,15 @@
 //                 (-length sets the smoothing length sqrt(beta/alpha)).
 //                 The fluid mass is held fixed by projecting the search
 //                 direction in the metric.
+//
+//   -loop gn      Levenberg-Marquardt Gauss-Newton (L2 control): the
+//                 inner PCG solves (H_GN + lambda M) s = -j with
+//                 Hessian-vector products from the envelope machinery
+//                 (one saddle and two Poisson solves each, on the
+//                 persistent operators); the LM damping is iterated
+//                 Tikhonov, and with -prior the loop converges onto the
+//                 regularised solution in an order of magnitude fewer
+//                 iterations than cg.
 //
 //   -loop advect  the advection flow: rho stepped along u itself — the
 //                 gradient flow of the gravitational energy in the
@@ -164,80 +174,56 @@ std::unique_ptr<DensityFeasibility> Evaluate(const Spaces& s, Density& rho) {
   return s.problem->Evaluate(rho.parent, rho.stokes);
 }
 
-// The metric: where the control lives, how the dual is assembled, and
-// the Riesz map identifying gradients.
-struct Metric {
+// The control's plumbing: where it lives, its Riesz map, the fixed-mass
+// constraint, the roughness prior and the mass matrix — the metric
+// itself (gradients, projections, prior bookkeeping) is the library's
+// ConstrainedMetric; the loops are the library's.
+struct Control {
   SpaceType* fes;            // the control space (fluid or parent)
   bool on_parent;            // Sobolev metrics live on the parent
   std::unique_ptr<RieszMap> riesz;
-  Vector mass_dual;          // l(v) = int_fluid v: the constraint's dual
-  Vector mass_gradient;      // its Riesz representative
+  std::unique_ptr<FormType> prior_form, mass_form;
+  OperatorHandle prior_K, mass_M;
+  Vector mass_dual;          // l(v) = int_fluid v
+  std::unique_ptr<ConstrainedMetric> metric;
+};
+
+Control MakeControl(const std::string& name, double length, double lambda,
+                    const Spaces& s) {
+  Control m;
+  m.on_parent = name != "l2";
+  m.fes = m.on_parent ? s.ctrl_parent : s.ctrl_fluid;
+  Array<int> empty;
+  if (m.on_parent) {
+    const int order = name == "h2" ? 2 : 1;
+    // Dirichlet on the outer boundary of the extension domain.
+    Array<int> outer(s.parent->bdr_attributes.Max());
+    outer = 0;
+    outer[s.parent->bdr_attributes.Max() - 1] = 1;
+    m.riesz = std::make_unique<SobolevRieszMap>(
+        *m.fes, 1.0, length * length, order, &outer);
+    // The map copies the marker's dofs at construction.
+  } else {
+    m.riesz = std::make_unique<L2RieszMap>(*m.fes);
+  }
+  m.metric = std::make_unique<ConstrainedMetric>(*m.riesz);
 
   // The roughness prior: lambda/2 c^T K c with K the H1-seminorm Gram
   // on the control space — a selection within the near-null directions
   // of J, biased toward smoothness rather than toward a known answer.
-  double lambda = 0.0;
-  std::unique_ptr<FormType> prior_form;
-  OperatorHandle prior_K;
-
-  double PriorValue(const Vector& c) const {
-    if (lambda == 0.0) {
-      return 0.0;
-    }
-    Vector Kc(c.Size());
-    prior_K.Ptr()->Mult(c, Kc);
-    return 0.5 * lambda * riesz->Pair(Kc, c);
-  }
-
-  void AssembleDual(DensityFeasibility& J, const Vector& c,
-                    Vector& j) const {
-    if (on_parent) {
-      J.DerivativeOnParent(*fes, j);
-    } else {
-      J.Derivative(*fes, j);
-    }
-    if (lambda != 0.0) {
-      Vector Kc(c.Size());
-      prior_K.Ptr()->Mult(c, Kc);
-      j.Add(lambda, Kc);
-    }
-  }
-
-  // Remove the mass component of a direction (the metric-orthogonal
-  // projection onto the fixed-fluid-mass plane).
-  void ProjectMass(Vector& d) const {
-    const double scale = riesz->Pair(mass_dual, mass_gradient);
-    const double along = riesz->Pair(mass_dual, d);
-    d.Add(-along / scale, mass_gradient);
-  }
-};
-
-Metric MakeMetric(const std::string& name, double length, double lambda,
-                  const Spaces& s) {
-  Metric m;
-  m.on_parent = name != "l2";
-  m.fes = m.on_parent ? s.ctrl_parent : s.ctrl_fluid;
-  m.lambda = lambda;
   if (lambda != 0.0) {
     m.prior_form = std::make_unique<FormType>(m.fes);
     m.prior_form->AddDomainIntegrator(new DiffusionIntegrator());
     m.prior_form->Assemble();
-    Array<int> empty;
     m.prior_form->FormSystemMatrix(empty, m.prior_K);
+    m.metric->SetPrior(*m.prior_K.Ptr(), lambda);
   }
-  if (m.on_parent) {
-    const int order = name == "h2" ? 2 : 1;
-    // Dirichlet on the outer boundary of the extension domain.
-    auto outer = std::make_unique<Array<int>>(
-        s.parent->bdr_attributes.Max());
-    *outer = 0;
-    (*outer)[s.parent->bdr_attributes.Max() - 1] = 1;
-    m.riesz = std::make_unique<SobolevRieszMap>(
-        *m.fes, 1.0, length * length, order, outer.get());
-    // The map copies the marker's dofs at construction; the Array may go.
-  } else {
-    m.riesz = std::make_unique<L2RieszMap>(*m.fes);
-  }
+
+  // The control's mass matrix: the Levenberg-Marquardt damping Gram.
+  m.mass_form = std::make_unique<FormType>(m.fes);
+  m.mass_form->AddDomainIntegrator(new MassIntegrator());
+  m.mass_form->Assemble();
+  m.mass_form->FormSystemMatrix(empty, m.mass_M);
 
   // The mass functional over the fluid, on the control space.
   ConstantCoefficient one(1.0);
@@ -265,15 +251,14 @@ Metric MakeMetric(const std::string& name, double length, double lambda,
 #else
   m.mass_dual = *lf;
 #endif
-  m.mass_gradient.SetSize(m.mass_dual.Size());
-  m.riesz->Mult(m.mass_dual, m.mass_gradient);
+  m.metric->SetConstraint(m.mass_dual);
   return m;
 }
 
 // The control seen by the density: on the parent the model reads the
 // restriction, which Sync takes from the fluid field, so the fluid
 // twin must follow the parent control.
-void SyncDensity(const Metric& m, const Vector& c, Density& rho,
+void SyncDensity(const Control& m, const Vector& c, Density& rho,
                  GridType& scratch_parent, GridType& scratch_fluid) {
   if (!m.on_parent) {
     rho.Sync(c);
@@ -357,7 +342,7 @@ int main(int argc, char* argv[]) {
 
   OptionsParser args(argc, argv);
   args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file (three-layer).");
-  args.AddOption(&loop, "-loop", "--loop", "cg or advect.");
+  args.AddOption(&loop, "-loop", "--loop", "cg, gn or advect.");
   args.AddOption(&metric_name, "-metric", "--metric",
                  "Gradient metric of the cg loop: l2, h1 or h2.");
   args.AddOption(&length, "-length", "--length",
@@ -453,6 +438,61 @@ int main(int argc, char* argv[]) {
                                examples::DefaultKeys(dim));
   examples::GLVisWindow after("final fluid density",
                               examples::DefaultKeys(dim));
+  examples::GLVisWindow flow("initial relaxation flow |u|",
+                             examples::DefaultKeys(dim));
+  examples::GLVisWindow infeasible_before("initial |dev T| / p",
+                                          examples::DefaultKeys(dim));
+  examples::GLVisWindow infeasible_after("final |dev T| / p",
+                                         examples::DefaultKeys(dim));
+
+  // The pointwise infeasibility: |dev T| against the pressure — where
+  // the fluid is being asked to carry shear.
+  struct InfeasibilityCoefficient : public Coefficient {
+    const MinimumDeviatoricEquilibriumStress* T;
+    const GridFunction* p;
+    mutable DenseMatrix M;
+    double Eval(ElementTransformation& tr,
+                const IntegrationPoint& ip) override {
+      const_cast<MinimumDeviatoricEquilibriumStress*>(T)->Eval(M, tr, ip);
+      const int d = M.Height();
+      double trace = 0.0;
+      for (int i = 0; i < d; i++) {
+        trace += M(i, i);
+      }
+      double dev2 = 0.0;
+      for (int i = 0; i < d; i++) {
+        for (int k = 0; k < d; k++) {
+          const double v = M(i, k) - (i == k ? trace / d : 0.0);
+          dev2 += v * v;
+        }
+      }
+      const double pressure = std::abs(p->GetValue(tr, ip));
+      return std::sqrt(dev2) / std::max(pressure, 1e-12);
+    }
+  };
+  auto send_state = [&](DensityFeasibility& J, examples::GLVisWindow& rho_w,
+                        examples::GLVisWindow* infeasible_w,
+                        bool with_flow) {
+    GridType rho_f(&ctrl_fluid);
+    rho_f.ProjectCoefficient(rho.stokes);
+    rho_w.Send(fluid, rho_f);
+    if (infeasible_w) {
+      InfeasibilityCoefficient eta;
+      eta.T = &J.Stress();
+      eta.p = &J.Stress().Pressure();
+      GridType eta_f(&ctrl_fluid);
+      eta_f.ProjectCoefficient(eta);
+      infeasible_w->Send(fluid, eta_f);
+    }
+    if (with_flow) {
+      VectorGridFunctionCoefficient u(&J.Velocity());
+      InnerProductCoefficient u2(u, u);
+      PowerCoefficient umag(u2, 0.5);
+      GridType u_f(&ctrl_fluid);
+      u_f.ProjectCoefficient(umag);
+      flow.Send(fluid, u_f);
+    }
+  };
 
   // The initial state.
   auto J0 = Evaluate(s, rho);
@@ -462,124 +502,86 @@ int main(int argc, char* argv[]) {
   }
   BarotropyRows(s, rho, *J0, "initial", scatter);
   if (visualisation) {
-    GridType rho_f(&ctrl_fluid);
-    rho_f.ProjectCoefficient(rho.stokes);
-    before.Send(fluid, rho_f);
+    send_state(*J0, before, &infeasible_before, /*with_flow=*/true);
   }
 
   const bool advect = std::string(loop) == "advect";
+  const bool gauss_newton = std::string(loop) == "gn";
   double j_final = j_start;
   int done = 0;
   std::unique_ptr<DensityFeasibility> J_last = std::move(J0);
 
   if (!advect) {
-    // --- Nonlinear CG in the chosen metric ---------------------------------
-    // The loop descends J_tot = J + prior; J alone (the certificate) is
-    // what the history records and the stopping test reads.
-    Metric metric = MakeMetric(metric_name, length, prior, s);
+    // --- The library loops (descent.hpp) -----------------------------------
+    // -loop cg: projected Polak-Ribiere+ CG in the chosen metric;
+    // -loop gn: Levenberg-Marquardt Gauss-Newton (which needs the L2
+    // control for its Hessian plumbing). The adapter syncs the density,
+    // evaluates through the persistent problem, and serves duals and
+    // Gauss-Newton products from the last state; the metric — Riesz
+    // map, fixed-mass plane, roughness prior — and the loops are the
+    // library's.
+    Control control = MakeControl(gauss_newton ? "l2" : metric_name,
+                                  length, prior, s);
     GridType scratch_parent(&ctrl_parent), scratch_fluid(&ctrl_fluid);
+    GridType d_fluid(&ctrl_fluid), d_parent(&ctrl_parent);
+    GridFunctionCoefficient dc_fluid(&d_fluid), dc_parent(&d_parent);
 
-    Vector c(metric.fes->GetTrueVSize());
-    c = 0.0;
-    Vector j(c.Size()), g(c.Size()), d(c.Size()), j_old(c.Size()),
-        g_old(c.Size()), c_trial(c.Size());
-
-    // The gradient is projected onto the fixed-mass plane as soon as it
-    // is identified; the projector is metric-self-adjoint, so every
-    // dual-gradient pairing below is then the manifold's own inner
-    // product and the PR conjugacy is the constrained one.
-    metric.AssembleDual(*J_last, c, j);
-    metric.riesz->Mult(j, g);
-    metric.ProjectMass(g);
-    d = g;
-    d *= -1.0;
-    double jraw = j_start;
-    double jval = j_start;  // the total
-    double t = 1.0;
-
-    bool restarted = false;
-    for (int it = 1; it <= iters; it++) {
-      const double slope = metric.riesz->Pair(j, d);
-      if (slope >= 0.0) {
-        if (restarted) {
-          // The projected steepest descent itself does not descend:
-          // the constrained optimum (to the solver floor).
-          break;
+    DescentFunctional f;
+    f.evaluate = [&](const Vector& c, Vector* dual) {
+      SyncDensity(control, c, rho, scratch_parent, scratch_fluid);
+      J_last = Evaluate(s, rho);
+      if (dual) {
+        if (control.on_parent) {
+          J_last->DerivativeOnParent(*control.fes, *dual);
+        } else {
+          J_last->Derivative(*control.fes, *dual);
         }
-        // Not a descent direction (a stale conjugacy): restart.
-        d = g;
-        d *= -1.0;
-        restarted = true;
-        continue;
       }
-      restarted = false;
-      // Line search: J is an exact quartic along the ray, so track
-      // forward — double the (warm-started) step while J keeps
-      // falling, backtrack while it does not. The accepted point is
-      // within a factor two of the quartic's minimiser.
-      auto at = [&](double step, double& total) {
-        c_trial = c;
-        c_trial.Add(step, d);
-        SyncDensity(metric, c_trial, rho, scratch_parent, scratch_fluid);
-        auto df = Evaluate(s, rho);
-        total = df->Value() + metric.PriorValue(c_trial);
-        return df;
-      };
-      double j_new;
-      std::unique_ptr<DensityFeasibility> trial = at(t, j_new);
-      while (j_new >= jval && t > 1e-14) {
-        t *= 0.5;
-        trial = at(t, j_new);
-      }
-      while (t > 1e-14) {
-        double j_next;
-        auto next = at(2.0 * t, j_next);
-        if (j_next >= j_new) {
-          break;
-        }
-        t *= 2.0;
-        trial = std::move(next);
-        j_new = j_next;
-      }
-      // Leave the density at the accepted point (the last Evaluate may
-      // have been the rejected probe).
-      c_trial = c;
-      c_trial.Add(t, d);
-      SyncDensity(metric, c_trial, rho, scratch_parent, scratch_fluid);
-      c = c_trial;
-      jval = j_new;
-      J_last = std::move(trial);
-      jraw = J_last->Value();
-      history.Row({double(it), jraw, t, 0.0, dev_over_p(*J_last),
+      return J_last->Value();
+    };
+    f.gauss_newton = [&](const Vector& d, Vector& Hd) {
+      d_fluid.SetFromTrueDofs(d);
+      d_parent = 0.0;
+      Transfer(d_fluid, d_parent);
+      J_last->HessianAction(rho.parent, rho.stokes, dc_parent, dc_fluid,
+                            *control.fes, Hd, /*gn_only=*/true);
+    };
+
+    DescentOptions options;
+    options.max_iterations = iters;
+    options.tolerance = tol;
+    // With the prior on, the LM inner solve is mesh-independent only
+    // under a preconditioner spectrally equivalent to lambda M +
+    // lambda_p K: a Sobolev Riesz map on the control space (the
+    // descent.hpp note; beta is the prior weight against the initial
+    // lambda = 1).
+    std::unique_ptr<SobolevRieszMap> inner_prec;
+    if (gauss_newton && prior > 0.0) {
+      inner_prec = std::make_unique<SobolevRieszMap>(ctrl_fluid, 1.0,
+                                                     prior, 1, nullptr);
+      options.inner_preconditioner = inner_prec.get();
+    }
+    options.monitor = [&](int it, double value, double step) {
+      history.Row({double(it), value, step, 0.0, dev_over_p(*J_last),
                    J_last->GravitationalEnergy()});
       if (Root()) {
-        std::cout << "cg " << std::setw(4) << it << ": J = " << jraw
-                  << ", step " << t << "\n";
+        std::cout << (gauss_newton ? "lm " : "cg ") << std::setw(4) << it
+                  << ": J = " << value
+                  << (gauss_newton ? ", lambda " : ", step ") << step
+                  << "\n";
       }
-      done = it;
-      if (jraw < tol * j_start) {
-        break;
-      }
-      // Roundoff hygiene: hold the iterate itself on the mass plane.
-      metric.ProjectMass(c);
-      j_old = j;
-      g_old = g;
-      metric.AssembleDual(*J_last, c, j);
-      metric.riesz->Mult(j, g);
-      metric.ProjectMass(g);
-      // Polak-Ribiere+, in dual-gradient pairings (the projected
-      // gradients make these the manifold inner products).
-      Vector dg(g);
-      dg -= g_old;
-      const double beta =
-          std::max(0.0, metric.riesz->Pair(j, dg) /
-                            metric.riesz->Pair(j_old, g_old));
-      d *= beta;
-      d -= g;
-    }
-    // Leave the density at the accepted state.
-    SyncDensity(metric, c, rho, scratch_parent, scratch_fluid);
-    j_final = jraw;
+    };
+
+    Vector c(control.fes->GetTrueVSize());
+    c = 0.0;
+    const DescentResult r =
+        gauss_newton
+            ? LevenbergMarquardt(f, *control.metric, *control.mass_M.Ptr(),
+                                 c, options)
+            : NonlinearCG(f, *control.metric, c, options);
+    SyncDensity(control, c, rho, scratch_parent, scratch_fluid);
+    done = r.iterations;
+    j_final = r.final;
   } else {
     // --- The advection flow ------------------------------------------------
     // rho stepped along the Stokes multiplier: an explicit step of the
@@ -738,9 +740,7 @@ int main(int argc, char* argv[]) {
   }
   BarotropyRows(s, rho, *J_last, "final", scatter);
   if (visualisation) {
-    GridType rho_f(&ctrl_fluid);
-    rho_f.ProjectCoefficient(rho.stokes);
-    after.Send(fluid, rho_f);
+    send_state(*J_last, after, &infeasible_after, /*with_flow=*/false);
   }
   history.Write();
   scatter.Write();

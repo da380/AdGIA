@@ -71,7 +71,11 @@ includes them all), are
   reference domain (identity, analytic, radial, tapered, grid-function),
   their interpolation, mapped meshes, and pull-back and Nanson coefficients;
 - rigid-body and general null-space projectors and projected Krylov solvers
-  for singular systems (`null_space.hpp`);
+  for singular systems (`null_space.hpp`); Riesz maps identifying
+  derivative duals with gradients in L2 and (iterated, vector-valued)
+  Sobolev metrics (`riesz.hpp`), and the descent toolkit over them — the
+  constrained metric and the projected nonlinear-CG and
+  Levenberg–Marquardt Gauss–Newton loops (`descent.hpp`);
 - the manifest that planetmodel writes beside a mesh, read into the
   attribute lists and markers the problems take, with the mesh and the
   fields of the model opened as it says (`mesh_manifest.hpp`).
