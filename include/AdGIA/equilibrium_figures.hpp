@@ -71,6 +71,24 @@ namespace AdGIA {
 class DensityFeasibility;
 
 /**
+ * @brief An enclosed solid component (an inner core) of the fluid-only
+ * certificate: without it, the functional never asks whether the
+ * component's force and torque balance — six conditions a connected
+ * solid satisfies automatically but a floating one does not
+ * (doc/equilibrium_figures.tex §2) — and J = 0 is optimistic. The
+ * component's boundary joins the Stokes saddle as a rigid boundary
+ * group, and its own weight and torque, @f$\int \rho\,\nabla\Phi\cdot
+ * \mathbf{r}_k@f$ over its region, enter the border right-hand side.
+ */
+struct RigidComponent {
+  /** The component's boundary, as a boundary-attribute marker on the
+   * STOKES (fluid) mesh (e.g. the ICB's inherited attribute). */
+  mfem::Array<int> fluid_bdr_marker;
+  /** The component's region, as domain attributes on the PARENT. */
+  mfem::Array<int> parent_attributes;
+};
+
+/**
  * @brief The persistent half of the feasibility evaluation: none of the
  * operators — the Poisson system with its DtN closure and
  * preconditioner, the Stokes saddle with its — depends on the density,
@@ -80,13 +98,15 @@ class DensityFeasibility;
  */
 class DensityFeasibilityProblem {
  public:
-  DensityFeasibilityProblem(mfem::FiniteElementSpace& fes_phi,
-                            int dtn_degree, mfem::real_t G,
-                            const mfem::Array<int>& stokes_attributes,
-                            mfem::FiniteElementSpace& fes_u,
-                            mfem::FiniteElementSpace& fes_p,
-                            mfem::Coefficient* mu = nullptr,
-                            const mfem::Array<int>* essential_bdr = nullptr);
+  /** @param rigid Optional enclosed solid components (RigidComponent);
+   * borrowed, must outlive the problem. */
+  DensityFeasibilityProblem(
+      mfem::FiniteElementSpace& fes_phi, int dtn_degree, mfem::real_t G,
+      const mfem::Array<int>& stokes_attributes,
+      mfem::FiniteElementSpace& fes_u, mfem::FiniteElementSpace& fes_p,
+      mfem::Coefficient* mu = nullptr,
+      const mfem::Array<int>* essential_bdr = nullptr,
+      const std::vector<RigidComponent>* rigid = nullptr);
   ~DensityFeasibilityProblem();
 
   /** @brief The functional, its fields and its derivative at one
@@ -166,6 +186,11 @@ class DensityFeasibility {
   int PotentialIterations() const { return phi_iterations_; }
   int AdjointIterations() const { return w_iterations_; }
 
+  /** @brief With rigid components: the border modes' coefficients —
+   * the rigid motion of each enclosed solid in the multiplier flow
+   * (empty otherwise). */
+  const mfem::Vector& RigidCoefficients() const { return rigid_a_; }
+
   /**
    * @brief The derivative @f$J'(\rho)@f$ as a dual vector against
    * @p fes_rho, a (typically L2) space on the Stokes mesh:
@@ -230,9 +255,11 @@ class DensityFeasibility {
   int phi_iterations_ = 0, w_iterations_ = 0;
 
   // The per-state fields: potentials on the parent, their restrictions
-  // to the Stokes mesh, the velocity's parent-side twin, the stress.
+  // to the Stokes mesh, the velocity's parent-side twin, the stress,
+  // and the rigid border's coefficients.
   std::unique_ptr<mfem::GridFunction> phi_, w_, phi_sub_, w_sub_, u_parent_;
   std::unique_ptr<MinimumDeviatoricEquilibriumStress> stress_;
+  mfem::Vector rigid_a_;
 };
 
 }  // namespace AdGIA

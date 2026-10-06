@@ -182,11 +182,20 @@ hydrostatic equilibrium. Shows: the minimum-deviatoric pressure, and
 the equilibrium-figures programme (`doc/equilibrium_figures.tex`): the
 fluid outer core of the three-layer model starts non-barotropic, and the
 fluid-only feasibility functional is driven to its floor by nonlinear CG
-in a choosable metric (`-metric l2|h1|h2`, `-length`) or by the
-advection flow (`-loop advect`). The CSVs plot J by iteration and the
-(Phi, rho) scatter before and after — restored barotropy is the scatter
-collapsed onto one curve. Shows: the initial and final fluid density.
-`./equilibrium_density`, `./equilibrium_density -loop advect`
+in a choosable metric (`-metric l2|h1|h2`, `-length`, `-prior`), by
+Levenberg–Marquardt Gauss–Newton (`-loop gn`, the fast route), or by
+the advection flow (`-loop advect`). The inner core's force and torque
+balance joins the certificate by default (`-core rigid`): the run
+prints the core's multiplier motion and the clamped functional beside
+J, whose initial gap is the core imbalance the connected-solid
+certificate cannot see, closing as balance is restored. The CSVs plot
+J, the dimensionless |dev T|/|p|, the energy and the core motion by
+iteration, and the (Phi, rho) scatter before and after — restored
+barotropy is the scatter collapsed onto one curve. Shows: the initial
+and final fluid density, the initial relaxation flow, and the
+|dev T|/p infeasibility map before and after.
+`./equilibrium_density`, `./equilibrium_density -loop gn -prior 1e-7`,
+`./equilibrium_density -core clamped`
 
 **`prestress_loading`**: does the deviatoric part of the pre-stress matter
 for loading? Full against quasi-hydrostatic pre-stress on ellipses of

@@ -31,9 +31,19 @@ using namespace self_grav_test;
 constexpr int kDtNDegree = 8;
 constexpr double kGravG = 0.05;
 
+double lateral_amplitude = 0.1;
+
 double FluidRho(const Vector& x) {
   const double r2 = x * x;
-  return 1.2 - 0.3 * r2 + 0.1 * x[1];
+  return 1.2 - 0.3 * r2 + lateral_amplitude * x[1];
+}
+
+// Sets the lateral amplitude, returning the previous value (the
+// rigid-core test switches to the symmetric model and back).
+double TestAmplitude(double value) {
+  const double old = lateral_amplitude;
+  lateral_amplitude = value;
+  return old;
 }
 
 // The density by attribute: polynomial within each region, so that it
@@ -349,4 +359,100 @@ TEST(EquilibriumFigures, HessianActionMatchesFDAndIsSymmetric) {
   const double fde = fd * e;
   EXPECT_NEAR(fde, hde, 2e-4 * std::max(std::abs(fde), std::abs(hde)))
       << "fd " << fde << " vs H " << hde;
+}
+
+TEST(EquilibriumFigures, RigidCoreCertificate) {
+  Mesh parent(ThreeLayerMeshFile(3), 1, 1);
+  auto fluid = SubMesh::CreateFromDomain(parent, Array<int>({2}));
+
+  H1_FECollection h1_phi(2, 3), h1_u(2, 3), h1_p(1, 3);
+  L2_FECollection l2(2, 3);
+  FiniteElementSpace fes_phi(&parent, &h1_phi);
+  FiniteElementSpace fes_u(&fluid, &h1_u, 3);
+  FiniteElementSpace fes_p(&fluid, &h1_p);
+  FiniteElementSpace fes_rho(&fluid, &l2);
+  FiniteElementSpace fes_rho_parent(&parent, &l2);
+
+  Array<int> ess(fluid.bdr_attributes.Max());
+  ess = 1;
+
+  // The inner core: its boundary is the fluid SubMesh's inherited ICB
+  // attribute (1); its region is parent attribute 1.
+  std::vector<RigidComponent> rigid(1);
+  rigid[0].fluid_bdr_marker.SetSize(fluid.bdr_attributes.Max());
+  rigid[0].fluid_bdr_marker = 0;
+  rigid[0].fluid_bdr_marker[0] = 1;
+  rigid[0].parent_attributes.SetSize(1);
+  rigid[0].parent_attributes[0] = 1;
+
+  ModelDensity rho;
+  DensityFeasibilityProblem clamped(fes_phi, 8, kGravG, Array<int>({2}),
+                                    fes_u, fes_p, nullptr, &ess);
+  DensityFeasibilityProblem enriched(fes_phi, 8, kGravG, Array<int>({2}),
+                                     fes_u, fes_p, nullptr, &ess, &rigid);
+
+  // The lateral model: the enrichment ADDS constraints on the stress
+  // (the core's force and torque balance), so the enriched minimum
+  // cannot be below the clamped one — and the degree-1 lateral term
+  // exerts a net force on the core, so it is strictly above, with a
+  // nonzero rigid multiplier motion.
+  auto j_clamped = clamped.Evaluate(rho.Get(), rho.Get());
+  auto j_enriched = enriched.Evaluate(rho.Get(), rho.Get());
+  EXPECT_GE(j_enriched->Value(), j_clamped->Value() * (1.0 - 1e-10));
+  EXPECT_GT(j_enriched->Value(), j_clamped->Value() * 1.001);
+  EXPECT_GT(j_enriched->RigidCoefficients().Norml2(), 0.0);
+
+  // The spherically symmetric model: the core balance is automatic, so
+  // the two certificates agree and the rigid motion vanishes (to the
+  // solver floor, against the translation scale of the multiplier).
+  const double amp = TestAmplitude(0.0);
+  auto j_c0 = clamped.Evaluate(rho.Get(), rho.Get());
+  auto j_e0 = enriched.Evaluate(rho.Get(), rho.Get());
+  TestAmplitude(amp);
+  EXPECT_NEAR(j_e0->Value(), j_c0->Value(),
+              1e-3 * std::abs(j_c0->Value()));
+
+  // The envelope derivative with the border: central FD along a random
+  // direction (the same harness as the clamped test).
+  std::mt19937 gen(31);
+  std::uniform_real_distribution<double> dist(-1.0, 1.0);
+  GridFunction d(&fes_rho), d_parent(&fes_rho_parent);
+  for (int i = 0; i < d.Size(); i++) {
+    d[i] = dist(gen);
+  }
+  d_parent = 0.0;
+  SubMesh::Transfer(d, d_parent);
+  GridFunctionCoefficient dc(&d), dc_parent(&d_parent);
+
+  Vector dual;
+  j_enriched->Derivative(fes_rho, dual);
+  const double step = 1e-3;
+  auto at = [&](double eps) {
+    ProductCoefficient scaled_f(eps, dc);
+    ProductCoefficient scaled_p(eps, dc_parent);
+    SumCoefficient rp(rho.Get(), scaled_p);
+    SumCoefficient rs(rho.Get(), scaled_f);
+    return enriched.Evaluate(rp, rs)->Value();
+  };
+  const double fd = (at(step) - at(-step)) / (2.0 * step);
+  const double predicted = dual * d;
+  EXPECT_NEAR(fd, predicted,
+              2e-5 * std::max(std::abs(fd), std::abs(predicted)))
+      << "fd " << fd << " vs dual.d " << predicted;
+
+  // The bordered Hessian action stays symmetric.
+  GridFunction e(&fes_rho), e_parent(&fes_rho_parent);
+  for (int i = 0; i < e.Size(); i++) {
+    e[i] = dist(gen);
+  }
+  e_parent = 0.0;
+  SubMesh::Transfer(e, e_parent);
+  GridFunctionCoefficient ec(&e), ec_parent(&e_parent);
+  Vector Hd, He;
+  j_enriched->HessianAction(rho.Get(), rho.Get(), dc_parent, dc, fes_rho,
+                            Hd);
+  j_enriched->HessianAction(rho.Get(), rho.Get(), ec_parent, ec, fes_rho,
+                            He);
+  const double hde = Hd * e;
+  EXPECT_NEAR(hde, He * d, 1e-7 * std::abs(hde));
 }

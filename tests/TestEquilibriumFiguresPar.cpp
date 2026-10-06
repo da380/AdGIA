@@ -155,6 +155,48 @@ double HessianPairing(FiniteElementSpace& fes_phi,
   return dot;
 }
 
+// The rigid-core certificate at the base density: J, the directional
+// derivative against `direction`, and the border coefficients' norm.
+void EvaluateRigid(FiniteElementSpace& fes_phi, FiniteElementSpace& fes_u,
+                   FiniteElementSpace& fes_p, FiniteElementSpace& fes_rho,
+                   const Array<int>& ess, Coefficient& direction,
+                   double& j, double& dd, double& a_norm) {
+  std::vector<RigidComponent> rigid(1);
+  rigid[0].fluid_bdr_marker.SetSize(
+      fes_u.GetMesh()->bdr_attributes.Max());
+  rigid[0].fluid_bdr_marker = 0;
+  rigid[0].fluid_bdr_marker[0] = 1;  // the ICB
+  rigid[0].parent_attributes.SetSize(1);
+  rigid[0].parent_attributes[0] = 1;  // the inner core
+
+  ModelDensity rho;
+  DensityFeasibilityProblem problem(fes_phi, kDtNDegree, kGravG,
+                                    Array<int>({2}), fes_u, fes_p, nullptr,
+                                    &ess, &rigid);
+  auto state = problem.Evaluate(rho.Get(), rho.Get());
+  j = state->Value();
+  a_norm = state->RigidCoefficients().Norml2();
+
+  Vector dual;
+  state->Derivative(fes_rho, dual);
+  std::unique_ptr<GridFunction> d;
+  auto* pfes = dynamic_cast<ParFiniteElementSpace*>(&fes_rho);
+  if (pfes) {
+    d = std::make_unique<ParGridFunction>(pfes);
+  } else {
+    d = std::make_unique<GridFunction>(&fes_rho);
+  }
+  d->ProjectCoefficient(direction);
+  Vector d_true(fes_rho.GetTrueVSize());
+  d->GetTrueDofs(d_true);
+  dd = dual * d_true;
+  if (pfes) {
+    double global = 0.0;
+    MPI_Allreduce(&dd, &global, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    dd = global;
+  }
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -165,6 +207,7 @@ int main(int argc, char* argv[]) {
 
   // Every rank: the serial problem on the full mesh.
   double j_serial = 0.0, dd_serial = 0.0, hdd_serial = 0.0;
+  double jr_serial = 0.0, ddr_serial = 0.0, ar_serial = 0.0;
   {
     Mesh parent(ThreeLayerMeshFile(3), 1, 1);
     auto fluid = SubMesh::CreateFromDomain(parent, Array<int>({2}));
@@ -181,6 +224,8 @@ int main(int argc, char* argv[]) {
                  &dd_serial);
     hdd_serial =
         HessianPairing(fes_phi, fes_u, fes_p, fes_rho, ess, direction);
+    EvaluateRigid(fes_phi, fes_u, fes_p, fes_rho, ess, direction,
+                  jr_serial, ddr_serial, ar_serial);
   }
 
   // The parallel problem.
@@ -218,6 +263,18 @@ int main(int argc, char* argv[]) {
         HessianPairing(fes_phi, fes_u, fes_p, fes_rho, ess, direction);
     Check(std::abs(hdd - hdd_serial) / std::abs(hdd_serial), 1e-6,
           "parallel Hessian pairing equals serial");
+
+    // The rigid-core certificate: value, derivative pairing and the
+    // border coefficients agree with the serial computation.
+    double jr = 0.0, ddr = 0.0, ar = 0.0;
+    EvaluateRigid(fes_phi, fes_u, fes_p, fes_rho, ess, direction, jr, ddr,
+                  ar);
+    Check(std::abs(jr - jr_serial) / jr_serial, 1e-7,
+          "parallel rigid-core J equals serial");
+    Check(std::abs(ddr - ddr_serial) / std::abs(ddr_serial), 1e-6,
+          "parallel rigid-core derivative equals serial");
+    Check(std::abs(ar - ar_serial) / ar_serial, 1e-6,
+          "parallel rigid coefficients equal serial");
   }
 
   if (Mpi::Root()) {

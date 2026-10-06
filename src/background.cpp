@@ -356,7 +356,9 @@ void MinimumNormEquilibriumStress::Eval(DenseMatrix& K,
 }
 
 // Everything the saddle keeps assembled: the system, its blocks, the
-// preconditioner, the null-space projector, the solver chain.
+// preconditioner, the null-space projector, the solver chain, and —
+// with rigid boundary groups — the border (lifted fields, columns,
+// their precomputed base solves and the reduced dense system).
 struct StokesSaddleSolver::Impl {
   mfem::ConstantCoefficient half{0.5};
   mfem::Array<int> ess_tdofs, offsets;
@@ -371,14 +373,69 @@ struct StokesSaddleSolver::Impl {
   std::unique_ptr<MINRESSolver> minres;
   std::unique_ptr<ProjectedOperator> op;
   std::unique_ptr<ProjectedSolver> prec_proj, solver;
+
+  FiniteElementSpace* fes_u = nullptr;
+  bool parallel = false;
+#ifdef MFEM_USE_MPI
+  MPI_Comm comm = MPI_COMM_NULL;
+#endif
+
+  // The rigid border (one group per enclosed solid component).
+  int rigid_modes = 0;
+  std::unique_ptr<BilinearForm> a_full_form;
+  std::unique_ptr<MixedBilinearForm> g_full_form;
+  OperatorHandle A_full, G_full;
+  std::vector<std::unique_ptr<GridFunction>> rigid_fields;
+  std::vector<Vector> R;      // the lifted fields' true dofs
+  std::vector<Vector> B_col;  // border columns [ess-zeroed A_full R; -G^T R]
+  std::vector<Vector> Y;      // S^{-1} B_col, precomputed
+  DenseMatrix reduced;        // D - B^T Y
+  DenseMatrixInverse reduced_inv;
+
+  real_t GlobalDot(const Vector& x, const Vector& y) const {
+    real_t d = x * y;
+#ifdef MFEM_USE_MPI
+    if (parallel) {
+      real_t global = 0.0;
+      MPI_Allreduce(&d, &global, 1, MPI_DOUBLE, MPI_SUM, comm);
+      d = global;
+    }
+#endif
+    return d;
+  }
 };
 
-StokesSaddleSolver::StokesSaddleSolver(FiniteElementSpace& fes_u,
-                                       FiniteElementSpace& fes_p,
-                                       Coefficient* mu, Diffeomorphism* map,
-                                       const Array<int>* essential_bdr)
+std::function<void(const Vector&, Vector&)> RigidMode(int dim, int mode) {
+  return [dim, mode](const Vector& x, Vector& v) {
+    v.SetSize(dim);
+    v = 0.0;
+    if (dim == 2) {
+      if (mode < 2) {
+        v[mode] = 1.0;
+      } else {
+        v[0] = -x[1];
+        v[1] = x[0];
+      }
+    } else {
+      if (mode < 3) {
+        v[mode] = 1.0;
+      } else {
+        const int i = mode - 3;
+        // e_i x x
+        v[(i + 1) % 3] = -x[(i + 2) % 3];
+        v[(i + 2) % 3] = x[(i + 1) % 3];
+      }
+    }
+  };
+}
+
+StokesSaddleSolver::StokesSaddleSolver(
+    FiniteElementSpace& fes_u, FiniteElementSpace& fes_p, Coefficient* mu,
+    Diffeomorphism* map, const Array<int>* essential_bdr,
+    const std::vector<Array<int>>* rigid_bdr)
     : impl_(std::make_unique<Impl>()) {
   Impl& s = *impl_;
+  s.fes_u = &fes_u;
   const int dim = fes_u.GetMesh()->SpaceDimension();
   MFEM_VERIFY(fes_u.GetVDim() == dim && fes_p.GetVDim() == 1 &&
                   fes_u.GetMesh() == fes_p.GetMesh(),
@@ -394,10 +451,40 @@ StokesSaddleSolver::StokesSaddleSolver(FiniteElementSpace& fes_u,
 
   // With an essential marker the velocity is clamped there (the
   // fluid-only feasibility variant); the true dofs are eliminated from
-  // the saddle in the usual way, with zero data.
+  // the saddle in the usual way, with zero data. A rigid group's
+  // boundary is clamped too — its rigid motions return through the
+  // border below. (The groups' boundaries are assumed disjoint from
+  // each other and from the clamped set, as concentric interfaces
+  // are.)
+  const int n_bdr = fes_u.GetMesh()->bdr_attributes.Size()
+                        ? fes_u.GetMesh()->bdr_attributes.Max()
+                        : 0;
+  Array<int> clamp(n_bdr);
+  clamp = 0;
   if (essential_bdr) {
-    Array<int> marker(*essential_bdr);
-    fes_u.GetEssentialTrueDofs(marker, s.ess_tdofs);
+    for (int i = 0; i < std::min(n_bdr, essential_bdr->Size()); i++) {
+      clamp[i] = (*essential_bdr)[i];
+    }
+  }
+  if (rigid_bdr) {
+    for (const auto& group : *rigid_bdr) {
+      for (int i = 0; i < std::min(n_bdr, group.Size()); i++) {
+        if (group[i]) {
+          clamp[i] = 1;
+        }
+      }
+    }
+  }
+  const bool any_clamped = [&]() {
+    for (int i = 0; i < clamp.Size(); i++) {
+      if (clamp[i]) {
+        return true;
+      }
+    }
+    return false;
+  }();
+  if (any_clamped) {
+    fes_u.GetEssentialTrueDofs(clamp, s.ess_tdofs);
   }
 
   // AW10 eqs. (73)-(74): the steady incompressible Stokes problem with
@@ -454,12 +541,14 @@ StokesSaddleSolver::StokesSaddleSolver(FiniteElementSpace& fes_u,
 #ifdef MFEM_USE_MPI
   bool parallel = false;
   MPI_Comm comm = CommOf(fes_u, parallel);
+  s.parallel = parallel;
+  s.comm = comm;
   s.projector = parallel ? std::make_unique<NullSpaceProjector>(comm)
                          : std::make_unique<NullSpaceProjector>();
 #else
   s.projector = std::make_unique<NullSpaceProjector>();
 #endif
-  if (!essential_bdr) {
+  if (!any_clamped) {
     auto rigid = MakeGeneratorProjector(fes_u, map);
     BlockVector n(s.offsets);
     for (int i = 0; i < rigid->Size(); i++) {
@@ -471,11 +560,13 @@ StokesSaddleSolver::StokesSaddleSolver(FiniteElementSpace& fes_u,
     bool whole_boundary = true;
     const Array<int>& bdr = fes_u.GetMesh()->bdr_attributes;
     for (int i = 0; i < bdr.Size(); i++) {
-      if (bdr[i] > essential_bdr->Size() || !(*essential_bdr)[bdr[i] - 1]) {
+      if (bdr[i] > clamp.Size() || !clamp[bdr[i] - 1]) {
         whole_boundary = false;
       }
     }
     if (whole_boundary) {
+      // The pressure's constant mode survives the border: the lifted
+      // fields' fluxes through their own boundary vanish.
       BlockVector n(s.offsets);
       n.GetBlock(0) = 0.0;
       n.GetBlock(1) = 1.0;  // H1 Lagrange: the constant's true dofs
@@ -500,12 +591,113 @@ StokesSaddleSolver::StokesSaddleSolver(FiniteElementSpace& fes_u,
   s.minres->SetPrintLevel(0);
   s.solver = std::make_unique<ProjectedSolver>(*s.projector);
   s.solver->SetSolver(*s.minres);
+
+  // --- The rigid border -----------------------------------------------------
+  // Per group: lifted fields R_k (rigid trace on the group's boundary,
+  // zero on every other clamped one), the uneliminated operators for
+  // the border blocks, the columns B_k = [A R_k (free rows); -G^T R_k],
+  // their base solves Y_k = S^{-1} B_k — paid once here — and the
+  // reduced dense system D - B^T Y. A bordered Solve then costs one
+  // base solve plus dense algebra.
+  if (rigid_bdr && !rigid_bdr->empty()) {
+    MFEM_VERIFY(!map, "StokesSaddleSolver: rigid boundary groups are not "
+                      "implemented in mapped mode.");
+    const int modes_per = dim == 3 ? 6 : 3;
+    s.rigid_modes = modes_per * static_cast<int>(rigid_bdr->size());
+
+    // The uneliminated operators (fresh assemblies; the eliminated
+    // ones above were modified in place).
+    IsotropicElasticTensorCoefficient C_full(dim, zero, m);
+    s.a_full_form = MakeBilinearForm(fes_u);
+    s.a_full_form->AddDomainIntegrator(new ElasticTensorIntegrator(C_full));
+    s.a_full_form->Assemble();
+    Array<int> none;
+    s.a_full_form->FormSystemMatrix(none, s.A_full);
+    s.g_full_form = MakeMixedBilinearForm(fes_p, fes_u);
+    s.g_full_form->AddDomainIntegrator(new DomainDivVectorScalarIntegrator());
+    s.g_full_form->Assemble();
+    s.g_full_form->FormRectangularSystemMatrix(none, none, s.G_full);
+
+    std::vector<Vector> AR_full;
+    for (const auto& group : *rigid_bdr) {
+      // The other clamped boundaries: everything clamped minus this
+      // group (disjointness assumed).
+      Array<int> others(clamp);
+      for (int i = 0; i < std::min(others.Size(), group.Size()); i++) {
+        if (group[i]) {
+          others[i] = 0;
+        }
+      }
+      Array<int> other_tdofs;
+      fes_u.GetEssentialTrueDofs(others, other_tdofs);
+
+      for (int mode = 0; mode < modes_per; mode++) {
+        VectorFunctionCoefficient rigid(dim, RigidMode(dim, mode));
+        auto field = detail::MakeGridFunction(&fes_u);
+        field->ProjectCoefficient(rigid);
+        Vector Rk(fes_u.GetTrueVSize());
+        field->GetTrueDofs(Rk);
+        Rk.SetSubVector(other_tdofs, 0.0);
+        field->SetFromTrueDofs(Rk);
+
+        Vector ARk(Rk.Size());
+        s.A_full.Ptr()->Mult(Rk, ARk);
+        BlockVector col(s.offsets);
+        col.GetBlock(0) = ARk;
+        col.GetBlock(0).SetSubVector(s.ess_tdofs, 0.0);
+        s.G_full.Ptr()->MultTranspose(Rk, col.GetBlock(1));
+        col.GetBlock(1) *= -1.0;
+
+        s.rigid_fields.push_back(std::move(field));
+        s.R.push_back(std::move(Rk));
+        AR_full.push_back(std::move(ARk));
+        s.B_col.push_back(col);
+      }
+    }
+
+    // The base solves of the columns, and the reduced system.
+    s.Y.resize(s.rigid_modes);
+    for (int k = 0; k < s.rigid_modes; k++) {
+      s.Y[k].SetSize(s.offsets.Last());
+      s.Y[k] = 0.0;
+      s.solver->Mult(s.B_col[k], s.Y[k]);
+      MFEM_VERIFY(s.minres->GetConverged(),
+                  "StokesSaddleSolver: a border base solve did not "
+                  "converge.");
+    }
+    s.reduced.SetSize(s.rigid_modes);
+    for (int k = 0; k < s.rigid_modes; k++) {
+      for (int l = 0; l < s.rigid_modes; l++) {
+        s.reduced(k, l) = s.GlobalDot(s.R[k], AR_full[l]) -
+                          s.GlobalDot(s.B_col[k], s.Y[l]);
+      }
+    }
+    s.reduced_inv.Factor(s.reduced);
+  }
 }
 
 StokesSaddleSolver::~StokesSaddleSolver() = default;
 
+int StokesSaddleSolver::RigidModes() const { return impl_->rigid_modes; }
+
+const GridFunction& StokesSaddleSolver::RigidField(int k) const {
+  return *impl_->rigid_fields.at(k);
+}
+
+real_t StokesSaddleSolver::Energy(const GridFunction& u) const {
+  const Impl& s = *impl_;
+  MFEM_VERIFY(s.A_full.Ptr(),
+              "StokesSaddleSolver::Energy: the uneliminated operator "
+              "exists only with rigid boundary groups.");
+  Vector U(s.fes_u->GetTrueVSize()), AU(U.Size());
+  u.GetTrueDofs(U);
+  s.A_full.Ptr()->Mult(U, AU);
+  return 0.5 * s.GlobalDot(U, AU);
+}
+
 int StokesSaddleSolver::Solve(const Vector& F, GridFunction& u,
-                              GridFunction& p) const {
+                              GridFunction& p, const Vector& rigid_rhs,
+                              Vector* rigid_coefficients) const {
   const Impl& s = *impl_;
   BlockVector B(s.offsets);
   B.GetBlock(0) = F;
@@ -518,15 +710,48 @@ int StokesSaddleSolver::Solve(const Vector& F, GridFunction& u,
   MFEM_VERIFY(s.minres->GetConverged(),
               "StokesSaddleSolver: the Stokes solve did not converge (is "
               "the body force self-equilibrated?)");
-  u.SetFromTrueDofs(X.GetBlock(0));
+  const int iterations = s.minres->GetNumIterations();
+
+  if (s.rigid_modes == 0) {
+    u.SetFromTrueDofs(X.GetBlock(0));
+    p.SetFromTrueDofs(X.GetBlock(1));
+    return iterations;
+  }
+
+  // The border elimination: a = (D - B^T Y)^{-1} (b_a - B^T X),
+  // X <- X - Y a, with b_a[k] = -R_k . F + rigid_rhs[k] (the enclosed
+  // component's own load; see the class notes).
+  MFEM_VERIFY(rigid_rhs.Size() == 0 || rigid_rhs.Size() == s.rigid_modes,
+              "StokesSaddleSolver: rigid_rhs size mismatch.");
+  Vector b_a(s.rigid_modes), a(s.rigid_modes);
+  for (int k = 0; k < s.rigid_modes; k++) {
+    b_a[k] = -s.GlobalDot(s.R[k], F) +
+             (rigid_rhs.Size() ? rigid_rhs[k] : 0.0) -
+             s.GlobalDot(s.B_col[k], X);
+  }
+  s.reduced_inv.Mult(b_a, a);
+  for (int k = 0; k < s.rigid_modes; k++) {
+    X.Add(-a[k], s.Y[k]);
+  }
+
+  // The total velocity: the clamped part plus the rigid combination.
+  Vector u_tot(X.GetBlock(0));
+  for (int k = 0; k < s.rigid_modes; k++) {
+    u_tot.Add(a[k], s.R[k]);
+  }
+  u.SetFromTrueDofs(u_tot);
   p.SetFromTrueDofs(X.GetBlock(1));
-  return s.minres->GetNumIterations();
+  if (rigid_coefficients) {
+    *rigid_coefficients = a;
+  }
+  return iterations;
 }
 
 MinimumDeviatoricEquilibriumStress::MinimumDeviatoricEquilibriumStress(
     FiniteElementSpace& fes_u, FiniteElementSpace& fes_p,
     VectorCoefficient& body_force, Coefficient* mu, Diffeomorphism* map,
-    const Array<int>* essential_bdr, const StokesSaddleSolver* solver)
+    const Array<int>* essential_bdr, const StokesSaddleSolver* solver,
+    const Vector& rigid_rhs, Vector* rigid_coefficients)
     : MatrixCoefficient(fes_u.GetMesh()->SpaceDimension()),
       fes_u_(&fes_u),
       fes_p_(&fes_p),
@@ -554,7 +779,7 @@ MinimumDeviatoricEquilibriumStress::MinimumDeviatoricEquilibriumStress(
 
   u_ = detail::MakeGridFunction(&fes_u);
   p_ = detail::MakeGridFunction(&fes_p);
-  iterations_ = solver->Solve(F, *u_, *p_);
+  iterations_ = solver->Solve(F, *u_, *p_, rigid_rhs, rigid_coefficients);
 }
 
 void MinimumDeviatoricEquilibriumStress::Eval(DenseMatrix& K,

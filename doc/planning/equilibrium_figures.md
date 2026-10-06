@@ -105,12 +105,21 @@ tolerances 1e-11).
 - **Per-component pressure constants.** The fluid-only solve removes
   one pressure constant; several fluid regions enclosed by solid need
   one per component (`background.cpp`, the clamped null-space branch).
-- **Disconnected solid (inner core).** `J_F` is exact only for a
-  connected solid; an inner core adds six force/torque conditions,
-  enforced by admitting its rigid-motion trace into the test space
-  (the `mu_s -> infinity` limit of `J_mu`). Not yet implemented; the
-  current class over-constrains there (self-consistent for the FD
-  tests, conservative as a certificate).
+- ~~**Disconnected solid (inner core).**~~ Done: rigid boundary groups
+  on `StokesSaddleSolver` (bordered saddle, the lifted fields' base
+  solves precomputed so a bordered solve costs one base solve plus
+  dense algebra) and `RigidComponent` on the feasibility problem (the
+  core's weight and torque on the border right-hand side, the adjoint
+  "velocity" extended into the core as its rigid multiplier motion),
+  FD-validated with the border and serial–parallel checked. Measured
+  on the three-layer lateral model: the corrected certificate's start
+  is 5.7x the clamped one — the net force on the inner core was the
+  model's largest infeasibility, invisible to the clamped functional —
+  the symmetric base agrees between the two to four digits (balance
+  automatic), and the Gauss–Newton restoration under the corrected
+  certificate collapses the within-equipotential spread to 4.1e-3,
+  three times better than the best clamped run. The example's
+  `-core rigid` is the default.
 - **Value from an inexact solve**: evaluate through the load
   functional (error quadratic in the solve error), as the reference
   document recommends — the class already does this.

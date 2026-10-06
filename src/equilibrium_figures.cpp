@@ -139,13 +139,61 @@ struct DensityFeasibilityProblem::Impl {
   // The potential's and the velocity's companion spaces.
   std::unique_ptr<H1_FECollection> h1_sub, h1_u_parent;
   std::unique_ptr<FiniteElementSpace> fes_phi_sub, fes_u_parent;
+
+  // The enclosed solid components: the saddle's rigid groups, each
+  // component's parent-side region marker, modes per group, and the
+  // all-ones true-dof vector of the potential space (for the load
+  // integrals).
+  const std::vector<RigidComponent>* rigid = nullptr;
+  std::vector<Array<int>> rigid_markers;      // for the saddle
+  std::vector<Array<int>> component_markers;  // parent regions
+  int modes_per = 0;
+  Vector ones_phi;
+
+  // int_{marked region} coeff, as the marked dual dotted with ones.
+  real_t IntegrateOver(const Array<int>& marker, Coefficient& coeff) const {
+    auto lf = detail::MakeLinearForm(fes_phi);
+    Array<int>& m = const_cast<Array<int>&>(marker);
+    lf->AddDomainIntegrator(new DomainLFIntegrator(coeff), m);
+    Vector dual;
+    AssembleTrueRHS(*fes_phi, *lf, dual);
+    real_t v = dual * ones_phi;
+#ifdef MFEM_USE_MPI
+    if (auto* pfes = dynamic_cast<ParFiniteElementSpace*>(fes_phi)) {
+      real_t global = 0.0;
+      MPI_Allreduce(&v, &global, 1, MPI_DOUBLE, MPI_SUM, pfes->GetComm());
+      v = global;
+    }
+#endif
+    return v;
+  }
+
+  // The border loads W_k = int_{component} rho grad(Phi) . r_k.
+  Vector ComponentLoads(Coefficient& rho_parent,
+                        const GridFunction& phi) const {
+    const int dim = fes_phi->GetMesh()->Dimension();
+    Vector W(modes_per * static_cast<int>(rigid->size()));
+    GradientGridFunctionCoefficient grad_phi(
+        const_cast<GridFunction*>(&phi));
+    int k = 0;
+    for (const auto& marker : component_markers) {
+      for (int mode = 0; mode < modes_per; mode++, k++) {
+        VectorFunctionCoefficient r(dim, RigidMode(dim, mode));
+        InnerProductCoefficient g_dot_r(grad_phi, r);
+        ProductCoefficient integrand(rho_parent, g_dot_r);
+        W[k] = IntegrateOver(marker, integrand);
+      }
+    }
+    return W;
+  }
 };
 
 DensityFeasibilityProblem::DensityFeasibilityProblem(
     FiniteElementSpace& fes_phi, int dtn_degree, real_t G,
     const Array<int>& stokes_attributes, FiniteElementSpace& fes_u,
     FiniteElementSpace& fes_p, Coefficient* mu,
-    const Array<int>* essential_bdr)
+    const Array<int>* essential_bdr,
+    const std::vector<RigidComponent>* rigid)
     : impl_(std::make_unique<Impl>()) {
   MFEM_VERIFY(fes_phi.GetVDim() == 1,
               "DensityFeasibility: a scalar potential space is needed.");
@@ -164,8 +212,26 @@ DensityFeasibilityProblem::DensityFeasibilityProblem(
   }
 
   s.poisson = std::make_unique<PoissonSolver>(fes_phi, dtn_degree);
-  s.saddle = std::make_unique<StokesSaddleSolver>(fes_u, fes_p, mu, nullptr,
-                                                  essential_bdr);
+  if (rigid && !rigid->empty()) {
+    s.rigid = rigid;
+    s.modes_per = fes_u.GetMesh()->Dimension() == 3 ? 6 : 3;
+    for (const auto& component : *rigid) {
+      s.rigid_markers.push_back(component.fluid_bdr_marker);
+      Array<int> marker(fes_phi.GetMesh()->attributes.Max());
+      marker = 0;
+      for (int i = 0; i < component.parent_attributes.Size(); i++) {
+        marker[component.parent_attributes[i] - 1] = 1;
+      }
+      s.component_markers.push_back(marker);
+    }
+    auto ones = detail::MakeGridFunction(&fes_phi);
+    *ones = 1.0;
+    s.ones_phi.SetSize(fes_phi.GetTrueVSize());
+    ones->GetTrueDofs(s.ones_phi);
+  }
+  s.saddle = std::make_unique<StokesSaddleSolver>(
+      fes_u, fes_p, mu, nullptr, essential_bdr,
+      s.rigid ? &s.rigid_markers : nullptr);
 
   s.h1_sub = std::make_unique<H1_FECollection>(
       fes_phi.FEColl()->GetOrder(), fes_u.GetMesh()->Dimension());
@@ -235,13 +301,21 @@ void DensityFeasibility::Solve(Coefficient& rho_parent,
 
   GradientGridFunctionCoefficient grad_phi(phi_sub_.get());
   ScalarVectorProductCoefficient body_force(rho_stokes, grad_phi);
+  Vector W;
+  if (s.rigid) {
+    // The enclosed components' loads on the border (+W: the sign the
+    // force-balance derivation fixes; doc/equilibrium_figures.tex §2).
+    W = s.ComponentLoads(rho_parent, *phi_);
+  }
   stress_ = std::make_unique<MinimumDeviatoricEquilibriumStress>(
       *s.fes_u, *s.fes_p, body_force, s.mu, nullptr, s.essential_bdr,
-      s.saddle.get());
+      s.saddle.get(), W, s.rigid ? &rigid_a_ : nullptr);
 
-  // 3. The value function J = -1/2 F . u, with F the load assembled
-  //    exactly as the saddle assembled it.
-  {
+  // 3. The value function: J = -1/2 F . u without the border; with it,
+  //    the convention-free energy of the total multiplier.
+  if (s.rigid) {
+    value_ = s.saddle->Energy(stress_->Auxiliary());
+  } else {
     auto lf = detail::MakeLinearForm(s.fes_u);
     lf->AddDomainIntegrator(new VectorDomainLFIntegrator(body_force));
     Vector F, U(s.fes_u->GetTrueVSize());
@@ -264,6 +338,39 @@ void DensityFeasibility::Solve(Coefficient& rho_parent,
     auto r = detail::MakeLinearForm(s.fes_phi);
     Array<int>& marker = const_cast<Array<int>&>(s.stokes_marker);
     r->AddDomainIntegrator(new DomainLFGradIntegrator(rho_u), marker);
+    // With rigid components the adjoint "velocity" extends into each
+    // core as its rigid multiplier motion — the border load's own
+    // Phi-chain, derived with the envelope theorem like the rest.
+    std::vector<std::unique_ptr<VectorFunctionCoefficient>> core_motion;
+    std::vector<std::unique_ptr<ScalarVectorProductCoefficient>> core_rho_u;
+    if (s.rigid) {
+      const int dim = s.fes_phi->GetMesh()->Dimension();
+      for (std::size_t g = 0; g < s.component_markers.size(); g++) {
+        std::vector<real_t> a(s.modes_per);
+        for (int mode = 0; mode < s.modes_per; mode++) {
+          // MINUS: the border multiplier pairs with its constraint with
+          // the opposite sign to the field multiplier's pattern (the FD
+          // harness pinned it).
+          a[mode] = -rigid_a_[static_cast<int>(g) * s.modes_per + mode];
+        }
+        core_motion.push_back(std::make_unique<VectorFunctionCoefficient>(
+            dim, [dim, a](const Vector& x, Vector& v) {
+              v.SetSize(dim);
+              v = 0.0;
+              Vector mode_v(dim);
+              for (int mode = 0; mode < static_cast<int>(a.size());
+                   mode++) {
+                RigidMode(dim, mode)(x, mode_v);
+                v.Add(a[mode], mode_v);
+              }
+            }));
+        core_rho_u.push_back(std::make_unique<ScalarVectorProductCoefficient>(
+            rho_parent, *core_motion.back()));
+        r->AddDomainIntegrator(
+            new DomainLFGradIntegrator(*core_rho_u.back()),
+            const_cast<Array<int>&>(s.component_markers[g]));
+      }
+    }
     Vector R;
     AssembleTrueRHS(*s.fes_phi, *r, R);
     w_ = detail::MakeGridFunction(s.fes_phi);
@@ -327,9 +434,13 @@ void DensityFeasibility::HessianAction(
   Transfer(*dphi, *dphi_sub);
 
   // The state's sensitivity: the saddle with the load derivative
-  // dF = (drho grad Phi + rho grad dPhi, v).
+  // dF = (drho grad Phi + rho grad dPhi, v); with rigid components the
+  // border loads' own derivative dW_k = int rho grad(dPhi) . r_k rides
+  // along (the direction vanishes on the solid, so its direct term
+  // does not appear).
   auto du = detail::MakeGridFunction(s.fes_u);
   auto dp = detail::MakeGridFunction(s.fes_p);
+  Vector da;
   {
     GradientGridFunctionCoefficient grad_phi(phi_sub_.get());
     GradientGridFunctionCoefficient grad_dphi(dphi_sub.get());
@@ -340,7 +451,11 @@ void DensityFeasibility::HessianAction(
     lf->AddDomainIntegrator(new VectorDomainLFIntegrator(df));
     Vector F;
     AssembleTrueRHS(*s.fes_u, *lf, F);
-    s.saddle->Solve(F, *du, *dp);
+    Vector dW;
+    if (s.rigid) {
+      dW = s.ComponentLoads(rho_parent, *dphi);
+    }
+    s.saddle->Solve(F, *du, *dp, dW, s.rigid ? &da : nullptr);
   }
 
   // The Gauss-Newton dual is the gradient assembly with (u, w)
@@ -364,6 +479,38 @@ void DensityFeasibility::HessianAction(
     ScalarVectorProductCoefficient drho_u(drho_parent, up_coeff);
     if (!gn_only) {
       r->AddDomainIntegrator(new DomainLFGradIntegrator(drho_u), marker);
+    }
+    // The sensitivity's core extension, as in the gradient's adjoint
+    // (the border load's Phi-chain, with the SENSITIVITY coefficients;
+    // the border load is linear in the fluid density, so no residual
+    // core term exists).
+    std::vector<std::unique_ptr<VectorFunctionCoefficient>> core_motion;
+    std::vector<std::unique_ptr<ScalarVectorProductCoefficient>> core_rho;
+    if (s.rigid) {
+      const int dim = s.fes_phi->GetMesh()->Dimension();
+      for (std::size_t g = 0; g < s.component_markers.size(); g++) {
+        std::vector<real_t> a(s.modes_per);
+        for (int mode = 0; mode < s.modes_per; mode++) {
+          // MINUS, as in the gradient's core extension.
+          a[mode] = -da[static_cast<int>(g) * s.modes_per + mode];
+        }
+        core_motion.push_back(std::make_unique<VectorFunctionCoefficient>(
+            dim, [dim, a](const Vector& x, Vector& v) {
+              v.SetSize(dim);
+              v = 0.0;
+              Vector mode_v(dim);
+              for (int mode = 0; mode < static_cast<int>(a.size());
+                   mode++) {
+                RigidMode(dim, mode)(x, mode_v);
+                v.Add(a[mode], mode_v);
+              }
+            }));
+        core_rho.push_back(std::make_unique<ScalarVectorProductCoefficient>(
+            rho_parent, *core_motion.back()));
+        r->AddDomainIntegrator(
+            new DomainLFGradIntegrator(*core_rho.back()),
+            const_cast<Array<int>&>(s.component_markers[g]));
+      }
     }
     Vector R;
     AssembleTrueRHS(*s.fes_phi, *r, R);

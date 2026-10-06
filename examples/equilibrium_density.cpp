@@ -11,8 +11,14 @@
 //             fluid, interface traction free }
 //
 // is positive, with the minimising multiplier u the creeping flow the
-// unbalanced buoyancy would drive. The example drives J to its floor by
-// moving the fluid density, two ways:
+// unbalanced buoyancy would drive. The inner core is an enclosed solid:
+// by default (-core rigid) its force and torque balance joins the
+// constraints through the saddle's rigid border, and the run reports
+// the core's multiplier motion (its force/torque signature, decaying
+// as balance is restored; the core_motion column of the CSV) alongside
+// the connected-solid (clamped) functional, whose gap to J is exactly
+// the core imbalance the clamped certificate cannot see. The example
+// drives J to its floor by moving the fluid density, three ways:
 //
 //   -loop cg      nonlinear conjugate gradients (Polak-Ribiere+, a
 //                 forward-tracking line search) on the density, the
@@ -329,6 +335,7 @@ int main(int argc, char* argv[]) {
 
   const char* mesh_file = "../data/elastogravity_three_layer_3d.msh";
   const char* loop = "cg";
+  const char* core = "rigid";
   const char* metric_name = "h2";
   double length = 0.3;
   double prior = 0.0;
@@ -347,6 +354,10 @@ int main(int argc, char* argv[]) {
                  "Gradient metric of the cg loop: l2, h1 or h2.");
   args.AddOption(&length, "-length", "--length",
                  "Smoothing length of the Sobolev metrics.");
+  args.AddOption(&core, "-core", "--core",
+                 "rigid (the exact certificate: the inner core's force "
+                 "and torque balance joins the constraints) or clamped "
+                 "(the connected-solid functional, optimistic here).");
   args.AddOption(&prior, "-prior", "--prior",
                  "Roughness (H1-seminorm) prior weight of the cg loop: "
                  "selects the smooth member of the near-null family.");
@@ -393,9 +404,23 @@ int main(int argc, char* argv[]) {
   Array<int> ess(fluid.bdr_attributes.Max());
   ess = 1;  // the certificate's no-slip condition on the whole boundary
 
+  // The inner core as an enclosed rigid component (the default): its
+  // force and torque balance joins the certificate's constraints,
+  // which the clamped functional misses (the class notes; `-core
+  // clamped` shows the difference).
+  std::vector<RigidComponent> rigid;
+  if (std::string(core) == "rigid") {
+    rigid.resize(1);
+    rigid[0].fluid_bdr_marker.SetSize(fluid.bdr_attributes.Max());
+    rigid[0].fluid_bdr_marker = 0;
+    rigid[0].fluid_bdr_marker[0] = 1;  // the ICB
+    rigid[0].parent_attributes.SetSize(1);
+    rigid[0].parent_attributes[0] = 1;  // the inner core
+  }
   DensityFeasibilityProblem problem(fes_phi, dtn_degree, kG,
                                     Array<int>({kFluidAttr}), fes_u, fes_p,
-                                    nullptr, &ess);
+                                    nullptr, &ess,
+                                    rigid.empty() ? nullptr : &rigid);
   Spaces s{&parent,      &fluid, &fes_phi,    &fes_u, &fes_p,
            &ctrl_fluid,  &ctrl_parent, &ess,  dtn_degree, &problem};
 
@@ -411,7 +436,7 @@ int main(int argc, char* argv[]) {
   };
   examples::CsvTable history(csv_file, {"iteration", "J", "step",
                                         "mass_drift", "dev_over_p",
-                                        "energy"});
+                                        "energy", "core_motion"});
   history.Meta("title", "density restoration: the feasibility functional")
       .Meta("x", "iteration")
       .Meta("y", "J")
@@ -494,12 +519,50 @@ int main(int argc, char* argv[]) {
     }
   };
 
+  // What the enriched certificate sees that the clamped one does not:
+  // the core's multiplier motion (its force/torque signature), and the
+  // gap between the two functionals.
+  auto report_core = [&](DensityFeasibility& J, const char* when) {
+    if (rigid.empty() || !Root()) {
+      return;
+    }
+    const Vector& a = J.RigidCoefficients();
+    double t2 = 0.0, r2 = 0.0;
+    for (int k = 0; k < a.Size(); k++) {
+      (k % 6 < 3 ? t2 : r2) += a[k] * a[k];
+    }
+    std::cout << "  core multiplier motion (" << when
+              << "): |translation| = " << std::sqrt(t2)
+              << ", |rotation| = " << std::sqrt(r2) << "\n";
+  };
+  std::unique_ptr<DensityFeasibilityProblem> clamped_problem;
+  auto report_gap = [&](const char* when) {
+    if (rigid.empty()) {
+      return;
+    }
+    if (!clamped_problem) {
+      clamped_problem = std::make_unique<DensityFeasibilityProblem>(
+          fes_phi, dtn_degree, kG, Array<int>({kFluidAttr}), fes_u, fes_p,
+          nullptr, &ess);
+    }
+    const double j_clamped =
+        clamped_problem->Evaluate(rho.parent, rho.stokes)->Value();
+    if (Root()) {
+      std::cout << "  clamped (connected-solid) functional (" << when
+                << "): " << j_clamped
+                << " — the certificate gap is the core's unbalanced "
+                   "force and torque\n";
+    }
+  };
+
   // The initial state.
   auto J0 = Evaluate(s, rho);
   const double j_start = J0->Value();
   if (Root()) {
     std::cout << "J at the start: " << std::scientific << j_start << "\n";
   }
+  report_core(*J0, "initial");
+  report_gap("initial");
   BarotropyRows(s, rho, *J0, "initial", scatter);
   if (visualisation) {
     send_state(*J0, before, &infeasible_before, /*with_flow=*/true);
@@ -563,7 +626,8 @@ int main(int argc, char* argv[]) {
     }
     options.monitor = [&](int it, double value, double step) {
       history.Row({double(it), value, step, 0.0, dev_over_p(*J_last),
-                   J_last->GravitationalEnergy()});
+                   J_last->GravitationalEnergy(),
+                   J_last->RigidCoefficients().Norml2()});
       if (Root()) {
         std::cout << (gauss_newton ? "lm " : "cg ") << std::setw(4) << it
                   << ": J = " << value
@@ -719,7 +783,8 @@ int main(int argc, char* argv[]) {
       // Mass drift: advection conserves int rho only to discretisation.
       const double drift = mass.Pair(m_dual, c) - mass_start;
       history.Row({double(it), jval, dt, drift, dev_over_p(*J_last),
-                   J_last->GravitationalEnergy()});
+                   J_last->GravitationalEnergy(),
+                   J_last->RigidCoefficients().Norml2()});
       if (Root() && (it % 10 == 0 || it == 1)) {
         std::cout << "advect " << std::setw(4) << it << ": J = " << jval
                   << ", dt " << dt << "\n";
@@ -738,6 +803,8 @@ int main(int argc, char* argv[]) {
               << j_final / j_start << " of the start, " << done
               << " iterations)\n";
   }
+  report_core(*J_last, "final");
+  report_gap("final");
   BarotropyRows(s, rho, *J_last, "final", scatter);
   if (visualisation) {
     send_state(*J_last, after, &infeasible_after, /*with_flow=*/false);
