@@ -137,6 +137,46 @@ isotropic, as in PREM) elasticity with `ElasticTensorIntegrator`; with
 protocol of the quasi-static problem classes over a sequence of times.
 Shows: the displacement.
 
+**`coseismic_deformation`**: static coseismic deformation on a Cartesian
+box with a free surface and no gravity: the earthquake is a stress glut,
+a planar fault split into moment-tensor point sources
+(`MatrixDeltaCoefficient` through
+`DomainLFDeformationGradientIntegrator`), with dip, and in 3-D strike and
+rake; the slip is tapered as cos^2 to zero at the fault ends by default
+(`-no-taper` for a uniform distribution, whose abrupt edges are
+themselves an artifact; a single patch keeps full amplitude);
+`-nd 1 -ns 1` collapses it to a single point source, and
+`-smooth <s>` replaces each delta by a normalised Gaussian s element
+widths wide through the same integrator's volume path — the same moment
+(the captured fraction is printed) and the same far field to
+O(sigma^2/r^2), but a resolved density instead of mesh-scale artifacts
+near the fault. Optional depth
+stiffening, a lateral modulus gradient, a soft Gaussian basin and
+Gaussian surface topography mapped onto the mesh nodes. Shows: u_z, scaled to the surface peaks, the vector
+displacement (`v` for arrows, `d` in 2-D to displace the mesh by it) and
+the moduli kappa and mu; the CSV plots the surface displacement profile.
+`./coseismic_deformation`, `./coseismic_deformation -dip 60 -s -0.01`,
+`./coseismic_deformation -d 3 -o 1 -rake 0`
+
+**`postseismic_deformation`**: post-seismic relaxation of the same box
+and fault (shared through `fault_box.hpp`): an elastic lid of a whole
+number of element rows (the discontinuity is meshed) over a standard
+linear solid, the stress glut held from t = 0 in a
+`LinearQuasiStaticClampedProblem`'s external load, stepped by the
+`ViscoelasticOperator`. The SLS is set by its stress-relaxation and
+creep-retardation times (their ratio fixes the relaxed modulus), both
+scaled by one parametric spatial factor (depth, lateral, Gaussian weak
+zone). Checks itself against the directly solved relaxed limit. Shows:
+the coseismic u_z, the relaxation animation and the final u_z on one
+colour scale; the CSVs plot the history at the surface point above the
+uplift peak and the coseismic/final/relaxed-limit profiles. A streamed
+animation cannot be replayed in GLVis (space pauses a live stream only),
+so the frames are also saved with a script:
+`glvis -run postseismic_deformation.glvs` replays them, space playing
+and pausing (`-no-anim` turns the saving off).
+`./postseismic_deformation`, `./postseismic_deformation -nl 0 -tau-e 4 -tf 20`,
+`./postseismic_deformation -tgamma 0.9 -tbx 1 -tbz 2`
+
 ### Fluids and interfaces
 
 **`gauged_fluid_cavity`**: an elastic body with a fluid core under a

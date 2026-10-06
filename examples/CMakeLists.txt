@@ -28,6 +28,8 @@ set(EXAMPLES
     love_numbers                # load and tidal Love numbers by degree, one solve each
     viscoelastic_love_numbers   # load Love-number histories of a Maxwell sphere vs the closed form
     anisotropic_elasticity      # ElasticTensorIntegrator, radial TI
+    coseismic_deformation       # moment-tensor (stress-glut) point/finite-fault sources
+    postseismic_deformation     # the same fault over an SLS: relaxation to the long-term limit
 )
 
 foreach(ex IN LISTS EXAMPLES)
