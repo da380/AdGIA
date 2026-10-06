@@ -178,6 +178,16 @@ hydrostatic equilibrium. Shows: the minimum-deviatoric pressure, and
 |dev T| of both. Compare
 `-e 0`.
 
+**`equilibrium_density`**: density restoration, the first milestone of
+the equilibrium-figures programme (`doc/equilibrium_figures.tex`): the
+fluid outer core of the three-layer model starts non-barotropic, and the
+fluid-only feasibility functional is driven to its floor by nonlinear CG
+in a choosable metric (`-metric l2|h1|h2`, `-length`) or by the
+advection flow (`-loop advect`). The CSVs plot J by iteration and the
+(Phi, rho) scatter before and after — restored barotropy is the scatter
+collapsed onto one curve. Shows: the initial and final fluid density.
+`./equilibrium_density`, `./equilibrium_density -loop advect`
+
 **`prestress_loading`**: does the deviatoric part of the pre-stress matter
 for loading? Full against quasi-hydrostatic pre-stress on ellipses of
 growing ellipticity. Shows: |dev S_e| and the response difference on the

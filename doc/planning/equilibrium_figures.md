@@ -61,14 +61,35 @@ tolerances 1e-11).
    flow of the energy, mass- and distribution-preserving); race them
    on milestone 1. L2 identification first, the Sobolev metrics as the
    first measured study.
-4. **Milestone 1** — fixed-shape density restoration on a fluid-core
-   model from a non-barotropic start, J to the discretisation floor.
-   The advection route's end state has an exact prediction
-   (the symmetric decreasing rearrangement; reference document §5).
+4. ~~**Milestone 1**~~ — demonstrated (examples/equilibrium_density.cpp,
+   three-layer model, lateral non-barotropic start, measurements under
+   `build_parallel/examples/eqd*_*.csv`): every regularised loop
+   removes the lateral content (best run: within-equipotential density
+   spread 3.4e-2 -> 1.3e-2, L2 metric with roughness prior 1e-7), and
+   the study MEASURED the semi-convergence the Sobolev-gradient
+   analysis predicted — the unregularised L2 loop drives J down 9x
+   while sending the density to [-4.5, 8.4] (mesh-scale pollution), and
+   even the H2 loop, run 400 iterations, pushes J BELOW the base
+   model's own discretisation floor (the unperturbed model evaluates to
+   J = 9.4e-9, two thirds of the perturbed start) and the physical
+   scatter grows again past that point: descending below the floor is
+   fitting discretisation error. Open: a principled stopping rule (the
+   floor is measurable by evaluating the reference model, or by
+   h-refinement; a discrepancy-principle stop or keeping the prior on
+   are the standard answers). The advection loop conserves the
+   distribution but stalls at its explicit-step floor (~0.7 of the
+   start); a semi-Lagrangian or flux-form transport step is the known
+   upgrade. The exact rearrangement prediction (reference document §5)
+   remains to be tested against an upgraded transport step.
 5. **Stage 2**: interface-shape parameters, moving-domain terms,
    gradient checks against the shift-derivative benchmark; rotation.
 
 ## Open items
+
+- **Promote the descent loop to a module.** The example's metric /
+  mass-projection / projected-PR-CG core is self-contained; once the
+  basic method is demonstrated, move it into a small library module
+  (beside `riesz.hpp`) so the stage-2 and joint loops reuse it.
 
 - **Per-component pressure constants.** The fluid-only solve removes
   one pressure constant; several fluid regions enclosed by solid need

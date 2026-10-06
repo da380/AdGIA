@@ -190,3 +190,88 @@ TEST(EquilibriumFigures, WholeBodyDerivativeAndEulerIdentity) {
   EXPECT_NEAR(euler, 4.0 * j0, 2e-5 * std::abs(j0))
       << "rho . J' = " << euler << " against 4 J = " << 4.0 * j0;
 }
+
+TEST(EquilibriumFigures, ParentDerivativeAgreesWithStokesDerivative) {
+  Mesh parent(ThreeLayerMeshFile(3), 1, 1);
+  auto fluid = SubMesh::CreateFromDomain(parent, Array<int>({2}));
+
+  H1_FECollection h1_phi(2, 3), h1_u(2, 3), h1_p(1, 3);
+  L2_FECollection l2(2, 3);
+  FiniteElementSpace fes_phi(&parent, &h1_phi);
+  FiniteElementSpace fes_u(&fluid, &h1_u, 3);
+  FiniteElementSpace fes_p(&fluid, &h1_p);
+  FiniteElementSpace fes_rho(&fluid, &l2);
+  FiniteElementSpace fes_rho_parent(&parent, &l2);
+
+  Array<int> ess(fluid.bdr_attributes.Max());
+  ess = 1;
+  ModelDensity rho;
+  // kDtNDegree by value: the name is ambiguous with the test common's
+  // at this (global) scope.
+  DensityFeasibility J(fes_phi, 8, kGravG, rho.Get(),
+                       Array<int>({2}), fes_u, fes_p, rho.Get(), nullptr,
+                       &ess);
+
+  // Pair both assemblies with one direction: on the Stokes mesh, and
+  // transferred (an exact L2 dof identification) to the parent. The
+  // marker-restricted parent assembly must integrate the same
+  // integrand over the same elements.
+  Vector dual_stokes, dual_parent;
+  J.Derivative(fes_rho, dual_stokes);
+  J.DerivativeOnParent(fes_rho_parent, dual_parent);
+
+  GridFunction d(&fes_rho);
+  FunctionCoefficient probe([](const Vector& x) {
+    return std::sin(2.0 * x[0]) * std::cos(3.0 * x[1]) + 0.4 * x[2];
+  });
+  d.ProjectCoefficient(probe);
+  GridFunction d_parent(&fes_rho_parent);
+  d_parent = 0.0;
+  SubMesh::Transfer(d, d_parent);
+
+  const double a = dual_stokes * d;
+  const double b = dual_parent * d_parent;
+  EXPECT_NEAR(a, b, 1e-11 * std::abs(a))
+      << "stokes-side " << a << " vs parent-side " << b;
+}
+
+TEST(EquilibriumFigures, PersistentProblemMatchesOneShot) {
+  Mesh parent(ThreeLayerMeshFile(3), 1, 1);
+  auto fluid = SubMesh::CreateFromDomain(parent, Array<int>({2}));
+
+  H1_FECollection h1_phi(2, 3), h1_u(2, 3), h1_p(1, 3);
+  L2_FECollection l2(2, 3);
+  FiniteElementSpace fes_phi(&parent, &h1_phi);
+  FiniteElementSpace fes_u(&fluid, &h1_u, 3);
+  FiniteElementSpace fes_p(&fluid, &h1_p);
+  FiniteElementSpace fes_rho(&fluid, &l2);
+
+  Array<int> ess(fluid.bdr_attributes.Max());
+  ess = 1;
+  ModelDensity rho;
+
+  DensityFeasibility one_shot(fes_phi, 8, kGravG, rho.Get(),
+                              Array<int>({2}), fes_u, fes_p, rho.Get(),
+                              nullptr, &ess);
+
+  DensityFeasibilityProblem problem(fes_phi, 8, kGravG, Array<int>({2}),
+                                    fes_u, fes_p, nullptr, &ess);
+  auto first = problem.Evaluate(rho.Get(), rho.Get());
+  auto second = problem.Evaluate(rho.Get(), rho.Get());
+
+  // Two evaluations through one problem agree with each other and with
+  // the one-shot construction (identical discrete systems).
+  EXPECT_NEAR(first->Value(), one_shot.Value(),
+              1e-12 * std::abs(one_shot.Value()));
+  EXPECT_NEAR(second->Value(), first->Value(),
+              1e-13 * std::abs(first->Value()));
+  EXPECT_NEAR(first->GravitationalEnergy(), one_shot.GravitationalEnergy(),
+              1e-12 * std::abs(one_shot.GravitationalEnergy()));
+
+  Vector d1, d2;
+  first->Derivative(fes_rho, d1);
+  one_shot.Derivative(fes_rho, d2);
+  Vector diff(d1);
+  diff -= d2;
+  EXPECT_LT(diff.Norml2() / d2.Norml2(), 1e-10);
+}

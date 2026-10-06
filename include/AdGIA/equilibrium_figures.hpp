@@ -68,6 +68,38 @@ namespace AdGIA {
  * caveats"); the class is written for, and verified in, three
  * dimensions.
  */
+class DensityFeasibility;
+
+/**
+ * @brief The persistent half of the feasibility evaluation: none of the
+ * operators — the Poisson system with its DtN closure and
+ * preconditioner, the Stokes saddle with its — depends on the density,
+ * so an optimisation loop assembles them once here and pays only the
+ * solves per evaluation. Parameters as in DensityFeasibility, minus
+ * the densities; everything is borrowed and must outlive the problem.
+ */
+class DensityFeasibilityProblem {
+ public:
+  DensityFeasibilityProblem(mfem::FiniteElementSpace& fes_phi,
+                            int dtn_degree, mfem::real_t G,
+                            const mfem::Array<int>& stokes_attributes,
+                            mfem::FiniteElementSpace& fes_u,
+                            mfem::FiniteElementSpace& fes_p,
+                            mfem::Coefficient* mu = nullptr,
+                            const mfem::Array<int>* essential_bdr = nullptr);
+  ~DensityFeasibilityProblem();
+
+  /** @brief The functional, its fields and its derivative at one
+   * density (the two coefficients as in DensityFeasibility). */
+  std::unique_ptr<DensityFeasibility> Evaluate(
+      mfem::Coefficient& rho_parent, mfem::Coefficient& rho_stokes) const;
+
+ private:
+  friend class DensityFeasibility;
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
+};
+
 class DensityFeasibility {
  public:
   /**
@@ -107,6 +139,13 @@ class DensityFeasibility {
    * function). */
   mfem::real_t Value() const { return value_; }
 
+  /** @brief The gravitational energy @f$E = \tfrac12\int\rho\,\Phi@f$
+   * of the state. The advection flow is E's gradient flow in the
+   * dissipation metric with decay rate @f$2J@f$: an advection loop
+   * accepts steps on E, not on J, which need not fall monotonically
+   * along the flow. */
+  mfem::real_t GravitationalEnergy() const { return energy_; }
+
   /** @brief The self-consistent potential on the parent mesh. */
   const mfem::GridFunction& Potential() const { return *phi_; }
 
@@ -136,19 +175,37 @@ class DensityFeasibility {
   void Derivative(mfem::FiniteElementSpace& fes_rho,
                   mfem::Vector& dual) const;
 
+  /**
+   * @brief The same derivative assembled against a space on the
+   * PARENT mesh, restricted to the Stokes region's attributes — the
+   * extended-domain form the Sobolev metrics consume
+   * (doc/equilibrium_figures.tex §6: the parameter lives on the whole
+   * mesh, the model reads its restriction, and the dual of the
+   * restriction is this marker-restricted assembly).
+   */
+  void DerivativeOnParent(mfem::FiniteElementSpace& fes,
+                          mfem::Vector& dual) const;
+
  private:
-  mfem::FiniteElementSpace* fes_phi_;
-  mfem::FiniteElementSpace* fes_u_;
-  mfem::real_t G_;
+  friend class DensityFeasibilityProblem;
+  /** The state constructor the problem's Evaluate uses: the heavy
+   * pieces come assembled from @p problem. */
+  DensityFeasibility(const DensityFeasibilityProblem& problem,
+                     mfem::Coefficient& rho_parent,
+                     mfem::Coefficient& rho_stokes);
+  void Solve(mfem::Coefficient& rho_parent, mfem::Coefficient& rho_stokes);
+
+  // One-shot compatibility: the public constructor owns its problem.
+  std::unique_ptr<DensityFeasibilityProblem> own_problem_;
+  const DensityFeasibilityProblem* problem_ = nullptr;
+
   mfem::real_t value_ = 0.0;
+  mfem::real_t energy_ = 0.0;
   int phi_iterations_ = 0, w_iterations_ = 0;
 
-  // The potential and adjoint potential on the parent, and their
-  // restrictions to the Stokes mesh (H1 transfers).
-  std::unique_ptr<mfem::H1_FECollection> h1_sub_;
-  std::unique_ptr<mfem::FiniteElementSpace> fes_phi_sub_;
-  std::unique_ptr<mfem::GridFunction> phi_, w_, phi_sub_, w_sub_;
-
+  // The per-state fields: potentials on the parent, their restrictions
+  // to the Stokes mesh, the velocity's parent-side twin, the stress.
+  std::unique_ptr<mfem::GridFunction> phi_, w_, phi_sub_, w_sub_, u_parent_;
   std::unique_ptr<MinimumDeviatoricEquilibriumStress> stress_;
 };
 

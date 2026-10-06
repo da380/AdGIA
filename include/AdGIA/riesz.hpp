@@ -16,18 +16,24 @@ namespace AdGIA {
  *
  * The maps act on true-dof vectors of one finite-element space; they
  * are mfem Operators, so loops can hold any of them behind one pointer
- * and the metric becomes a runtime switch. Serial and parallel.
+ * and the metric becomes a runtime switch. Vector spaces (vdim > 1,
+ * e.g. a mapping control field) get the component-wise metric through
+ * the vector mass and diffusion integrators. Serial and parallel.
  */
 class RieszMap : public mfem::Operator {
  public:
-  explicit RieszMap(int n) : mfem::Operator(n) {}
+  explicit RieszMap(mfem::FiniteElementSpace& fes)
+      : mfem::Operator(fes.GetTrueVSize()), fes_(&fes) {}
 
-  /** @brief The metric inner product <x, y> of two true-dof vectors
-   * (global in parallel): the loop's own notion of length, so that
-   * step sizes and projections live in the same geometry as the
-   * gradient. */
-  virtual mfem::real_t InnerProduct(const mfem::Vector& x,
-                                    const mfem::Vector& y) const = 0;
+  /** @brief The pairing of a dual with a field, @f$j\cdot x@f$ (global
+   * in parallel). Every metric quantity the descent loops need is such
+   * a pairing — @f$\langle g, g\rangle = j\cdot g@f$ for the gradient
+   * g = Mult(j), directional slopes, the mass-projection scalar — so
+   * no metric inner product is assembled. */
+  mfem::real_t Pair(const mfem::Vector& dual, const mfem::Vector& x) const;
+
+ protected:
+  mfem::FiniteElementSpace* fes_;
 };
 
 /**
@@ -42,11 +48,8 @@ class L2RieszMap : public RieszMap {
   ~L2RieszMap();
 
   void Mult(const mfem::Vector& dual, mfem::Vector& g) const override;
-  mfem::real_t InnerProduct(const mfem::Vector& x,
-                            const mfem::Vector& y) const override;
 
  private:
-  mfem::FiniteElementSpace* fes_;
   std::unique_ptr<mfem::BilinearForm> m_;
   mfem::OperatorHandle M_;
   std::unique_ptr<mfem::Solver> prec_;
@@ -77,7 +80,8 @@ class L2RieszMap : public RieszMap {
 class SobolevRieszMap : public RieszMap {
  public:
   /**
-   * @param fes Scalar H1 space on the extension domain; not owned.
+   * @param fes H1 space on the extension domain, scalar or vector
+   * (component-wise metric); not owned.
    * @param alpha Mass weight.
    * @param beta Gradient weight; @f$\sqrt{\beta/\alpha}@f$ is the
    * smoothing length.
@@ -92,17 +96,9 @@ class SobolevRieszMap : public RieszMap {
 
   void Mult(const mfem::Vector& dual, mfem::Vector& g) const override;
 
-  /** @brief The order-s inner product, evaluated as
-   * @f$x^T \tilde A (\tilde A^{-1} M)^{s-1}... @f$ — concretely
-   * @f$\langle x, y\rangle_s = j_x\cdot y@f$ with @f$j_x@f$ the dual
-   * of x, i.e. by one application of the Gram chain (s - 1 solves). */
-  mfem::real_t InnerProduct(const mfem::Vector& x,
-                            const mfem::Vector& y) const override;
-
  private:
   void EliminateEssential(mfem::Vector& v) const;
 
-  mfem::FiniteElementSpace* fes_;
   int order_;
   mfem::Array<int> ess_tdofs_;
   std::unique_ptr<mfem::BilinearForm> a_, m_;

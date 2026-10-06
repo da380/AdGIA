@@ -25,21 +25,6 @@ void AssembleTrueRHS(FiniteElementSpace& fes, LinearForm& lf, Vector& B) {
   }
 }
 
-// A GS (serial) or AMG (parallel) preconditioner for an assembled
-// operator handle.
-std::unique_ptr<Solver> MakePreconditioner(const OperatorHandle& A) {
-#ifdef MFEM_USE_MPI
-  if (A.Type() == Operator::Hypre_ParCSR) {
-    auto amg = std::make_unique<HypreBoomerAMG>(
-        *const_cast<OperatorHandle&>(A).As<HypreParMatrix>());
-    amg->SetPrintLevel(0);
-    return amg;
-  }
-#endif
-  return std::make_unique<GSSmoother>(
-      *const_cast<OperatorHandle&>(A).As<SparseMatrix>());
-}
-
 // Transfer a parent GridFunction to one on a SubMesh of the same parent
 // (or back: the direction is read off the meshes).
 void Transfer(const GridFunction& src, GridFunction& dst) {
@@ -54,8 +39,19 @@ void Transfer(const GridFunction& src, GridFunction& dst) {
   SubMesh::Transfer(src, dst);
 }
 
+real_t GlobalSum(FiniteElementSpace& fes, real_t v) {
+#ifdef MFEM_USE_MPI
+  if (auto* pfes = dynamic_cast<ParFiniteElementSpace*>(&fes)) {
+    real_t global = 0.0;
+    MPI_Allreduce(&v, &global, 1, MPI_DOUBLE, MPI_SUM, pfes->GetComm());
+    return global;
+  }
+#endif
+  return v;
+}
+
 // The whole-mesh Poisson operator with the DtN closure, kept assembled
-// so that the potential and the adjoint solve share it.
+// so that the potential and the adjoint solves share it.
 class PoissonSolver {
  public:
   PoissonSolver(FiniteElementSpace& fes, int dtn_degree) : fes_(&fes) {
@@ -73,7 +69,7 @@ class PoissonSolver {
     as_->AddDomainIntegrator(new MassIntegrator(*eps_));
     as_->Assemble();
     as_->FormSystemMatrix(empty, As_);
-    prec_ = MakePreconditioner(As_);
+    prec_ = detail::MakePreconditioner(As_);
 
 #ifdef MFEM_USE_MPI
     if (auto* pfes = dynamic_cast<ParFiniteElementSpace*>(&fes)) {
@@ -129,61 +125,129 @@ class PoissonSolver {
 
 }  // namespace
 
+// The persistent, density-independent machinery.
+struct DensityFeasibilityProblem::Impl {
+  FiniteElementSpace *fes_phi, *fes_u, *fes_p;
+  Coefficient* mu;
+  const Array<int>* essential_bdr;
+  real_t G;
+  Array<int> stokes_marker;
+
+  std::unique_ptr<PoissonSolver> poisson;
+  std::unique_ptr<StokesSaddleSolver> saddle;
+
+  // The potential's and the velocity's companion spaces.
+  std::unique_ptr<H1_FECollection> h1_sub, h1_u_parent;
+  std::unique_ptr<FiniteElementSpace> fes_phi_sub, fes_u_parent;
+};
+
+DensityFeasibilityProblem::DensityFeasibilityProblem(
+    FiniteElementSpace& fes_phi, int dtn_degree, real_t G,
+    const Array<int>& stokes_attributes, FiniteElementSpace& fes_u,
+    FiniteElementSpace& fes_p, Coefficient* mu,
+    const Array<int>* essential_bdr)
+    : impl_(std::make_unique<Impl>()) {
+  MFEM_VERIFY(fes_phi.GetVDim() == 1,
+              "DensityFeasibility: a scalar potential space is needed.");
+  Impl& s = *impl_;
+  s.fes_phi = &fes_phi;
+  s.fes_u = &fes_u;
+  s.fes_p = &fes_p;
+  s.mu = mu;
+  s.essential_bdr = essential_bdr;
+  s.G = G;
+
+  s.stokes_marker.SetSize(fes_phi.GetMesh()->attributes.Max());
+  s.stokes_marker = 0;
+  for (int i = 0; i < stokes_attributes.Size(); i++) {
+    s.stokes_marker[stokes_attributes[i] - 1] = 1;
+  }
+
+  s.poisson = std::make_unique<PoissonSolver>(fes_phi, dtn_degree);
+  s.saddle = std::make_unique<StokesSaddleSolver>(fes_u, fes_p, mu, nullptr,
+                                                  essential_bdr);
+
+  s.h1_sub = std::make_unique<H1_FECollection>(
+      fes_phi.FEColl()->GetOrder(), fes_u.GetMesh()->Dimension());
+  s.fes_phi_sub = detail::MakeFESpace(fes_u, s.h1_sub.get());
+  s.h1_u_parent = std::make_unique<H1_FECollection>(
+      fes_u.FEColl()->GetOrder(), fes_phi.GetMesh()->Dimension());
+  s.fes_u_parent =
+      detail::MakeFESpace(fes_phi, s.h1_u_parent.get(), fes_u.GetVDim());
+}
+
+DensityFeasibilityProblem::~DensityFeasibilityProblem() = default;
+
+std::unique_ptr<DensityFeasibility> DensityFeasibilityProblem::Evaluate(
+    Coefficient& rho_parent, Coefficient& rho_stokes) const {
+  return std::unique_ptr<DensityFeasibility>(
+      new DensityFeasibility(*this, rho_parent, rho_stokes));
+}
+
+DensityFeasibility::DensityFeasibility(
+    const DensityFeasibilityProblem& problem, Coefficient& rho_parent,
+    Coefficient& rho_stokes)
+    : problem_(&problem) {
+  Solve(rho_parent, rho_stokes);
+}
+
 DensityFeasibility::DensityFeasibility(
     FiniteElementSpace& fes_phi, int dtn_degree, real_t G,
     Coefficient& rho_parent, const Array<int>& stokes_attributes,
     FiniteElementSpace& fes_u, FiniteElementSpace& fes_p,
     Coefficient& rho_stokes, Coefficient* mu,
-    const Array<int>* essential_bdr)
-    : fes_phi_(&fes_phi), fes_u_(&fes_u), G_(G) {
-  MFEM_VERIFY(fes_phi.GetVDim() == 1,
-              "DensityFeasibility: a scalar potential space is needed.");
-  const real_t four_pi_G = 4.0 * std::numbers::pi * G_;
+    const Array<int>* essential_bdr) {
+  own_problem_ = std::make_unique<DensityFeasibilityProblem>(
+      fes_phi, dtn_degree, G, stokes_attributes, fes_u, fes_p, mu,
+      essential_bdr);
+  problem_ = own_problem_.get();
+  Solve(rho_parent, rho_stokes);
+}
+
+void DensityFeasibility::Solve(Coefficient& rho_parent,
+                               Coefficient& rho_stokes) {
+  const DensityFeasibilityProblem::Impl& s = *problem_->impl_;
+  const real_t four_pi_G = 4.0 * std::numbers::pi * s.G;
 
   // 1. The self-consistent potential on the parent mesh:
-  //    (K + DtN) Phi = -4 pi G (rho, v).
-  PoissonSolver poisson(fes_phi, dtn_degree);
+  //    (K + DtN) Phi = -4 pi G (rho, v), and the energy
+  //    E = 1/2 int rho Phi from the unscaled density dual.
   {
-    auto b = detail::MakeLinearForm(&fes_phi);
+    auto b = detail::MakeLinearForm(s.fes_phi);
     b->AddDomainIntegrator(new DomainLFIntegrator(rho_parent));
     Vector B;
-    AssembleTrueRHS(fes_phi, *b, B);
+    AssembleTrueRHS(*s.fes_phi, *b, B);
+    Vector rho_dual(B);
     B *= -four_pi_G;
-    phi_ = detail::MakeGridFunction(&fes_phi);
-    phi_iterations_ = poisson.Solve(B, *phi_);
+    phi_ = detail::MakeGridFunction(s.fes_phi);
+    phi_iterations_ = s.poisson->Solve(B, *phi_);
+
+    Vector Phi(s.fes_phi->GetTrueVSize());
+    phi_->GetTrueDofs(Phi);
+    energy_ = GlobalSum(*s.fes_phi, 0.5 * (rho_dual * Phi));
   }
 
   // 2. The potential on the Stokes mesh (an H1 dof transfer), the load
-  //    rho grad Phi, and the Stokes saddle.
-  h1_sub_ = std::make_unique<H1_FECollection>(
-      fes_phi.FEColl()->GetOrder(), fes_u.GetMesh()->Dimension());
-  fes_phi_sub_ = detail::MakeFESpace(fes_u, h1_sub_.get());
-  phi_sub_ = detail::MakeGridFunction(fes_phi_sub_.get());
+  //    rho grad Phi, and the Stokes saddle (the problem's assembled
+  //    solver, through the stress generator).
+  phi_sub_ = detail::MakeGridFunction(s.fes_phi_sub.get());
   Transfer(*phi_, *phi_sub_);
 
   GradientGridFunctionCoefficient grad_phi(phi_sub_.get());
   ScalarVectorProductCoefficient body_force(rho_stokes, grad_phi);
   stress_ = std::make_unique<MinimumDeviatoricEquilibriumStress>(
-      fes_u, fes_p, body_force, mu, nullptr, essential_bdr);
+      *s.fes_u, *s.fes_p, body_force, s.mu, nullptr, s.essential_bdr,
+      s.saddle.get());
 
   // 3. The value function J = -1/2 F . u, with F the load assembled
   //    exactly as the saddle assembled it.
   {
-    auto lf = detail::MakeLinearForm(&fes_u);
+    auto lf = detail::MakeLinearForm(s.fes_u);
     lf->AddDomainIntegrator(new VectorDomainLFIntegrator(body_force));
-    Vector F, U(fes_u.GetTrueVSize());
-    AssembleTrueRHS(fes_u, *lf, F);
+    Vector F, U(s.fes_u->GetTrueVSize());
+    AssembleTrueRHS(*s.fes_u, *lf, F);
     stress_->Auxiliary().GetTrueDofs(U);
-    real_t j = -0.5 * (F * U);
-#ifdef MFEM_USE_MPI
-    if (detail::IsParallel(fes_u)) {
-      real_t global = 0.0;
-      MPI_Allreduce(&j, &global, 1, MPI_DOUBLE, MPI_SUM,
-                    dynamic_cast<ParFiniteElementSpace&>(fes_u).GetComm());
-      j = global;
-    }
-#endif
-    value_ = j;
+    value_ = GlobalSum(*s.fes_u, -0.5 * (F * U));
   }
 
   // 4. The adjoint potential: (K + DtN) w = r, with the source
@@ -191,31 +255,23 @@ DensityFeasibility::DensityFeasibility(
   //    Stokes region's attributes (the velocity transferred to a parent
   //    H1 field, exact there by the dof identification).
   {
-    auto vec_fec = std::make_unique<H1_FECollection>(
-        fes_u.FEColl()->GetOrder(), fes_phi.GetMesh()->Dimension());
-    auto fes_u_parent = detail::MakeFESpace(fes_phi, vec_fec.get(),
-                                            fes_u.GetVDim());
-    auto u_parent = detail::MakeGridFunction(fes_u_parent.get());
-    *u_parent = 0.0;
-    Transfer(stress_->Auxiliary(), *u_parent);
-    VectorGridFunctionCoefficient u_coeff(u_parent.get());
+    u_parent_ = detail::MakeGridFunction(s.fes_u_parent.get());
+    *u_parent_ = 0.0;
+    Transfer(stress_->Auxiliary(), *u_parent_);
+    VectorGridFunctionCoefficient u_coeff(u_parent_.get());
     ScalarVectorProductCoefficient rho_u(rho_parent, u_coeff);
 
-    Array<int> marker(fes_phi.GetMesh()->attributes.Max());
-    marker = 0;
-    for (int i = 0; i < stokes_attributes.Size(); i++) {
-      marker[stokes_attributes[i] - 1] = 1;
-    }
-    auto r = detail::MakeLinearForm(&fes_phi);
+    auto r = detail::MakeLinearForm(s.fes_phi);
+    Array<int>& marker = const_cast<Array<int>&>(s.stokes_marker);
     r->AddDomainIntegrator(new DomainLFGradIntegrator(rho_u), marker);
     Vector R;
-    AssembleTrueRHS(fes_phi, *r, R);
-    w_ = detail::MakeGridFunction(&fes_phi);
-    w_iterations_ = poisson.Solve(R, *w_);
+    AssembleTrueRHS(*s.fes_phi, *r, R);
+    w_ = detail::MakeGridFunction(s.fes_phi);
+    w_iterations_ = s.poisson->Solve(R, *w_);
   }
 
   // 5. The adjoint potential on the Stokes mesh, for the derivative.
-  w_sub_ = detail::MakeGridFunction(fes_phi_sub_.get());
+  w_sub_ = detail::MakeGridFunction(s.fes_phi_sub.get());
   Transfer(*w_, *w_sub_);
 }
 
@@ -227,10 +283,11 @@ const GridFunction& DensityFeasibility::Velocity() const {
 
 void DensityFeasibility::Derivative(FiniteElementSpace& fes_rho,
                                     Vector& dual) const {
-  MFEM_VERIFY(fes_rho.GetMesh() == fes_u_->GetMesh(),
+  const DensityFeasibilityProblem::Impl& s = *problem_->impl_;
+  MFEM_VERIFY(fes_rho.GetMesh() == s.fes_u->GetMesh(),
               "DensityFeasibility: the control space must live on the "
               "Stokes mesh.");
-  const real_t four_pi_G = 4.0 * std::numbers::pi * G_;
+  const real_t four_pi_G = 4.0 * std::numbers::pi * s.G;
 
   // dJ[drho] = int drho ( -u . grad Phi + 4 pi G w ) over the Stokes
   // mesh (doc/equilibrium_figures.tex, the envelope-theorem derivative).
@@ -243,6 +300,28 @@ void DensityFeasibility::Derivative(FiniteElementSpace& fes_rho,
   auto lf = detail::MakeLinearForm(&fes_rho);
   lf->AddDomainIntegrator(new DomainLFIntegrator(integrand));
   AssembleTrueRHS(fes_rho, *lf, dual);
+}
+
+void DensityFeasibility::DerivativeOnParent(FiniteElementSpace& fes,
+                                            Vector& dual) const {
+  const DensityFeasibilityProblem::Impl& s = *problem_->impl_;
+  MFEM_VERIFY(fes.GetMesh() == s.fes_phi->GetMesh(),
+              "DensityFeasibility: a space on the parent mesh is needed.");
+  const real_t four_pi_G = 4.0 * std::numbers::pi * s.G;
+
+  // The same integrand as Derivative(), in its parent-side fields,
+  // under the Stokes region's attribute marker (the transferred
+  // velocity equals the Stokes one there).
+  VectorGridFunctionCoefficient u_coeff(u_parent_.get());
+  GradientGridFunctionCoefficient grad_phi(phi_.get());
+  InnerProductCoefficient advective(u_coeff, grad_phi);
+  GridFunctionCoefficient w_coeff(w_.get());
+  SumCoefficient integrand(advective, w_coeff, -1.0, four_pi_G);
+
+  auto lf = detail::MakeLinearForm(&fes);
+  Array<int>& marker = const_cast<Array<int>&>(s.stokes_marker);
+  lf->AddDomainIntegrator(new DomainLFIntegrator(integrand), marker);
+  AssembleTrueRHS(fes, *lf, dual);
 }
 
 }  // namespace AdGIA

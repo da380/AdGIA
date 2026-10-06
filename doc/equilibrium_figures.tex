@@ -76,7 +76,9 @@ and the Hessian action; \S\ref{sec:energy} interprets the functional as
 the squared gradient of the gravitational energy and derives the
 alternative advection route; \S\ref{sec:sobolev} turns derivatives into
 gradients by Sobolev metrics; \S\ref{sec:stage2} admits the shape as a
-control; \S\ref{sec:algorithms} collects algorithms and verification.
+control; \S\ref{sec:second} derives second derivatives and
+Newton--Krylov steps for density and shape; \S\ref{sec:algorithms}
+collects algorithms and verification.
 
 \paragraph{Sign convention.} Throughout, as in the rest of the library,
 \begin{equation}
@@ -836,34 +838,9 @@ by the mutual-energy symmetry, so $\int\rho J' = -2\ip{\bff}{\bu} =
 2a(\bu,\bu) = 4J$. (The integral is over the whole body: $J'$ on the
 solid is $w - \bu\cdot\nabla\Phi$ as well.)
 
-\subsection{Hessian actions}
-\label{sec:hessian}
-
-Differentiate \eqref{eq:lagrangian} in direction $\delta\rho$:
-\begin{equation}
-  H\delta\rho = -\bigl(\delta\phi^1 + \delta\bu\cdot\nabla\Phi
-  + \bu\cdot\nabla\delta\Phi\bigr),
-\end{equation}
-where $\delta\Phi = \Phi[\delta\rho]$ (one Poisson solve);
-$\delta\bu = \mathsf{S}\,\delta\ell_\rho$ solves the saddle with load
-$-\ip{\delta\rho\nabla\Phi + \rho\nabla\delta\Phi}{\cdot}$ (one saddle
-solve, same operator); and $\delta\phi^1$ is the potential of
-$-\div(\delta\rho\,\bu + \rho\,\delta\bu)$ (one Poisson solve). These are
-the second-order adjoints of the same pair: because the saddle is
-self-adjoint, the second-order saddle adjoint coincides with the forward
-sensitivity $\delta\bu$, and the second-order Poisson adjoint is
-$-\delta\phi^1$. The Hessian splits as
-\begin{equation}
-  \ip{H\delta\rho}{\delta\rho} = a(\delta\bu,\delta\bu)
-  + D^2\ell_\rho[\delta\rho,\delta\rho](\bu),
-  \qquad D^2\ell_\rho[\delta\rho,\delta\rho](\bu)
-  = -2\int\delta\rho\,\nabla\delta\Phi\cdot\bu ,
-\end{equation}
-the first term positive semi-definite (the Gauss--Newton part) and the
-second vanishing where $\bu = 0$, i.e.\ at every zero of $J$. Near the
-zero set Gauss--Newton is therefore asymptotically exact; at the zero
-set the Hessian is singular along the zero set itself (the barotropic
-family), which is why a prior is needed for Newton-type methods.
+Second derivatives --- Hessian actions with respect to density and
+shape, their Gauss--Newton part, and Newton--Krylov methods --- are the
+subject of \S\ref{sec:second}.
 
 % ======================================================================
 \section{Energy interpretation and the advection route}
@@ -1201,6 +1178,10 @@ $\int_{\partial\Bs^{(2)}}(P\bN)\cdot W\delta\varphi\dS$ with the fluid
 traction per referential area, paired through Nanson; its sign and the
 rest of that case are to be fixed with the stage-2 implementation.
 
+The field-level form of \eqref{eq:shape-derivative}, its projection onto
+interface parameterisations, the role of the lift and the second-order
+(Gauss--Newton) shape block are in \S\ref{sec:shape-second}.
+
 The derivative of the state with respect to interface location is what
 the interface-shift perturbation benchmark certifies
 (\texttt{benchmarks/perturbation/README.md}); shift-type maps must be
@@ -1241,6 +1222,444 @@ Tisserand-frame machinery in the perturbation layer, finite-strain
 reference changes, coupling to viscoelastic evolution.
 
 % ======================================================================
+\section{Second derivatives and second-order adjoints}
+\label{sec:second}
+
+\subsection{Why second order is routine here}
+
+In the referential framework every control is a field on the fixed
+reference domain: the density $\rho$ on $B$ (or on the extension domain
+$X$), and in stage~2 the equilibrium mapping $\varphi_e$ on $D$, or the
+interface-shape coefficients $s$ through which it is parameterised.
+Every form --- the Stokes saddle, the load, the Poisson operator with
+its DtN closure --- is an integral over fixed reference regions, on a
+fixed mesh with fixed quadrature points, whose integrand depends on the
+controls pointwise through $\rho$ and through $F = D\varphi_e$ (via
+$F^{-1}$, $J = \det F$, $\cof F$). There are no boundary perturbations
+anywhere. Derivatives of all orders are therefore ordinary Gateaux
+derivatives of integrands, and second-order adjoints are obtained by
+applying the Lagrangian argument of \S\ref{sec:derivative} once more.
+
+\begin{remark}[Contrast with moving-domain shape calculus]
+Classical shape optimisation perturbs the domain itself by vector fields
+$V$; the first shape derivative then has the Hadamard structure (it
+depends only on $V\cdot\bn$ on the boundary), and the second derivative,
+defined by composing two perturbations of the identity, carries
+curvature terms and is in general not symmetric: it depends on how the
+second perturbation is transported by the first (Delfour \& Zol\'esio
+\cite{DelfourZolesio}). Parameterising the shape by a map on a fixed
+reference trades all of this for $F$-dependence of the integrands. A
+function of the coefficients $s\in\R^{N_s}$ has an ordinary, symmetric
+second derivative; normal speeds, curvature and the jump structure on the
+interfaces are absorbed into the dependence on $F$, which the mapping
+layer keeps explicit and analytic at the quadrature points.
+\end{remark}
+
+\paragraph{Discrete setting.} Write the Taylor--Hood saddle of
+\eqref{eq:stokes-mixed} as
+\begin{equation}
+  \mathcal{K}\begin{bmatrix}\bu\\ p\end{bmatrix}
+  = \begin{bmatrix}-\mathsf{f}\\ 0\end{bmatrix},
+  \qquad
+  \mathcal{K} = \begin{bmatrix} \mathsf{A} & -\mathsf{D}^{T}\\
+                 -\mathsf{D} & 0\end{bmatrix},
+  \label{eq:saddle-discrete}
+\end{equation}
+with $\mathsf{A}$ the matrix of $a$, $\mathsf{D}$ the divergence pairing
+and $\mathsf{f}_i = \int\rho\,\nabla\Phi\cdot\bv_i$ (mapped:
+$\int\rho\,F^{-T}\nabla\zeta\cdot\bv_i$) the load vector; and the Poisson
+problem as $\mathsf{B}\Phi = -\mathsf{m}(\rho)$ with $\mathsf{B}$ the
+Laplacian-plus-DtN matrix (mapped: with $a(F)$) and $\mathsf{m}(\rho)_k =
+\int\rho\chi_k$, independent of the map. Then $J = \tfrac12\bu^{T}
+\mathsf{A}\bu$ and, by Proposition~\ref{prop:envelope},
+\begin{equation}
+  \mathrm{d}J[d] = -\bu^{T}\,\partial\mathsf{f}[d] .
+  \label{eq:dJ-discrete}
+\end{equation}
+
+\subsection{The density Hessian}
+\label{sec:hessian}
+
+In stage~1, $\mathcal{K}$ and $\mathsf{B}$ do not depend on $\rho$, and
+$\mathsf{f}$ depends on it bilinearly, $\mathsf{f}(\rho) =
+\mathsf{f}_2(\rho,\rho)$ with $\mathsf{f}_2(\rho_1,\rho_2)_i =
+\int\rho_1\nabla\Phi[\rho_2]\cdot\bv_i$ (a centrifugal term adds a
+part linear in $\rho$ and changes nothing below). Hence
+\begin{equation}
+  \partial\mathsf{f}[d] = \bigl(d\,\nabla\Phi + \rho\,\nabla\delta\Phi_d,\ \bv_i\bigr),
+  \qquad
+  \partial^2\mathsf{f}[d_1,d_2] = \bigl(d_1\nabla\delta\Phi_{2} +
+  d_2\nabla\delta\Phi_{1},\ \bv_i\bigr),
+  \qquad \delta\Phi_k = \Phi[d_k],
+\end{equation}
+each $\delta\Phi$ one Poisson solve. The state sensitivity solves the
+\emph{same} saddle:
+\begin{equation}
+  \mathcal{K}\begin{bmatrix}\delta\bu_k\\ \delta p_k\end{bmatrix}
+  = \begin{bmatrix}-\partial\mathsf{f}[d_k]\\ 0\end{bmatrix} .
+  \label{eq:sensitivity}
+\end{equation}
+Differentiating \eqref{eq:dJ-discrete} (with $d = d_1$) in direction
+$d_2$,
+\begin{equation}
+  H[d_1,d_2] = -\delta\bu_2^{T}\,\partial\mathsf{f}[d_1]
+               - \bu^{T}\partial^2\mathsf{f}[d_1,d_2] .
+\end{equation}
+By the first row of \eqref{eq:sensitivity} for $d_1$,
+$-\partial\mathsf{f}[d_1] = \mathsf{A}\delta\bu_1 - \mathsf{D}^T\delta p_1$,
+and $\mathsf{D}\delta\bu_2 = 0$ by its second row for $d_2$, so the
+pressure term drops:
+\begin{equation}
+  \boxed{\;H[d_1,d_2] = \underbrace{\delta\bu_2^{T}\mathsf{A}\,\delta\bu_1}_{H_{\mathrm{GN}}}
+  \;\underbrace{-\;\bu^{T}\partial^2\mathsf{f}[d_1,d_2]}_{H_{\mathrm{R}}}\;}
+  \label{eq:hessian-split}
+\end{equation}
+Both terms are manifestly symmetric in $(d_1,d_2)$.
+
+\paragraph{The Gauss--Newton term.} $J = \tfrac12\norm{r}^2$ with the
+residual $r(\rho) = (2\mu)^{1/2}\eps(\bu(\rho)) \in L^2(\Omega;\mathrm{Sym})$,
+a least-squares problem, and $H_{\mathrm{GN}}[d_1,d_2] =
+\ip{\partial r[d_1]}{\partial r[d_2]}_{L^2} = a(\delta\bu_1,\delta\bu_2)$
+is its Gauss--Newton matrix: symmetric positive semi-definite. Its order:
+$H_{\mathrm{GN}}[d,d] = \sup_{\bv\in U}\ip{d\nabla\Phi +
+\rho\nabla\delta\Phi_d}{\bv}^2/a(\bv,\bv)$ is the squared $U'$-norm of the
+force perturbation, an $H^{-1}$-type norm of $d$: $H_{\mathrm{GN}}$ is
+smoothing of order $-2$ on densities, hence compact on $L^2$. Its kernel
+contains every $d$ whose force perturbation is a gradient --- at $J = 0$,
+the tangent directions of the barotropic family.
+
+\paragraph{The residual term.} $H_{\mathrm{R}}$ pairs the residual
+velocity $\bu$ with the bilinear part of the load. Since
+$\norm{\bu}_a = (2J)^{1/2}$, $|H_{\mathrm{R}}[d,d]| = O(J^{1/2})$: it
+vanishes on the zero set, where Gauss--Newton is exact, and away from it
+it is indefinite (it is what makes the quartic $J$ non-convex), so the
+full Hessian can be indefinite.
+
+\paragraph{Hessian-vector product.} For fixed $d_2 = d$, the dual vector
+$h$ with $h^{T}d_1 = H[d_1,d]$ follows by the Poisson-adjoint step of
+\S\ref{sec:derivative} applied to each term. The Gauss--Newton term is
+\eqref{eq:dJ-discrete} with $\bu$ replaced by $\delta\bu_d$:
+$-\int(d_1\nabla\Phi + \rho\nabla\delta\Phi_1)\cdot\delta\bu_d$; the
+residual term is $-\int(d_1\nabla\delta\Phi_d + d\,\nabla\delta\Phi_1)
+\cdot\bu$. The parts non-local in $d_1$ are $-\int\nabla\delta\Phi_1\cdot
+(\rho\,\delta\bu_d + d\,\bu)$, and with one adjoint
+\begin{equation}
+  b(\chi,\hat w) = \int\bigl(\rho\,\delta\bu_d + d\,\bu\bigr)\cdot\nabla\chi
+  \quad\forall\chi
+  \qquad\Longrightarrow\qquad
+  -\int\nabla\delta\Phi_1\cdot(\rho\,\delta\bu_d + d\,\bu)
+  = \int d_1\,\hat w ,
+\end{equation}
+exactly as for $w$. Hence
+\begin{equation}
+  H d = \hat w - \delta\bu_d\cdot\nabla\Phi - \bu\cdot\nabla\delta\Phi_d ,
+  \label{eq:hessvec}
+\end{equation}
+where $\hat w = -\delta\phi^1$ is minus the Eulerian potential of
+$-\div(\rho\,\delta\bu_d + d\,\bu)$ (in strong form
+$\nabla^2\hat w = 4\pi G\div(\rho\,\delta\bu_d + d\,\bu)$, same operator
+and closure as $w$): \eqref{eq:hessvec} is the derivative of
+\eqref{eq:lagrangian}. The Gauss--Newton product drops $d\,\bu$ from the
+adjoint source and the last term.
+
+These are the second-order adjoints of the pair. Because the saddle is
+self-adjoint and its value is the objective, the second-order saddle
+adjoint coincides with the forward sensitivity $\delta\bu_d$; the
+second-order Poisson adjoint is $\hat w$, with the source of $w$
+differentiated.
+
+\paragraph{Cost.} One product needs $\delta\Phi_d$ (Poisson),
+$\delta\bu_d$ (saddle) and $\hat w$ (Poisson): one saddle and two Poisson
+solves, the same solves as one value-and-gradient evaluation ($\Phi$,
+$\bu$, $w$), i.e.\ between one and two value evaluations depending on
+the cost of a Poisson solve relative to a saddle solve, plus the
+assembly of right-hand sides. No operator depends on $\rho$:
+$\mathcal{K}$, $\mathsf{B}$ and their preconditioners are built once for
+the whole stage-1 run.
+
+\subsection{Relation to the energy}
+
+At a zero of $J$ (a critical point of $E$ on rearrangements,
+\S\ref{sec:energy}), take a rearrangement direction $d = -\div(\rho\bv)$,
+$\bv \in U$. The force perturbation $\ip{\partial\mathsf{f}[d]}{\bv'}$ is
+the $\rho$-derivative of $E'[\bv'] = \ip{\bff}{\bv'}$ along the flow of
+$\bv$, i.e.\ the second variation $Q_E(\bv,\bv')$ of $E$ on
+rearrangements (at a critical point the term from composing two flows,
+$\ip{\bff}{\nabla_{\bv}\bv'}$, vanishes because $\bff$ annihilates $U$).
+Hence $\delta\bu_d = -\operatorname{Hess}_aE\,\bv$ and
+\begin{equation}
+  H[d,d] = H_{\mathrm{GN}}[d,d] = \norm{\operatorname{Hess}_aE\,\bv}_a^{2}
+  \qquad\text{at } J = 0 :
+\end{equation}
+on rearrangement directions the Hessian of $J$ is the \emph{square} of the
+second-variation operator of $E$ in the dissipation metric. The second
+variation of $E$ therefore lives in the Gauss--Newton term, and squaring
+loses its sign: $J$ has a minimum at stable and unstable stratifications
+alike, as found in \S\ref{sec:energy}. The sign survives in the
+linearisation $-\operatorname{Hess}_aE$ of the advection flow, which is
+why that route discriminates stability. The residual term carries no
+second-variation information; it couples the current imbalance $\bu =
+-\operatorname{grad}_aE$ to the curvature of the load map and is
+responsible for the non-convexity of $J$ away from equilibrium.
+
+\subsection{Newton--Krylov for density}
+\label{sec:newton-krylov}
+
+Each outer step solves approximately the Gauss--Newton model on the mass
+plane,
+\begin{equation}
+  \min_{\delta:\ \mathsf{m}^{T}\delta = 0}\
+  j^{T}\delta + \tfrac12\delta^{T}\bigl(H_{\mathrm{GN}} + \lambda G\bigr)\delta,
+\end{equation}
+where $\lambda G$ is the exact Hessian of the Tikhonov prior of
+\S\ref{sec:sobolev} (its gradient being $\lambda(\rho - \rho_{\mathrm{ref}})$,
+added to $j$). The method is truncated conjugate gradients
+(Steihaug \cite{Steihaug1983}) with matrix-free products
+\eqref{eq:hessvec} and the preconditioner $z = \Pi_G G^{-1}r$, where
+$\Pi_G$ is the $G$-orthogonal projection onto the mass plane of
+\S\ref{sec:sobolev}. Preconditioning with a projection that maps into the
+constraint plane keeps every iterate on it (projected CG; Gould, Hribar
+\& Nocedal \cite{GouldHribarNocedal2001}).
+
+\begin{itemize}
+\item \emph{Singular directions.} $H_{\mathrm{GN}}$ is exactly singular at
+  $J = 0$ along the barotropic family. In stage~1 there is no gauge
+  direction (the density alone carries none); the field parameterisation
+  $(\rho,\varphi_e)$ of stage~2 would add the gauge directions to the
+  kernel at critical points, and the interface-shape parameterisation
+  removes them. Rearrangement directions are \emph{not} kernel directions
+  in general: by the previous subsection they lie in the kernel only where
+  $\operatorname{Hess}_aE$ does (neutral directions such as rearrangements
+  within a uniform region, which do not change $\rho$ at all). Truncated
+  CG tolerates semi-definiteness; with $\lambda > 0$ the model is
+  positive definite; a trust region bounds the step otherwise.
+\item \emph{Indefiniteness.} Away from the minimum the full Hessian can
+  be indefinite; full Newton then needs negative-curvature handling.
+  Gauss--Newton is positive semi-definite by construction and asymptotically
+  exact on the zero set.
+\item \emph{The preconditioner.} The Riesz map is the natural
+  preconditioner in a specific sense: the preconditioned operator
+  $G^{-1}(H_{\mathrm{GN}} + \lambda G) = \lambda I + G^{-1}H_{\mathrm{GN}}$
+  is the identity plus a compact operator ($H_{\mathrm{GN}}$ has order
+  $-2$, $G$ order $2s \ge 0$), so CG converges superlinearly with
+  mesh-independent iteration counts. $G^{-1}H_{\mathrm{GN}}$ alone is not
+  well conditioned --- it is more compact still --- so without the prior
+  the inner CG is an iterative regularisation, the metric deciding that
+  smooth components are resolved first and truncation deciding where to
+  stop.
+\item Bounds are handled as in \S\ref{sec:algorithms} (projection of the
+  Newton iterate, with backtracking).
+\end{itemize}
+
+\subsection{Shape: the field-level derivative and its projections}
+\label{sec:shape-second}
+
+\paragraph{The field dual.} Equation \eqref{eq:shape-derivative} is
+linear in $\delta F = D\delta\varphi$. Written as a vector-field dual on
+the reference,
+\begin{equation}
+  \Gamma(\delta\varphi) := \partial_\varphi J[\delta\varphi]
+  = \int_{\Omega}\Psi : D\delta\varphi\dx
+  + \int_{D}\Psi_{g} : D\delta\varphi\dx ,
+  \label{eq:field-dual}
+\end{equation}
+with ($\eps_\varphi = \sym(D\bu F^{-1})$, $\bm{g} = F^{-T}\nabla\zeta$,
+$\bU = F^{-1}\bu$, and $A:B = \tr(A^TB)$)
+\begin{align}
+  \Psi &= 2\mu J\bigl[F^{-T}D\bu^{T}\eps_\varphi F^{-T}
+          - \tfrac12|\eps_\varphi|^{2}F^{-T}\bigr]
+          + \rho\,\bm{g}\otimes\bU
+          + pJ\bigl[\tr(D\bu F^{-1})F^{-T} - F^{-T}D\bu^{T}F^{-T}\bigr],
+  \\
+  \Psi_{g} &= \frac{1}{4\pi G}\Bigl[(\nabla w\cdot a\nabla\zeta)F^{-T}
+          - F^{-T}\nabla w\otimes a\nabla\zeta
+          - F^{-T}\nabla\zeta\otimes a\nabla w\Bigr] ,
+\end{align}
+the three groups of $\Psi$ coming, in order, from $-\tfrac12\delta
+a_\varphi$, from the explicit $F$ in the load, and from the divergence
+constraint, and $\Psi_g$ from $\delta b_\varphi$ with $a'$ of
+\texttt{doc/gravitating\_elasticity.md} \S3.1 (each obtained from
+$\delta F^{-1} = -F^{-1}\delta FF^{-1}$, $\delta J = J\,F^{-T}:\delta F$
+and $A:(B\,\delta F\,C) = (B^TAC^T):\delta F$). $\Psi$ and $\Psi_g$ are the
+energy--momentum (Eshelby-type) tensors of the Stokes and Poisson
+Lagrangians. A centrifugal potential composed with the map, whose load
+is $-\int\rho\,(\nabla\psi\circ\varphi_e)\cdot\bu$, adds the term
+$-\int\rho\,\bu\cdot(\nabla^2\psi\circ\varphi_e)\,\delta\varphi$, in
+$\delta\varphi$ itself rather than its gradient. $\Gamma$ is assembled once per outer
+iteration from fields already computed for the density gradient ($\bu$,
+$p$, $\zeta$, $w$): \emph{no additional solve}. It is a dual vector on
+the finite element space of the map.
+
+\paragraph{Projection onto a parameterisation.} Any shape
+parameterisation $\varphi_e = \varphi[s]$ enters only through its
+tangent fields $\bm{\theta}_i = \partial\varphi/\partial s_i$: the
+interface displacement of coefficient $s_i$ (e.g.\ a spherical harmonic
+on one interface) lifted into the volume by a fixed rule --- the mapping
+layer's harmonic or tapered extensions --- and vanishing near the DtN
+sphere. Then
+\begin{equation}
+  \frac{\partial J}{\partial s_i} = \Gamma(\bm{\theta}_i) ,
+\end{equation}
+one dot product per coefficient. One derivation serves every
+parameterisation; the interface-harmonic one is a particular pairing.
+
+\paragraph{Lifts and the gauge.} Two lifts $\bm{\theta}, \bm{\theta}'$ of
+the same interface motion differ by a field vanishing on every interface,
+$\bm{\theta} - \bm{\theta}' = F_e\bfeta$. This is \emph{not} by itself a
+gauge direction: the gauge direction is $(\Div(\rho\bfeta), F_e\bfeta)$,
+moving the map \emph{and} transporting the referential density.
+Gauge invariance of $J$ gives the identity
+\begin{equation}
+  \Gamma(F_e\bfeta) = -\int_B J'_\rho\,\Div(\rho\bfeta)\dx
+  = \int_B \rho\,\nabla J'_\rho\cdot\bfeta\dx
+  \label{eq:gauge-identity}
+\end{equation}
+for every $\bfeta$ tangent to the interfaces and vanishing near
+$\partial D$ ($J'_\rho = w - \bU\cdot\nabla\zeta$ on the whole body, as in
+\S\ref{sec:derivative}). Hence, at fixed referential density, the
+projected derivative depends on the lift by
+$\int\rho\nabla J'_\rho\cdot\bfeta$. This is physical, not a defect: a
+different lift moves different material when the referential density is
+held fixed. The difference vanishes where $\rho = 0$ (lifts differing
+only in the buffer give identical derivatives, the extension gauge of
+\texttt{doc/gravitating\_elasticity.md} \S3), and where $J'_\rho$ is
+constant: in the fluid at a density-stationary point, where $J'_\rho$
+equals the mass multiplier. In the solid, whose density is data, the lift
+is part of the model's definition of how material moves with the
+interfaces. A lift-independent derivative is obtained by pairing each
+lift with its gauge-compensating density change, holding the
+\emph{Eulerian} density fixed away from the interfaces:
+\begin{equation}
+  \Gamma_{\mathrm{E}}(\bm{\theta}) := \Gamma(\bm{\theta})
+  + \int_B J'_\rho\,\Div_{\mathrm{r}}\bigl(\rho F_e^{-1}\bm{\theta}\bigr)\dx ,
+\end{equation}
+with $\Div_{\mathrm{r}}$ the region-wise divergence. By
+\eqref{eq:gauge-identity}, $\Gamma_{\mathrm{E}}$ depends only on the
+interface traces of $\bm{\theta}$. This is the derivative of classical
+(Eulerian) shape calculus, Hadamard structure included, recovered from
+the referential one. Which pairing is used is a choice of coordinates on
+the joint $(\rho, s)$ control space; a joint stationary point is the same
+in both. The referential pairing conserves each region's mass
+automatically, matching the rearrangement semantics of
+\S\ref{sec:energy}.
+
+\paragraph{Discrete gauge diagnostic.} Discretely
+\eqref{eq:gauge-identity} holds only approximately. The lift of each
+parameter is therefore fixed once and for all, and the defect
+\begin{equation}
+  \Gamma_h(\bm{\theta}) - \Gamma_h(\bm{\theta}')
+  - \int\rho_h\nabla J'_{\rho,h}\cdot\bfeta
+  \qquad(\text{equivalently } \Gamma_{\mathrm{E},h}(\bm{\theta}) -
+  \Gamma_{\mathrm{E},h}(\bm{\theta}'))
+\end{equation}
+for two lifts of one interface motion is a built-in measure of the
+discrete gauge error. It is the optimisation analogue of the
+change-of-variables identity checks of the mapped generators
+(\texttt{MappedGeneratorsMatchTransformedMesh}).
+
+\subsection{Shape second order: Gauss--Newton}
+
+With shape controls, $\mathcal{K}$, $\mathsf{f}$ and $\mathsf{B}$ all
+depend on $s$ through $F$. Define the residual on the fixed reference,
+\begin{equation}
+  r(\rho, s) = (2\mu J_\varphi)^{1/2}\,\eps_\varphi(\bu)
+  \in L^2(\Omega;\mathrm{Sym}),
+  \qquad J = \tfrac12\norm{r}^{2}_{L^2} ,
+\end{equation}
+(the weight $J_\varphi^{1/2}$ absorbs the volume change, so the space
+does not move), and the Gauss--Newton matrix as the Gram matrix of its
+first derivative, $H_{\mathrm{GN}}[\cdot,\cdot] =
+\ip{\partial r[\cdot]}{\partial r[\cdot]}_{L^2}$. For density directions
+this coincides with \eqref{eq:hessian-split}. For a shape direction
+$\bm{\theta}$,
+\begin{equation}
+  \partial r[\bm{\theta}] = (2\mu J_\varphi)^{1/2}\Bigl[
+  \tfrac12(F^{-T}:D\bm{\theta})\,\eps_\varphi(\bu)
+  - \sym\bigl(D\bu F^{-1}D\bm{\theta}F^{-1}\bigr)
+  + \eps_\varphi(\delta\bu_{\bm{\theta}})\Bigr],
+\end{equation}
+which needs only the \emph{first-order} state sensitivity, obtained by
+differentiating \eqref{eq:saddle-discrete}:
+\begin{equation}
+  \mathcal{K}\begin{bmatrix}\delta\bu_{\bm{\theta}}\\ \delta p_{\bm{\theta}}\end{bmatrix}
+  = -\,\partial\mathcal{K}[\bm{\theta}]\begin{bmatrix}\bu\\ p\end{bmatrix}
+  - \begin{bmatrix}\partial\mathsf{f}[\bm{\theta}]\\ 0\end{bmatrix},
+  \qquad
+  \mathsf{B}\,\delta\zeta_{\bm{\theta}} = -\partial\mathsf{B}[\bm{\theta}]\,\zeta ,
+\end{equation}
+where $\partial\mathsf{f}[\bm{\theta}]$ contains the explicit $F$-dependence
+of the load and $\nabla\delta\zeta_{\bm{\theta}}$ (the map-independent
+Poisson source contributes nothing). Per shape direction this is one
+Poisson and one saddle solve with the \emph{current} operators, whose
+preconditioners are reused across all directions within an outer
+iteration. The second row is non-zero, $\mathsf{D}\delta\bu_{\bm{\theta}} =
+-\partial\mathsf{D}[\bm{\theta}]\bu$: the divergence constraint moves with
+the map.
+
+Two points distinguish this from the density case. First, the
+Gauss--Newton matrix must be defined through the residual, not by
+discarding a term of the value-function expansion. The second-order
+envelope formula $\mathrm{d}^2J = \partial^2_{ss}\mathcal{L} -
+c^{T}\mathcal{K}_L^{-1}c$, with $\mathcal{K}_L$ the Hessian of the
+Lagrangian in $(\bu,p)$ and $c = \partial_{(\bu,p)}\partial_s\mathcal{L}$,
+has a sensitivity term that is indefinite as soon as $c$ has a pressure
+component, because $\mathcal{K}_L$ is a saddle matrix. For density
+directions $c$ has none, and the two definitions agree. Second, full
+Newton needs second derivatives of every form with respect to $F$ (and,
+for a parameterisation nonlinear in $s$, $\partial^2\varphi/\partial s^2$)
+together with second-order adjoint solves. Gauss--Newton needs none of
+these.
+
+\paragraph{The dense shape block.} The shape block is low-dimensional
+(interface harmonics up to some degree on a few interfaces), so the
+Gauss--Newton matrix is built explicitly: one Poisson and one saddle
+solve per parameter give $\partial r[\bm{\theta}_i]$, and
+$H_{\mathrm{GN},ij} = \ip{\partial r[\bm{\theta}_i]}{\partial
+r[\bm{\theta}_j]}$, the field-level sensitivities paired on both sides
+with lifted basis directions. Away from $J = 0$ these entries depend on
+the lift at $O(\norm{r}) = O(J^{1/2})$, because $r$ is transported, not
+invariant, under relabelling. That is the same order as the neglected
+residual term, and the dependence disappears on the zero set. The
+gradient is checked coefficient by coefficient against central
+differences of $J$, and the sensitivities $\delta\bu_{\bm{\theta}_i}$
+against differences of the state, using the interface-shift machinery
+of the perturbation benchmark: the same validation pattern, applied to
+the optimisation.
+
+\paragraph{Joint steps.} Density and shape derivatives of the residual
+are columns of one linear map $(\delta\rho,\delta s)\mapsto\partial r$, so
+the joint Gauss--Newton matrix
+$\begin{bmatrix}H_{\rho\rho} & H_{\rho s}\\ H_{s\rho} & H_{ss}\end{bmatrix}$
+is a Gram matrix and positive semi-definite, and a joint Newton step is
+coherent. The mixed product $H_{s\rho}d = (\ip{\partial r[\bm{\theta}_i]}
+{\partial r[d]})_i$ costs one density sensitivity. The step is computed by
+preconditioned CG on the joint system, with block preconditioner
+$\operatorname{diag}\bigl(\Pi_GG^{-1}, (H_{ss} + \lambda_sG_s)^{-1}\bigr)$,
+the second block dense and small. Alternatively the shape block is
+eliminated through a Schur complement, at one inner density solve per
+shape parameter.
+
+\subsection{Discrete exactness and verification}
+
+Everything in this section differentiates the \emph{discrete} $J_h$
+exactly, provided the derivatives of the forms are those of the
+assembled forms: the same mesh, the same quadrature, and integrands
+differentiated analytically through $F$, $F^{-1}$, $J$ at the quadrature
+points, which do not move. The DtN block never contributes, because the
+map is the identity near $\partial D$. The finite-difference harness that
+validates gradients therefore validates Hessian products the same way:
+\begin{itemize}
+\item symmetry, $d_1^{T}(Hd_2) = d_2^{T}(Hd_1)$, for the full and the
+  Gauss--Newton products separately;
+\item $(j(\rho + \eta d) - j(\rho - \eta d))/2\eta$ against $Hd$, with
+  $O(\eta^2)$ convergence;
+\item $H_{\mathrm{R}}[d,d] = O(J^{1/2})$ along a converging sequence;
+\item for shape, the dense $H_{\mathrm{GN}}$ entries against central
+  differences of the residual, and the gauge identity
+  \eqref{eq:gauge-identity}.
+\end{itemize}
+
+% ======================================================================
 \section{Algorithms and verification}
 \label{sec:algorithms}
 
@@ -1261,6 +1680,11 @@ saddle solutions for the loads $-\ip{d\nabla\Phi + \rho\nabla\Phi[d]}{\cdot}$
 and $-\ip{d\nabla\Phi[d]}{\cdot}$; with $a(\bu_i,\bu_k) = \ell_i(\bu_k)$,
 $J(\tau)$ is an explicit quartic, minimised by solving a cubic --- one
 Poisson and two saddle solves per line search.
+
+In the tail, once nonlinear CG has brought $J$ down, the Newton--Krylov
+(Gauss--Newton) step of \S\ref{sec:newton-krylov} replaces the CG
+direction, with the same line search; for joint density--shape steps
+see \S\ref{sec:shape-second}.
 
 \subsection{Bounds and mass}
 
@@ -1293,8 +1717,8 @@ divergence handled as in \S\ref{sec:energy}.
   agreement is limited by solver tolerances only.
 \item \emph{Euler identity} \eqref{eq:euler}: $\int_B\rho J' = 4J$ with
   the derivative evaluated on the whole density (solid included).
-\item \emph{Hessian}: symmetry $\delta_1^TH\delta_2 = \delta_2^TH\delta_1$
-  and finite differences of $j$.
+\item \emph{Hessian}: the symmetry, gradient-difference and residual-scaling
+  checks of \S\ref{sec:second}.
 \item \emph{Cross-check of the functionals}: $\Jmu$ against $\JF$ over a
   sweep of $\mu_{\mathrm{s}}/\mu_{\mathrm{f}}$, expecting
   $\Jmu - \JF = O(1/\mu_{\mathrm{s}})$ and convergence of the solid stress
@@ -1401,6 +1825,25 @@ BIT Numer. Math. 55 (2015), 459--485.
 E.~Polak, G.~Ribi\`ere,
 \emph{Note sur la convergence de m\'ethodes de directions conjugu\'ees},
 Rev. Fran\c{c}aise Informat. Recherche Op\'erationnelle 3 (1969), 35--43.
+
+\bibitem{Steihaug1983}
+T.~Steihaug,
+\emph{The conjugate gradient method and trust regions in large scale
+optimization},
+SIAM J. Numer. Anal. 20 (1983), 626--637.
+
+% TODO: verify volume/pages.
+\bibitem{GouldHribarNocedal2001}
+N.~I.~M. Gould, M.~E. Hribar, J.~Nocedal,
+\emph{On the solution of equality constrained quadratic programming
+problems arising in optimization},
+SIAM J. Sci. Comput. 23 (2001), 1376--1395.
+
+% TODO: verify edition and the chapter on second-order shape derivatives.
+\bibitem{DelfourZolesio}
+M.~C. Delfour, J.-P. Zol\'esio,
+\emph{Shapes and Geometries: Metrics, Analysis, Differential Calculus,
+and Optimization}, 2nd ed., SIAM, 2011.
 
 \bibitem{NocedalWright}
 J.~Nocedal, S.~J. Wright,

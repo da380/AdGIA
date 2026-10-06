@@ -355,36 +355,49 @@ void MinimumNormEquilibriumStress::Eval(DenseMatrix& K,
   PullbackStressAt(map_, T, ip, G_, two_mu, 0.0, F_, Fi_, A_, S_, tmp_, K);
 }
 
-MinimumDeviatoricEquilibriumStress::MinimumDeviatoricEquilibriumStress(
-    FiniteElementSpace& fes_u, FiniteElementSpace& fes_p,
-    VectorCoefficient& body_force, Coefficient* mu, Diffeomorphism* map,
-    const Array<int>* essential_bdr)
-    : MatrixCoefficient(fes_u.GetMesh()->SpaceDimension()),
-      fes_u_(&fes_u),
-      fes_p_(&fes_p),
-      mu_(mu),
-      map_(map),
-      half_(0.5) {
+// Everything the saddle keeps assembled: the system, its blocks, the
+// preconditioner, the null-space projector, the solver chain.
+struct StokesSaddleSolver::Impl {
+  mfem::ConstantCoefficient half{0.5};
+  mfem::Array<int> ess_tdofs, offsets;
+  std::unique_ptr<BilinearForm> a, mp;
+  std::unique_ptr<MixedBilinearForm> g_form;
+  OperatorHandle A, G, Mp;
+  std::unique_ptr<TransposeOperator> Gt;
+  std::unique_ptr<BlockOperator> block_op;
+  std::unique_ptr<Solver> prec_u, prec_p;
+  std::unique_ptr<BlockDiagonalPreconditioner> block_prec;
+  std::unique_ptr<NullSpaceProjector> projector;
+  std::unique_ptr<MINRESSolver> minres;
+  std::unique_ptr<ProjectedOperator> op;
+  std::unique_ptr<ProjectedSolver> prec_proj, solver;
+};
+
+StokesSaddleSolver::StokesSaddleSolver(FiniteElementSpace& fes_u,
+                                       FiniteElementSpace& fes_p,
+                                       Coefficient* mu, Diffeomorphism* map,
+                                       const Array<int>* essential_bdr)
+    : impl_(std::make_unique<Impl>()) {
+  Impl& s = *impl_;
   const int dim = fes_u.GetMesh()->SpaceDimension();
   MFEM_VERIFY(fes_u.GetVDim() == dim && fes_p.GetVDim() == 1 &&
                   fes_u.GetMesh() == fes_p.GetMesh(),
-              "MinimumDeviatoricEquilibriumStress: vector velocity and "
-              "scalar pressure spaces on one mesh are needed");
+              "StokesSaddleSolver: vector velocity and scalar pressure "
+              "spaces on one mesh are needed");
   MFEM_VERIFY(
       fes_p.FEColl()->GetOrder() < fes_u.FEColl()->GetOrder(),
-      "MinimumDeviatoricEquilibriumStress: the pressure space must sit at "
-      "least one polynomial order below the velocity space (Taylor-Hood); "
+      "StokesSaddleSolver: the pressure space must sit at least one "
+      "polynomial order below the velocity space (Taylor-Hood); "
       "equal-order interpolation violates the inf-sup (LBB) condition and "
       "produces spurious pressure modes.");
-  Coefficient& m = mu_ ? *mu_ : half_;
+  Coefficient& m = mu ? *mu : s.half;
 
   // With an essential marker the velocity is clamped there (the
   // fluid-only feasibility variant); the true dofs are eliminated from
   // the saddle in the usual way, with zero data.
-  Array<int> ess_tdofs;
   if (essential_bdr) {
     Array<int> marker(*essential_bdr);
-    fes_u.GetEssentialTrueDofs(marker, ess_tdofs);
+    fes_u.GetEssentialTrueDofs(marker, s.ess_tdofs);
   }
 
   // AW10 eqs. (73)-(74): the steady incompressible Stokes problem with
@@ -394,43 +407,43 @@ MinimumDeviatoricEquilibriumStress::MinimumDeviatoricEquilibriumStress(
   // each form pulled back with the relabelling recipe in mapped mode.
   ConstantCoefficient zero(0.0);
   IsotropicElasticTensorCoefficient C_iso(dim, zero, m);
-  auto a = MakeBilinearForm(fes_u);
-  a->AddDomainIntegrator(map_ ? new ElasticTensorIntegrator(C_iso, *map_)
-                              : new ElasticTensorIntegrator(C_iso));
-  a->Assemble();
-  OperatorHandle A;
+  s.a = MakeBilinearForm(fes_u);
+  s.a->AddDomainIntegrator(map ? new ElasticTensorIntegrator(C_iso, *map)
+                               : new ElasticTensorIntegrator(C_iso));
+  s.a->Assemble();
   Array<int> empty;
-  a->FormSystemMatrix(ess_tdofs, A);
+  s.a->FormSystemMatrix(s.ess_tdofs, s.A);
 
   ConstantCoefficient one(1.0);
-  auto g_form = MakeMixedBilinearForm(fes_p, fes_u);
-  g_form->AddDomainIntegrator(map_
-                                  ? new DomainDivVectorScalarIntegrator(*map_)
-                                  : new DomainDivVectorScalarIntegrator());
-  g_form->Assemble();
-  OperatorHandle G;
-  g_form->FormRectangularSystemMatrix(empty, ess_tdofs, G);
-  TransposeOperator Gt(*G.Ptr());
+  s.g_form = MakeMixedBilinearForm(fes_p, fes_u);
+  s.g_form->AddDomainIntegrator(
+      map ? new DomainDivVectorScalarIntegrator(*map)
+          : new DomainDivVectorScalarIntegrator());
+  s.g_form->Assemble();
+  s.g_form->FormRectangularSystemMatrix(empty, s.ess_tdofs, s.G);
+  s.Gt = std::make_unique<TransposeOperator>(*s.G.Ptr());
 
-  Array<int> offsets({0, fes_u.GetTrueVSize(), fes_p.GetTrueVSize()});
-  offsets.PartialSum();
-  BlockOperator block_op(offsets);
-  block_op.SetBlock(0, 0, A.Ptr());
-  block_op.SetBlock(0, 1, G.Ptr(), -1.0);
-  block_op.SetBlock(1, 0, &Gt, -1.0);
+  s.offsets.SetSize(3);
+  s.offsets[0] = 0;
+  s.offsets[1] = fes_u.GetTrueVSize();
+  s.offsets[2] = fes_p.GetTrueVSize();
+  s.offsets.PartialSum();
+  s.block_op = std::make_unique<BlockOperator>(s.offsets);
+  s.block_op->SetBlock(0, 0, s.A.Ptr());
+  s.block_op->SetBlock(0, 1, s.G.Ptr(), -1.0);
+  s.block_op->SetBlock(1, 0, s.Gt.get(), -1.0);
 
   // Pressure-block preconditioner: the mass matrix (the Stokes Schur
   // complement up to the mu weight).
-  auto mp = MakeBilinearForm(fes_p);
-  mp->AddDomainIntegrator(new MassIntegrator(one));
-  mp->Assemble();
-  OperatorHandle Mp;
-  mp->FormSystemMatrix(empty, Mp);
-  auto prec_u = MakePreconditioner(A);
-  auto prec_pr = MakePreconditioner(Mp);
-  BlockDiagonalPreconditioner block_prec(offsets);
-  block_prec.SetDiagonalBlock(0, prec_u.get());
-  block_prec.SetDiagonalBlock(1, prec_pr.get());
+  s.mp = MakeBilinearForm(fes_p);
+  s.mp->AddDomainIntegrator(new MassIntegrator(one));
+  s.mp->Assemble();
+  s.mp->FormSystemMatrix(empty, s.Mp);
+  s.prec_u = MakePreconditioner(s.A);
+  s.prec_p = MakePreconditioner(s.Mp);
+  s.block_prec = std::make_unique<BlockDiagonalPreconditioner>(s.offsets);
+  s.block_prec->SetDiagonalBlock(0, s.prec_u.get());
+  s.block_prec->SetDiagonalBlock(1, s.prec_p.get());
 
   // Null space. Traction everywhere: the rigid modes of u alone (mapped
   // rotations in mapped mode), and the pressure has NO constant
@@ -438,22 +451,21 @@ MinimumDeviatoricEquilibriumStress::MinimumDeviatoricEquilibriumStress(
   // WHOLE boundary instead gives the pressure its classical constant
   // mode (G 1_p has entries over interior test functions only, each the
   // integral of a divergence with vanishing trace).
-  std::unique_ptr<NullSpaceProjector> projector;
 #ifdef MFEM_USE_MPI
   bool parallel = false;
   MPI_Comm comm = CommOf(fes_u, parallel);
-  projector = parallel ? std::make_unique<NullSpaceProjector>(comm)
-                       : std::make_unique<NullSpaceProjector>();
+  s.projector = parallel ? std::make_unique<NullSpaceProjector>(comm)
+                         : std::make_unique<NullSpaceProjector>();
 #else
-  projector = std::make_unique<NullSpaceProjector>();
+  s.projector = std::make_unique<NullSpaceProjector>();
 #endif
   if (!essential_bdr) {
-    auto rigid = MakeGeneratorProjector(fes_u, map_);
-    BlockVector n(offsets);
+    auto rigid = MakeGeneratorProjector(fes_u, map);
+    BlockVector n(s.offsets);
     for (int i = 0; i < rigid->Size(); i++) {
       n.GetBlock(0) = rigid->Basis(i);
       n.GetBlock(1) = 0.0;
-      projector->Add(n);
+      s.projector->Add(n);
     }
   } else {
     bool whole_boundary = true;
@@ -464,11 +476,67 @@ MinimumDeviatoricEquilibriumStress::MinimumDeviatoricEquilibriumStress(
       }
     }
     if (whole_boundary) {
-      BlockVector n(offsets);
+      BlockVector n(s.offsets);
       n.GetBlock(0) = 0.0;
       n.GetBlock(1) = 1.0;  // H1 Lagrange: the constant's true dofs
-      projector->Add(n);
+      s.projector->Add(n);
     }
+  }
+
+#ifdef MFEM_USE_MPI
+  s.minres = parallel ? std::make_unique<MINRESSolver>(comm)
+                      : std::make_unique<MINRESSolver>();
+#else
+  s.minres = std::make_unique<MINRESSolver>();
+#endif
+  s.op = std::make_unique<ProjectedOperator>(*s.block_op, *s.projector);
+  s.prec_proj = std::make_unique<ProjectedSolver>(*s.projector);
+  s.prec_proj->SetSolver(*s.block_prec);
+  s.minres->SetOperator(*s.op);
+  s.minres->SetPreconditioner(*s.prec_proj);
+  s.minres->SetRelTol(1e-11);
+  s.minres->SetAbsTol(0.0);
+  s.minres->SetMaxIter(50000);
+  s.minres->SetPrintLevel(0);
+  s.solver = std::make_unique<ProjectedSolver>(*s.projector);
+  s.solver->SetSolver(*s.minres);
+}
+
+StokesSaddleSolver::~StokesSaddleSolver() = default;
+
+int StokesSaddleSolver::Solve(const Vector& F, GridFunction& u,
+                              GridFunction& p) const {
+  const Impl& s = *impl_;
+  BlockVector B(s.offsets);
+  B.GetBlock(0) = F;
+  B.GetBlock(0) *= -1.0;
+  B.GetBlock(0).SetSubVector(s.ess_tdofs, 0.0);
+  B.GetBlock(1) = 0.0;
+  BlockVector X(s.offsets);
+  X = 0.0;
+  s.solver->Mult(B, X);
+  MFEM_VERIFY(s.minres->GetConverged(),
+              "StokesSaddleSolver: the Stokes solve did not converge (is "
+              "the body force self-equilibrated?)");
+  u.SetFromTrueDofs(X.GetBlock(0));
+  p.SetFromTrueDofs(X.GetBlock(1));
+  return s.minres->GetNumIterations();
+}
+
+MinimumDeviatoricEquilibriumStress::MinimumDeviatoricEquilibriumStress(
+    FiniteElementSpace& fes_u, FiniteElementSpace& fes_p,
+    VectorCoefficient& body_force, Coefficient* mu, Diffeomorphism* map,
+    const Array<int>* essential_bdr, const StokesSaddleSolver* solver)
+    : MatrixCoefficient(fes_u.GetMesh()->SpaceDimension()),
+      fes_u_(&fes_u),
+      fes_p_(&fes_p),
+      mu_(mu),
+      map_(map),
+      half_(0.5) {
+  if (!solver) {
+    own_solver_ = std::make_unique<StokesSaddleSolver>(fes_u, fes_p, mu, map,
+                                                       essential_bdr);
+    solver = own_solver_.get();
   }
 
   LinearForm lf(&fes_u);
@@ -481,42 +549,12 @@ MinimumDeviatoricEquilibriumStress::MinimumDeviatoricEquilibriumStress(
   } else {
     lf.AddDomainIntegrator(new VectorDomainLFIntegrator(body_force));
   }
-  BlockVector B(offsets);
-  AssembleTrueRHS(fes_u, lf, B.GetBlock(0));
-  B.GetBlock(0) *= -1.0;
-  B.GetBlock(0).SetSubVector(ess_tdofs, 0.0);
-  B.GetBlock(1) = 0.0;
-
-  std::unique_ptr<MINRESSolver> minres;
-#ifdef MFEM_USE_MPI
-  minres = parallel ? std::make_unique<MINRESSolver>(comm)
-                    : std::make_unique<MINRESSolver>();
-#else
-  minres = std::make_unique<MINRESSolver>();
-#endif
-  ProjectedOperator op(block_op, *projector);
-  ProjectedSolver prec_proj(*projector);
-  prec_proj.SetSolver(block_prec);
-  minres->SetOperator(op);
-  minres->SetPreconditioner(prec_proj);
-  minres->SetRelTol(1e-11);
-  minres->SetAbsTol(0.0);
-  minres->SetMaxIter(50000);
-  minres->SetPrintLevel(0);
-  BlockVector X(offsets);
-  X = 0.0;
-  ProjectedSolver solver(*projector);
-  solver.SetSolver(*minres);
-  solver.Mult(B, X);
-  MFEM_VERIFY(minres->GetConverged(),
-              "MinimumDeviatoricEquilibriumStress: the Stokes solve did "
-              "not converge (is the body force self-equilibrated?)");
-  iterations_ = minres->GetNumIterations();
+  Vector F;
+  AssembleTrueRHS(fes_u, lf, F);
 
   u_ = detail::MakeGridFunction(&fes_u);
-  u_->SetFromTrueDofs(X.GetBlock(0));
   p_ = detail::MakeGridFunction(&fes_p);
-  p_->SetFromTrueDofs(X.GetBlock(1));
+  iterations_ = solver->Solve(F, *u_, *p_);
 }
 
 void MinimumDeviatoricEquilibriumStress::Eval(DenseMatrix& K,

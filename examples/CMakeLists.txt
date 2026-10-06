@@ -15,6 +15,7 @@ set(EXAMPLES
     sliding_fluid_ellipse       # sliding interface (displacement discontinuity) on an elliptical body
     slipping_interface          # self-gravitating slipping fluid core: every option, spherical or aspherical reference
     equilibrium_stress          # AW10 minimum-norm / minimum-deviatoric equilibrium stress generators
+    equilibrium_density         # density restoration: the feasibility functional driven to its floor
     prestress_loading           # does the deviatoric pre-stress matter for loading? (ellipse sweep)
     referential_elastogravity   # general referential problem vs the Eulerian one (self-benchmark)
     viscoelasticity             # ViscoelasticOperator driver

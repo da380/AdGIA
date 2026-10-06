@@ -241,6 +241,44 @@ class MinimumNormEquilibriumStress : public mfem::MatrixCoefficient {
 };
 
 /**
+ * @brief The assembled minimum-deviatoric Stokes saddle, kept alive so
+ * that repeated solves pay assembly and preconditioner setup once. No
+ * operator here depends on the density — only the load does — so an
+ * optimisation loop (doc/equilibrium_figures.tex) holds one of these
+ * for its every value, gradient and Hessian-action solve.
+ *
+ * The system, null-space handling, optional viscosity field, mapped
+ * mode and essential-velocity option are exactly those of
+ * MinimumDeviatoricEquilibriumStress, which delegates to this class
+ * (and can borrow a shared instance). Serial and parallel.
+ */
+class StokesSaddleSolver {
+ public:
+  /** Parameters as in MinimumDeviatoricEquilibriumStress; the spaces,
+   * coefficients, map and marker are borrowed and must outlive the
+   * solver. */
+  StokesSaddleSolver(mfem::FiniteElementSpace& fes_u,
+                     mfem::FiniteElementSpace& fes_p,
+                     mfem::Coefficient* mu = nullptr,
+                     Diffeomorphism* map = nullptr,
+                     const mfem::Array<int>* essential_bdr = nullptr);
+  ~StokesSaddleSolver();
+
+  /**
+   * @brief Solves the saddle for the velocity-space load dual
+   * @f$F = (\mathbf{f}, \mathbf{v})@f$ (true dofs; the class applies
+   * the system's sign and the essential zeroing). Returns the solver's
+   * iteration count.
+   */
+  int Solve(const mfem::Vector& F, mfem::GridFunction& u,
+            mfem::GridFunction& p) const;
+
+ private:
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
+};
+
+/**
  * @brief The minimum *deviatoric* equilibrium stress field of Al-Attar
  * & Woodhouse (2010, §3.4): the equilibrium stress whose deviatoric
  * part has the smallest norm. By their eqs. (70)–(74) it is
@@ -303,12 +341,16 @@ class MinimumDeviatoricEquilibriumStress : public mfem::MatrixCoefficient {
    * be self-equilibrated there. Clamping removes the rigid kernel; when
    * the marker covers *every* boundary attribute the pressure acquires
    * the classical constant ambiguity instead, projected here.
+   * @param solver Optional shared StokesSaddleSolver (which must have
+   * been built with the same spaces and options); when null the object
+   * assembles its own. A loop evaluating many densities shares one.
    */
   MinimumDeviatoricEquilibriumStress(
       mfem::FiniteElementSpace& fes_u, mfem::FiniteElementSpace& fes_p,
       mfem::VectorCoefficient& body_force, mfem::Coefficient* mu = nullptr,
       Diffeomorphism* map = nullptr,
-      const mfem::Array<int>* essential_bdr = nullptr);
+      const mfem::Array<int>* essential_bdr = nullptr,
+      const StokesSaddleSolver* solver = nullptr);
 
   void Eval(mfem::DenseMatrix& K, mfem::ElementTransformation& T,
             const mfem::IntegrationPoint& ip) override;
@@ -322,6 +364,7 @@ class MinimumDeviatoricEquilibriumStress : public mfem::MatrixCoefficient {
   mfem::Coefficient* mu_;
   Diffeomorphism* map_;
   mfem::ConstantCoefficient half_;
+  std::unique_ptr<StokesSaddleSolver> own_solver_;
   std::unique_ptr<mfem::GridFunction> u_, p_;
   mfem::DenseMatrix G_, F_, Fi_, A_, S_, tmp_;
   int iterations_ = 0;

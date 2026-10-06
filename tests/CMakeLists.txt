@@ -97,6 +97,8 @@ if(USE_MPI)
     target_link_libraries(TestSphericalHarmonicsPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestEquilibriumFiguresPar TestEquilibriumFiguresPar.cpp)
     target_link_libraries(TestEquilibriumFiguresPar PRIVATE AdGIA MPI::MPI_CXX)
+    add_executable(TestRieszPar TestRieszPar.cpp)
+    target_link_libraries(TestRieszPar PRIVATE AdGIA MPI::MPI_CXX)
     foreach(np 1 2 4)
         add_test(NAME TestSubMeshDofInjectionPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
@@ -143,6 +145,9 @@ if(USE_MPI)
         add_test(NAME TestEquilibriumFiguresPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestEquilibriumFiguresPar>)
+        add_test(NAME TestRieszPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestRieszPar>)
     endforeach()
 endif()
 
@@ -234,6 +239,10 @@ gtest_discover_tests(TestBackground)
 add_executable(TestEquilibriumFigures TestEquilibriumFigures.cpp)
 target_link_libraries(TestEquilibriumFigures PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestEquilibriumFigures)
+
+add_executable(TestRiesz TestRiesz.cpp)
+target_link_libraries(TestRiesz PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestRiesz)
 
 add_executable(TestReferentialProblem TestReferentialProblem.cpp)
 target_link_libraries(TestReferentialProblem PRIVATE AdGIA gtest_main)
