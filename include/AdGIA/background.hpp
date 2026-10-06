@@ -292,12 +292,23 @@ class MinimumDeviatoricEquilibriumStress : public mfem::MatrixCoefficient {
    * @param mu Optional positive weight field; constant when null.
    * @param map Optional relabelling (see the class notes); not owned,
    * must outlive the object.
+   * @param essential_bdr Optional boundary-attribute marker on which the
+   * velocity is clamped, @f$\mathbf{u} = \mathbf{0}@f$, in place of the
+   * natural traction condition — the multiplier condition of the
+   * fluid-only feasibility functional (doc/equilibrium_figures.tex),
+   * whose constraint set leaves the interface traction free. The
+   * constraint @f$\mathrm{Div}\,\mathbf{T} + \mathbf{f} = \mathbf{0}@f$
+   * then holds on the mesh with no condition on @f$\mathbf{T}
+   * \hat{\mathbf{n}}@f$ over the marked part, so @p body_force need not
+   * be self-equilibrated there. Clamping removes the rigid kernel; when
+   * the marker covers *every* boundary attribute the pressure acquires
+   * the classical constant ambiguity instead, projected here.
    */
-  MinimumDeviatoricEquilibriumStress(mfem::FiniteElementSpace& fes_u,
-                                     mfem::FiniteElementSpace& fes_p,
-                                     mfem::VectorCoefficient& body_force,
-                                     mfem::Coefficient* mu = nullptr,
-                                     Diffeomorphism* map = nullptr);
+  MinimumDeviatoricEquilibriumStress(
+      mfem::FiniteElementSpace& fes_u, mfem::FiniteElementSpace& fes_p,
+      mfem::VectorCoefficient& body_force, mfem::Coefficient* mu = nullptr,
+      Diffeomorphism* map = nullptr,
+      const mfem::Array<int>* essential_bdr = nullptr);
 
   void Eval(mfem::DenseMatrix& K, mfem::ElementTransformation& T,
             const mfem::IntegrationPoint& ip) override;

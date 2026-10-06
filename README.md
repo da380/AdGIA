@@ -64,7 +64,9 @@ includes them all), are
 - background states for the referential problems (`background.hpp`): the
   hydrostatic state of a radial model, its relabelled description, and
   minimum-norm and minimum-deviatoric equilibrium stress fields for
-  aspherical bodies;
+  aspherical bodies; the density feasibility functional of the
+  equilibrium-figures programme and its adjoint-free derivative
+  (`equilibrium_figures.hpp`);
 - the mapping (relabelling) layer (`mappings.hpp`): diffeomorphisms of the
   reference domain (identity, analytic, radial, tapered, grid-function),
   their interpolation, mapped meshes, and pull-back and Nanson coefficients;
@@ -93,6 +95,7 @@ documents in the source tree are of two kinds.
 | `doc/gauged_fluid.md` | the gauged treatment of fluid regions |
 | `doc/slip_interface.tex` (PDF) | the slipping fluid–solid interface: derivation, discretisation, constraint enforcement, implementation, verification |
 | `doc/gauge_penalty_iteration.tex` (PDF) | gauge penalties and their iterated (Tikhonov) refinement |
+| `doc/equilibrium_figures.tex` (PDF) | equilibrium states and hydrostatic figures by constrained optimisation: the feasibility functionals, their derivatives, Sobolev gradients, the advection route |
 | `doc/mappings.md` | the mapping (relabelling) layer: pulled-back forms, assembly recipe, change-of-variables identity |
 | `doc/submesh_coupling.md` | forms between a mesh and its SubMesh: the dof injection, its parallel construction, constraints |
 | `doc/viscoelasticity.md` | the quasi-static problem interface, rheologies, time stepping, strain maps, state-dependent relaxation, composite rheologies |

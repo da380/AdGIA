@@ -357,7 +357,8 @@ void MinimumNormEquilibriumStress::Eval(DenseMatrix& K,
 
 MinimumDeviatoricEquilibriumStress::MinimumDeviatoricEquilibriumStress(
     FiniteElementSpace& fes_u, FiniteElementSpace& fes_p,
-    VectorCoefficient& body_force, Coefficient* mu, Diffeomorphism* map)
+    VectorCoefficient& body_force, Coefficient* mu, Diffeomorphism* map,
+    const Array<int>* essential_bdr)
     : MatrixCoefficient(fes_u.GetMesh()->SpaceDimension()),
       fes_u_(&fes_u),
       fes_p_(&fes_p),
@@ -377,6 +378,15 @@ MinimumDeviatoricEquilibriumStress::MinimumDeviatoricEquilibriumStress(
       "produces spurious pressure modes.");
   Coefficient& m = mu_ ? *mu_ : half_;
 
+  // With an essential marker the velocity is clamped there (the
+  // fluid-only feasibility variant); the true dofs are eliminated from
+  // the saddle in the usual way, with zero data.
+  Array<int> ess_tdofs;
+  if (essential_bdr) {
+    Array<int> marker(*essential_bdr);
+    fes_u.GetEssentialTrueDofs(marker, ess_tdofs);
+  }
+
   // AW10 eqs. (73)-(74): the steady incompressible Stokes problem with
   // traction boundary conditions, as the symmetric saddle system
   //   [ A  -G   ] [u]   [-F]
@@ -390,7 +400,7 @@ MinimumDeviatoricEquilibriumStress::MinimumDeviatoricEquilibriumStress(
   a->Assemble();
   OperatorHandle A;
   Array<int> empty;
-  a->FormSystemMatrix(empty, A);
+  a->FormSystemMatrix(ess_tdofs, A);
 
   ConstantCoefficient one(1.0);
   auto g_form = MakeMixedBilinearForm(fes_p, fes_u);
@@ -399,7 +409,7 @@ MinimumDeviatoricEquilibriumStress::MinimumDeviatoricEquilibriumStress(
                                   : new DomainDivVectorScalarIntegrator());
   g_form->Assemble();
   OperatorHandle G;
-  g_form->FormRectangularSystemMatrix(empty, empty, G);
+  g_form->FormRectangularSystemMatrix(empty, ess_tdofs, G);
   TransposeOperator Gt(*G.Ptr());
 
   Array<int> offsets({0, fes_u.GetTrueVSize(), fes_p.GetTrueVSize()});
@@ -422,9 +432,12 @@ MinimumDeviatoricEquilibriumStress::MinimumDeviatoricEquilibriumStress(
   block_prec.SetDiagonalBlock(0, prec_u.get());
   block_prec.SetDiagonalBlock(1, prec_pr.get());
 
-  // Null space: the rigid modes of u alone (mapped rotations in mapped
-  // mode). With the traction boundary condition the pressure has NO
-  // constant ambiguity.
+  // Null space. Traction everywhere: the rigid modes of u alone (mapped
+  // rotations in mapped mode), and the pressure has NO constant
+  // ambiguity. Any clamping kills the rigid modes; clamping on the
+  // WHOLE boundary instead gives the pressure its classical constant
+  // mode (G 1_p has entries over interior test functions only, each the
+  // integral of a divergence with vanishing trace).
   std::unique_ptr<NullSpaceProjector> projector;
 #ifdef MFEM_USE_MPI
   bool parallel = false;
@@ -434,12 +447,26 @@ MinimumDeviatoricEquilibriumStress::MinimumDeviatoricEquilibriumStress(
 #else
   projector = std::make_unique<NullSpaceProjector>();
 #endif
-  {
+  if (!essential_bdr) {
     auto rigid = MakeGeneratorProjector(fes_u, map_);
     BlockVector n(offsets);
     for (int i = 0; i < rigid->Size(); i++) {
       n.GetBlock(0) = rigid->Basis(i);
       n.GetBlock(1) = 0.0;
+      projector->Add(n);
+    }
+  } else {
+    bool whole_boundary = true;
+    const Array<int>& bdr = fes_u.GetMesh()->bdr_attributes;
+    for (int i = 0; i < bdr.Size(); i++) {
+      if (bdr[i] > essential_bdr->Size() || !(*essential_bdr)[bdr[i] - 1]) {
+        whole_boundary = false;
+      }
+    }
+    if (whole_boundary) {
+      BlockVector n(offsets);
+      n.GetBlock(0) = 0.0;
+      n.GetBlock(1) = 1.0;  // H1 Lagrange: the constant's true dofs
       projector->Add(n);
     }
   }
@@ -457,6 +484,7 @@ MinimumDeviatoricEquilibriumStress::MinimumDeviatoricEquilibriumStress(
   BlockVector B(offsets);
   AssembleTrueRHS(fes_u, lf, B.GetBlock(0));
   B.GetBlock(0) *= -1.0;
+  B.GetBlock(0).SetSubVector(ess_tdofs, 0.0);
   B.GetBlock(1) = 0.0;
 
   std::unique_ptr<MINRESSolver> minres;

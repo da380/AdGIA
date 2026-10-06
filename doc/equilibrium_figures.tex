@@ -1,0 +1,1417 @@
+\documentclass[11pt]{article}
+
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage[margin=1.1in]{geometry}
+\usepackage{bm}
+\usepackage{array}
+\usepackage[colorlinks=true,linkcolor=blue,citecolor=blue]{hyperref}
+
+\newtheorem{lemma}{Lemma}
+\newtheorem{proposition}{Proposition}
+\newtheorem{remark}{Remark}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\eps}{\varepsilon}
+\newcommand{\Bs}{B_{\mathrm{s}}}
+\newcommand{\Bf}{B_{\mathrm{f}}}
+\newcommand{\bu}{\mathbf{u}}
+\newcommand{\bv}{\mathbf{v}}
+\newcommand{\bw}{\mathbf{w}}
+\newcommand{\bx}{\mathbf{x}}
+\newcommand{\bn}{\mathbf{n}}
+\newcommand{\bN}{\mathbf{N}}
+\newcommand{\bU}{\mathbf{U}}
+\newcommand{\bff}{\mathbf{f}}
+\newcommand{\br}{\mathbf{r}}
+\newcommand{\bfeta}{\bm{\eta}}
+\newcommand{\bnu}{\bm{\nu}}
+\newcommand{\jump}[1]{[\![#1]\!]}
+\newcommand{\dS}{\,\mathrm{d}S}
+\newcommand{\dV}{\,\mathrm{d}V}
+\newcommand{\dx}{\,\mathrm{d}x}
+\newcommand{\tr}{\operatorname{tr}}
+\newcommand{\dev}{\operatorname{dev}}
+\newcommand{\sym}{\operatorname{sym}}
+\newcommand{\cof}{\operatorname{cof}}
+\newcommand{\Div}{\operatorname{Div}}
+\renewcommand{\div}{\operatorname{div}}
+\newcommand{\norm}[1]{\lVert #1 \rVert}
+\newcommand{\ip}[2]{\langle #1, #2\rangle}
+\newcommand{\Ja}{J_{\mathrm{naive}}}
+\newcommand{\JF}{J_{\mathrm{F}}}
+\newcommand{\Jmu}{J_{\mu}}
+\newcommand{\Jh}{J_{\mathrm{hyd}}}
+
+\title{Equilibrium states and hydrostatic figures by constrained
+       optimisation:\\ feasibility functionals, their derivatives,
+       and Sobolev gradients}
+\author{AdGIA method notes}
+\date{}
+
+\begin{document}
+\maketitle
+\sloppy
+
+\noindent
+This note is the theory of computing equilibrium states of
+self-gravitating bodies with fluid regions --- and, in its
+generalisation, hydrostatic figures --- as the solution of a
+constrained optimisation problem. Its companions are
+\texttt{doc/gravitating\_elasticity.md} (notation, the relabelling laws,
+and section ``Equilibrium stress in general models'', whose
+minimum-deviatoric generator is the inner solver used here),
+\texttt{doc/slip\_interface.tex} (the slip machinery, which describes the
+dynamics \emph{about} an equilibrium, not the equilibrium itself) and
+\texttt{doc/gauge\_penalty\_iteration.tex} (gauge handling and its
+discrete semi-convergence). The planning summary is
+\texttt{doc/planning/equilibrium\_figures.md}.
+
+The organisation: \S\ref{sec:problem} states the equilibrium problem and
+shows that the equilibrium mapping may be taken continuous;
+\S\ref{sec:functional} defines the feasibility functionals --- a naive
+one that fails, an exact fluid-only one, and a weighted whole-body one
+that approaches it --- and characterises their zero sets;
+\S\ref{sec:dual} derives their common Stokes (dual) structure;
+\S\ref{sec:derivative} derives the derivative with respect to density
+and the Hessian action; \S\ref{sec:energy} interprets the functional as
+the squared gradient of the gravitational energy and derives the
+alternative advection route; \S\ref{sec:sobolev} turns derivatives into
+gradients by Sobolev metrics; \S\ref{sec:stage2} admits the shape as a
+control; \S\ref{sec:algorithms} collects algorithms and verification.
+
+\paragraph{Sign convention.} Throughout, as in the rest of the library,
+\begin{equation}
+  \nabla^{2}\Phi = 4\pi G \varrho \quad\text{in } \R^{3},
+  \qquad \Phi \to 0 \ \text{at infinity},
+  \label{eq:poisson-strong}
+\end{equation}
+so that $\Phi < 0$, the gravitational acceleration is $-\nabla\Phi$, the
+body force per unit volume is $-\varrho\nabla\Phi$, and equilibrium of a
+Cauchy stress $T$ reads $\Div T - \varrho\nabla\Phi = 0$. In a fluid,
+$T = -p\,1$ and the hydrostatic balance is $\nabla p = -\varrho\nabla\Phi$.
+(With the opposite convention $\Phi > 0$ every body-force term below
+changes sign; nothing else changes.) We write
+\begin{equation}
+  \bff := \varrho\,\nabla\Phi ,
+  \qquad\text{so that equilibrium is}\qquad \Div T = \bff .
+  \label{eq:f}
+\end{equation}
+$\Phi$ is always the \emph{total} self-consistent potential of the
+whole body (one global Poisson solve; \S\ref{sec:poisson}); in the
+rotating case of \S\ref{sec:rotation} a centrifugal potential is
+added.
+
+% ======================================================================
+\section{The equilibrium problem and the role of the mapping}
+\label{sec:problem}
+
+\subsection{Equations at a natural reference}
+
+Let the body occupy $B \subset \R^{3}$, partitioned into a fluid part
+$\Bf$ and a solid part $\Bs$, each a union of connected regions, with
+material discontinuities across a set of internal interfaces; $\Sigma$
+denotes the fluid--solid interfaces and $\partial B$ the free surface.
+At a \emph{natural} reference (particle label $=$ equilibrium position)
+a static state is a symmetric stress field $T$ and density $\varrho$
+such that
+\begin{equation}
+  \begin{gathered}
+  \Div T = \varrho\nabla\Phi \ \text{in each region}, \qquad
+  \jump{T\bn} = 0 \ \text{across interfaces}, \\
+  T\bn = 0 \ \text{on } \partial B,
+  \qquad \dev T = 0 \ \text{in } \Bf ,
+  \end{gathered}
+  \label{eq:equilibrium}
+\end{equation}
+with $\Phi$ solving \eqref{eq:poisson-strong} (so that $\Phi$ and
+$\nabla\Phi\cdot\bn$ are continuous across every interface). Here
+$\dev T = T - \tfrac13(\tr T)1$. The solid stress is otherwise
+unconstrained: whatever deviatoric stress the solid carries is, at this
+level, admissible (consistency with the solid's constitutive data is a
+separate matter, settled by choosing the equilibrium stress $S_e$ of the
+reference as the stress found here).
+
+\subsection{Referential form}
+
+To parameterise the shape, pull the state back to a fixed reference body
+through an equilibrium mapping $\varphi_e$, with $F_e = D\varphi_e$,
+$J_e = \det F_e$. The referential density is $\rho = J_e\,\varrho\circ\varphi_e$,
+the first Piola--Kirchhoff stress $P = J_e (T\circ\varphi_e)F_e^{-T}$ and
+the referential potential $\zeta = \Phi\circ\varphi_e$. The Piola
+identity $J_e(\div \mathbf{a})\circ\varphi_e = \Div\bigl(J_e F_e^{-1}
+\mathbf{a}\circ\varphi_e\bigr)$ applied row-wise to $T$ gives
+\begin{equation}
+  \Div P = J_e (\Div T)\circ\varphi_e
+         = \rho\,F_e^{-T}\nabla\zeta ,
+  \qquad P\bN = 0 \ \text{on } \partial B,
+  \qquad \jump{P\bN} = 0 ,
+  \label{eq:equilibrium-ref}
+\end{equation}
+the traction per referential area $P\bN$ pairing with the Nanson
+normal $\bnu = \cof(F_e)\bN$ as in \texttt{doc/slip\_interface.tex}.
+The Poisson equation pulls back to the weak form with the tensor
+$a_e = J_e F_e^{-1}F_e^{-T}$ (Maitra \& Al-Attar 2024, eq.~21;
+\texttt{doc/gravitating\_elasticity.md} \S3), and its source is
+$\int_B \rho\,\chi\dx$, \emph{independent of the map} because $\rho$ is
+mass per referential volume. These are the referential equilibrium
+equations of Al-Attar \& Woodhouse \cite{AW10} and Maitra \& Al-Attar
+\cite{MA24}, and nothing more: the fluid condition is
+$\dev\bigl(J_e^{-1} P F_e^{T}\bigr) = 0$ in $\Bf$.
+
+\subsection{The mapping may be taken continuous}
+\label{sec:continuity}
+
+\begin{proposition}\label{prop:continuous}
+Let a static state be described through a labelling that is smooth on
+each of $\Bs$, $\Bf$ but slips tangentially across $\Sigma$:
+$\varphi_{\mathrm{f}}|_{\Sigma} = \varphi_{\mathrm{s}}|_{\Sigma}\circ\sigma$
+with $\sigma$ a diffeomorphism of $\Sigma$ isotopic to the identity.
+Then the same physical state is described by data on the same reference
+body with a continuous mapping, obtained by relabelling the fluid side
+only.
+\end{proposition}
+\begin{proof}
+Physical positions are continuous across a fluid--solid boundary (no
+cavitation, no overlap), so $\varphi_{\mathrm{f}}(\Sigma) =
+\varphi_{\mathrm{s}}(\Sigma)$ and $\sigma$ is well defined. Because
+$\sigma$ is isotopic to the identity, $\sigma^{-1}$ extends (through a
+collar of $\Sigma$ in $\Bf$, tapering the isotopy to the identity) to a
+diffeomorphism $\xi$ of $\Bf$ onto itself with $\xi|_\Sigma =
+\sigma^{-1}$ and $\xi = \mathrm{id}$ away from the collar. Then
+$(\varphi_{\mathrm{f}}\circ\xi)|_\Sigma = \varphi_{\mathrm{s}}|_\Sigma$:
+the relabelled fluid map matches the solid map on $\Sigma$. Transform the
+fluid data by the relabelling laws (Al-Attar \& Crawford \cite{AC16};
+\texttt{doc/gravitating\_elasticity.md} \S1), $\tilde\rho = J_\xi\,\rho\circ\xi$
+and correspondingly for the constitutive data; the physical fields
+$\varrho$, $T$, $\Phi$ are unchanged, hence so is the state.
+\end{proof}
+
+The proposition is a statement about \emph{description}, and it holds
+because the constitutive data are \emph{defined} at the natural
+reference and transported with whatever labelling is chosen. If instead
+the data were pinned to a fixed reference while the map varied, the map
+would carry physics, and tangential slip would not be removable. That is
+precisely the situation of the \emph{perturbation} layer: there the data
+are fixed on the reference, a linearised tangential slip is in general
+not a relabelling (\texttt{doc/gravitating\_elasticity.md} \S5), and the
+slipping-interface formulation is required. For describing and
+parameterising an equilibrium, fluid-slip terms are not needed, and the
+rest of this note works with continuous $\varphi_e$.
+
+% ======================================================================
+\section{Feasibility functionals}
+\label{sec:functional}
+
+Fix $(\rho, \varphi_e)$ and the self-consistent $\Phi$. Until
+\S\ref{sec:stage2} take $\varphi_e = \mathrm{id}$ (so $\rho = \varrho$);
+the mapped forms change nothing structural and are recorded where
+needed. The idea is to find the equilibrium stress field that comes
+closest to having no deviatoric part in the fluid, and to measure the
+remainder. How ``closest'' is measured matters, and three choices are
+compared.
+
+\subsection{Admissible stress fields}
+
+For a domain $\Omega \in \{B, \Bf\}$ and a closed subspace
+$V \subseteq H^{1}(\Omega)^{3}$ of test fields, define the
+\emph{equilibrium-compatible} stress fields
+\begin{equation}
+  \mathcal{S}(\Omega, V) = \Bigl\{ T \in L^{2}(\Omega; \mathrm{Sym}) :
+  \int_{\Omega} T : \eps(\bv)\dV + \int_{\Omega} \bff\cdot\bv\dV = 0
+  \ \ \forall\, \bv \in V \Bigr\},
+  \label{eq:admissible}
+\end{equation}
+with $\eps(\bv) = \sym\nabla\bv$. Integrating by parts region by region,
+$T \in \mathcal{S}(\Omega, V)$ means $\Div T = \bff$ in each region of
+$\Omega$, together with whatever traction conditions the test space
+encodes: on parts of $\partial\Omega$ where $V$ is unconstrained,
+$T\bn = 0$; across internal interfaces where $V$ is continuous,
+$\jump{T\bn} = 0$; on parts of $\partial\Omega$ where $V$ vanishes, no
+condition at all. Two instances:
+\begin{itemize}
+\item \emph{Whole body}: $\Omega = B$, $V = H^{1}(B)^{3}$. This is
+  \eqref{eq:equilibrium} without the fluid condition: traction-free
+  surface, continuous tractions. The constraint is consistent iff $\bff$
+  exerts no net force or torque, $\int_B \bff\cdot\br = 0$ for every
+  rigid motion $\br$; for self-gravitation this holds identically,
+  because $\int_B \varrho\nabla\Phi\dV$ and $\int_B
+  \bx\times\varrho\nabla\Phi\dV$ are double integrals of kernels
+  antisymmetric under exchange of the two points.
+\item \emph{Fluid alone}: $\Omega = \Bf$, $V = V_{\mathrm{F}} :=
+  \{\bv \in H^{1}(\Bf)^{3} : \bv = 0 \text{ on } \Sigma\}$. This is the
+  balance $\Div T = \bff$ in the fluid with $T\bn = 0$ on any free fluid
+  surface and \emph{no condition on the fluid--solid interface traction}:
+  the solid is to absorb whatever traction results.
+\end{itemize}
+
+\subsection{The naive functional, and why it fails}
+\label{sec:naive}
+
+The first candidate takes the whole-body minimum-deviatoric stress field
+of Al-Attar \& Woodhouse \cite[\S3.4]{AW10}, which the library already
+generates (\texttt{MinimumDeviatoricEquilibriumStress}), and reads off
+its fluid part:
+\begin{equation}
+  \Ja = \tfrac12\int_{\Bf} |\dev T_m|^{2}\dV , \qquad
+  T_m = \operatorname*{arg\,min}_{T \in \mathcal{S}(B, H^1)}
+        \tfrac12\int_{B} |\dev T|^{2}\dV .
+  \label{eq:Jnaive}
+\end{equation}
+This is \emph{not} a feasibility certificate: $\Ja$ is in general
+positive at models that possess a valid static state.
+
+\begin{proposition}[Leakage]\label{prop:leakage}
+Suppose a valid static state exists, and let $T'$ be the valid field
+(\,$\dev T' = 0$ in $\Bf$\,) of least solid deviatoric norm
+$\int_{\Bs}|\dev T|^2$. Then $\Ja = 0$ if and only if $T'$ is also the
+whole-body minimiser $T_m$; this holds if and only if there is a
+divergence-free $\bu \in H^1(B)^3$ with $\dev T' = \eps(\bu)$ in $B$ and
+$\bu$ rigid on each connected fluid region. Otherwise $\Ja > 0$.
+\end{proposition}
+\begin{proof}
+The objective $Q(T) = \frac12\int_B|\dev T|^2$ is strictly convex in
+$\dev T$, so $\dev T_m$ is unique; likewise $\dev T'$ is unique within
+the closed affine subset $\mathcal{S}' = \{T \in \mathcal{S}(B,H^1):
+\dev T = 0 \text{ on } \Bf\}$. If $\dev T_m = 0$ on $\Bf$ then
+$T_m \in \mathcal{S}'$, so $Q(T_m) \ge Q(T')$, and minimality of $T_m$
+gives $\dev T_m = \dev T'$. Conversely if $\dev T' = \dev T_m$ then
+$\Ja = 0$. Hence $\Ja = 0$ iff $T'$ is a global minimiser. By the
+optimality conditions of the whole-body problem (\S\ref{sec:dual} with
+uniform weight), $T$ is the global minimiser iff $\dev T = \eps(\bu)$
+for some divergence-free $\bu \in H^1(B)^3$; for $T = T'$ this forces
+$\eps(\bu) = 0$ on $\Bf$, i.e.\ $\bu$ rigid on each fluid region.
+\end{proof}
+
+The mechanism is first-order versus second-order. Perturb $T'$ by a
+self-equilibrated field $S$ (\,$\Div S = 0$, continuous tractions,
+traction-free surface\,):
+\begin{equation}
+  Q(T' + tS) = Q(T')
+  + t\int_{\Bs}\dev T' : \dev S \dV
+  + \tfrac{t^{2}}{2}\int_{B}|\dev S|^{2}\dV .
+\end{equation}
+The fluid contributes nothing at first order, because $\dev T' = 0$
+there; the solid term decreases at first order along any $S$ with
+$\int_{\Bs}\dev T':\dev S < 0$. Unless every such $S$ is fluid-shear-free
+(the non-generic condition of the proposition), the whole-body minimiser
+lowers the solid's deviatoric stress by exporting some into the fluid,
+paying only quadratically for it. An aspherical solid enclosing a
+barotropic fluid in general must carry deviatoric stress, and the
+naive minimiser leaks part of it into the fluid. In a spherically
+symmetric hydrostatic model $\dev T' = 0$ everywhere and there is
+nothing to leak, which is why spherical tests cannot detect the defect.
+
+The whole-body value $\Jh := Q(T_m)$ is meaningful in its own right:
+$\Jh = 0$ iff the \emph{whole} body admits a hydrostatic state, which is
+the defining property of a \emph{hydrostatic figure}
+(\S\ref{sec:zeroset}). It is the functional for that problem, not for
+equilibrium states with load-bearing solids.
+
+\subsection{The exact fluid-only functional}
+\label{sec:JF}
+
+Minimise the fluid's deviatoric stress over fluid stress fields alone,
+leaving the interface traction free:
+\begin{equation}
+  \JF = \inf_{T \in \mathcal{S}(\Bf, V_{\mathrm{F}})}
+        \int_{\Bf}\frac{1}{4\mu_{\mathrm{f}}}\,|\dev T|^{2}\dV ,
+  \label{eq:JF}
+\end{equation}
+with a constant reference weight $\mu_{\mathrm{f}} > 0$ (the choice
+$\mu_{\mathrm{f}} = \tfrac12$ gives $\tfrac12\int|\dev T|^2$ and matches
+the default weight of the library's generator). The weight is written
+as a viscosity because that is what it becomes in \S\ref{sec:dual}.
+
+\begin{proposition}[Completion]\label{prop:completion}
+Let $\Bs$ be connected. If $T_{\mathrm{f}} \in \mathcal{S}(\Bf,
+V_{\mathrm{F}})$, then there is a solid stress $T_{\mathrm{s}}$ with
+$\Div T_{\mathrm{s}} = \bff$ in $\Bs$, $T_{\mathrm{s}}\bn =
+T_{\mathrm{f}}\bn$ on $\Sigma$ and $T_{\mathrm{s}}\bn = 0$ on
+$\partial B \cap \partial\Bs$; the pair is in $\mathcal{S}(B, H^1)$.
+\end{proposition}
+\begin{proof}
+The traction problem for the solid is solvable iff the loads exert no
+net force or torque on it (the standard compatibility condition; it is
+also \cite[eq.~58]{AW10}, and a solution is supplied e.g.\ by the
+minimum-norm generator). Let $\bn_{\mathrm{f}}$ be the outward normal of
+$\Bf$. On $\Sigma$ the solid's outward normal is $-\bn_{\mathrm{f}}$, so
+the prescribed solid traction there is $-T_{\mathrm{f}}\bn_{\mathrm{f}}$,
+and $\Div T_{\mathrm{s}} = \bff$ requires $\int_{\partial\Bs}
+T_{\mathrm{s}}\bn = \int_{\Bs}\bff$. The left side is
+\begin{equation}
+  -\int_{\Sigma} T_{\mathrm{f}}\bn_{\mathrm{f}}\dS
+  = -\int_{\partial\Bf} T_{\mathrm{f}}\bn_{\mathrm{f}}\dS
+  = -\int_{\Bf}\bff\dV ,
+\end{equation}
+using that $T_{\mathrm{f}}\bn_{\mathrm{f}} = 0$ on any free fluid surface
+and the divergence theorem in $\Bf$. The requirement is therefore
+$\int_B\bff\dV = 0$, the vanishing of the total self-gravitational
+force. The torque identity is the same computation
+with $\bx\times$ inserted, closed by the vanishing of the total
+self-gravitational torque (and, for the divergence theorem step, by the
+symmetry of $T_{\mathrm{f}}$).
+\end{proof}
+
+So the fluid field's forced resultant is exactly what the solid's
+equilibrium requires, and nothing is lost by optimising over the fluid
+alone. With \emph{several} solid components --- an inner core as well
+as a mantle --- the computation above only balances their sum: each
+additional solid component imposes its own six force and torque
+conditions, which are not automatic. The exact certificate then
+enlarges $V_{\mathrm{F}}$ by the traces of the rigid motions of each
+additional component (\S\ref{sec:dual}, Remark~\ref{rem:innercore}).
+Below, $\Bs$ is connected unless stated.
+
+\begin{proposition}\label{prop:JFexact}
+With $\Bs$ connected, $\JF = 0$ if and only if the model possesses a
+valid static state \eqref{eq:equilibrium}.
+\end{proposition}
+\begin{proof}
+If a valid state exists, its fluid part is in $\mathcal{S}(\Bf,
+V_{\mathrm{F}})$ with zero objective. Conversely, the infimum in
+\eqref{eq:JF} is attained (\S\ref{sec:dual}); if it is zero the
+minimiser has $\dev T = 0$ in $\Bf$, and Proposition~\ref{prop:completion}
+completes it to a valid state.
+\end{proof}
+
+\subsection{The weighted whole-body functional}
+\label{sec:Jmu}
+
+The third candidate repairs the naive functional by weighting: with a
+region-wise positive field $\mu$, equal to $\mu_{\mathrm{f}}$ in the fluid
+and $\mu_{\mathrm{s}} \gg \mu_{\mathrm{f}}$ in the solid,
+\begin{equation}
+  \Jmu = \min_{T \in \mathcal{S}(B, H^1)}
+         \int_{B}\frac{1}{4\mu}\,|\dev T|^{2}\dV .
+  \label{eq:Jmu}
+\end{equation}
+This is the library's whole-body generator with a two-valued weight
+(its \texttt{mu} coefficient).
+
+\begin{proposition}\label{prop:Jmu}
+(i) $\Jmu$ is non-increasing in $\mu_{\mathrm{s}}$, and $\Jmu \ge J_\infty$
+where $J_\infty := \inf_{T\in\mathcal{S}(B,H^1)}
+\int_{\Bf}|\dev T|^2/(4\mu_{\mathrm{f}})$; with $\Bs$ connected,
+$J_\infty = \JF$.
+(ii) $\Jmu \le J_\infty + C/\mu_{\mathrm{s}}$, with
+$C = \tfrac14\int_{\Bs}|\dev T^{\star}|^{2}$ for any minimiser $T^\star$
+of $J_\infty$; in particular at a feasible model
+$\Jmu = O(1/\mu_{\mathrm{s}})$.
+(iii) $\Jmu \to J_\infty$ as $\mu_{\mathrm{s}} \to \infty$, and the
+minimisers converge to the minimiser of $J_\infty$ whose solid
+deviatoric norm is least; in particular the solid stress output
+$\dev T = 2\mu_{\mathrm{s}}\eps(\bu)$ (\S\ref{sec:dual}) stays bounded
+and converges, while $\eps(\bu) = O(1/\mu_{\mathrm{s}})$ in the solid.
+\end{proposition}
+\begin{proof}
+(i) The integrand is pointwise non-increasing in $\mu_{\mathrm{s}}$ and
+bounded below by its fluid part. $J_\infty = \JF$ for connected $\Bs$:
+restriction maps $\mathcal{S}(B,H^1)$ into $\mathcal{S}(\Bf,V_{\mathrm{F}})$,
+and Proposition~\ref{prop:completion} shows it is onto.
+(ii) Evaluate the objective at $T^\star$.
+(iii) From (i)--(ii). For the minimisers: write $\Jmu = \min_T
+[\mathcal{F}(T) + \mu_{\mathrm{s}}^{-1}\mathcal{G}(T)]$ with
+$\mathcal{F}$ the fluid and $\mathcal{G}$ the (scaled) solid term, both
+convex quadratics in $\dev T$. The family is bounded in $L^2$ by (ii); a
+weak limit point $\bar T$ minimises $\mathcal{F}$, and comparing with any
+minimiser $T^\star$ of $\mathcal{F}$,
+$\mathcal{F}(T_\mu) + \mu_{\mathrm{s}}^{-1}\mathcal{G}(T_\mu) \le
+\mathcal{F}(T^\star) + \mu_{\mathrm{s}}^{-1}\mathcal{G}(T^\star)$ with
+$\mathcal{F}(T_\mu) \ge \mathcal{F}(T^\star)$ gives
+$\mathcal{G}(T_\mu) \le \mathcal{G}(T^\star)$, so $\bar T$ minimises
+$\mathcal{G}$ among minimisers of $\mathcal{F}$ (the standard
+hierarchical limit of a vanishing penalty); strict convexity in the
+deviatoric part makes the limit unique, and the convergence strong.
+\end{proof}
+
+So $\Jmu$ is a certificate with a floor: at feasible models it is
+$O(\norm{\dev T_{\mathrm{s}}}^{2}/\mu_{\mathrm{s}})$, and the floor can
+be removed by Richardson extrapolation in $1/\mu_{\mathrm{s}}$ from two or
+three contrasts, $\Jmu \approx J_\infty + c_1/\mu_{\mathrm{s}}$. Its
+advantages are that it uses the existing generator unchanged, that it
+remains exact with any number of solid components (its limit $J_\infty$
+contains the force and torque balance of every component, see
+Remark~\ref{rem:innercore}), and that its dual (\S\ref{sec:dual}) is the
+literal creeping flow of a body with that viscosity structure. Its cost
+is conditioning: the Stokes operator with viscosity contrast
+$\mu_{\mathrm{s}}/\mu_{\mathrm{f}}$ degrades the preconditioner (a
+block-diagonal preconditioner with a viscosity-weighted pressure mass
+matrix is the minimum requirement), so the contrast cannot be taken
+arbitrarily large.
+
+\subsection{The zero sets}
+\label{sec:zeroset}
+
+\begin{proposition}\label{prop:barotropic}
+$\JF = 0$ iff there is $p \in H^{1}(\Bf)$ with
+\begin{equation}
+  \nabla p = -\rho\nabla\Phi \ \text{in } \Bf,
+  \qquad p = 0 \ \text{on free fluid surfaces}.
+  \label{eq:hydrostatic}
+\end{equation}
+At such a state, on each connected component of each level set of
+$\Phi$ in $\Bf$ on which $\nabla\Phi \ne 0$, $p$ is constant, and so
+is $\rho$ wherever $\rho$ is differentiable; locally $\rho = R(\Phi)$
+and $p = P(\Phi)$ with $P' = -R$ (the barotropic structure). A free
+fluid surface adjacent to fluid of positive density is a level surface
+of $\Phi$. $\Jh = 0$ iff \eqref{eq:hydrostatic} holds on all of $B$ with
+$p \in H^1(B)$; then every interface across which $\rho$ jumps is a
+level surface of $\Phi$.
+\end{proposition}
+\begin{proof}
+$\dev T = 0$ means $T = -p\,1$; membership of $\mathcal{S}(\Bf,
+V_{\mathrm{F}})$ is then the weak form of \eqref{eq:hydrostatic}, with
+$p\in H^1$ since $\nabla p = -\rho\nabla\Phi \in L^2$. The tangential
+derivative of $p$ along a level set vanishes, so $p$ is constant on each
+connected component; taking the curl, $\nabla\rho\times\nabla\Phi = 0$
+wherever $\rho$ is differentiable, so $\rho$ is constant there too; by
+the implicit function theorem $\rho$ and $p$ are locally functions of
+$\Phi$, and \eqref{eq:hydrostatic} gives $P' = -R$. On a free surface
+$p = 0$ is constant while $\nabla p = -\rho\nabla\Phi \ne 0$ points
+along the normal, so the surface is a level set of $p$, hence locally of
+$\Phi$. For $\Jh$, $p \in H^1(B)$ is continuous across interfaces, so
+its tangential derivative is too; with
+$\nabla_\Sigma p = -\rho\nabla_\Sigma\Phi$ on both sides and $\Phi$
+continuously differentiable, $(\rho_+ - \rho_-)\nabla_\Sigma\Phi = 0$:
+where the density jumps, the interface is an equipotential.
+\end{proof}
+
+The proposition fixes what is and is not an obstruction, and corrects a
+tempting over-statement. \emph{Distinct components of one level set are
+not forced to carry equal density}: each carries its own branch
+$P_k(\Phi)$, and the branches are tied only by single-valuedness of $p$
+where components merge and by boundary conditions (a U-tube with two
+columns of different density but free surfaces at different heights is
+in equilibrium; capped by a solid, the heights need not even differ).
+For a fluid region enclosed by a connected solid there is no
+obstruction at all: a uniform density $\rho = \text{const}$ satisfies
+\eqref{eq:hydrostatic} with $p = -\rho\Phi + \text{const}$, whatever the
+geometry, so $\JF = 0$ is always attainable by density control and the
+shape of the fluid--solid interface is \emph{not} constrained --- the
+solid supports any interface topography. Genuine infeasibility of the
+equilibrium-state problem comes from: (a) boundaries that the fluid must
+support itself (free fluid surfaces, prescribed density jumps inside the
+fluid), which must be equipotentials; (b) the force and torque balance of
+each additional solid component; (c) restrictions on the admissible
+density (bounds, a fixed parametric form, or the fixed distribution
+function of the rearrangement route of \S\ref{sec:energy}). For the
+hydrostatic-figure functional $\Jh$, by contrast, every density
+interface --- including the core--mantle boundary --- must be an
+equipotential, and a fixed aspherical geometry that violates this has
+$\Jh > 0$ at the density minimiser, quantifying the infeasibility.
+
+At $\JF = 0$ the minimiser over densities is not unique: every
+barotropic density compatible with the constraints is a zero. A prior
+selects within the zero set (\S\ref{sec:sobolev}); the rearrangement
+route selects differently (\S\ref{sec:energy}).
+
+\begin{remark}[The solid's field]\label{rem:shell}
+$\Phi$ is the total potential, $\Phi = \Phi[\rho|_{\Bf}] +
+\Phi[\rho|_{\Bs}]$ by linearity, and with the solid fixed (stage~1) the
+second part is static data; only the first responds to density updates.
+If the solid is a spherically symmetric shell enclosing the fluid, the
+shell theorem gives $\nabla\Phi[\rho|_{\Bs}] = 0$ in the cavity, so the
+fluid's balance involves the fluid's own self-gravity alone. An
+aspherical solid does act on the fluid --- at fixed aspherical geometry
+already in stage~1, and through its shape in stage~2.
+\end{remark}
+
+% ======================================================================
+\section{Duality: the Stokes structure}
+\label{sec:dual}
+
+Both functionals are instances of one template. Let $\Omega$, $V$ be as
+in \eqref{eq:admissible}, $\mu > 0$ a viscosity field on $\Omega$, and
+\begin{equation}
+  J = \inf_{T \in \mathcal{S}(\Omega, V)} \int_\Omega \frac{1}{4\mu}|\dev T|^2\dV .
+  \label{eq:template}
+\end{equation}
+$\JF$ is $(\Omega, V, \mu) = (\Bf, V_{\mathrm{F}}, \mu_{\mathrm{f}})$;
+$\Jmu$ is $(B, H^1, \mu)$; $\Jh$ is $(B, H^1, \tfrac12)$.
+
+\subsection{Lagrangian and dual}
+
+Introduce a multiplier $\bu \in V$ for the constraint and the Lagrangian
+\begin{equation}
+  L(T, \bu) = \int_\Omega \frac{1}{4\mu}|\dev T|^2
+  - \int_\Omega T : \eps(\bu) - \int_\Omega \bff\cdot\bu .
+\end{equation}
+$\sup_{\bu} L(T,\bu)$ is the objective if $T \in \mathcal{S}(\Omega,V)$
+and $+\infty$ otherwise, so $J = \inf_T\sup_{\bu}L$. For fixed $\bu$,
+minimise over $T$ pointwise. Split $T = \dev T + \tfrac13(\tr T)1$:
+the trace part enters only through $-\tfrac13\tr T\,\div\bu$, so the
+infimum is $-\infty$ unless $\div\bu = 0$; the deviatoric part is
+minimised at
+\begin{equation}
+  \dev T = 2\mu\,\eps(\bu)
+  \qquad(\text{using } \dev\eps(\bu) = \eps(\bu) \text{ when } \div\bu = 0),
+  \label{eq:devT}
+\end{equation}
+with value $\int\mu|\eps(\bu)|^2 - 2\int\mu|\eps(\bu)|^2 =
+-\int\mu|\eps(\bu)|^2$. Hence the dual problem is
+\begin{equation}
+  \sup_{\bu \in U} g(\bu), \qquad
+  g(\bu) = -\tfrac12 a(\bu,\bu) - \ip{\bff}{\bu}, \qquad
+  a(\bu,\bv) = \int_\Omega 2\mu\,\eps(\bu):\eps(\bv)\dV,
+  \label{eq:dual}
+\end{equation}
+over the divergence-free test fields $U = \{\bu \in V : \div\bu = 0\}$,
+with $\ip{\bff}{\bu} = \int_\Omega\bff\cdot\bu$. Its maximiser satisfies
+\begin{equation}
+  a(\bu,\bv) = -\ip{\bff}{\bv} \qquad \forall\,\bv \in U ,
+  \label{eq:stokes-weak}
+\end{equation}
+and at the maximiser, taking $\bv = \bu$, $g(\bu) = \tfrac12 a(\bu,\bu)$.
+
+\begin{proposition}[Strong duality]\label{prop:duality}
+Assume $\ip{\bff}{\br} = 0$ for every $\br \in U$ with $a(\br,\br) = 0$.
+Then \eqref{eq:stokes-weak} has a solution $\bu$, unique up to that
+kernel, there is a pressure $p \in L^2(\Omega)$ with
+\begin{equation}
+  a(\bu,\bv) - \int_\Omega p\,\div\bv = -\ip{\bff}{\bv}
+  \quad\forall\,\bv\in V, \qquad
+  \int_\Omega q\,\div\bu = 0 \quad\forall\, q,
+  \label{eq:stokes-mixed}
+\end{equation}
+the field $T_{\min} = -p\,1 + 2\mu\,\eps(\bu)$ attains the infimum
+\eqref{eq:template}, and
+\begin{equation}
+  J = \tfrac12 a(\bu,\bu) = \int_\Omega \mu\,|\eps(\bu)|^2\dV .
+  \label{eq:value}
+\end{equation}
+\end{proposition}
+\begin{proof}
+On $U$ modulo the kernel, $a$ is coercive by Korn's inequality, and the
+compatibility assumption makes the right-hand side a functional on the
+quotient; Lax--Milgram gives $\bu$. The pressure exists by the inf--sup
+condition for the divergence on $V$ (Girault \& Raviart \cite{GR86}),
+which is where divergence-free extensions of boundary data are needed.
+By \eqref{eq:stokes-mixed}, $\int T_{\min}:\eps(\bv) = a(\bu,\bv) -
+\int p\div\bv = -\ip{\bff}{\bv}$ for all $\bv\in V$, so
+$T_{\min}\in\mathcal{S}(\Omega,V)$, and its objective is
+$\int\mu|\eps(\bu)|^2 = \tfrac12a(\bu,\bu) = g(\bu)$. Weak duality
+($\inf\sup \ge \sup\inf$) then makes both optimal.
+\end{proof}
+
+\subsection{Reading the dual}
+
+Equation \eqref{eq:stokes-mixed} is the steady incompressible Stokes
+problem
+\begin{equation}
+  -\nabla p + \Div\bigl(2\mu\,\eps(\bu)\bigr) = \bff = \rho\nabla\Phi ,
+  \qquad \div\bu = 0 ,
+  \label{eq:stokes-strong}
+\end{equation}
+i.e.\ $\bu$ is the creeping flow, with viscosity $\mu$, driven by the
+gravitational body force $-\rho\nabla\Phi$ against which no hydrostatic
+pressure can balance --- the unbalanced buoyancy. The stress
+$T_{\min} = -p1 + 2\mu\eps(\bu)$ is its viscous stress. The value
+\eqref{eq:value} is $\int\mu|\eps|^2$, which is Rayleigh's dissipation
+function of that flow, i.e.\ \emph{half} its rate of viscous
+dissipation $\int 2\mu|\eps(\bu)|^2$. (This factor reappears in
+\S\ref{sec:energy}.) The boundary conditions are those encoded by $V$:
+\begin{itemize}
+\item $\JF$: $\bu = 0$ on $\Sigma$ (no slip against the solid) and
+  traction-free on free fluid surfaces. The boundary condition is forced
+  by the free interface traction: varying $T$ with $\delta T\bn$
+  arbitrary on $\Sigma$ in $\int_{\Bf}\delta T:\eps(\bu) = -\int_{\Bf}
+  \Div\delta T\cdot\bu + \int_{\partial\Bf}\delta T\bn\cdot\bu$ leaves the
+  boundary term, whose vanishing for all $\delta T\bn$ is $\bu|_\Sigma = 0$.
+  For a fluid region enclosed by solid, Korn's first inequality makes $a$
+  coercive on $U$: \emph{there is no rigid kernel}. The pressure is
+  determined only up to an additive constant in each enclosed fluid
+  region, since $\int\div\bv = \int_{\partial}\bv\cdot\bn = 0$ for every
+  $\bv\in V_{\mathrm{F}}$ there; physically the absolute pressure in a
+  sealed container is not fixed by equilibrium. $J$ does not depend on it,
+  and it is fixed by a mean-zero constraint per enclosed region.
+\item $\Jmu$ and $\Jh$: traction-free on $\partial B$, $\bu$ continuous
+  across interfaces, $\div\bu = 0$ in the solid as well. The kernel of
+  $a$ on $U$ is the global rigid motions (\,$\eps(\bu)=0$ on each region
+  plus continuity\,), compatible by the vanishing total force and torque;
+  it is projected exactly as in the existing generator. No pressure
+  constant is free (traction boundary).
+\end{itemize}
+In the rigid limit $\mu_{\mathrm{s}}\to\infty$ of $\Jmu$ the solid
+velocity becomes rigid on each solid component: with a connected solid,
+the limit flow (in the gauge where the solid is at rest) is the no-slip
+flow of $\JF$, consistent with Proposition~\ref{prop:Jmu}.
+
+\begin{remark}[Further solid components]\label{rem:innercore}
+For an inner core $\Bs^{(2)}$ inside a fluid shell inside a mantle
+$\Bs^{(1)}$, the exact fluid-only certificate uses
+$V_{\mathrm{F}}^{+} = \{\bv\in H^1(\Bf)^3 : \bv = 0 \text{ on }
+\partial\Bs^{(1)},\ \bv = \br \text{ on } \partial\Bs^{(2)} \text{ for some
+rigid } \br\}$: six extra unknowns, whose equations in
+\eqref{eq:stokes-mixed} are the force and torque balance on the inner
+core (inner-core loads $\int_{\Bs^{(2)}}\bff\cdot\br$ included). A rigid
+motion has zero flux through the closed inner-core boundary, so the
+pressure constant of the fluid shell remains free. This
+is the $\mu_{\mathrm{s}}\to\infty$ limit of $\Jmu$ with the mantle at
+rest.
+\end{remark}
+
+\subsection{Discretisation and inexact solves}
+
+The saddle \eqref{eq:stokes-mixed} is discretised with Taylor--Hood
+pairs \cite{TaylorHood}, the pressure one order below the velocity, as
+in \texttt{MinimumDeviatoricEquilibriumStress}; $\Jmu$ is exactly that
+class with a two-valued \texttt{mu}, and $\JF$ is the same saddle on the
+fluid SubMesh with essential (no-slip) conditions on $\Sigma$ and the
+per-region pressure constant removed. All statements of this section hold
+verbatim for the discrete problem with $U_h$ the discretely
+divergence-free subspace, which is what makes the derivatives of
+\S\ref{sec:derivative} exact for the discrete functional.
+
+When $\bu$ is only an approximation $\tilde\bu \in U$ with error $\bm{e}$,
+the two expressions of the value behave differently:
+$g(\tilde\bu) = J - \tfrac12a(\bm{e},\bm{e})$ (a lower bound, error
+quadratic in $\bm{e}$, by expanding the quadratic $g$ about its
+maximiser), while $\tfrac12a(\tilde\bu,\tilde\bu) = J + a(\bu,\bm{e}) +
+O(\bm{e}^2)$ has a first-order error. The value is therefore evaluated as
+$g(\tilde\bu)$. The derivative of \S\ref{sec:derivative} is linear in
+$\bu$ and carries a first-order error; the saddle tolerance must be set
+accordingly.
+
+% ======================================================================
+\section{The derivative with respect to density}
+\label{sec:derivative}
+
+Stage~1: the shape is fixed and the control is the fluid density. All
+three functionals depend on $\rho$ only through the load $\bff =
+\rho\nabla\Phi[\rho]$; the spaces $V$, $U$ and the form $a$ are
+independent of $\rho$.
+
+\subsection{The Poisson problem and its closure}
+\label{sec:poisson}
+
+Let $D \supset B$ be the ball bounded by the DtN sphere, of radius $b$;
+the region $D\setminus B$ is the buffer. Outside $D$ the potential is
+harmonic and decaying, $\Phi = \sum_{lm}\Phi_{lm}(b/r)^{l+1}Y_{lm}$, so on
+$\partial D$, $\partial_r\Phi = -\Lambda\Phi$ with $\Lambda$ the
+Dirichlet-to-Neumann operator, acting on degree $l$ by $(l+1)/b$:
+symmetric and positive semi-definite. Multiplying
+\eqref{eq:poisson-strong} by $\chi\in H^1(D)$ and integrating by parts
+over $D$,
+\begin{equation}
+  b(\Phi,\chi) := \frac{1}{4\pi G}\Bigl[\int_D \nabla\Phi\cdot\nabla\chi\dV
+  + \int_{\partial D}\chi\,\Lambda\Phi\dS\Bigr]
+  = -\int_B \rho\,\chi\dV
+  \qquad\forall\,\chi\in H^1(D) .
+  \label{eq:poisson-weak}
+\end{equation}
+The form $b$ is symmetric and, in three dimensions, coercive on $H^1(D)$.
+This is the library's Poisson machinery (Laplacian plus DtN, with the DtN
+truncated at some degree; the truncated form is still symmetric, which
+is all that is used below). Write $\Phi[\rho]$ for the solution operator;
+it is linear.
+
+\begin{remark}[Two dimensions]
+The 2-D DtN form has no degree-zero term, so $b$ is singular on
+constants, the potential is determined up to a constant, and solvability
+of $b(\cdot,\chi) = \ell(\chi)$ requires $\ell(1) = 0$. For the adjoint
+below the load is $\int\rho\bu\cdot\nabla\chi$, which vanishes at
+$\chi = 1$, so the adjoint is always solvable; its solution is defined up
+to a constant, which pairs to zero with every mass-preserving density
+perturbation --- precisely the admissible ones. Nothing below changes.
+\end{remark}
+
+\subsection{Differentiating the value function}
+
+\begin{proposition}\label{prop:envelope}
+Let $\ell_\rho(\bv) := -\ip{\rho\nabla\Phi[\rho]}{\bv}$ and $\bu$ the
+solution of \eqref{eq:stokes-weak}. Then
+\begin{equation}
+  \delta J = \delta\ell_\rho(\bu)
+  = -\int_\Omega \bigl(\delta\rho\,\nabla\Phi + \rho\,\nabla\delta\Phi\bigr)\cdot\bu\dV ,
+  \qquad \delta\Phi = \Phi[\delta\rho] .
+  \label{eq:dJ1}
+\end{equation}
+\end{proposition}
+\begin{proof}
+Let $\mathsf{S}: U' \to U$ be the solution operator of
+\eqref{eq:stokes-weak} on the quotient by the kernel: $a(\mathsf{S}\ell,\bv)
+= \ell(\bv)$. It is self-adjoint, $\ell_1(\mathsf{S}\ell_2) =
+a(\mathsf{S}\ell_1,\mathsf{S}\ell_2)$. Then $J = \tfrac12 a(\mathsf{S}\ell_\rho,
+\mathsf{S}\ell_\rho) = \tfrac12\ell_\rho(\mathsf{S}\ell_\rho)$, and
+$\delta J = \tfrac12\delta\ell_\rho(\mathsf{S}\ell_\rho) +
+\tfrac12\ell_\rho(\mathsf{S}\delta\ell_\rho) = \delta\ell_\rho(\bu)$
+by self-adjointness. The kernel is harmless: $\ell_\rho(\br) = 0$ for
+every rigid $\br$ and every $\rho$ (vanishing total force and torque),
+so also $\delta\ell_\rho(\br) = 0$.
+\end{proof}
+
+This is the envelope theorem (Danskin \cite{Danskin}) for the value
+function $J(\rho) = \max_{U} g(\cdot\,;\rho)$: the derivative is the
+partial derivative of the Lagrangian at the saddle point, and no
+transposed saddle solve is needed --- \emph{the primal multiplier $\bu$
+is the adjoint variable}, because the saddle is self-adjoint and the
+objective is its own value. The proof shows this directly for stage~1;
+the Lagrangian form of the envelope theorem is what carries over to
+stage~2, where $U$ itself depends on the control. For $\JF$ the pairing
+in \eqref{eq:dJ1} is over $\Bf$ only; for $\Jmu$ it is over $B$, the
+solid's slow flow included.
+
+\subsection{The Poisson adjoint}
+
+The first term of \eqref{eq:dJ1} is already local in $\delta\rho$. The
+second, $T_2 := \int_\Omega\rho\nabla\delta\Phi\cdot\bu$, is not. Define
+the adjoint potential $w\in H^1(D)$ by
+\begin{equation}
+  b(\chi, w) = \int_\Omega \rho\,\bu\cdot\nabla\chi\dV
+  \qquad\forall\,\chi\in H^1(D),
+  \label{eq:adjoint}
+\end{equation}
+the same symmetric Poisson operator with a different load. Then, taking
+$\chi = \delta\Phi$ in \eqref{eq:adjoint} and $\chi = w$ in the
+perturbed \eqref{eq:poisson-weak} (\,$b(\delta\Phi,\chi) =
+-\int\delta\rho\,\chi$\,),
+\begin{equation}
+  T_2 = b(\delta\Phi, w) = -\int_B \delta\rho\, w\dV .
+\end{equation}
+With \eqref{eq:dJ1}, for perturbations supported in $\Bf$,
+\begin{equation}
+  \boxed{\;\delta J = \int_{\Bf}\delta\rho\,\bigl(w - \bu\cdot\nabla\Phi\bigr)\dV,
+  \qquad J'(\rho) = w - \bu\cdot\nabla\Phi \ \ \text{in } \Bf\; }
+  \label{eq:gradient}
+\end{equation}
+as an $L^2$ density. The formula holds unchanged for perturbations of
+the solid density (with $\bu$ the solid velocity, zero for $\JF$), which
+is used in the verification of \S\ref{sec:verification}.
+
+\paragraph{Strong form and interpretation.} Integrating
+\eqref{eq:adjoint} by parts, $w$ solves $\nabla^2 w = 4\pi G\,\div(\rho\bu)$
+in the distributional sense (with $\rho\bu$ extended by zero, so the
+jumps of $\rho\bu\cdot\bn$ act as surface sources) and the same DtN
+closure. Let $\phi^{1}[\bu]$ be the Eulerian potential perturbation
+produced by transporting the density with displacement $\bu$: the
+Eulerian density change is $-\div(\rho\bu)$, so $\nabla^2\phi^1 =
+-4\pi G\div(\rho\bu)$. Hence $w = -\phi^1[\bu]$ and
+\begin{equation}
+  J'(\rho) = -\bigl(\phi^{1}[\bu] + \bu\cdot\nabla\Phi\bigr)
+  = -\,\Delta_{\bu}\Phi ,
+  \label{eq:lagrangian}
+\end{equation}
+minus the \emph{Lagrangian} perturbation of the potential along $\bu$ ---
+in the language of \texttt{doc/gravitating\_elasticity.md} \S3, minus the
+referential potential perturbation $\zeta^1 = \phi^1 + \bu\cdot\nabla\Phi$
+generated by $\bu$. An independent check of the sign by Green's
+functions: with $\Phi[\sigma](\bx) = -G\int\sigma(\mathbf{y})|\bx-\mathbf{y}|^{-1}$,
+$T_2 = -\int\div(\rho\bu)\,\delta\Phi = \int\delta\rho\,\phi^1[\bu]$ by
+the symmetry of the kernel, and $-T_2 = \int\delta\rho\,w$ agrees.
+
+\paragraph{Mapped form.} With a fixed non-identity $\varphi_e$ (stage~1
+on an aspherical reference) the same steps give, with $\zeta =
+\Phi\circ\varphi_e$, the pulled-back velocity $\bU = F_e^{-1}\bu$ and the
+mapped Poisson form $b_e$ (Laplacian with $a_e = J_eF_e^{-1}F_e^{-T}$, DtN
+unchanged because $\varphi_e = \mathrm{id}$ near $\partial D$):
+$b_e(\chi,w) = \int\rho\,\bU\cdot\nabla\chi$ and $J' = w - \bU\cdot\nabla\zeta$.
+
+\subsection{Discrete exactness}
+
+For the discrete functional $J_h(\rho_h)$, defined by the discrete
+Poisson form $b_h$, the discrete load $\ell_h(\bv_h) =
+-\int\rho_h\nabla\Phi_h\cdot\bv_h$ and the Taylor--Hood saddle, every step
+above holds in finite dimensions. The derivative vector
+$j_i = \partial J_h/\partial\rho_i = \int_{\Bf}\psi_i\,(w_h -
+\bu_h\cdot\nabla\Phi_h)$, with $w_h$ from the discrete adjoint
+$b_h(\chi_h,w_h) = \int\rho_h\bu_h\cdot\nabla\chi_h$, is then the
+\emph{exact} gradient of $J_h$ (up to solver tolerances), provided the
+same quadrature is used for the load in the forward and adjoint
+assemblies. Finite-difference checks therefore converge to round-off,
+not to discretisation level.
+
+\subsection{Homogeneity and an identity}
+
+Without rotation, $\ell_\rho$ is a quadratic form in $\rho$ (the
+product of $\rho$ with the linear $\nabla\Phi[\rho]$), $\bu$ is linear in
+$\ell_\rho$, and $J$ is quadratic in $\bu$: $J$ is a homogeneous quartic
+in the total density $\rho$ on $B$, $J(t\rho) = t^4J(\rho)$. Euler's
+identity gives
+\begin{equation}
+  \int_B \rho\,J'(\rho)\dV = 4J ,
+  \label{eq:euler}
+\end{equation}
+a check that exercises the whole chain. Directly:
+$\int\rho\,\phi^1[\bu] = \int(-\div\rho\bu)\Phi = \int\rho\bu\cdot\nabla\Phi$
+by the mutual-energy symmetry, so $\int\rho J' = -2\ip{\bff}{\bu} =
+2a(\bu,\bu) = 4J$. (The integral is over the whole body: $J'$ on the
+solid is $w - \bu\cdot\nabla\Phi$ as well.)
+
+\subsection{Hessian actions}
+\label{sec:hessian}
+
+Differentiate \eqref{eq:lagrangian} in direction $\delta\rho$:
+\begin{equation}
+  H\delta\rho = -\bigl(\delta\phi^1 + \delta\bu\cdot\nabla\Phi
+  + \bu\cdot\nabla\delta\Phi\bigr),
+\end{equation}
+where $\delta\Phi = \Phi[\delta\rho]$ (one Poisson solve);
+$\delta\bu = \mathsf{S}\,\delta\ell_\rho$ solves the saddle with load
+$-\ip{\delta\rho\nabla\Phi + \rho\nabla\delta\Phi}{\cdot}$ (one saddle
+solve, same operator); and $\delta\phi^1$ is the potential of
+$-\div(\delta\rho\,\bu + \rho\,\delta\bu)$ (one Poisson solve). These are
+the second-order adjoints of the same pair: because the saddle is
+self-adjoint, the second-order saddle adjoint coincides with the forward
+sensitivity $\delta\bu$, and the second-order Poisson adjoint is
+$-\delta\phi^1$. The Hessian splits as
+\begin{equation}
+  \ip{H\delta\rho}{\delta\rho} = a(\delta\bu,\delta\bu)
+  + D^2\ell_\rho[\delta\rho,\delta\rho](\bu),
+  \qquad D^2\ell_\rho[\delta\rho,\delta\rho](\bu)
+  = -2\int\delta\rho\,\nabla\delta\Phi\cdot\bu ,
+\end{equation}
+the first term positive semi-definite (the Gauss--Newton part) and the
+second vanishing where $\bu = 0$, i.e.\ at every zero of $J$. Near the
+zero set Gauss--Newton is therefore asymptotically exact; at the zero
+set the Hessian is singular along the zero set itself (the barotropic
+family), which is why a prior is needed for Newton-type methods.
+
+% ======================================================================
+\section{Energy interpretation and the advection route}
+\label{sec:energy}
+
+\subsection{The functional as a squared gradient}
+
+Let $E = \tfrac12\int_B\rho\,\Phi[\rho] = -\frac{1}{8\pi G}\int_{\R^3}
+|\nabla\Phi|^2 \le 0$ be the gravitational energy (the identity by
+\eqref{eq:poisson-strong} and integration by parts). Move the material
+with a velocity $\bv$ that is a \emph{rearrangement}: an element of $U$
+(divergence-free in the fluid, and for $\JF$ zero on $\Sigma$; for
+$\Jmu$ divergence-free throughout). The density is transported,
+$\partial_t\rho = -\div(\rho\bv)$, and since $E$ is a symmetric
+quadratic form,
+\begin{equation}
+  \frac{\mathrm{d}E}{\mathrm{d}t} = \int\partial_t\rho\,\Phi
+  = -\int\div(\rho\bv)\,\Phi = \int\rho\,\bv\cdot\nabla\Phi
+  = \ip{\bff}{\bv} ,
+  \label{eq:dE}
+\end{equation}
+(boundary terms vanish because $\rho\bv$ is extended by zero and $\Phi$
+is continuous). So $\bv\mapsto\ip{\bff}{\bv}$ is the derivative of $E$
+along rearrangements, and by \eqref{eq:stokes-weak}
+\begin{equation}
+  \bu = -\operatorname{grad}_a E ,
+  \qquad J = \tfrac12\norm{\operatorname{grad}_a E}_a^{2} ,
+\end{equation}
+where $\operatorname{grad}_a$ is the Riesz representative in the
+\emph{dissipation metric} $a$ on $U$. Minimising $J$ is thus a
+least-squares formulation of the first-order optimality conditions of
+$E$ on the space of rearrangements; the stationarity conditions of $E$
+under rearrangement are exactly the equilibrium conditions, with the
+pressure as the multiplier of incompressibility (this is the classical
+variational characterisation of equilibria of incompressible
+self-gravitating fluids).
+
+Consequently $J = 0$ at \emph{every} critical point of $E$, stable or
+not. The second variation along the flow $X_t$ of a fixed $\bv\in U$,
+$\rho_t = \rho\circ X_t^{-1}$, is
+\begin{equation}
+  \frac{\mathrm{d}^2E}{\mathrm{d}t^2}\Big|_{0}
+  = \int\ddot\rho\,\Phi + \int\dot\rho\,\Phi[\dot\rho],
+  \qquad \dot\rho = -\bv\cdot\nabla\rho, \quad
+  \ddot\rho = \bv\cdot\nabla(\bv\cdot\nabla\rho).
+\end{equation}
+Integrating the first term by parts ($\div\bv = 0$, $\bv\cdot\bn = 0$ on
+the fluid boundary) and using $\rho = R(\Phi)$ at a barotropic state,
+\begin{equation}
+  \frac{\mathrm{d}^2E}{\mathrm{d}t^2}\Big|_{0}
+  = -\int_{\Bf} R'(\Phi)\,(\bv\cdot\nabla\Phi)^2\dV
+    \;-\; \frac{1}{4\pi G}\int_{\R^3}\bigl|\nabla\Phi[\bv\cdot\nabla\rho]\bigr|^2\dV .
+\end{equation}
+The second (self-gravity) term is non-positive but smoothing: for $\bv$
+localised at scale $\ell$ it is smaller than the first by $O(\ell^2)$.
+Hence $R' \le 0$ (density non-increasing with $\Phi$, i.e.\ outwards) is
+necessary for stability, and an unstably stratified barotropic state
+($R' > 0$ somewhere) is a saddle of $E$ with $J = 0$. This is the
+stability criterion of an incompressibly rearranged fluid: parcels
+carry their density unchanged; a compressible fluid would be judged
+against the adiabatic gradient instead (the Brunt--V\"ais\"al\"a
+criterion), which the rearrangement model does not represent.
+
+\subsection{Gradient flow: the advection route}
+
+The alternative outer loop transports the density along $\bu$,
+\begin{equation}
+  \partial_t\rho + \bu\cdot\nabla\rho = 0 \quad\text{in } \Bf ,
+  \label{eq:advection}
+\end{equation}
+recomputing $\Phi$ and $\bu$ as $\rho$ changes. By \eqref{eq:dE} and
+\eqref{eq:stokes-weak},
+\begin{equation}
+  \frac{\mathrm{d}E}{\mathrm{d}t} = \ip{\bff}{\bu} = -a(\bu,\bu) = -2J :
+\end{equation}
+this is the gradient flow of $E$ in the dissipation metric --- the
+quasi-static viscous relaxation of an incompressible fluid of viscosity
+$\mu$ --- and the energy decays at twice the functional's value (the
+full dissipation rate). For $\Jmu$ it is literally the relaxation of the
+whole body with the two-valued viscosity, the solid creeping at
+$O(1/\mu_{\mathrm{s}})$ (a stage-1 implementation freezes the geometry,
+consistently to that order); for $\JF$ the solid is held at rest.
+
+Properties, each immediate from \eqref{eq:advection} with
+$\div\bu = 0$ and $\bu\cdot\bn = 0$ on the fluid boundary:
+\begin{itemize}
+\item The flow map is volume-preserving, so mass is conserved and the
+  \emph{distribution function} $|\{\rho > c\}\cap\Omega_k|$ of every
+  connected fluid region $\Omega_k$ is invariant. Advection answers
+  ``rearrange \emph{this} material into equilibrium'' --- for instance,
+  rearrange the material of a reference Earth model's core into a state
+  consistent with an aspherical mantle --- whereas the optimisation route
+  answers ``find \emph{a} nearby equilibrium density''.
+\item Mass cannot move between disconnected fluid regions, and the
+  per-region distribution is fixed: this is the advection route's form of
+  the density restrictions of \S\ref{sec:zeroset}, item (c).
+\item $E$ decreases strictly until $J = 0$; generically the flow leaves
+  saddles (unstable stratifications) and selects stable states, whereas
+  minimising $J$ converges to whatever zero is nearest, stable or not,
+  and needs a prior for selection.
+\item For a fluid region enclosed by a fixed solid, $-E$ restricted to
+  the region is (up to a linear term from the solid's field) the strictly
+  convex, weakly sequentially continuous functional
+  $\rho\mapsto\frac{1}{8\pi G}\norm{\nabla\Phi[\rho]}^2$; by Burton's
+  theory of convex maximisation over rearrangement classes
+  \cite{Burton1987} its maximum over the weak closure of the
+  rearrangement class of the initial density is attained \emph{within}
+  the class. A minimiser of $E$ among rearrangements of the given
+  material therefore exists without mixing. In the spherically symmetric
+  case it is explicit: by the shell theorem (Remark~\ref{rem:shell}) the
+  solid's term is constant on the class, and by the Riesz rearrangement
+  inequality (Lieb \& Loss \cite[Thm.~3.7]{LiebLoss}) the self-energy is
+  minimised by the symmetric decreasing rearrangement $\rho^{*}$ of the
+  initial density about the centre.
+\end{itemize}
+
+\subsection{Cost}
+
+Per step, both loops need one Poisson solve for $\Phi$ and one saddle
+solve for $\bu$; the optimisation route needs one more Poisson solve (the
+adjoint $w$) plus the Riesz map of \S\ref{sec:sobolev}, the advection
+route one transport step. Transport of $\rho$ needs care with the
+discrete divergence: Taylor--Hood velocities are only discretely
+divergence-free against the pressure space, so the conservative form
+$\partial_t\rho + \div(\rho\bu_h) = 0$ conserves mass exactly but not the
+distribution function, and the advective form the reverse; an
+exactly divergence-free reconstruction of $\bu_h$ (an $H(\div)$
+post-processing) restores both.
+
+% ======================================================================
+\section{Derivatives are not gradients: Sobolev metrics}
+\label{sec:sobolev}
+
+\subsection{Derivative, metric, gradient}
+
+$J'(\rho)$ is a dual element: discretely, the vector $j$ with
+$j_i = \partial J_h/\partial\rho_i$. A gradient needs an inner product,
+represented by a symmetric positive-definite Gram matrix $G$: $g =
+G^{-1}j$, the unique vector with $g^{T}G\,\delta = j^{T}\delta$ for all
+$\delta$. The choice of $G$ is the implicit preconditioner of every
+first-order method. The $L^2$ choice $G = M$ (the mass matrix) gives
+$g = M^{-1}j$, the $L^2$ projection of the density \eqref{eq:gradient}.
+It is a reasonable start here because $J'$ is built from smooth fields
+($\bu\in H^1$, $\phi^1 \in H^1$, $\nabla\Phi$ bounded), with two caveats:
+discretely, $\nabla\Phi_h$ jumps across element faces, so $M^{-1}j$
+carries mesh-scale oscillations that are not damped and accumulate over
+iterations; and the Stokes flow has singular gradients at re-entrant
+edges and where free fluid surfaces meet solid, imprinting local
+structure on $J'$.
+
+\subsection{The $H^1$ metric}
+
+On a domain $X$ (\S\ref{sec:extension}) take
+\begin{equation}
+  \ip{\rho_1}{\rho_2}_{1} = \int_X\bigl(\alpha\,\rho_1\rho_2
+  + \beta\,\nabla\rho_1\cdot\nabla\rho_2\bigr)\dV ,
+  \qquad G_1 = \tilde A := \alpha M + \beta K ,
+\end{equation}
+with $K$ the stiffness matrix. The Riesz solve is the Helmholtz-type
+problem $(\alpha - \beta\nabla^2)g = J'$; its Green's function in three
+dimensions is $e^{-r/L}/(4\pi\beta r)$ with smoothing length
+$L = \sqrt{\beta/\alpha}$: the gradient is the derivative averaged over
+balls of radius $\sim L$, and components of $J'$ at wavelengths below $L$
+are suppressed by $(1 + \beta k^2/\alpha)^{-1}$.
+
+\subsection{Regularity and the $H^2$ default}
+
+In three dimensions $H^1 \hookrightarrow L^6$ only; $H^s
+\hookrightarrow C^0$ requires $s > 3/2$. A Riesz representative in $H^s$
+of an arbitrary dual element of $H^s$ is in $H^s$, so a metric of order
+$s > 3/2$ guarantees continuous updates whatever the regularity of the
+derivative (discretisation noise, or future parameter fields with
+rougher derivatives). The working default is $s = 2$, realised by
+iterating the $H^1$ Gram. With $\mathcal{A}_h = M^{-1}\tilde A$ the
+discrete operator $\alpha - \beta\nabla^2_h$ (self-adjoint in the
+$M$-inner product), the order-$2$ inner product is
+$\ip{\mathcal{A}_h\rho_1}{\mathcal{A}_h\rho_2}_{L^2}$, i.e.
+\begin{equation}
+  G_2 = \tilde A M^{-1}\tilde A , \qquad
+  g = \tilde A^{-1} M \tilde A^{-1} j :
+\end{equation}
+two solves with the same operator and one mass product. The caveat: the
+composition carries the boundary condition of $\tilde A$ through both
+applications, so the norm is $\norm{(\alpha - \beta\nabla^2_X)\rho}_{L^2}$
+with the condition built into the operator domain --- spectrally
+$(\alpha + \beta(-\nabla^2_X))^{2}$, not the condition-free $H^2(X)$
+norm. This is harmless because the metric is posed on an extension
+domain, whose boundary is kept several smoothing lengths away from the
+control region.
+
+\subsection{Extension domain}
+\label{sec:extension}
+
+The parameter is regarded as living on a domain $X \supseteq \Bf$ ---
+the whole body, or the ball including the buffer shell --- and the
+forward model reads only its restriction to $\Bf$; the derivative $j$ is
+supported in $\Bf$, and the Riesz solve spreads the gradient into
+$X\setminus\Bf$, where it is inert. This removes any boundary condition
+on the parameter at the fluid--solid interface, which is precisely where
+the density action concentrates and where an artificial Dirichlet or
+Neumann condition would bias every update. The outer condition (Dirichlet
+or natural) acts at $\partial X$, at distance $\gg L$ from $\Bf$, and its
+influence decays like $e^{-d/L}$. The extended field is continuous: it is
+a phantom in the solid, not the solid's density, which is separate data.
+A consequence: updates in a metric of order $s \ge 1/2$ cannot create
+discontinuities in $\rho|_{\Bf}$ (step functions are in $H^s$ only for
+$s < 1/2$); discontinuities present in the initial density are kept,
+none are generated.
+
+\subsection{Fractional orders}
+
+For a positive self-adjoint operator $\mathcal{A}$ and $0 < \sigma < 1$,
+Balakrishnan's formula \cite{Balakrishnan1960}
+\begin{equation}
+  \mathcal{A}^{-\sigma} = \frac{\sin\pi\sigma}{\pi}\int_0^\infty
+  t^{-\sigma}\,(t + \mathcal{A})^{-1}\,\mathrm{d}t
+  \label{eq:balakrishnan}
+\end{equation}
+follows from the scalar identity $\int_0^\infty t^{-\sigma}(t+\lambda)^{-1}
+\mathrm{d}t = \lambda^{-\sigma}\pi/\sin\pi\sigma$ ($\lambda > 0$) and
+the spectral theorem. For the metric of order $s = n + \sigma$ the
+gradient is $g = \mathcal{A}_h^{-s}M^{-1}j$; using
+$(t + M^{-1}\tilde A)^{-1}M^{-1} = (tM + \tilde A)^{-1}$,
+\begin{equation}
+  \mathcal{A}_h^{-\sigma}M^{-1}j = \frac{\sin\pi\sigma}{\pi}
+  \int_0^\infty t^{-\sigma}\,\bigl((\alpha + t)M + \beta K\bigr)^{-1} j\,\mathrm{d}t ,
+\end{equation}
+each integrand evaluation a Helmholtz solve with a shifted, better
+conditioned operator. With $t = e^{y}$ the integrand decays exponentially
+in both directions (like $e^{(1-\sigma)y}$ as $y\to-\infty$ and
+$e^{-\sigma y}$ as $y\to\infty$), and the trapezoidal (sinc) rule in $y$
+converges exponentially in the number of nodes (Bonito \& Pasciak
+\cite{BonitoPasciak2015}). The order $s$ becomes a continuous
+regularisation parameter, realised with nothing but shifted solves of
+existing machinery; the same Riesz and fractional-power infrastructure
+serves every parameter field of the library's inverse problems.
+
+\subsection{Constraints and priors in the metric}
+
+\emph{Mass.} The mass functional $m(\rho) = \int_{\Bf}\rho$ has
+derivative vector $m_i = \int_{\Bf}\psi_i$, independent of $\rho$; its
+Riesz representative $r = G^{-1}m$ is fixed and cached. The
+$G$-orthogonal projection of a gradient onto the mass-preserving
+directions is
+\begin{equation}
+  g_\perp = g - \frac{m^{T}g}{m^{T}r}\,r ,
+\end{equation}
+which satisfies $m^{T}g_\perp = 0$ and $\ip{g_\perp}{r}_G = 0$: one scalar
+correction per step. Further linear constraints (centre of mass and
+products of inertia in the rotating case, \S\ref{sec:rotation}) add
+cached representatives and a small Gram matrix.
+
+\emph{Prior.} A Tikhonov term $\frac{\lambda}{2}(\rho-\rho_{\mathrm{ref}})^T
+G(\rho-\rho_{\mathrm{ref}})$ in the \emph{same} metric has derivative
+$\lambda G(\rho-\rho_{\mathrm{ref}})$ and hence gradient
+$\lambda(\rho-\rho_{\mathrm{ref}})$: plain shrinkage, no extra solve.
+This requires $\rho_{\mathrm{ref}}$ on $X$ (a continuous extension of the
+fluid reference profile, satisfying the outer condition) and the prior
+measured with exactly the Gram used for the gradient.
+
+% ======================================================================
+\section{Stage 2: the shape as a control}
+\label{sec:stage2}
+
+\subsection{Gauge}
+
+Admit $\varphi_e$ among the controls. The pair $(\rho,\varphi_e)$
+carries the relabelling gauge: for a diffeomorphism $\xi$ of $B$
+preserving every region and equal to the identity near $\partial D$,
+$(J_\xi\,\rho\circ\xi,\ \varphi_e\circ\xi)$ describes the same physical
+state. Since $J$ depends only on the physical state, it is
+gauge-invariant. Infinitesimally, with $\xi = \mathrm{id} + t\bfeta$
+($\bfeta$ tangent to $\partial B$ and to every interface), $J_\xi \approx
+1 + t\Div\bfeta$ and $\rho\circ\xi \approx \rho + t\bfeta\cdot\nabla\rho$,
+so the gauge directions are
+\begin{equation}
+  (\delta\rho, \delta\varphi_e) = (\Div(\rho\bfeta),\ F_e\bfeta),
+\end{equation}
+the referential counterparts of the trivial displacements of
+Friedman \& Schutz \cite{FriedmanSchutz1978}. The derivative annihilates
+them, so in exact arithmetic the gradient in any metric is orthogonal to
+the gauge and descent never drifts along it. Discretely, invariance is
+only approximate, and spurious gauge components accumulate over many
+iterations --- the optimisation analogue of the semi-convergence of
+\texttt{doc/gauge\_penalty\_iteration.tex}. The redundancy is eliminated
+rather than projected: $\varphi_e = \varphi[h]$ is parameterised by
+interface-shape coefficients $h$ (topography of the fluid--solid
+interfaces and of the surface, e.g.\ in spherical harmonics), extended
+into the regions by a fixed rule and equal to the identity at the DtN
+sphere. If $h\mapsto$ (physical interface shapes) is injective, a
+relabelling with $\varphi[h]\circ\xi = \varphi[h']$ forces $h = h'$ and
+$\xi = \mathrm{id}$: no gauge remains. This matches the mapping layer and
+keeps the computational interfaces spherical.
+
+\subsection{The shape derivative}
+
+The envelope theorem now needs its Lagrangian form, because the
+divergence constraint depends on the map. Pulled back, the saddle reads:
+$a_\varphi(\bu,\bv) = \int 2\mu\,\eps_\varphi(\bu):\eps_\varphi(\bv)\,J$
+with $\eps_\varphi(\bu) = \sym(D\bu\,F^{-1})$; divergence
+$\tr(D\bu\,F^{-1})J$; load $\ell(\bv) = -\int\rho\,(F^{-T}\nabla\zeta)
+\cdot\bv$; Poisson $b_\varphi$ with $a(F) = JF^{-1}F^{-T}$ and the
+map-independent source $-\int\rho\chi$. With
+$\mathcal{L}(\bu,p;\rho,\varphi) = -\tfrac12a_\varphi(\bu,\bu) +
+\ell(\bu) + \int p\,\tr(D\bu F^{-1})J$ and $(\bu,p)$ the saddle point,
+\begin{equation}
+  \delta J = -\tfrac12\,\delta a_\varphi(\bu,\bu)
+  - \int\rho\,(\delta F^{-T}\nabla\zeta)\cdot\bu
+  + \delta b_\varphi(\zeta, w)
+  + \int p\,\delta\bigl[\tr(D\bu F^{-1})J\bigr] ,
+  \label{eq:shape-derivative}
+\end{equation}
+with $\delta F = D\delta\varphi$, $\delta(F^{-1}) = -F^{-1}\delta F F^{-1}$,
+$\delta J = J\tr(F^{-1}\delta F)$, $w$ the mapped adjoint of
+\S\ref{sec:derivative}, and $\delta b_\varphi(\zeta,w) = \frac{1}{4\pi G}
+\int\ip{a'(\delta\varphi)\nabla\zeta}{\nabla w}$ with $a'$ as in
+\texttt{doc/gravitating\_elasticity.md} \S3.1. The third term follows as
+before: differentiating $b_\varphi(\zeta,\chi) = -\int\rho\chi$ gives
+$b_\varphi(\delta\zeta,\chi) = -\delta b_\varphi(\zeta,\chi)$, and the
+$\nabla\delta\zeta$ part of the load derivative is $-b_\varphi(\delta\zeta,w) =
+\delta b_\varphi(\zeta,w)$. All terms are volume integrals: these are the
+moving-domain transport terms, the penalised fluid region moving with
+$\varphi_e$, written in the distributed (volume) form of the shape
+derivative. For $\JF$ the no-slip condition $\bu = 0$ on $\Sigma$ is
+map-independent in referential coordinates. The equivalent boundary
+(Hadamard) form concentrates the derivative on the interfaces as normal
+speed times jumps of energy densities, paired through the Nanson normal
+$\bnu = \cof(F_e)\bN$ with the referential measure (the Jacobian
+warning of \texttt{doc/slip\_interface.tex}); the volume form is
+preferred discretely (Hiptmair, Paganini \& Sargheini
+\cite{HiptmairPaganiniSargheini2015}). An inner core's rigid trace
+$\bu = W\varphi_e + \mathbf{t}$ on its boundary (Remark~\ref{rem:innercore})
+depends on the map and contributes a further interface term
+$\int_{\partial\Bs^{(2)}}(P\bN)\cdot W\delta\varphi\dS$ with the fluid
+traction per referential area, paired through Nanson; its sign and the
+rest of that case are to be fixed with the stage-2 implementation.
+
+The derivative of the state with respect to interface location is what
+the interface-shift perturbation benchmark certifies
+(\texttt{benchmarks/perturbation/README.md}); shift-type maps must be
+used in their interpolated-$F$ form and with gradient kinks aligned with
+mesh attributes, as documented there.
+
+\subsection{What stage 2 is for}
+
+By \S\ref{sec:zeroset}, a fluid region enclosed by a connected solid is
+always feasible at fixed shape, so for the equilibrium-state functional
+$\JF$ the shape is a genuine control only where fluid supports its own
+boundary --- free fluid surfaces (oceans, wholly fluid bodies), fluid
+interfaces with prescribed density jumps --- where an inner core must be
+balanced, or where the density is restricted (\S\ref{sec:zeroset}(c),
+e.g.\ the rearrangement semantics). For the hydrostatic-figure functional
+$\Jh$, every density interface must become an equipotential, and the
+fixed-aspherical-geometry case is a useful intermediate diagnostic:
+$\Jh > 0$ at the stage-1 minimiser quantifies the infeasibility of a
+non-equipotential interface, and stage~2 drives it to zero.
+
+\subsection{Rotation}
+\label{sec:rotation}
+
+A steady rotation $\bm{\Omega}$ adds the centrifugal potential
+$\psi = -\tfrac12|\bm{\Omega}\times\bx|^2$ (house convention: the
+centrifugal acceleration is $-\nabla\psi$), $\bff = \rho\nabla(\Phi+\psi)$,
+turning equilibrium states into equilibrium figures. $\psi$ is
+independent of $\rho$, so \eqref{eq:gradient} acquires only
+$-\bu\cdot\nabla\psi$, and $J$ is no longer homogeneous. Compatibility is
+no longer automatic: $\int\rho\nabla\psi = -\Omega^2 M\bx_{\perp,\mathrm{cm}}$
+vanishes iff the centre of mass lies on the rotation axis, and the
+torque $\int\rho\,\bx\times\nabla\psi$ (with $\bm{\Omega}$ along
+$\mathbf{e}_3$, components $\Omega^2\int\rho\,x_2x_3$ and
+$-\Omega^2\int\rho\,x_1x_3$) vanishes iff the axis is a principal axis of
+inertia. Both are linear in $\rho$ and enter as additional projected
+constraints (\S\ref{sec:sobolev}). Deferred: Coriolis and the
+Tisserand-frame machinery in the perturbation layer, finite-strain
+reference changes, coupling to viscoelastic evolution.
+
+% ======================================================================
+\section{Algorithms and verification}
+\label{sec:algorithms}
+
+\subsection{Optimisation loop}
+
+Nonlinear conjugate gradients (Polak--Ribi\`ere with restart,
+\cite{PolakRibiere1969,NocedalWright}) in the chosen metric:
+$d_k = -g_k + \beta_k d_{k-1}$, with
+\begin{equation}
+  \beta_k = \max\Bigl(0,\ \frac{\ip{g_k}{g_k - g_{k-1}}_G}{\ip{g_{k-1}}{g_{k-1}}_G}\Bigr),
+  \qquad \ip{g}{h}_G = j^{T}h \ \ (j = Gg),
+\end{equation}
+so no product with $G$ is needed. Step lengths by Armijo backtracking
+\cite{Armijo1966}. Without bounds an exact line search is cheap in
+stage~1: $\ell_{\rho+\tau d}$ is quadratic in $\tau$, so
+$\bu(\tau) = \bu_0 + \tau\bu_1 + \tau^2\bu_2$ with $\bu_1$, $\bu_2$ the
+saddle solutions for the loads $-\ip{d\nabla\Phi + \rho\nabla\Phi[d]}{\cdot}$
+and $-\ip{d\nabla\Phi[d]}{\cdot}$; with $a(\bu_i,\bu_k) = \ell_i(\bu_k)$,
+$J(\tau)$ is an explicit quartic, minimised by solving a cubic --- one
+Poisson and two saddle solves per line search.
+
+\subsection{Bounds and mass}
+
+Pointwise bounds $\rho_{\min}\le\rho\le\rho_{\max}$ together with the mass
+constraint make the projection a singly linearly constrained,
+box-constrained quadratic program. MFEM's \texttt{SLBQPOptimizer} solves
+$\min\norm{x - x_t}_2$ subject to $w^Tx = a$, $x_{\mathrm{lo}}\le x\le
+x_{\mathrm{hi}}$ in the Euclidean coefficient norm, which is the $L^2$
+projection for a lumped (diagonal) mass after the scaling
+$x \mapsto M_L^{1/2}x$. Projection with bounds in a non-diagonal metric
+$G$ is a genuine QP; the practical compromise is the metric for the
+direction and the lumped-$L^2$ projection for feasibility. Nodal bounds
+imply pointwise bounds only for order one (or a Bernstein basis).
+
+\subsection{Advection loop}
+
+Poisson for $\Phi$, saddle for $\bu$, then a transport step of
+\eqref{eq:advection} with a time step limited by the CFL condition and by
+the energy decrease $\Delta E \approx -2J\Delta t$, with the discrete
+divergence handled as in \S\ref{sec:energy}.
+
+\subsection{Verification}
+\label{sec:verification}
+
+\begin{itemize}
+\item \emph{Finite differences}: $(J_h(\rho + \eta\delta) - J_h(\rho -
+  \eta\delta))/2\eta$ against $j^{T}\delta$ for random and structured
+  $\delta$; the Taylor remainder $|J_h(\rho+\eta\delta) - J_h(\rho) -
+  \eta j^T\delta| = O(\eta^2)$. Being the exact discrete gradient, the
+  agreement is limited by solver tolerances only.
+\item \emph{Euler identity} \eqref{eq:euler}: $\int_B\rho J' = 4J$ with
+  the derivative evaluated on the whole density (solid included).
+\item \emph{Hessian}: symmetry $\delta_1^TH\delta_2 = \delta_2^TH\delta_1$
+  and finite differences of $j$.
+\item \emph{Cross-check of the functionals}: $\Jmu$ against $\JF$ over a
+  sweep of $\mu_{\mathrm{s}}/\mu_{\mathrm{f}}$, expecting
+  $\Jmu - \JF = O(1/\mu_{\mathrm{s}})$ and convergence of the solid stress
+  output (Proposition~\ref{prop:Jmu}); $\Ja > 0$ at a feasible aspherical
+  model as the leakage control (Proposition~\ref{prop:leakage}).
+\item \emph{Stage 2}: gradients against the interface-shift benchmark,
+  and the gauge orthogonality $j^T(\Div(\rho\bfeta), F_e\bfeta) \approx 0$
+  as a discretisation diagnostic.
+\end{itemize}
+
+\paragraph{Milestone.} Fixed-shape density restoration on the fluid-core
+model (spherical fluid core, spherical solid mantle, buffer): start from
+a deliberately non-barotropic fluid density (the hydrostatic profile plus
+a mass-free lateral perturbation) and drive $J$ to the discretisation
+floor. The two routes have different, known targets. With the prior
+$\rho_{\mathrm{ref}}$ the hydrostatic profile, the optimisation route
+must recover $\rho_{\mathrm{ref}}$ (it is a zero of $J$ and of the
+prior). The advection route must reach a stable rearrangement of the
+starting material; the global minimiser of $E$ among rearrangements is
+the symmetric decreasing rearrangement $\rho^*$ of the starting density
+(\S\ref{sec:energy}; by Remark~\ref{rem:shell} the spherical mantle
+exerts no force in the cavity), computable directly from the distribution
+function. The first measured study compares $L^2$, $H^1$ and $H^2$
+metrics (iteration counts against mesh refinement; a proper metric
+should give mesh-independent counts), and the optimisation against the
+advection route; then $\JF$ against $\Jmu$ on an aspherical model.
+
+% ======================================================================
+\begin{thebibliography}{99}
+
+\bibitem{AW10}
+D.~Al-Attar, J.~H. Woodhouse,
+\emph{On the parametrization of equilibrium stress fields in the Earth},
+Geophys. J. Int. 181 (2010), 567--576.
+
+\bibitem{AC16}
+D.~Al-Attar, O.~Crawford,
+\emph{Particle relabelling transformations in elastodynamics},
+Geophys. J. Int. 205 (2016), 575--593.
+
+\bibitem{MA24}
+M.~Maitra, D.~Al-Attar,
+\emph{On the elastodynamics of rotating planets},
+Geophys. J. Int. 237 (2024), 1301--1338.
+
+% TODO: verify page range of Friedman & Schutz (1978).
+\bibitem{FriedmanSchutz1978}
+J.~L. Friedman, B.~F. Schutz,
+\emph{Lagrangian perturbation theory of nonrelativistic fluids},
+Astrophys. J. 221 (1978), 937--957.
+
+\bibitem{GR86}
+V.~Girault, P.-A. Raviart,
+\emph{Finite Element Methods for Navier--Stokes Equations},
+Springer, 1986.
+
+\bibitem{TaylorHood}
+C.~Taylor, P.~Hood,
+\emph{A numerical solution of the Navier--Stokes equations using the
+finite element technique},
+Comput. Fluids 1 (1973), 73--100.
+
+\bibitem{Danskin}
+J.~M. Danskin,
+\emph{The Theory of Max-Min and its Application to Weapons Allocation
+Problems},
+Springer, 1967.
+
+\bibitem{Balakrishnan1960}
+A.~V. Balakrishnan,
+\emph{Fractional powers of closed operators and the semigroups generated
+by them},
+Pacific J. Math. 10 (1960), 419--437.
+
+\bibitem{BonitoPasciak2015}
+A.~Bonito, J.~E. Pasciak,
+\emph{Numerical approximation of fractional powers of elliptic
+operators},
+Math. Comp. 84 (2015), 2083--2110.
+
+% TODO: verify the precise statement used (maximum of a strictly convex,
+% weakly sequentially continuous functional over the weak closure of a
+% rearrangement class is attained in the class) and its location in Burton (1987).
+\bibitem{Burton1987}
+G.~R. Burton,
+\emph{Rearrangements of functions, maximization of convex functionals,
+and vortex rings},
+Math. Ann. 276 (1987), 225--253.
+
+% TODO: verify theorem number of the Riesz rearrangement inequality.
+\bibitem{LiebLoss}
+E.~H. Lieb, M.~Loss,
+\emph{Analysis}, 2nd ed.,
+American Mathematical Society, 2001.
+
+% TODO: verify volume/pages.
+\bibitem{HiptmairPaganiniSargheini2015}
+R.~Hiptmair, A.~Paganini, S.~Sargheini,
+\emph{Comparison of approximate shape gradients},
+BIT Numer. Math. 55 (2015), 459--485.
+
+% TODO: verify issue/pages.
+\bibitem{PolakRibiere1969}
+E.~Polak, G.~Ribi\`ere,
+\emph{Note sur la convergence de m\'ethodes de directions conjugu\'ees},
+Rev. Fran\c{c}aise Informat. Recherche Op\'erationnelle 3 (1969), 35--43.
+
+\bibitem{NocedalWright}
+J.~Nocedal, S.~J. Wright,
+\emph{Numerical Optimization}, 2nd ed., Springer, 2006.
+
+\bibitem{Armijo1966}
+L.~Armijo,
+\emph{Minimization of functions having Lipschitz continuous first
+partial derivatives},
+Pacific J. Math. 16 (1966), 1--3.
+
+\end{thebibliography}
+
+\end{document}

@@ -5,6 +5,7 @@
 #include "AdGIA/bilininteg.hpp"
 #include "AdGIA/coefficient.hpp"
 #include "AdGIA/elastic_tensor.hpp"
+#include "AdGIA/equilibrium_figures.hpp"
 #include "AdGIA/index.hpp"
 #include "AdGIA/json.hpp"
 #include "AdGIA/lininteg.hpp"

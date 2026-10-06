@@ -1,5 +1,6 @@
-target_sources(${PROJECT_NAME} PRIVATE null_space.cpp 
+target_sources(${PROJECT_NAME} PRIVATE null_space.cpp
                                        background.cpp
+                                       equilibrium_figures.cpp
                                        bilininteg.cpp
                                        coefficient.cpp
                                        lininteg.cpp
