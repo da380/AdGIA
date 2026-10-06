@@ -47,6 +47,10 @@ import matplotlib.pyplot as plt  # noqa: E402
 HERE = Path(__file__).resolve().parent
 REPOSITORY = HERE.parent.parent.parent
 
+sys.path.insert(0, str(HERE.parent.parent / "common"))
+
+from outputs import outside_source  # noqa: E402
+
 COLOURS = {"RK4": "#e34948", "ETD1": "#e87ba4", "BE": "#eda100",
            "SDIRK23": "#2a78d6", "ExpTrap": "#1baf7a",
            "Adaptive": "#4a3aa7"}
@@ -152,6 +156,7 @@ def main() -> None:
     p.add_argument("--figures-only", action="store_true")
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args()
+    args.out = outside_source(args.out)
     args.out.mkdir(parents=True, exist_ok=True)
     program = find_program(args.program)
     mesh = REPOSITORY / "data" / "beam-quad.mesh"

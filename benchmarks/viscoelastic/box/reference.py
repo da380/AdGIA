@@ -227,6 +227,12 @@ def box_reference(case: Case, times: list[float]) -> dict:
     Px[0, 0] += 1.0
     S = case.amplitude * case.history(t)
     if case.load == "uniaxial_stress":
+        if any(m <= 0.0 for m in mu):
+            # the modal engine divides by sqrt(mu_k tau_k), and a dead
+            # branch's internal variable still evolves in the FE run, so
+            # it cannot just be dropped here as column_reference does
+            raise SystemExit("box reference: a zero-modulus branch is not "
+                             "supported under stress control")
         mu_u = mu_inf + sum(mu)
         delta, q = zero_d_response(2 * mu_u, [2 * m for m in mu], tau,
                                    case.history, case.amplitude, t)

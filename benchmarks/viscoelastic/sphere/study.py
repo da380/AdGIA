@@ -150,6 +150,15 @@ class Runner:
         if self.dry:
             print("$ " + shlex.join(cmd))
             return None
+        if res.exists():
+            try:
+                json.loads(res.read_text())
+            except json.JSONDecodeError:
+                # a run killed mid-write leaves a truncated file: remake
+                # it rather than crash the study on it in record()
+                print(f"  {res}: unreadable (interrupted run?), remade",
+                      flush=True)
+                res.unlink()
         if not res.exists():
             p = subprocess.run(cmd, capture_output=True, text=True)
             if p.returncode != 0 or not res.exists():

@@ -581,16 +581,12 @@ the jump, as the box benchmark driver does.
    amplitude sweep (`talk_data/`) and the dense viscoelastic histories
    (`viscoelastic_series/`). Campaign stages (or a `--stages docs` group)
    would make the whole documentation reproducible with one command.
-2. Scripts that write relative to the working directory without the
-   source-tree guard: only the viscoelastic box and sphere scripts pass
-   output paths through `common/outputs.py`. `love_numbers/run.py`
-   (`--out runs`), `campaign.py` (`--out runs_campaign`),
-   `viscoelastic/stepping/survey.py` (`--out survey`), `talk_figures.py`
-   (`--out talk`), `perturbation/perturbation_check.py` (default beside
-   the case), `viscoelastic/love/laplace_reference.py` / `compare.py` and
-   `common/make_case.py` write wherever they are started, including into
-   the source tree. Apply `outside_source` to their defaults; outputs
-   belong in the build tree.
+2. ~~Scripts that write relative to the working directory without the
+   source-tree guard.~~ Done (6 Oct 2026): every benchmark script now
+   passes its output root through `common/outputs.py::outside_source`.
+   Regenerating the committed references of
+   `viscoelastic/love/references/` is now a build-tree write plus a
+   copy.
 
 **See:** `benchmarks/campaign.py`; `benchmarks/common/outputs.py`;
 `doc/benchmarks.tex`, "Reproducing the figures".

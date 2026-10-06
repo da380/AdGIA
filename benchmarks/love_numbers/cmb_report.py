@@ -14,8 +14,9 @@ below which mesh error the approximation is the bottleneck.
     python cmb_report.py runs --order 3 --out runs/cmb_summary.md
 
 The comparison is of the load Love numbers: h' and l' from degree one,
-k' from degree two (frame-fixed at one), degree zero left out with a
-fluid layer (README.md).
+k' from degree two (frame-fixed at one). Degree zero is always left out:
+with a fluid layer the Dahlen-family treatments are wrong there by
+design (README.md), and the report is about those treatments.
 
 Combined runs (`run.py --cmb ... --combined`, results suffixed
 `_combined`) get tables of their own, their rows marked "(combined)" and
@@ -105,6 +106,8 @@ def main() -> None:
             degrees = sorted(set.intersection(
                 *(set(r["values"]) for r in runs.values())) & set(refs))
             degrees = [l for l in degrees if l >= 1]
+            if not degrees:
+                continue  # a degree-zero-only run: nothing to compare
             heading = (f"## {case} (order {order}, degrees "
                        f"{degrees[0]}-{degrees[-1]})")
             if mode:

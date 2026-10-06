@@ -46,6 +46,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parent / "common"))
 
 from costs import load_cost  # noqa: E402
+from outputs import outside_source  # noqa: E402
 
 COLOURS = {"dahlen": "#2a78d6", "gauged": "#eb6834",
            "referential": "#eda100", "slip": "#008300",
@@ -197,21 +198,26 @@ def identity_figure(campaign: Path, out: Path) -> None:
              "fluid core (welded, gauged)")]:
         path = campaign / log
         if path.exists():
-            bars.append((label, measured(path), GOOD))
+            bars.append((label, measured(path), GOOD, False))
     # The slipping interface: read the campaign's slip identity log when
     # it exists; the fallback constant is the measurement of
-    # doc/benchmarks.tex, "Leg B" (fluid_core, A = 0.02, h = 0.3). The
-    # slipping-interface forms are not certified covariant, so this bar
-    # is informational.
+    # doc/benchmarks.tex, "Leg B" (fluid_core, A = 0.02, h = 0.3), and is
+    # hatched and labelled so it cannot pass for a measurement of this
+    # tree. The slipping-interface forms are not certified covariant, so
+    # this bar is informational.
     slip_log = campaign / "identity_fluid_core_slip_h0.3.txt"
-    bars.append(("fluid core (slip interface)",
-                 measured(slip_log) if slip_log.exists() else 1.2e-2,
-                 WARN))
+    if slip_log.exists():
+        bars.append(("fluid core (slip interface)", measured(slip_log),
+                     WARN, False))
+    else:
+        bars.append(("fluid core (slip interface)\nnot rerun: the number "
+                     "of doc/benchmarks.tex", 1.2e-2, WARN, True))
     fig, ax = plt.subplots(figsize=(9.2, 4.2))
     y = range(len(bars))[::-1]
     ax.barh(y, [b[1] for b in bars], color=[b[2] for b in bars],
-            height=0.6)
-    for yi, (_, v, _c) in zip(y, bars):
+            hatch=["///" if b[3] else "" for b in bars],
+            edgecolor="white", height=0.6)
+    for yi, (_, v, _c, _d) in zip(y, bars):
         ax.text(v * 1.4, yi, f"{v:.0e}", va="center", fontsize=13,
                 color=MUTED)
     ax.set_yticks(y, [b[0] for b in bars])
@@ -242,8 +248,11 @@ def derivative_figure(case: Path, out: Path, eps: float = 0.02,
     perturbed models, the Love number by marker."""
     refs = {}
     for s in (eps, -eps):
-        r = json.loads((case / f"shift_{s:+g}" /
-                        "reference.json").read_text())
+        path = case / f"shift_{s:+g}" / "reference.json"
+        if not path.exists():
+            print(f"derivative figure skipped: no {path}")
+            return
+        r = json.loads(path.read_text())
         refs[s] = {l: {q: r[f"{q}_load"][i] for q in "hlk"}
                    for i, l in enumerate(r["degree"])}
     shape = {"h": "o", "l": "s", "k": "^"}
@@ -272,6 +281,10 @@ def derivative_figure(case: Path, out: Path, eps: float = 0.02,
                         else "none", markeredgewidth=2.0)
                 lo = d1 if lo is None else min(lo, d1, d3)
                 hi = d1 if hi is None else max(hi, d1, d3)
+    if lo is None:
+        print(f"derivative figure skipped: no shifted results under {case}")
+        plt.close(fig)
+        return
     pad = 0.1 * (hi - lo)
     ax.plot([lo - pad, hi + pad], [lo - pad, hi + pad], color=MUTED,
             linewidth=1.0, zorder=0)
@@ -574,6 +587,7 @@ def main() -> None:
                         "missing. A combined bar's cost is its one load "
                         "solve for all the degrees")
     args = p.parse_args()
+    args.out = outside_source(args.out)
     args.out.mkdir(parents=True, exist_ok=True)
 
     methods_figure(args.methods_case, args.out, args.combined)

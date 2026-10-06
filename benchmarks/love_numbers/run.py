@@ -57,6 +57,7 @@ sys.path.insert(0, str(HERE.parent / "common"))
 
 import models  # noqa: E402
 from drivers import find_programs, run  # noqa: E402
+from outputs import outside_source  # noqa: E402
 
 
 def main() -> None:
@@ -152,6 +153,8 @@ def main() -> None:
     p.add_argument("--dry-run", action="store_true",
                    help="print the commands without running them")
     args = p.parse_args()
+    if not args.dry_run:
+        args.out = outside_source(args.out)
 
     programs = Path(".") if args.dry_run and args.programs is None \
         else find_programs(args.programs)

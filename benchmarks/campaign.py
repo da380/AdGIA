@@ -85,6 +85,7 @@ sys.path.insert(0, str(HERE / "common"))
 
 from costs import load_cost  # noqa: E402
 from drivers import find_programs, run  # noqa: E402
+from outputs import outside_source  # noqa: E402
 
 #: Which methods and stages run on which models, beyond the Eulerian
 #: pair, which run on everything.
@@ -187,7 +188,8 @@ def main() -> None:
 
     programs = Path(".") if args.dry_run and args.programs is None \
         else find_programs(args.programs)
-    py, mpiexec, out = sys.executable, args.mpiexec, args.out
+    py, mpiexec = sys.executable, args.mpiexec
+    out = args.out if args.dry_run else outside_source(args.out)
     loves = out / "love_numbers"
     if not args.dry_run:
         for d in (loves, out / "relabelling", out / "perturbation"):

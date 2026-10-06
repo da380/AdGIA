@@ -62,13 +62,15 @@ inline double Seconds(Clock::time_point since) {
   return std::chrono::duration<double>(Clock::now() - since).count();
 }
 
-// A number as JSON: null when not finite.
+// A number as JSON: null when not finite. 17 significant digits make the
+// double round-trip exact, so differencing scripts see the solver's
+// numbers, not 1-ulp reading noise.
 inline std::string Num(real_t x) {
   if (!std::isfinite(x)) {
     return "null";
   }
   std::ostringstream os;
-  os << std::setprecision(16) << x;
+  os << std::setprecision(17) << x;
   return os.str();
 }
 
@@ -436,6 +438,11 @@ class Case {
     // The method solved: the Eulerian pair share the
     // LinearQuasiStaticMixedSelfGravitatingProblem, the referential family
     // its own construction below.
+    MFEM_VERIFY(!options.gauged || std::string(options.method) == "dahlen" ||
+                    std::string(options.method) == "gauged",
+                "-gauged chooses the gauged Eulerian method: it cannot be "
+                "combined with -method "
+                    << options.method << ".");
     method = options.gauged ? "gauged" : options.method;
     MFEM_VERIFY(method == "dahlen" || method == "gauged" ||
                     method == "referential" || method == "slip" ||
@@ -966,7 +973,12 @@ class Case {
        << (options_.solver == 0 ? "schur_cg" : "block_minres")
        << "\",\n  \"method\": \"" << method
        << "\",\n  \"fluid_treatment\": \""
-       << (method == "gauged" ? "gauged" : "dahlen") << "\""
+       // dahlen keeps Dahlen's fluid; the gauged Eulerian and the welded
+       // referential methods gauge it; the slip pair lets it slip
+       << (method == "dahlen"       ? "dahlen"
+           : method == "slip" || method == "slip_broken" ? "slip"
+                                                         : "gauged")
+       << "\""
        << ",\n  \"cmb\": \"" << options_.cmb << "\""
        << (options_.map_amplitude != 0.0
                ? ",\n  \"map_amplitude\": " + Num(options_.map_amplitude) +
