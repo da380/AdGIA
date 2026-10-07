@@ -46,7 +46,8 @@ def run_driver(programs: str, mpiexec: str, np: int, out: Path,
 def compare(d: dict, quiet: bool = False) -> dict[int, dict[str, float]]:
     """Relative errors against the exact reference, per degree."""
     m = DiscModel(lam=d["kappa_s"] - d["mu_s"], mu=d["mu_s"],
-                  kappa_f=d["kappa_f"], c=d["r_cmb"], a=1.0)
+                  kappa_f=d["kappa_f"], c=d["r_cmb"], a=1.0,
+                  P0=d.get("P0", 0.0))
     errors: dict[int, dict[str, float]] = {}
     for e in d["degrees"]:
         l = e["l"]
@@ -91,6 +92,57 @@ def identity(dw: dict, ds: dict) -> float:
     return worst
 
 
+def shift_mode(args, extra) -> bool:
+    """The shift leg: solve at +/- eps through the mapped assembly on
+    the fixed mesh and compare the central difference of the surface
+    responses with the exact interface derivative of the reference.
+    This isolates the mapped volume operators (welded) and, on top of
+    them, the mapped constraint row (slip) under a jumping F."""
+    eps = args.shift
+    ok = True
+    for order in args.orders:
+        for ref in args.refinements:
+            print(f"-- shift {eps}, order {order}, refinements {ref}")
+            for method in ("welded", "slip"):
+                runs = {}
+                for sgn, tag in ((+1, "+"), (-1, "-")):
+                    out = (Path(args.out) /
+                           f"results_{method}_o{order}r{ref}"
+                           f"_shift{tag}{eps}.json")
+                    runs[sgn] = run_driver(
+                        args.programs, args.mpiexec, args.np, out, method,
+                        order, ref, args.lmax,
+                        extra + ["-shift", str(sgn * eps)])
+                d = runs[+1]
+                m = DiscModel(lam=d["kappa_s"] - d["mu_s"], mu=d["mu_s"],
+                              kappa_f=d["kappa_f"], c=d["r_cmb"], a=1.0,
+                              P0=d.get("P0", 0.0))
+                print(f"  {method}: central difference vs exact d/dc")
+                for ep, em in zip(runs[+1]["degrees"], runs[-1]["degrees"]):
+                    l = ep["l"]
+                    s = solve(m, l)
+                    if l == 1:
+                        fd = ((ep["ur_a"] + ep["ut_a"])
+                              - (em["ur_a"] + em["ut_a"])) / (2 * eps)
+                        ex = (s.derivatives["ur_a"]
+                              + s.derivatives["ut_a"])
+                        items = [("d(U+V)_a/dc", fd, ex)]
+                    else:
+                        items = [("dur_a/dc",
+                                  (ep["ur_a"] - em["ur_a"]) / (2 * eps),
+                                  s.derivatives["ur_a"])]
+                        if l >= 2:
+                            items.append(
+                                ("dut_a/dc",
+                                 (ep["ut_a"] - em["ut_a"]) / (2 * eps),
+                                 s.derivatives["ut_a"]))
+                    for name, fd, ex in items:
+                        rel = abs(fd - ex) / max(abs(ex), 1e-12)
+                        print(f"    l={l} {name:<12} FD {fd:>12.6f} "
+                              f"exact {ex:>12.6f}  rel {rel:.2e}")
+    return ok
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--orders", type=int, nargs="+", default=[2])
@@ -102,10 +154,20 @@ def main() -> int:
     p.add_argument("--mpiexec", default="mpiexec")
     p.add_argument("--identity-tol", type=float, default=1e-4,
                    help="welded-vs-slip gap allowed on every rung")
+    p.add_argument("--P0", type=float, default=0.0,
+                   help="rung 1: run with this uniform surface pressure "
+                        "(passed to the driver; the reference follows)")
+    p.add_argument("--shift", type=float, default=0.0,
+                   help="run the shift leg at +/- this eps instead of "
+                        "the absolute ladder")
     p.add_argument("--program-args", default="",
                    help="extra driver options, one string")
     args = p.parse_args()
     extra = args.program_args.split()
+    if args.P0:
+        extra += ["-P0", str(args.P0)]
+    if args.shift:
+        return 0 if shift_mode(args, extra) else 1
 
     ok = True
     ladders: dict[tuple[int, str], list[float]] = {}
@@ -114,7 +176,9 @@ def main() -> int:
             print(f"-- order {order}, refinements {ref}")
             runs = {}
             for method in ("welded", "slip"):
-                out = Path(args.out) / f"results_{method}_o{order}r{ref}.json"
+                tag = f"_P{args.P0}" if args.P0 else ""
+                out = (Path(args.out) /
+                       f"results_{method}_o{order}r{ref}{tag}.json")
                 runs[method] = run_driver(args.programs, args.mpiexec,
                                           args.np, out, method, order, ref,
                                           args.lmax, extra)

@@ -94,11 +94,12 @@ through Leg B. The AL normal–normal penalty with its 1/|ν| factor
 passes inside the strict Leg-B identity. The single-valued
 organisation's mismatch gravity pieces are assembled at φ_e = id and
 refuse maps outright (`Diffeomorphism::IsIdentity` guard); that
-limitation is separate. The reference docs still call mapped slipping
-results unverified: update them once the Leg-A refinement ladder is
-run (and the interface-shift derivative item below retested — it was
-predicted to share this defect and must be re-measured against the
-1-D reference with the fixed kernels).
+limitation is separate. The interface-shift derivative item below was re-measured with the
+fixed kernels (unchanged — the fix is provably inert for radial
+shifts) and subsequently resolved as gauge pollution plus the physics
+envelope (its own item); the "mapped slipping results unverified"
+wording in the reference docs can be retired on the strength of the
+order-3 ladder and the resolved derivative item.
 
 A data point from `examples/slipping_interface.cpp`: on the
 aspherical fluid-core meshes (radial-stretch reference, eps = 0.05,
@@ -163,12 +164,19 @@ example and the benchmark.
 
 ### Slipping class: missing diagnostics and noise
 
-**Status:** open (small).
+**Status:** open; item (1) is a NEEDED FIX (7 Oct 2026), items (2)–(4)
+small.
 
-(1) The slipping class records no per-refinement gauge residuals
-(`GaugeResiduals()` stays empty) and exposes no way to apply its fluid
-gauge penalty, so the gauge convergence of the slip path cannot be
-inspected as for the welded classes. (2) `NewRadialVacuumExtension`
+(1) **Needed fix.** The slipping class records no per-refinement gauge
+residuals (`GaugeResiduals()` stays empty) and exposes no way to apply
+its fluid gauge penalty, so the gauge convergence of the slip path
+cannot be inspected as for the welded classes, and no
+`WarnGaugeContraction` semi-convergence warning can fire. Evidence: the
+`slip_broken` interface-shift derivatives were gauge-polluted
+(semi-convergent at order 3, biased at order 2) with no warning, while
+the welded runs at the same settings reported it (next item). Fix:
+record the residuals per refinement and route them through the same
+contraction check as the welded classes. (2) `NewRadialVacuumExtension`
 prints MFEM "points were not found" warnings on the aspherical meshes
 (the retries resolve them; it is noise on every run). (3)
 `MaxIdentityDeviation` lives only in `benchmarks/common/relabelling.hpp`;
@@ -182,47 +190,70 @@ interface submesh.
 
 ### `slip_broken` interface-shift derivatives disagree with the 1-D reference
 
-**Status:** open; RE-MEASURED 8 Oct 2026 after the direction-slot fix:
-UNCHANGED (slip_broken h'₂ 25.1 %, l'₂ 11.5 %, k'₂ 18.7 %, h'₃ 5.6 %,
-l'₃ 23.2 %, k'₃ 4.9 % — the pre-fix numbers to within noise;
-referential identical to its pre-fix row too). The fix is PROVABLY
-inert here: the shift maps are radial, so their interpolated-F shears
-at the interface are normal–normal (`F = 1 + a⊗N` with `a ∥ N`), and
-for those the old `P_T F⁻¹` slot was already invariant (`P_T a = 0`) —
-the covariance defect only ever acted on tangential shears (the
-lateral relabelling). The earlier "probably the same defect" guess is
-retracted. The sharpened suspect is the next item — the broken-ζ side
-conventions under `[[F]] ≠ 0` across Σ, the one configuration the
-shift maps uniquely create: a one-sided data choice errs by
-O([[F]]) ∝ ε, invisible in the absolute solve (measured: 4e-3 at
-degrees 0 and 3) but O(1) in the ε-derivative — exactly the observed
-signature. The constraint-row b was already exonerated in the 2-D lab;
-`G_Σ`'s b, q and `B_Σ`'s data sides under a jumping F remain, and the
-resolution is the theory pass of the next item (what the §brokenzeta
-derivation says each form must consume when F jumps), paper-first.
+**Status:** RESOLVED 7 Oct 2026 — gauge pollution plus the physics
+envelope of the comparison; no formulation-level anomaly remains.
 
-On `fluid_core`, `h = 0.3`, order 2, shifts ε = ±0.02 of the CMB
-(interpolated-F shift maps, exact sweeps), the derivatives of the Love
-numbers with respect to the interface radius disagree with the 1-D finite
-difference of pyslfp solves far more for `slip_broken` than for the
-referential method on the same mesh and map:
+**What it was.** The recorded disagreement (`slip_broken` h'₂ 25 %,
+l'₂ 12 %, k'₂ 19 %, h'₃ 5.6 %, l'₃ 23 %, k'₃ 4.9 %, against referential
+6.4 / 12 / 1.7 / 1.9 / 14 / 0.8 %; `fluid_core`, `h = 0.3`, order 2,
+ε = ±0.02) was measured at the Love-number gauge setting, penalty
+ε_g = 0.01 with 3 Tikhonov refinements. At order 3 that setting is
+semi-convergent on this mesh (GaugeRefine contraction ~1.0 at degrees
+1–3); at order 2 it is silently biased. Only the welded classes could
+report it: the slipping classes record no gauge residuals
+(`GaugeResiduals()` stays empty), so the `slip_broken` runs carried no
+warning — the missing-diagnostics item above proved load-bearing. The
+earlier candidates were eliminated on the way: the direction-slot
+covariance fix is provably inert for radial shift maps (their
+interface shears are normal–normal, `a ∥ N`), and the side-convention
+hypothesis is retired by the theory pass and audit
+([f_jump_side_conventions.md](f_jump_side_conventions.md); "Broken-ζ
+interface forms when F jumps across Σ" below).
 
-| | h'₂ | l'₂ | k'₂ | h'₃ | l'₃ | k'₃ |
-|---|---|---|---|---|---|---|
-| `slip_broken` | 25 % | 12 % | 19 % | 5.6 % | 23 % | 4.9 % |
-| referential | 6.4 % | 12 % | 1.7 % | 1.9 % | 14 % | 0.8 % |
+**Definitive numbers** (gauge ε_g = 0.1, 7 refinements; ε = 0.02,
+lmax 3, `h = 0.3`; derivative relative difference against the pyslfp
+central difference):
 
-An earlier build gave k'₂ 39 %, k'₃ 11 %, l'₂ 2.8 % for `slip_broken`: the
-numbers move between builds, itself a symptom. Degree 0 agrees for both
-methods (0.8 %). The two methods share the shift map and the reference,
-so the difference sits in the slipping forms under a moving interface.
-The degree-2 rows of both methods also carry the ~17 % method-independent
-offset that is the O(N²) stratification mismatch between the 3-D
-compressible fluid and pyslfp's neutral fluid (see
-[future_work.md](future_work.md), "Neutral (Adams–Williamson) core
-model").
+| | order | h'₀ | h'₂ | l'₂ | k'₂ | h'₃ | l'₃ | k'₃ |
+|---|---|---|---|---|---|---|---|---|
+| referential | 2 | 0.79 % | 5.62 % | 11.1 % | 1.23 % | 1.58 % | 13.6 % | 0.53 % |
+| `slip_broken` | 2 | 0.78 % | 8.67 % | 7.85 % | 3.97 % | 2.95 % | 16.0 % | 1.97 % |
+| referential | 3 | 0.0027 % | 7.90 % | 7.30 % | 3.32 % | 2.86 % | 10.4 % | 1.19 % |
+| `slip_broken` | 3 | 0.0027 % | 11.6 % | 2.79 % | 6.36 % | 4.97 % | 13.9 % | 3.20 % |
 
-**See:** `doc/benchmarks.tex`, "The perturbation family" (Results);
+Absolute agreement with pyslfp at order 3 (worst compared Love number
+per degree, ε = −0.02 / 0 / +0.02): referential l = 2
+8.2 / 7.9 / 7.8e-2, `slip_broken` l = 2 5.4 / 4.8 / 4.3e-2; degree 0
+4.4e-5 / 1.5e-4 / 4.3e-5 for both. pyslfp's numerics are exonerated
+(ngll 5 → 12 moves every Love number and central-difference derivative
+by ≤ ~1e-10 relative); l'₂ = −0.0178, so the l' percentages sit on a
+small denominator.
+
+**Residual observations.** With a converged gauge the degree-2/3
+discrepancies are order-dependent and non-converging for BOTH methods,
+and the slip-vs-referential differences are mixed in sign across
+quantities and lie within that envelope. The envelope is consistent
+with the genuine physics difference between the 3-D full-fluid solves
+and the Dahlen-reduced reference together with the non-neutral
+resolution floor ("`fluid_core` h-ladder: residual items" below); the
+2-D disc family cannot yet split these on a non-neutral core ("Which
+tangential slips are removable by relabelling" below). `slip_broken`
+is the closer of the two to pyslfp in absolute terms at degree 2; that
+is an observation, not an attribution. What remains open is nothing
+formulation-level: the aw_core comparisons (where the 2-D twin shows
+all three methods coincide) are pending in 3-D.
+
+**Practical guidance.** Shift runs (full-tolerance AL sweeps) need
+per-order gauge settings: ε_g = 0.01 with 3 refinements is
+semi-convergent at order 3 on this mesh; ε_g = 0.1 with ~7 refinements
+converges (its final refinements hit the solver tolerance floor, which
+the contraction tripwire mis-reports — see "GaugeRefine contraction
+tripwire: false positive at the tolerance floor"). The old runs'
+results files are kept beside the new ones with a `_geps001` suffix.
+
+**See:** `doc/benchmarks.tex`, "The perturbation family" (Results;
+"Assumptions and implementation details" for the gauge settings) and
+"The formulations compared" (the decomposition caveat);
 `benchmarks/perturbation/README.md`, `perturbation_check.py`.
 
 ### Broken-ζ interface forms when F jumps across Σ
@@ -273,7 +304,9 @@ Analytic continuous b in the constraint kernels had no effect in the lab.
 
 ### Which tangential slips are removable by relabelling (including N² = 0)
 
-**Status:** open. The reference documents state the conservative
+**Status:** open; the N² = 0 premise is confirmed numerically in 2-D
+(7 Oct 2026, below), the 3-D `aw_core` degree-1 null test remains. The
+reference documents state the conservative
 position — tangential slip is not gauge in general; the slipping
 formulation is the general one; the welded gauged formulation is used
 where the suppressed slip is absent or removable, e.g. on spherically
@@ -333,6 +366,36 @@ depends only on div u) states that even the uniform load drives a genuine
 tangential slip on the ellipse; welded and sliding observables there can
 be compared directly as a test of removability.
 
+*2-D numerical adjudication (7 Oct 2026).* The per-degree radial
+reference of the gravitating disc (`benchmarks/disc/disc_radial.py`,
+the θ-reduction of the code's weak forms with welded, free-slip and
+Dahlen switches) settles the mechanism on the neutral case. On
+`aw_core_2d` (N² = 0) welded, slip and Dahlen agree to ~1e-10 at every
+degree: welded is exact through the enlarged (class-K) relabelling
+group, and Dahlen is exact because the reduction coincides with the
+full static fluid at N² = 0. This is the strict prediction, and it
+holds. On `fluid_core_2d` (N² < 0, l = 2, dead surface traction) the
+measurement does NOT resolve the welded-suppression split: the Dahlen
+solve converges (u_r(a) = −0.1782503 at p8 / p11 / p12, seven digits),
+while the full-fluid welded (−0.1784474 / −0.1789929 / −0.1782873) and
+slip (−0.1782625 / −0.1782305 / −0.1783079) solves wander
+non-monotonically within a ~0.3 % envelope — the non-neutral resolution
+floor ("`fluid_core` h-ladder: residual items"). Fixed-resolution
+welded-slip and slip-Dahlen differences sit inside that envelope and
+are not decompositions. The 2-D geometry also limits what can be read
+across: the circle's surface-divergence-free slips are the rotations
+only, so for N² ≠ 0 the strict class removes nothing generic, whereas
+3-D re-weights toward the toroidal sector and the soft degree-1 mode.
+Consequences: (i) the class-K removability at N² = 0 stands confirmed
+at mechanism level in 2-D; (ii) on non-neutral models a welded method
+compared against a Dahlen reference bundles the welded-suppression
+error, the static-vs-secular closure difference and the resolution
+floor, none separately resolved at current resolutions — 3-D offsets
+against pyslfp previously read as one of these are not attributable;
+(iii) remaining: the 3-D `aw_core` degree-1 null test (welded ≡ slip ≡
+Dahlen expected), and the N²-scaling of the envelope, which the 2-D
+instrument can measure but has not run.
+
 **See:** `doc/gravitating_elasticity.md` §5, §5.1, §5.2;
 `doc/gauged_fluid.md` §2 "Tangential slip and the welded space",
 "Equivalence and the Adams–Williamson condition";
@@ -341,7 +404,8 @@ be compared directly as a test of removability.
 "The slipping-interface problem" ("When it is needed; assumptions");
 `examples/sliding_fluid_ellipse.cpp`; `tests/TestSlipProblem.cpp`
 (`TwoLayerBarotropicCrossCheck`); `tests/TestReferentialProblem.cpp`
-(`FluidRelabellingNullPair`).
+(`FluidRelabellingNullPair`); `benchmarks/disc/disc_radial.py`,
+`doc/planning/disc_gravity_reference.md`.
 
 ---
 
@@ -385,6 +449,23 @@ present; thresholds 0.9 for semi-convergence, 0.2 for residual bias).
 **See:** `doc/gauge_penalty_iteration.tex`, "Semi-convergence and the
 operating point"; `doc/benchmarks.tex`, "Solver settings: measured
 behaviour"; `src/quasi_static_problem.cpp` (`WarnGaugeContraction`).
+
+### GaugeRefine contraction tripwire: false positive at the tolerance floor
+
+**Status:** open (small; library), 7 Oct 2026.
+
+Once the Tikhonov corrections reach the linear-solver tolerance floor,
+successive corrections stop shrinking and `WarnGaugeContraction` reports
+a contraction near 1 — semi-convergence — although the refinement has
+converged. Seen on the gauge-converged interface-shift runs
+(`fluid_core`, `h = 0.3`, penalty 0.1, 7 refinements), whose final
+refinements sit at the floor. Fix: ignore corrections below the solver
+tolerance (relative to the solution) when estimating the contraction,
+so the warning fires only on genuine semi-convergence.
+
+**See:** `src/quasi_static_problem.cpp` (`WarnGaugeContraction`);
+`doc/benchmarks.tex`, "The perturbation family" ("Assumptions and
+implementation details").
 
 ### Definiteness of the mixed system: the negative control
 
@@ -524,7 +605,26 @@ uncapped ladder is run and documented).
 4. The uncapped ladder has no campaign stage (see "Benchmark
    housekeeping" below).
 
-**See:** `doc/benchmarks.tex`, "Resolution and the h-ladder", "Results".
+*Candidate explanation for 1–3 (7 Oct 2026): a resolution floor by
+physics.* On `fluid_core_2d` (N² < 0) the 1-D radial reference's l = 2
+response drifts ~3e-3 non-monotonically under p-refinement and moves
+~1e-3 with the fluid regulariser, while `aw_core_2d` (N² = 0) converges
+to ~1e-12. For N² ≠ 0 the static operator is inverted at the edge of
+its essential spectrum: the full-elastic fluid's interior slaving
+u_r = −φ/g conflicts with normal continuity at the interface, and the
+conflict is resolved in a boundary layer whose discrete representation
+never settles. The Dahlen-reduced solve on the same disc converges (its
+closure is well-posed); the welded and slip full-fluid solves wander
+within a ~0.3 % envelope. Caveat: the ladder above is the Dahlen path, and
+the 2-D Dahlen solve converges; whether the floor reaches the 3-D
+Dahlen path, or only the full-fluid methods, is part of what the 3-D
+test (the same ladder on `aw_core` against `fluid_core`) decides. The
+2-D floor is recorded (loosely bounded, strict on the neutral twin) in
+the validation of `benchmarks/disc/disc_radial.py`
+(`python disc_radial.py`).
+
+**See:** `doc/benchmarks.tex`, "Resolution and the h-ladder", "Results";
+`benchmarks/disc/disc_radial.py` (`validate`).
 
 ### Combined-degree solves: unverified paths
 

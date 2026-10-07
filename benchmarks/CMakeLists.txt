@@ -95,6 +95,7 @@ benchmark_launcher(common love_numbers make_case)
 
 benchmark_driver(disc disc_benchmark)
 benchmark_launcher(disc disc check ${BENCHMARK_LAUNCHER_ARGUMENTS})
+benchmark_launcher(disc disc explore)
 
 # --- Relabelling ------------------------------------------------------------
 

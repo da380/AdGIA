@@ -135,10 +135,11 @@ hazard; the shift driver forces interpolated F).
 
 - There is no missing interface term proportional to [[F]], and no
   mixed-side bug: the side-convention explanation of the `slip_broken`
-  shift-derivative disagreement (h'₂ 25 %, k'₂ 19 %) is **retired**.
-  Remaining candidates: discretisation (the order-3 rung of the
-  perturbation family, running as of this note — the Leg-A playbook),
-  and the physics content of the comparison itself.
+  shift-derivative disagreement is **retired**. (Resolved the same
+  day: the recorded discrepancies were dominated by gauge-penalty
+  semi-convergence in the benchmark configuration, with the
+  remainder inside the physics envelope — open_issues.md, the
+  interface-shift item.)
 - pyslfp's own numerics are exonerated as a contributor: an ngll
   5 → 12 ladder on `fluid_core` and its ±0.02 shifted models moves
   every Love number and every central-difference derivative by

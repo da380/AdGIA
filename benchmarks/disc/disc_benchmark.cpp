@@ -51,6 +51,7 @@
 #include <vector>
 
 #include "AdGIA.hpp"
+#include "relabelling.hpp"
 
 using namespace mfem;
 using namespace AdGIA;
@@ -185,6 +186,7 @@ struct Result {
 
 void WriteJson(const std::string& path, const std::string& method, int order,
                int refinements, double kappa_s, double mu_s, double kappa_f,
+               double shift, double P0,
                const std::vector<Result>& results) {
   if (!Root()) {
     return;
@@ -196,6 +198,8 @@ void WriteJson(const std::string& path, const std::string& method, int order,
     << "  \"refinements\": " << refinements << ",\n"
     << "  \"kappa_s\": " << kappa_s << ",\n  \"mu_s\": " << mu_s << ",\n"
     << "  \"kappa_f\": " << kappa_f << ",\n"
+    << "  \"shift\": " << shift << ",\n"
+    << "  \"P0\": " << P0 << ",\n"
     << "  \"r_cmb\": " << kRCmb << ",\n  \"degrees\": [\n";
   for (size_t i = 0; i < results.size(); i++) {
     const auto& r = results[i];
@@ -225,6 +229,7 @@ int main(int argc, char* argv[]) {
   int lmin = 0, lmax = 4;
   double kappa_s = 2.0, mu_s = 1.0, kappa_f = 1.5;
   double eps = 1.0e-2, theta = 1.0e2, rel_tol = 1.0e-12;
+  double shift = 0.0, P0 = 0.0;
   int n_al = 10;
 
   OptionsParser args(argc, argv);
@@ -244,6 +249,14 @@ int main(int argc, char* argv[]) {
   args.AddOption(&n_al, "-nal", "--al-iterations",
                  "Augmented-Lagrangian / gauge refinement iterations.");
   args.AddOption(&rel_tol, "-rt", "--rel-tol", "Inner CG relative tolerance.");
+  args.AddOption(&P0, "-P0", "--pressure",
+                 "Rung 1: uniform surface pressure of the pre-stressed "
+                 "reference state (S_e = -P0 I, bare moduli, B_Sigma with "
+                 "pi = P0 on the slip side; unmapped runs only).");
+  args.AddOption(&shift, "-shift", "--shift",
+                 "Interface shift eps: solve the model with the interface "
+                 "at r_cmb + eps through the mapped assembly on this fixed "
+                 "mesh (benchmarks/common/relabelling.hpp InterfaceShift).");
   args.Parse();
   if (!args.Good()) {
     if (Root()) {
@@ -268,8 +281,42 @@ int main(int argc, char* argv[]) {
 
   H1_FECollection fec(order, dim);
   ConstantCoefficient c_kappa_s(kappa_s), c_mu_s(mu_s);
-  ConstantCoefficient c_kappa_f(kappa_f), one(1.0);
+  ConstantCoefficient c_kappa_f(kappa_f), one(1.0), zero(0.0);
   ConstantCoefficient c_eps_mu(eps * kappa_f);
+
+  // The interface-shift mapping (exact, with the solid-side band at the
+  // kink) and the referential tensors of the mapped assembly. The map
+  // is the identity on and beyond the surface, so the load and the
+  // surface extraction are unmapped even in shift runs.
+  std::unique_ptr<CallableDiffeomorphism> map;
+  if (shift != 0.0) {
+    map = std::make_unique<CallableDiffeomorphism>(benchmark::InterfaceShift(
+        dim, {0.0, kRCmb, 1.0}, 1, shift));
+  }
+  auto C_solid = IsotropicElasticTensorCoefficient::FromBulkModulus(
+      dim, c_kappa_s, c_mu_s);
+  auto C_fluid = IsotropicElasticTensorCoefficient::FromBulkModulus(
+      dim, c_kappa_f, c_eps_mu);
+  auto C_dev = IsotropicElasticTensorCoefficient::FromBulkModulus(
+      dim, zero, c_eps_mu);
+
+  // Rung 1 (P0 != 0): the pre-stressed reference state. Bare moduli
+  // lam_b = lam_eff - P0, mu_b = mu_eff + P0 (the model's physical
+  // moduli are effective), the geometric term S_e = -P0 I, and
+  // B_Sigma with pi = P0 on the slip side. Not combined with -shift.
+  MFEM_VERIFY(P0 == 0.0 || shift == 0.0,
+              "rung 1 (-P0) and the shift leg (-shift) do not combine yet");
+  ConstantCoefficient c_lam_bs(kappa_s - mu_s - P0), c_mu_bs(mu_s + P0);
+  ConstantCoefficient c_lam_bf(kappa_f - P0), c_mu_bf(P0), c_P0(P0);
+  IsotropicElasticTensorCoefficient C_bare_s(dim, c_lam_bs, c_mu_bs);
+  IsotropicElasticTensorCoefficient C_bare_f(dim, c_lam_bf, c_mu_bf);
+  DenseMatrix Se_mat(dim);
+  Se_mat = 0.0;
+  for (int d = 0; d < dim; d++) {
+    Se_mat(d, d) = -P0;
+  }
+  MatrixConstantCoefficient S_e(Se_mat);
+  IdentityDiffeomorphism id_map(dim);
 
   std::vector<Result> results;
 
@@ -289,19 +336,38 @@ int main(int argc, char* argv[]) {
     solid_attr[1] = 1;  // attribute 2: mantle
 
     FormType a(&fes);
-    a.AddDomainIntegrator(new ElasticityIntegrator(c_kappa_s, 1.0, 0.0),
-                          solid_attr);
-    a.AddDomainIntegrator(new ElasticityIntegrator(c_mu_s, -2.0 / dim, 1.0),
-                          solid_attr);
-    a.AddDomainIntegrator(new ElasticityIntegrator(c_kappa_f, 1.0, 0.0),
-                          fluid_attr);
-    a.AddDomainIntegrator(new ElasticityIntegrator(c_eps_mu, -2.0 / dim, 1.0),
-                          fluid_attr);
+    if (P0 != 0.0) {
+      a.AddDomainIntegrator(new ElasticTensorIntegrator(C_bare_s),
+                            solid_attr);
+      a.AddDomainIntegrator(new ElasticTensorIntegrator(C_bare_f),
+                            fluid_attr);
+      a.AddDomainIntegrator(new GeometricStiffnessIntegrator(S_e));
+      a.AddDomainIntegrator(new ElasticTensorIntegrator(C_dev), fluid_attr);
+    } else if (map) {
+      a.AddDomainIntegrator(new ElasticTensorIntegrator(C_solid, *map),
+                            solid_attr);
+      a.AddDomainIntegrator(new ElasticTensorIntegrator(C_fluid, *map),
+                            fluid_attr);
+    } else {
+      a.AddDomainIntegrator(new ElasticityIntegrator(c_kappa_s, 1.0, 0.0),
+                            solid_attr);
+      a.AddDomainIntegrator(new ElasticityIntegrator(c_mu_s, -2.0 / dim, 1.0),
+                            solid_attr);
+      a.AddDomainIntegrator(new ElasticityIntegrator(c_kappa_f, 1.0, 0.0),
+                            fluid_attr);
+      a.AddDomainIntegrator(
+          new ElasticityIntegrator(c_eps_mu, -2.0 / dim, 1.0), fluid_attr);
+    }
     a.Assemble();
     a.Finalize();
     FormType q(&fes);
-    q.AddDomainIntegrator(new ElasticityIntegrator(c_eps_mu, -2.0 / dim, 1.0),
-                          fluid_attr);
+    if (map) {
+      q.AddDomainIntegrator(new ElasticTensorIntegrator(C_dev, *map),
+                            fluid_attr);
+    } else {
+      q.AddDomainIntegrator(
+          new ElasticityIntegrator(c_eps_mu, -2.0 / dim, 1.0), fluid_attr);
+    }
     q.Assemble();
     q.Finalize();
 #ifdef MFEM_USE_MPI
@@ -331,8 +397,13 @@ int main(int argc, char* argv[]) {
         g.GetTrueDofs(t);
         P.Add(t);
       }
-      RigidRotation rot(dim, 2);
-      g.ProjectCoefficient(rot);
+      if (map) {
+        MappedRotation rot(*map, 2);
+        g.ProjectCoefficient(rot);
+      } else {
+        RigidRotation rot(dim, 2);
+        g.ProjectCoefficient(rot);
+      }
       g.GetTrueDofs(t);
       P.Add(t);
     }
@@ -387,7 +458,8 @@ int main(int argc, char* argv[]) {
       r.interface_ = ResponseAmplitudes(fes, u, cmb, L);
       // p1 = -kappa_f dA/A with dA = 2 pi c U_0(c): the l = 0 interface
       // amplitude already in hand (zero for l >= 1 up to discretisation).
-      r.p1 = L == 0 ? -2.0 * kappa_f * r.interface_.U / kRCmb : 0.0;
+      r.p1 = L == 0 ? -2.0 * kappa_f * r.interface_.U / (kRCmb + shift)
+                    : 0.0;
       results.push_back(r);
       if (Root()) {
         std::cout << "welded l=" << L << "  ur_a=" << r.surface.U
@@ -395,7 +467,7 @@ int main(int argc, char* argv[]) {
       }
     }
     WriteJson(out_file, method, order, refinements, kappa_s, mu_s, kappa_f,
-              results);
+              shift, P0, results);
     return 0;
   }
 
@@ -410,23 +482,50 @@ int main(int argc, char* argv[]) {
   const int ns = fes_s->GetTrueVSize(), nf = fes_f->GetTrueVSize();
 
   FormType a_s(fes_s.get());
-  a_s.AddDomainIntegrator(new ElasticityIntegrator(c_kappa_s, 1.0, 0.0));
-  a_s.AddDomainIntegrator(new ElasticityIntegrator(c_mu_s, -2.0 / dim, 1.0));
+  if (P0 != 0.0) {
+    a_s.AddDomainIntegrator(new ElasticTensorIntegrator(C_bare_s));
+    a_s.AddDomainIntegrator(new GeometricStiffnessIntegrator(S_e));
+  } else if (map) {
+    a_s.AddDomainIntegrator(new ElasticTensorIntegrator(C_solid, *map));
+  } else {
+    a_s.AddDomainIntegrator(new ElasticityIntegrator(c_kappa_s, 1.0, 0.0));
+    a_s.AddDomainIntegrator(new ElasticityIntegrator(c_mu_s, -2.0 / dim, 1.0));
+  }
   a_s.Assemble();
   a_s.Finalize();
   FormType a_f(fes_f.get());
-  a_f.AddDomainIntegrator(new ElasticityIntegrator(c_kappa_f, 1.0, 0.0));
-  a_f.AddDomainIntegrator(new ElasticityIntegrator(c_eps_mu, -2.0 / dim, 1.0));
+  if (P0 != 0.0) {
+    a_f.AddDomainIntegrator(new ElasticTensorIntegrator(C_bare_f));
+    a_f.AddDomainIntegrator(new GeometricStiffnessIntegrator(S_e));
+    a_f.AddDomainIntegrator(new ElasticTensorIntegrator(C_dev));
+  } else if (map) {
+    a_f.AddDomainIntegrator(new ElasticTensorIntegrator(C_fluid, *map));
+  } else {
+    a_f.AddDomainIntegrator(new ElasticityIntegrator(c_kappa_f, 1.0, 0.0));
+    a_f.AddDomainIntegrator(
+        new ElasticityIntegrator(c_eps_mu, -2.0 / dim, 1.0));
+  }
   a_f.Assemble();
   a_f.Finalize();
   FormType q_f(fes_f.get());
-  q_f.AddDomainIntegrator(new ElasticityIntegrator(c_eps_mu, -2.0 / dim, 1.0));
+  if (map) {
+    q_f.AddDomainIntegrator(new ElasticTensorIntegrator(C_dev, *map));
+  } else {
+    q_f.AddDomainIntegrator(
+        new ElasticityIntegrator(c_eps_mu, -2.0 / dim, 1.0));
+  }
   q_f.Assemble();
   q_f.Finalize();
 
   auto cmb = RadialBdrMarker(solid, 0.9 * kRCmb, 1.1 * kRCmb);
   FormType b_form(fes_s.get());
-  b_form.AddBoundaryIntegrator(new BoundaryNormalNormalIntegrator(one), cmb);
+  if (map) {
+    b_form.AddBoundaryIntegrator(new BoundaryNormalNormalIntegrator(*map),
+                                 cmb);
+  } else {
+    b_form.AddBoundaryIntegrator(new BoundaryNormalNormalIntegrator(one),
+                                 cmb);
+  }
   b_form.Assemble();
   b_form.Finalize();
 
@@ -442,6 +541,14 @@ int main(int argc, char* argv[]) {
   std::unique_ptr<HypreParMatrix> JtBJ(ParMult(JtB.get(), J.get(), true));
   std::unique_ptr<HypreParMatrix> A00(Add(1.0, *As, theta, *B));
   std::unique_ptr<HypreParMatrix> A11(Add(1.0, *Af, theta, *JtBJ));
+  std::unique_ptr<HypreParMatrix> A01, A10;
+  if (P0 != 0.0) {
+    auto BS = NewSlipInterfaceMatrix(*fes_s, *J, cmb, c_P0, id_map);
+    A00.reset(Add(1.0, *A00, 1.0, *BS.ss));
+    A11.reset(Add(1.0, *A11, 1.0, *BS.ff));
+    A01.reset(Add(-theta, *BJ, 1.0, *BS.sf));
+    A10.reset(Add(-theta, *JtB, 1.0, *BS.fs));
+  }
   HypreBoomerAMG prec0(*A00), prec1(*A11);
   prec0.SetPrintLevel(0);
   prec1.SetPrintLevel(0);
@@ -461,6 +568,14 @@ int main(int argc, char* argv[]) {
   std::unique_ptr<SparseMatrix> JtBJ(mfem::Mult(*JtB, *J));
   std::unique_ptr<SparseMatrix> A00(Add(1.0, *As, theta, *B));
   std::unique_ptr<SparseMatrix> A11(Add(1.0, *Af, theta, *JtBJ));
+  std::unique_ptr<SparseMatrix> A01, A10;
+  if (P0 != 0.0) {
+    auto BS = NewSlipInterfaceMatrix(*fes_s, *J, cmb, c_P0, id_map);
+    A00.reset(Add(1.0, *A00, 1.0, *BS.ss));
+    A11.reset(Add(1.0, *A11, 1.0, *BS.ff));
+    A01.reset(Add(-theta, *BJ, 1.0, *BS.sf));
+    A10.reset(Add(-theta, *JtB, 1.0, *BS.fs));
+  }
   GSSmoother prec0(*A00), prec1(*A11);
   NullSpaceProjector P;
   CGSolver cg;
@@ -470,8 +585,13 @@ int main(int argc, char* argv[]) {
   offsets.PartialSum();
   BlockOperator block_op(offsets);
   block_op.SetBlock(0, 0, A00.get());
-  block_op.SetBlock(0, 1, BJ.get(), -theta);
-  block_op.SetBlock(1, 0, JtB.get(), -theta);
+  if (A01) {
+    block_op.SetBlock(0, 1, A01.get());
+    block_op.SetBlock(1, 0, A10.get());
+  } else {
+    block_op.SetBlock(0, 1, BJ.get(), -theta);
+    block_op.SetBlock(1, 0, JtB.get(), -theta);
+  }
   block_op.SetBlock(1, 1, A11.get());
   BlockDiagonalPreconditioner block_prec(offsets);
   block_prec.SetDiagonalBlock(0, &prec0);
@@ -494,9 +614,15 @@ int main(int argc, char* argv[]) {
       nvec.GetBlock(1) = tf;
       P.Add(nvec);
     }
-    RigidRotation rot(dim, 2);
-    gs.ProjectCoefficient(rot);
-    gf.ProjectCoefficient(rot);
+    if (map) {
+      MappedRotation rot(*map, 2);
+      gs.ProjectCoefficient(rot);
+      gf.ProjectCoefficient(rot);
+    } else {
+      RigidRotation rot(dim, 2);
+      gs.ProjectCoefficient(rot);
+      gf.ProjectCoefficient(rot);
+    }
     gs.GetTrueDofs(ts);
     gf.GetTrueDofs(tf);
     nvec.GetBlock(0) = ts;
@@ -571,7 +697,8 @@ int main(int argc, char* argv[]) {
     r.normal_jump = jump;
     r.surface = ResponseAmplitudes(*fes_s, us, surf, L);
     r.interface_ = ResponseAmplitudes(*fes_s, us, cmb, L);
-    r.p1 = L == 0 ? -2.0 * kappa_f * r.interface_.U / kRCmb : 0.0;
+    r.p1 = L == 0 ? -2.0 * kappa_f * r.interface_.U / (kRCmb + shift)
+                  : 0.0;
     results.push_back(r);
     if (Root()) {
       std::cout << "slip   l=" << L << "  ur_a=" << r.surface.U
@@ -580,6 +707,6 @@ int main(int argc, char* argv[]) {
     }
   }
   WriteJson(out_file, method, order, refinements, kappa_s, mu_s, kappa_f,
-            results);
+            shift, P0, results);
   return 0;
 }

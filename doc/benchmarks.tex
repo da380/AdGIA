@@ -542,6 +542,29 @@ error, and the cross-method agreement there is still a real check. The
 PREM cores are near neutral but carry inner cores, which the slipping
 methods do not support.
 
+The offset of a welded method (\code{gauged}, \code{referential}) against
+pyslfp on a non-neutral core is not the $O(N^2)$ closure difference alone.
+It bundles three effects: (i) the welded-suppression error, the tangential
+interface slip the welded space excludes; (ii) the static-against-secular
+closure difference above; and (iii) a resolution floor of the full static
+fluid itself. For $N^2\ne0$ the static operator is inverted at the edge of
+its essential spectrum, and the interior slaving $u_r=-\phi/g$ of the
+full-elastic fluid conflicts with normal continuity at the interface, which
+is resolved in a boundary layer whose discrete representation does not
+settle. The 2-D disc family (\code{benchmarks/disc/disc\_radial.py}, the
+per-degree $\theta$-reduction of the code's weak forms with welded,
+free-slip and Dahlen switches) measures what can and cannot be separated.
+On the Adams--Williamson disc core ($N^2=0$) the three methods agree to
+about $10^{-10}$ at every degree: all three effects vanish together. On the
+uniform disc core ($N^2<0$, degree 2) the Dahlen solve converges, while the
+welded and free-slip solves drift non-monotonically within an envelope of
+about $0.3\,\%$ under $p$-refinement and move with the fluid regulariser;
+neither (i) nor (ii) is resolved separately from (iii) at the resolutions
+run. Offsets of the welded methods against pyslfp on \code{fluid\_core} are
+therefore not attributed to any one of the three. The corresponding 3-D
+decomposition (on \code{aw\_core}) has not been run, nor has the
+$N^2$-scaling of the 2-D envelope.
+
 \subsection{The CMB treatments}
 \label{sec:cmb}
 
@@ -749,13 +772,18 @@ On \code{fluid\_core}, $h=0.3$, order 2 (local campaign profile), every
 formulation agrees with pyslfp to 0.2--4\,\% in $h'$ and $k'$ at degrees
 0--4, which is the discretisation level at this resolution. The gauged,
 referential and slipping formulations also agree at $l=0$, where Dahlen
-does not by design. The spread between methods is mesh error, not a
-difference in physics; in particular the welded (\code{gauged},
-\code{referential}) and slipping (\code{slip}, \code{slip\_broken})
-formulations agree to discretisation level on this spherically symmetric
-model, where the tangential slip the welded space suppresses is absent
-or removable by relabelling (on a general aspherical interface it need not
-be, and the slipping formulation is the general one). The $l'$
+does not by design. The spread between methods is dominated by mesh
+error; in particular the welded (\code{gauged}, \code{referential})
+and slipping (\code{slip}, \code{slip\_broken}) formulations agree to
+discretisation level on this spherically symmetric model at $l \ge 2$.
+That agreement is an approximation statement, not an identity: the
+tangential slip the welded space suppresses is removable by
+relabelling only for a neutrally stratified fluid ($N^2 = 0$; the
+decomposition paragraph of \S\ref{sec:formulations}), and on this
+non-neutral core the suppression error is genuine but sits below the
+mesh level at these degrees — it is visible at degree~1, where the
+slip rides the soft core--shell translation. The slipping formulation
+is the general one. The $l'$
 column is larger in relative terms ($l'_2$ is small), and \code{winkler} is
 the outlier (\S\ref{sec:cmbresults}). Cost differs much more than accuracy.
 Mean cost per load solve, degrees 0--4:
@@ -1389,42 +1417,110 @@ difference of pyslfp solves, not an analytic perturbation-theory kernel.
   numbers.
 \item Every augmented-Lagrangian sweep runs at full tolerance in shift
   runs, so that the endpoints are reproducible.
+\item The gauge settings (\code{-geps}, \code{-gref}) are chosen per order
+  and per mesh. $D_{3\text{D}}$ is a difference of two endpoint solves
+  divided by $2\eps$, so a gauge bias that is not converged, or not
+  equal at the two endpoints, enters it amplified. On \code{fluid\_core} at
+  $h=0.3$ the Love-number setting (penalty $10^{-2}$, three refinements)
+  is semi-convergent at order 3 (refinement contraction about 1.0 at
+  degrees 1--3) and biased at order 2; shift runs use penalty $10^{-1}$
+  with seven refinements, which converges. The last refinements then sit at
+  the linear-solver tolerance, where \code{WarnGaugeContraction} reports
+  semi-convergence falsely. Only the welded classes record gauge residuals:
+  the slipping classes keep none, so a slipping shift run carries no
+  warning of an unconverged gauge, and its settings are checked on a
+  welded run at the same order and mesh.
 \item Comparisons: $h'$ at every degree, $l'$ and $k'$ from degree 2,
   degree 1 skipped, near-zero derivatives skipped.
 \end{itemize}
 
 \subsection{Results}
 
-Local campaign profile: $\eps=\pm0.02$, $h=0.3$, order 2, degrees $0$--$3$.
+Profile: \code{fluid\_core}, $h=0.3$, CMB shifts $\eps=\pm0.02$, degrees
+$0$--$3$, orders 2 and 3, gauge penalty $10^{-1}$ with seven refinements.
+Relative discrepancy $|D_{3\text{D}}-D_{1\text{D}}|/|D_{1\text{D}}|$, in
+per cent:
 \begin{center}
 \small
-\begin{tabular}{@{}llP{10cm}@{}}
+\begin{tabular}{@{}llccccccc@{}}
 \toprule
-model & method & $|D_{3\text{D}}-D_{1\text{D}}|/|D_{1\text{D}}|$ \\
+order & method & $h'_0$ & $h'_2$ & $l'_2$ & $k'_2$ & $h'_3$ & $l'_3$ & $k'_3$ \\
 \midrule
-\code{fluid\_core} & referential & $h'_0$ 0.8\,\%, $h'_2$ 6.4\,\%, $l'_2$ 12\,\%, $k'_2$ 1.7\,\%, $h'_3$ 1.9\,\%, $l'_3$ 14\,\%, $k'_3$ 0.8\,\% \\
-\code{fluid\_core} & slip\_broken & $h'_0$ 0.8\,\%, $h'_2$ 25\,\%, $l'_2$ 12\,\%, $k'_2$ 19\,\%, $h'_3$ 5.6\,\%, $l'_3$ 23\,\%, $k'_3$ 4.9\,\% \\
-\code{two\_solid} & referential & $h'_0$ 2.9\,\%, $h'_2$ 8.1\,\%, $l'_2$ 5.1\,\%, $k'_2$ 11\,\%, $h'_3$ 17\,\%, $l'_3$ 5.2\,\%, $k'_3$ 11\,\% \\
+2 & referential & 0.79 & 5.62 & 11.1 & 1.23 & 1.58 & 13.6 & 0.53 \\
+2 & slip\_broken & 0.78 & 8.67 & 7.85 & 3.97 & 2.95 & 16.0 & 1.97 \\
+3 & referential & 0.0027 & 7.90 & 7.30 & 3.32 & 2.86 & 10.4 & 1.19 \\
+3 & slip\_broken & 0.0027 & 11.6 & 2.79 & 6.36 & 4.97 & 13.9 & 3.20 \\
 \bottomrule
 \end{tabular}
 \end{center}
-The degree-0 derivative agrees to 0.8\,\% for both methods on
-\code{fluid\_core}, and the referential method's $k'$ derivatives agree to
-1--2\,\%; the $l'$ entries inherit the small-denominator amplification of
-$l'$. The slip\_broken derivatives at degrees 2 and 3 are several times
-further from the reference than the referential ones on the same mesh and
-map; the two methods share the shift map and the reference, so the
-difference lies in the slipping forms under a moving interface, and those
-derivatives are not verified. The absolute agreement at each $\eps$ (left
-panels) is flat across the ladder: the mapped solves track the perturbed
-models as well as the unmapped solve tracks the base model. Its degree-2
-value, about 17\,\% and set by $l'_2$, is the same for every $\eps$ and
-both methods: it is the $O(N^2)$ mismatch of the compressible methods
-against pyslfp's neutral fluid on this non-neutral core
-(\S\ref{sec:formulations}), not a shift or solver effect. On
-\code{two\_solid} the derivatives are small (the interface lies deep, with
-modest jumps), and relative discrepancies of 5--17\,\% are within an order
-of magnitude of the error of the numbers themselves.
+Absolute agreement with pyslfp at order 3, the worst compared Love number
+of the degree, at each shift:
+\begin{center}
+\small
+\begin{tabular}{@{}llccc@{}}
+\toprule
+method & degree & $\eps=-0.02$ & $\eps=0$ & $\eps=+0.02$ \\
+\midrule
+referential & 2 & $8.2\times10^{-2}$ & $7.9\times10^{-2}$ & $7.8\times10^{-2}$ \\
+slip\_broken & 2 & $5.4\times10^{-2}$ & $4.8\times10^{-2}$ & $4.3\times10^{-2}$ \\
+both & 0 & $4.4\times10^{-5}$ & $1.5\times10^{-4}$ & $4.3\times10^{-5}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{The reference.}
+pyslfp's own numerics do not contribute: an ngll ladder from 5 to 12 on
+\code{fluid\_core} and on its two shifted models moves every Love number
+and every central-difference derivative by at most about $10^{-10}$
+relative. $D_{1\text{D}}$ is therefore the derivative of the
+Dahlen-reduced static-fluid response to that precision. $l'_2=-0.0178$, so
+the $l'$ percentages are relative to a small denominator.
+
+\paragraph{Reading.}
+The degree-0 derivative agrees to $0.8\,\%$ at order 2 and to
+$2.7\times10^{-5}$ at order 3, for both methods. At degrees 2 and 3 the
+discrepancies are order-dependent and do not converge from order 2 to
+order 3 for either method: some fall ($l'_2$, $l'_3$), others grow ($h'_2$,
+$k'_2$, $h'_3$, $k'_3$). The differences between the two methods are
+mixed in sign across the quantities: slip\_broken is further from the
+reference in $h'$ and $k'$ at degrees 2 and 3 and in $l'_3$, and closer in
+$l'_2$, at both orders. With a
+converged gauge no formulation-level anomaly remains: the two methods share
+the shift map and the reference, and their difference lies within the
+envelope that both carry. That envelope is consistent with the physics
+that separates the 3-D solves from the reference, namely the full static
+compressible fluid against the Dahlen reduction on a non-neutral core,
+together with the resolution floor of the full static fluid for $N^2\ne0$
+(and, for the referential method, the welded-suppression error); these
+contributions (\S\ref{sec:formulations}) are not separated on
+\code{fluid\_core}. In absolute terms slip\_broken is the closer of the
+two to pyslfp at degree 2 ($4.3$--$5.4\times10^{-2}$ against
+$7.8$--$8.2\times10^{-2}$); the 2-D measurements that would decide
+whether this reflects the free-slip interface lie inside the same
+resolution floor. The absolute agreement varies little across the shifts:
+the mapped solves track the perturbed models about as well as the
+unmapped solve tracks the base model.
+
+\paragraph{The gauge settings.}
+The numbers above require the shift-run gauge settings of
+\S\ref{sec:pert} (penalty $10^{-1}$, seven refinements). At the
+Love-number setting (penalty $10^{-2}$, three refinements) the order-3
+endpoints are semi-convergent and the order-2 endpoints biased, and the
+derivatives at degrees 2 and 3 are not usable; the slipping runs give no
+warning of it, since only the welded classes record gauge residuals. The
+results of those runs are kept beside the definitive ones, with the suffix
+\path{_geps001} in their file names.
+
+\paragraph{\code{two\_solid}.}
+On \code{two\_solid} (no fluid, so the gauge does not enter; referential,
+order 2) the discrepancies are $h'_0$ 2.9\,\%, $h'_2$ 8.1\,\%, $l'_2$
+5.1\,\%, $k'_2$ 11\,\%, $h'_3$ 17\,\%, $l'_3$ 5.2\,\%, $k'_3$ 11\,\%. The
+derivatives are small (the interface lies deep, with modest jumps), and
+relative discrepancies of 5--17\,\% are within an order of magnitude of
+the error of the numbers themselves.
+
+% The figures below were made from the order-2 runs at gauge penalty 1e-2
+% (three refinements); regenerate them from the definitive runs.
 
 \begin{figure}[H]
 \centering

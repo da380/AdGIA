@@ -49,13 +49,20 @@ import numpy as np
 @dataclass(frozen=True)
 class DiscModel:
     """Plane-strain annulus (lam, mu) on [c, a] over a fluid disc of
-    bulk modulus kappa_f; t is the load amplitude."""
+    bulk modulus kappa_f; t is the load amplitude. The moduli are the
+    EFFECTIVE (physical) ones; P0 is the uniform surface pressure of
+    rung 1 (doc/planning/no_gravity_analytics.md): the volume operator
+    and the interface conditions collapse to the rung-0 ones in
+    effective variables, and only the loaded-surface rows change, to
+    the dead-traction amplitudes of delta P . N = sigma_eff . N
+    - P0 cof(Du) N."""
     lam: float
     mu: float
     kappa_f: float
     c: float
     a: float
     t: float = 1.0
+    P0: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -129,10 +136,22 @@ def _system(model: DiscModel, l: int):
         f = dat if deriv else at
         return np.array([f(pm[which], r) for pm in per_mode])
 
+    # Rung 1: the dead referential traction at the loaded surface is
+    # delta P . N, whose amplitude rows gain -P0 (u + l v) r^(k-1)
+    # (radial) and -P0 (l u + v) r^(k-1) (tangential); the interface
+    # rows are the effective (rung-0) ones unchanged.
+    def srr_hat(r):
+        return row(SRR, r) - model.P0 * np.array(
+            [(m.u + l * m.v) * r ** (m.k - 1.0) for m in ms])
+
+    def srt_hat(r):
+        return row(SRT, r) - model.P0 * np.array(
+            [(l * m.u + m.v) * r ** (m.k - 1.0) for m in ms])
+
     if l == 0:
         # sigma_rr(a) = -t ; sigma_rr(c) = -p1 = +(2 kappa_f / c) u_r(c),
         # i.e. sigma_rr(c) - (2 kappa_f / c) u_r(c) = 0.
-        M = np.vstack([row(SRR, a),
+        M = np.vstack([srr_hat(a),
                        row(SRR, c) - 2.0 * model.kappa_f / c * row(UR, c)])
         b = np.array([-t, 0.0])
         # the spring row is a pure power of c too: d/dc applies to both
@@ -143,7 +162,7 @@ def _system(model: DiscModel, l: int):
         dM = np.vstack([np.zeros(n), row(SRR, c, True) - spring])
     else:
         srt_a = -t if l == 1 else 0.0  # self-equilibrated at l = 1
-        M = np.vstack([row(SRR, a), row(SRT, a),
+        M = np.vstack([srr_hat(a), srt_hat(a),
                        row(SRR, c), row(SRT, c)])
         b = np.array([-t, srt_a, 0.0, 0.0])
         dM = np.vstack([np.zeros(n), np.zeros(n),
@@ -263,6 +282,38 @@ def validate(lmax: int = 6, verbose: bool = True) -> bool:
         if l >= 1:
             record(f"l={l} Navier FD residual", navier_residual(model, s),
                    1e-5)
+
+    # Rung 1 (P0): zero pressure reduces to rung 0 exactly; the l = 0
+    # surface row matches the direct delta-P formula
+    # lam (U' + U/r) + (2 mu - P0) U'; derivatives still match FD.
+    P0 = 0.3
+    for l in (0, 2, 3):
+        s0 = solve(model, l)
+        sz = solve(DiscModel(lam, mu, model.kappa_f, c, a, P0=0.0), l)
+        record(f"l={l} P0=0 reduces to rung 0",
+               abs(s0.responses["ur_a"] - sz.responses["ur_a"]), 1e-14)
+    mp = DiscModel(lam, mu, model.kappa_f, c, a, P0=P0)
+    sp = solve(mp, 0)
+    # direct 2x2: modes U = A r + B / r; delta P_rr = lam_b (U' + U/r)
+    # + (2 mu_b - P0) U' with the BARE moduli lam_b = lam - P0,
+    # mu_b = mu + P0 (the model's lam, mu are effective): A-mode entry
+    # 2 lam + 2 mu - P0, B-mode entry -(2 mu + P0) / r^2.
+    A2 = np.array(
+        [[2.0 * lam + 2.0 * mu - P0, -(2.0 * mu + P0) / a ** 2],
+         [2.0 * (lam + mu) - 2.0 * model.kappa_f,
+          -2.0 * mu / c ** 2 - 2.0 * model.kappa_f / c ** 2]])
+    x2 = np.linalg.solve(A2, np.array([-1.0, 0.0]))
+    record("l=0 P0 surface row vs direct delta-P",
+           abs(sp.responses["ur_a"] - (x2[0] * a + x2[1] / a)), 1e-12)
+    for l in (0, 2):
+        sp = solve(mp, l)
+        s_plus = solve(DiscModel(lam, mu, model.kappa_f, c + 1e-6, a,
+                                 P0=P0), l)
+        s_minus = solve(DiscModel(lam, mu, model.kappa_f, c - 1e-6, a,
+                                  P0=P0), l)
+        fd = (s_plus.responses["ur_a"] - s_minus.responses["ur_a"]) / 2e-6
+        record(f"l={l} P0 derivative vs FD",
+               abs(sp.derivatives["ur_a"] - fd) / max(abs(fd), 1e-12), 1e-6)
 
     # Exact derivative vs central finite difference in c.
     eps = 1e-6

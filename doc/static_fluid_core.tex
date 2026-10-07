@@ -1,0 +1,638 @@
+\documentclass[11pt]{article}
+
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage[margin=1.1in]{geometry}
+\usepackage{bm}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage[colorlinks=true,linkcolor=blue,citecolor=blue]{hyperref}
+
+\newtheorem{proposition}{Proposition}
+\newtheorem{claim}{Claim}
+\newtheorem{remark}{Remark}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\eps}{\varepsilon}
+\newcommand{\bu}{\mathbf{u}}
+\newcommand{\bw}{\mathbf{w}}
+\newcommand{\bn}{\mathbf{n}}
+\newcommand{\dS}{\,\mathrm{d}S}
+\newcommand{\dV}{\,\mathrm{d}V}
+\newcommand{\tr}{\operatorname{tr}}
+\newcommand{\Div}{\operatorname{div}}
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\jump}[1]{[\![#1]\!]}
+
+\title{The static response of a body with a stratified fluid core:\\
+       well-posedness, the Dahlen closure, and what dissipation\\
+       selects}
+\author{AdGIA method notes}
+\date{7 October 2026}
+
+\begin{document}
+\maketitle
+\sloppy
+
+\noindent
+This note collects, in one place and with terms defined, a set of
+results and observations about the \emph{static} (time-independent)
+linearised response of a self-gravitating body containing an inviscid
+fluid region --- a fluid core --- whose stratification is not neutral.
+The short version:
+
+\begin{enumerate}
+\item If the fluid's squared buoyancy frequency $N^2$ is nonzero, the
+  static problem posed with the fluid as an elastic material (the
+  natural reading of ``set the time derivatives to zero'') has
+  \emph{no solution}: its field equations force the fluid's radial
+  displacement to ride the equipotentials, and that assignment is
+  generically incompatible with the kinematic matching at the
+  core--mantle boundary (\S\ref{sec:slaving}--\ref{sec:nonexist}).
+\item This failure is invariant under the fluid-relabelling symmetry:
+  no choice of gauge representative repairs it. The static problem is
+  well posed on the quotient by the relabelling group \emph{exactly}
+  when $N^2 = 0$, where the group is large enough to absorb the
+  offending degree of freedom (\S\ref{sec:gauge}).
+\item Dahlen's classical treatment of the fluid is immune because it
+  eliminates the fluid displacement before the conflict can arise. The
+  price, usually left implicit, is a normal-displacement discontinuity
+  at the core--mantle boundary, carried in the formalism as a surface
+  mass density. Dahlen's static problem is well posed and its answer
+  is independent of the fluid's bulk modulus at every degree
+  $\ell \ge 1$ (\S\ref{sec:dahlen}).
+\item Dissipation decides. Every physical regularisation we can
+  identify --- fluid viscosity, diffusion of the stratifying quantity
+  (a point made by Wunsch in the 1970s\footnote{Reference to be added;
+  the observation that the static response of a stratified fluid is
+  selected by dissipative processes, however weak, goes back at least
+  to Wunsch's work of that decade.}), or a Maxwell viscoelastic core
+  --- yields a well-posed evolution whose $t \to \infty$ limit is the
+  Dahlen (secular) answer. Dahlen's closure is therefore not one
+  arbitrary resolution among many: it is the distinguished limit of
+  every dissipative completion (\S\ref{sec:regular}).
+\item For glacial-isostatic-adjustment timescales the body sits
+  extraordinarily deep in the secular regime --- even a core with
+  $N^2$ six orders of magnitude below plausible values has buoyancy
+  periods of years against loading periods of millennia --- so the
+  Dahlen closure is the physically correct static limit there, and the
+  entire ambiguity quantified below is practically negligible for GIA
+  next to, say, three-dimensional viscosity variations. The interest
+  of the result is conceptual, and for bodies or observables where
+  core stratification itself is the target (\S\ref{sec:persp}).
+\end{enumerate}
+
+\noindent
+Numerical evidence for each statement, obtained with this library's
+one-dimensional radial reference and its finite-element solvers, is
+collected in \S\ref{sec:evidence}. Statements are tagged
+\emph{derived} (a calculation reproduced here), \emph{argued} (a
+mathematical claim whose proof is sketched but not completed), or
+\emph{measured}.
+
+%=====================================================================
+\section{Setting and definitions}
+\label{sec:setting}
+
+\paragraph{Background state.} A non-rotating body occupies
+$B \subset \R^d$ ($d = 2$ or $3$; the two-dimensional ``gravitating
+disc'' is the testing geometry of this library and all statements
+below hold in both dimensions). It consists of a solid region and a
+fluid region separated by an interface $\Sigma$ (for concreteness, a
+fluid core of radius $c$ under a solid mantle; the core--mantle
+boundary, CMB). The background is a radial hydrostatic equilibrium:
+density $\rho(r)$, gravitational potential $\Phi_0$ with
+$\nabla^2\Phi_0 = 4\pi G \rho$ and $g(r) = \Phi_0'(r) \ge 0$, and
+pressure $p^0$ with $\mathrm{d}p^0/\mathrm{d}r = -\rho g$.
+
+\paragraph{The fluid, and $N^2$.} The fluid is \emph{inviscid} and
+\emph{barotropic-elastic}: its strain energy per unit referential
+volume is $V(\mathbf{x}, J)$, a function of position and of the
+volume ratio $J = \det F$ alone, with bulk modulus
+$\kappa = J^2 \partial^2_J V$ evaluated at equilibrium. It supports
+no shear stress. The \emph{squared buoyancy frequency} is
+\begin{equation}
+  N^2 \;=\; -g\left(\frac{1}{\rho}\frac{\mathrm{d}\rho}{\mathrm{d}r}
+            + \frac{g\rho}{\kappa}\right),
+  \label{eq:N2}
+\end{equation}
+the frequency (squared) of vertical oscillation of a displaced fluid
+parcel. $N^2 > 0$ is stable stratification, $N^2 < 0$ unstable, and
+$N^2 = 0$ --- the \emph{Adams--Williamson} or \emph{neutral} state ---
+means the density profile is exactly the one produced by adiabatic
+self-compression, so a displaced parcel is always neutrally buoyant.
+The library's test model \code{fluid\_core} (uniform density,
+finite $\kappa$) has $N^2 = -g^2\rho/\kappa < 0$; its constructed
+twin \code{aw\_core} has $N^2 = 0$ identically, by choosing the
+density profile first and defining
+$\kappa = -\rho^2 g / (\mathrm{d}\rho/\mathrm{d}r)$ in closed form.
+
+\paragraph{Perturbations.} Linearise about the background:
+$\bu$ is the (referential) displacement field, $\phi$ the
+\emph{Eulerian} perturbation of the gravitational potential (the
+change at a fixed spatial point), and, in the fluid,
+$p^1$ and $\rho^1$ the Eulerian pressure and density perturbations.
+The \emph{Lagrangian} pressure perturbation (the change following the
+material) is $\Delta p = p^1 + \bu\cdot\nabla p^0$; for the
+barotropic-elastic fluid $\Delta p = -\kappa\,\Div\bu$. Mass
+conservation gives $\rho^1 = -\Div(\rho\,\bu)$.
+
+\paragraph{The three formulations compared.} All act on the same
+background and load; they differ in how the fluid and the interface
+are described. (Precise weak forms:
+\code{doc/quasi\_static\_models.tex} and
+\code{doc/gravitating\_elasticity.md}; here only what matters.)
+\begin{description}
+\item[welded:] the fluid is kept as the elastic material above, and
+  the displacement is a single continuous field across $\Sigma$ ---
+  both normal and tangential components match.
+\item[slip (slipping interface):] the fluid displacement is an
+  independent field; only the \emph{normal} component is matched at
+  $\Sigma$ ($\bn\cdot\jump{\bu} = 0$, in the notation of
+  \code{doc/slip\_interface.tex}); the tangential jump --- the slip
+  --- is free, and the interface carries the corresponding pressure
+  and gravity forms.
+\item[Dahlen:] the fluid displacement is eliminated analytically
+  (\S\ref{sec:dahlen}); the fluid contributes a volume term in $\phi$
+  and interface terms at $\Sigma$, and the solid is described in the
+  standard (effective-moduli) variables.
+\end{description}
+
+\paragraph{The fluid-relabelling (FRL) symmetry.} A
+\emph{relabelling} is an infinitesimal rearrangement $\bw$ of the
+fluid's material labels that leaves every physical field unchanged:
+it must preserve the mass distribution and whatever else the energy
+depends on, and must not move the boundary,
+$\bw\cdot\bn = 0$ on $\partial(\text{fluid})$. Which $\bw$ qualify
+depends on the stratification:
+\begin{itemize}
+\item \textbf{strict class} ($N^2 \ne 0$): $\Div\bw = 0$ and
+  $\bw\cdot\nabla\Phi_0 = 0$ --- volume-preserving and tangent to the
+  level surfaces of the background potential. On a spherical
+  (circular) interface the induced boundary motions are the
+  surface-divergence-free tangential fields; in two dimensions,
+  rigid rotations only.
+\item \textbf{class K} ($N^2 = 0$): $\Div(\rho\,\bw) = 0$ with
+  $\bw\cdot\bn = 0$ --- the ``trivial displacements''. This is a much
+  larger group; in particular every tangential boundary field is the
+  trace of some member, so every slip is removable
+  (\code{doc/planning/open\_issues.md}, the removability item).
+\end{itemize}
+Solutions of the static equations, when they exist, are determined
+only up to the relevant class: the physically meaningful object is
+the equivalence class (the \emph{orbit}), and any gauge-invariant
+observable --- surface displacement, the potential, tractions --- is
+constant on it. The Maitra--Al-Attar programme implemented in this
+library enforces normal continuity, leaves the slip free, and selects
+a representative of the orbit by a gauge condition (in practice a
+small penalty, iteratively refined); see \S\ref{sec:gauge} for when
+this is and is not legitimate.
+
+%=====================================================================
+\section{The interior slaving}
+\label{sec:slaving}
+
+\emph{Status: derived.} Work at one harmonic degree $\ell \ge 1$ on
+the radial background, in either dimension. Write the static
+(time-independent) equations of the elastic fluid.
+
+\textbf{Step 1 (tangential balance).} The tangential component of the
+linearised momentum balance,
+$-\nabla p^1 = \rho\,\nabla\phi + \rho^1\nabla\Phi_0$, has no
+$\rho^1$-term (gravity is radial), and integrates along the level
+surface to
+\begin{equation}
+  p^1 = -\rho\,\phi
+  \qquad (\ell \ge 1).
+  \label{eq:p-slaved}
+\end{equation}
+
+\textbf{Step 2 (radial balance).} Substituting \eqref{eq:p-slaved}
+into the radial component gives
+\begin{equation}
+  \rho^1 = \frac{1}{g}\frac{\mathrm{d}\rho}{\mathrm{d}r}\,\phi .
+  \label{eq:rho-slaved}
+\end{equation}
+Equations \eqref{eq:p-slaved}--\eqref{eq:rho-slaved} are exactly
+Dahlen's interior relations: they follow from momentum balance alone
+and hold for \emph{any} static description of the fluid, elastic or
+reduced.
+
+\textbf{Step 3 (the elastic description adds kinematics).} The
+elastic fluid also carries $\rho^1 = -\Div(\rho\bu)$ and
+$\Delta p = -\kappa \Div\bu$ with
+$\Delta p = p^1 - \rho g\,u_r$ (using
+$\bu\cdot\nabla p^0 = -\rho g\,u_r$). Eliminating $\Div\bu$ between
+the two and inserting \eqref{eq:p-slaved}--\eqref{eq:rho-slaved}
+yields, after a line of algebra in which the combination
+\eqref{eq:N2} appears,
+\begin{equation}
+  \boxed{\;u_r\,\frac{\rho N^2}{g}
+   \;=\; -\,\frac{\rho N^2}{g^2}\,\phi\;}
+  \qquad\Longrightarrow\qquad
+  u_r = -\frac{\phi}{g}
+  \quad\text{whenever } N^2 \neq 0 .
+  \label{eq:slaving}
+\end{equation}
+The radial displacement is \emph{slaved}, pointwise, to the potential
+perturbation: fluid particles ride the perturbed equipotentials
+(equivalently, the Lagrangian perturbation of the potential-plus-%
+position label vanishes). At $N^2 = 0$ the relation degenerates to
+$0 = 0$ and $u_r$ is free --- the first appearance of the dichotomy
+that organises everything below.
+
+%=====================================================================
+\section{Non-existence of the elastic-static solution}
+\label{sec:nonexist}
+
+\emph{Status: argued, and displayed numerically.} At the CMB the
+kinematics of every formulation that carries a fluid displacement
+demands
+\begin{equation}
+  u_r(\text{fluid side of }\Sigma) = u_r(\text{solid side of }\Sigma),
+  \label{eq:matching}
+\end{equation}
+while \eqref{eq:slaving} assigns the fluid side the value
+$-\phi(c)/g(c)$. For a generic load the two assignments differ; the
+same trace cannot take two values; hence:
+
+\begin{claim}[no classical static solution]
+\label{claim:nonexist}
+For $N^2 \ne 0$ and generic loading, the static problem of the
+elastic fluid --- welded or slipping alike, since both impose
+\eqref{eq:matching} --- has no solution in any function space in
+which the fluid displacement has a normal trace at $\Sigma$
+(classical, or $H^1$-conforming weak). The over-determination sits at
+the interface; no interior rearrangement relieves it.
+\end{claim}
+
+Three remarks on what this does and does not say.
+
+\begin{remark}[the variational face]
+In weak form the pathology appears as spectrum, not as a visible
+contradiction: the stratification contributes a continuum of
+near-neutral fluid motions whose energies accumulate at zero
+(for the dynamic operator, the essential spectrum is an interval with
+endpoint $0$ whenever $N^2 \neq 0$ somewhere). Zero is then not an
+isolated eigenvalue with a clean kernel but an accumulation point;
+the static operator's range is not closed; and a generic load has a
+component outside it. For stable stratification the energy picture is
+loss of compactness: minimising sequences push the violation of
+\eqref{eq:slaving} into ever-thinner structure at $\Sigma$, the
+infimum is approached but not attained, and the limit object leaves
+the space. For $N^2 < 0$ the same occurs in saddle form. Turning
+this paragraph into a theorem (non-closed range; characterisation of
+the compatible loads) is open and worth doing if this material is
+published.
+\end{remark}
+
+\begin{remark}[what computations produce instead]
+A discretised and/or regularised problem is finite-dimensional and
+always has an answer. But it approximates an escaping sequence, not a
+solution: the computed fluid displacement never settles (it depends
+on the mesh and on the regularisation parameter at fixed accuracy),
+while gauge-invariant solid observables hover in a band whose size is
+controlled by the stratification. The measured bands are in
+\S\ref{sec:evidence}. We emphasise: this is not a solver deficiency,
+and no amount of resolution removes it.
+\end{remark}
+
+\begin{remark}[there is no boundary layer to resolve]
+One might expect the solution to consist of the slaved interior plus
+a thin matching layer at $\Sigma$. Numerically no such layer appears
+at any regularisation we tried: statics contains no mechanism to set
+a layer width (no viscosity, no diffusion), so the would-be layer has
+zero width --- which is just Claim~\ref{claim:nonexist} again. The
+layer becomes real, with a physical width, only when dissipation is
+restored (\S\ref{sec:regular}).
+\end{remark}
+
+%=====================================================================
+\section{The gauge-theoretic statement}
+\label{sec:gauge}
+
+\emph{Status: derived (the invariance observation); argued (the
+dichotomy).} Two observations place the obstruction relative to the
+FRL symmetry.
+
+First, every relabelling of either class satisfies
+$\bw\cdot\bn = 0$ on $\Sigma$, so no gauge transformation alters the
+normal trace: the incompatibility of
+\eqref{eq:slaving}--\eqref{eq:matching} is untouched by any choice of
+representative. Second, and more sharply: for $N^2 \ne 0$ the strict
+class is tangent to the level surfaces, so its members have
+$w_r = 0$ \emph{pointwise} --- the radial displacement of the fluid
+is gauge-\emph{invariant} precisely when \eqref{eq:slaving} pins it.
+At $N^2 = 0$, where class K makes $u_r$ gauge-variable, the pinning
+equation is the one that degenerates. The geometry of the symmetry
+group and the solvability of the field equations switch together.
+
+\begin{proposition}[well-posedness on the quotient]
+\label{prop:quotient}
+The static problem is well posed on the quotient by the fluid
+relabellings if and only if $N^2 = 0$. At $N^2 = 0$ the zero modes of
+the static operator form a genuine null space (class K), every load
+is compatible with it (relabellings are energy- and load-neutral),
+and the solution set is a single nonempty orbit; the
+Maitra--Al-Attar selection --- normal continuity, free slip, a
+representative picked by minimising a gauge functional --- is then a
+well-posed choice among existing solutions. For $N^2 \ne 0$ the
+degeneracy at zero is essential spectrum rather than kernel, the
+solution set is empty for generic loads, and the selection step has
+nothing to select from: the gauge-fixed discrete answer it returns is
+the regularised object of the previous section, with its band.
+\emph{(The ``only if'' direction is Claim~\ref{claim:nonexist}; the
+``if'' direction at $N^2=0$ is the class-K lifting argument of the
+removability analysis, and is confirmed numerically to $10^{-10}$.)}
+\end{proposition}
+
+This is, we believe, the clean way to say what is wrong and what is
+right simultaneously: nothing in the relabelling programme is at
+fault --- it is exactly the framework in which the dichotomy
+kernel-versus-essential-spectrum can be stated --- but its selection
+step inherits the solvability of the quotient problem, which is a
+property of the stratification, not of the method.
+
+%=====================================================================
+\section{Dahlen's method as the secular closure}
+\label{sec:dahlen}
+
+\emph{Status: derived (the identification); measured (the
+$\kappa$-blindness and the null test).} Dahlen's elimination keeps
+only \eqref{eq:p-slaved}--\eqref{eq:rho-slaved} --- which are exact
+--- and never introduces a fluid displacement, so
+Claim~\ref{claim:nonexist} cannot touch it: its static problem is
+well posed (and, in our one-dimensional reference, converges to
+machine precision where the elastic-static solves wander). What
+happened to the conflict? Reconstruct the displacement implied by
+Dahlen's fields through $\rho^1 = -\Div(\rho\bu)$: it is the slaved
+field $u_r = -\phi/g$, which does \emph{not} match the solid at
+$\Sigma$. The formalism remains consistent because its interface
+term
+\[
+  -\int_{\Sigma} \rho_F\,
+     \bigl[\phi\,(\mathbf{m}\cdot\bu') + \phi'\,(\mathbf{m}\cdot\bu)\bigr]\dS
+\]
+(the ``F3'' term of the implementation; $\mathbf{m}$ the solid's
+outward normal, $\rho_F$ the fluid-side density) carries the mass
+displaced \emph{across} the boundary as a surface density. In the
+displacement picture this is a normal-displacement discontinuity at
+the CMB: the fluid slips normally past the boundary and the swept
+mass is booked on $\Sigma$. That is the \emph{secular closure}: the
+state reached after the fluid has rearranged to hydrostatic
+equilibrium in the perturbed potential, however long that takes.
+
+Two sharp consequences, both verified:
+(i) at $\ell \ge 1$ the construction never consults the fluid's bulk
+modulus, so Dahlen's answer is exactly independent of $\kappa$ in the
+core (measured: unchanged to $10^{-11}$ under a thirty-fold scaling);
+(ii) at $N^2 = 0$ the reduction coincides with the full elastic
+static fluid, so Dahlen, welded and slip must agree exactly there
+(measured: $\sim 10^{-10}$ at every degree on \code{aw\_core}). The
+well-known failure at $\ell = 0$ --- the elimination discards the
+compressional physics, and one constant pressure per fluid region
+remains free --- is a separate, understood matter; the practical
+remedy (solve $\ell = 0$ with the displacement description) is what
+this library and \code{pyslfp} both do.
+
+\paragraph{Aspherical reference states.} The elimination above is a
+spherical accident. Its first step --- tangential balance integrating
+to $p^1 = -\rho\,\phi$ degree by degree --- used the fact that on a
+spherical background the level surfaces are the coordinate spheres
+and the harmonics decouple. On a properly aspherical hydrostatic
+reference the same balance says only that $p^1 + \rho\,\phi$ is
+constant on each level surface of $\Phi_0$: the elimination leaves a
+free \emph{function} of $\Phi_0$ per connected fluid region,
+coupled to every harmonic through Poisson's equation
+(\code{doc/quasi\_static\_models.tex}, assumption M4). The secular
+\emph{state} still exists on any geometry --- the fluid rearranged
+to hydrostatic equilibrium in the perturbed potential is a
+well-defined configuration --- but Dahlen's \emph{route} to it does
+not survive asphericity in any practically implementable form. Since
+the full-elastic static formulations are the ill-posed ones at
+$N^2 \ne 0$, an aspherical model with a non-neutral core currently
+has \emph{no} practical well-posed static method at all; the
+dissipative route of \S\ref{sec:regular} is then not a consistency
+check but the only general-geometry computation of the secular
+response on offer. For this library's aspherical programme
+(equilibrium figures, aspherical reference states) the point is
+practical, not academic.
+
+\begin{remark}[a historical irony]
+Dahlen criticised, forcefully, a 1970s proposal of Crossley and
+Gubbins that the static deformation problem admits a discontinuity of
+radial displacement at the CMB. The analysis above says that his own
+static method carries exactly such a discontinuity, implicitly, as
+the surface-mass bookkeeping of the secular closure --- and that for
+$N^2 \ne 0$ some such discontinuity is \emph{necessary}, since no
+static solution without one exists. The only question a formulation
+answers is whether it admits the jump openly and is well posed, or
+forbids it and loses existence. \emph{(Exact references to be added.)}
+\end{remark}
+
+%=====================================================================
+\section{What dissipation selects, and routes to regularisation}
+\label{sec:regular}
+
+\emph{Status: argued; the viscoelastic route is implementable in this
+library and is proposed as the decisive numerical experiment.}
+Statics is the degenerate limit of some evolution, and the
+non-existence of \S\ref{sec:nonexist} is the statement that the
+limit depends on physics that statics has discarded. Restoring any of
+it gives a well-posed problem:
+
+\begin{itemize}
+\item \textbf{Fluid viscosity.} With viscosity $\eta$, however small,
+  the quasi-static evolution under a steady load is well posed; the
+  stress supported by the stratification relaxes as the fluid creeps
+  along equipotentials, and the $t \to \infty$ state is the
+  rearranged, hydrostatic one --- the Dahlen answer. The interface
+  region acquires a genuine layer of $\eta$-dependent width that
+  thins as $t$ grows.
+\item \textbf{Diffusion of the stratifying quantity.} If the density
+  anomaly a displaced parcel carries can diffuse (thermally or
+  compositionally), the buoyancy constraint itself erodes;
+  weak diffusion again selects the rearranged state. This is, as we
+  understand it, Wunsch's point from the 1970s: for a stratified
+  fluid the static response is not a property of the inviscid
+  adiabatic equations at all --- it is selected by the dissipative
+  processes, however weak they are.
+\item \textbf{A Maxwell viscoelastic core.} Give the core's shear
+  response a Maxwell element with a short relaxation time. At every
+  Laplace frequency $s > 0$ the moduli are shifted and the problem is
+  uniformly well posed; the $t\to\infty$ (equivalently $s\to 0^+$)
+  limit of the observables is again the secular answer. This
+  regularisation is \emph{already implementable} with the library's
+  viscoelastic time layer and is the cleanest numerical experiment on
+  offer: step a \code{fluid\_core}-type model with a Maxwell core to
+  late time and watch the observables leave the elastic-static band
+  and converge onto the Dahlen values. Proposed; not yet run. Its
+  real significance is aspherical (\S\ref{sec:dahlen}): where the
+  Dahlen elimination does not survive the geometry, time-stepping a
+  weakly dissipative core is the only practical route to the secular
+  response, and it works on any mesh this library can build.
+\item \textbf{What does not work.} A static Tikhonov pin (the small
+  deviatoric regulariser $\eps_{\mathrm{reg}}$ of the numerical
+  tools) makes each solve unique but selects nothing physical: the
+  answer depends on $\eps_{\mathrm{reg}}$ with no limit --- measured,
+  and expected, since a static regulariser supplies no arrow of time.
+  Likewise the frequency-domain route: the response exists for every
+  $\sigma \neq 0$ but has no limit as $\sigma \to 0$ (the limit point
+  sits on the essential spectrum); the static limit is genuinely
+  non-uniform, which is the spectral restatement of the whole
+  phenomenon and connects to the classical secular-constant
+  (Longman) discussions. \emph{(References to be added.)}
+\end{itemize}
+
+\noindent
+The conclusion inverts the naive reading of
+Claim~\ref{claim:nonexist}: the elastic-static problem is not
+``the'' static problem that Dahlen approximates; Dahlen's closure is
+the static limit that every dissipative completion agrees on, and the
+elastic-static formulation is the one asking a question without an
+answer. What remains true, and matters, is that the \emph{size} of
+the gap between any regularised transient and the secular endpoint is
+controlled by the stratification, vanishes identically at
+$N^2 = 0$, and is invisible in formulations that never resolve the
+closure choice explicitly.
+
+%=====================================================================
+\section{Numerical evidence}
+\label{sec:evidence}
+
+All measurements 7 October 2026, with the per-degree radial reference
+of the two-dimensional disc family
+(\code{benchmarks/disc/disc\_radial.py}; the $\theta$-reduction of
+this library's weak forms, solved by one-dimensional $hp$ finite
+elements and validated against closed-form solutions of the
+gravity-free problems at $10^{-9}$--$10^{-13}$), and with the
+finite-element example \code{examples/self\_gravitating\_solvers}
+(all six solver architectures of the library on one model and load).
+Models: \code{fluid\_core\_2d} (uniform-density core, $N^2 < 0$) and
+its mass-matched neutral twin \code{aw\_core\_2d} ($N^2 = 0$ in
+closed form); degree-2 loading unless stated.
+
+\begin{center}
+\small
+\begin{tabular}{@{}llll@{}}
+\toprule
+measurement & \code{aw\_core\_2d} & \code{fluid\_core\_2d} & reads as \\
+\midrule
+welded $=$ slip $=$ Dahlen & $\sim 10^{-10}$, every degree &
+  spread $\sim 10^{-3}$--$10^{-2}$ & Prop.~\ref{prop:quotient} \\
+$p$-refinement of welded/slip & converges, $\sim 10^{-12}$ &
+  wanders, $\sim 3\times 10^{-3}$ band & Claim~\ref{claim:nonexist} \\
+$p$-refinement of Dahlen & converges & converges ($7$ digits) &
+  \S\ref{sec:dahlen} \\
+sensitivity to $\eps_{\mathrm{reg}}$ & none ($10^{-8}$--$10^{-12}$) &
+  $\sim 10^{-3}$ & no physical selection \\
+fluid field tracks \eqref{eq:slaving}? & (n/a: free) & never, at any
+  $\eps_{\mathrm{reg}}$ & no-layer remark \\
+Dahlen under $\kappa \times 30$ & --- & unchanged to $10^{-11}$ &
+  $\kappa$-blindness \\
+band about Dahlen vs $N^2\times\frac{1}{30}$ & --- & shrinks
+  $\sim 14\times$ (noisy) & band $\to 0$ with $N^2$ \\
+FE six-architecture null & all within $1.2\times10^{-3}$ &
+  genuine spreads & the FE replica \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent
+Fixed-resolution differences \emph{between} the full-elastic methods
+on the non-neutral model (welded versus slip, or either versus
+Dahlen) lie inside the wandering band and are not resolved
+decompositions; only the neutral-twin nulls and Dahlen's convergence
+are sharp. Separately, the welded-versus-slip distinction --- the
+suppression of non-removable slip by the welded space --- is a
+\emph{kinematic} matter orthogonal to the closure question: it too
+vanishes at $N^2 = 0$ (class K removes every slip) and is measured as
+the $10^{-10}$ null above, but at $N^2 \neq 0$ its magnitude on these
+models is likewise inside the band at $\ell \ge 2$ (in three
+dimensions it is visible at degree~1, riding the soft core--shell
+translation; see \code{doc/planning/open\_issues.md}).
+
+%=====================================================================
+\section{Perspective, implications, and open items}
+\label{sec:persp}
+
+\paragraph{Timescales.} The secular regime is entered when the
+loading timescale exceeds the buoyancy timescale. Even a core
+stratification as feeble as $N^2 \sim 10^{-15}\,\mathrm{s}^{-2}$ ---
+six orders below commonly discussed outer-core values --- gives
+buoyancy periods of order years, against GIA loading periods of
+millennia: $\sigma/N \lesssim 10^{-3}$ in the most unfavourable
+reading, and $\sim 10^{-7}$ for plausible values. For GIA, therefore,
+the Dahlen closure is simply correct, the elastic-static band is
+transient physics the Earth has long since relaxed through, and the
+entire effect is negligible against (for example) three-dimensional
+mantle-viscosity variations. The practical force of this note for GIA
+is indirect: it explains the non-neutral resolution floor seen in
+benchmark ladders, disciplines what comparisons against Dahlen-type
+references (such as \code{pyslfp}) can and cannot resolve, and
+identifies the neutral twin \code{aw\_core} as the configuration on
+which everything is clean.
+
+\paragraph{Where it is not academic.} Observables or bodies for which
+core stratification is itself the target --- stably stratified layers
+at the top of the core, other planets, or any inversion in which
+$N^2$ is a parameter --- inherit an $N^2$-controlled modelling choice
+that is invisible in standard treatments because the closure is
+implicit. There the honest statement is: the static response is
+defined only up to the secular closure, Dahlen computes that closure,
+and the distance to any finite-time (partially relaxed) state is a
+transient that requires the dissipative physics to evaluate.
+
+\paragraph{Relation to the dynamic ill-posedness argument (DAMTP
+2025 talk).} A sketched argument of the author's (slides,
+\code{\~{}/Documents/Talks/DAMTP2025}; to be completed) holds that
+the \emph{dynamic} equations in a non-neutrally stratified fluid are
+ill-posed through a loss of regularity: writing the fluid
+elasto-dynamic operator as $A = C^*(C+D+E) + FC$, with $C$ the
+divergence-type operator and $F$ the buoyancy coupling that
+\emph{vanishes exactly in the neutral case}, the kernel sector of
+the resolvent reduction is driven by the acoustic sector through the
+composite $FC$ --- energy transfer from acoustic to internal modes.
+The essential mechanism is a \emph{loss of regularity}: because of
+the factor of $C$ the coupling is an operator of order one, so the
+internal sector is forced by a quantity one derivative rougher than
+its space, and the $\ker C$ dynamics (free, with no smoothing)
+cannot pay the derivative back --- $u_0$ does not remain in the
+right space, at any frequency. The explicit $p^{-1}$ factor is the
+additional low-frequency amplification on top of this. The present
+note is the $p \to 0$ endpoint of the same structure: at $F = 0$
+the kernel sector decouples as pure gauge and the static quotient
+problem is well posed (Proposition~\ref{prop:quotient}); at
+$F \neq 0$ the driving has no static limit, which is
+Claim~\ref{claim:nonexist},
+the non-uniform $\sigma \to 0$ limit of \S\ref{sec:regular}, and
+the measured band, while the interfacial loss of compactness is the
+spatial face of the dynamic loss of regularity. The two gradations
+are consistent: dynamically, mild solutions survive while
+derivatives are progressively lost; statically, where there is no
+time left to lose them in, existence itself fails. In particular the open theorem below and the talk's
+to-be-completed argument are one piece of mathematics --- the
+essential-spectrum characterisation there reduces to the Fredholm
+property of $1_Z - p^{-1}D\,(QB|_{\ker C} + p\,1)^{-1}QF$, whose
+$p \to 0$ corner is exactly the static solvability question ---
+and the measurements of \S\ref{sec:evidence} are numerical evidence
+for the dynamic conjecture as well.
+
+\paragraph{Open items.}
+(i) The functional-analytic theorem behind
+Claim~\ref{claim:nonexist} and Proposition~\ref{prop:quotient} ---
+now best approached jointly with the dynamic argument above.
+(ii) The Maxwell-core regularisation experiment of
+\S\ref{sec:regular} --- implementable now, and the direct numerical
+demonstration that dissipation selects Dahlen.
+(iii) A clean measurement of the band's $N^2$-scaling (the
+one-dimensional tool does each point in seconds; the current
+two-resolution estimator is noisy).
+(iv) The three-dimensional \code{aw\_core} runs: the degree-1
+welded--slip null test, the Dahlen-path $h$-ladder (deciding whether
+the non-neutral floor explains the outstanding
+\code{fluid\_core} ladder residuals), and the decomposition of the
+\code{pyslfp} offsets.
+(v) References: Dahlen's 1970s static-deformation papers, the
+Crossley--Gubbins exchange, Longman's problem, and Wunsch's
+dissipation argument, to be added precisely.
+
+\end{document}

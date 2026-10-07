@@ -1,10 +1,14 @@
 # The no-gravity slip family: exact references, 2-D first
 
-**Status:** derivation note for review, 7 Oct 2026; nothing
-implemented yet. Rung 0 (2-D, no gravity, no pre-stress) is derived in
-full below; rungs 1-2 are specified with their method. The 3-D twins
-(Love's shell solution, the κ/V fluid spring) follow the identical
-structure and are deferred until the 2-D rungs are clean.
+**Status:** derivation note, 7 Oct 2026; updated 8 Oct 2026. Rungs 0
+and 1 are implemented and passing (`benchmarks/disc/`). Rung 2 is
+implemented and validated for welded, slip and Dahlen at l = 0 and
+l ≥ 2 (`disc_models.py`, `disc_radial.py`; design in
+[disc_gravity_reference.md](disc_gravity_reference.md)), the Dahlen
+switch via the Eulerian mixed-class path after the referential glue
+failed the aw_core_2d null test; l = 1 pending. The 3-D twins (Love's
+shell solution, the κ/V fluid spring) follow the identical structure
+and are deferred.
 
 **Purpose.** With gravity off, the slipping problem's physics becomes
 trivial while its *machinery* — the broken space, the pairing, the
@@ -122,19 +126,66 @@ construction.
 ## Rung 1: uniform surface pressure P₀ (still no gravity)
 
 A uniform normal pressure P₀ on r = a with no body force equilibrates
-with the homogeneous hydrostatic pre-stress σ⁰ = −P₀ I in solid and
+with the homogeneous hydrostatic pre-stress S_e = −P₀ I in solid and
 fluid alike: π = P₀ constant, the non-natural reference state of the
-Traction classes. This switches on B_Σ (coefficient π) and the
-fluid's induced shear rigidity μ_b = π while keeping every coefficient
-constant, so the perturbation operator is homogeneous and
-equidimensional and the degree-l solutions remain power laws r^k —
-the exponents now come from a small eigenproblem (det of a 2 × 2
-polynomial symbol) instead of the classical ±l, ±l+2, and the BC
-system is the same 4 × 4 shape. Method, not tables: the reference
-implementation computes exponents and basis numerically-exactly per
-(λ, μ, P₀, l). Rung 1 is the first exact test of B_Σ and of the
-multiplier physics (λ converges to the interface traction
-perturbation) — still with no potential block at all.
+Traction classes (dead referential tractions; stiffness = material +
+geometric only — `doc/gravitating_elasticity.md` §2). This switches
+on B_Σ (coefficient π) and the fluid's bare shear μ_b = P₀. The
+derivation collapses further than first expected — three structural
+facts (each to be checked):
+
+**(1) The volume operator is classical Navier with the effective
+moduli.** The perturbation first Piola is δP = λ_b div u I + 2μ_b ε −
+P₀ Du, and div(−P₀ Du) = −P₀ Δu, so the strong form is Navier with
+
+    λ_eff = λ_b + P₀,    μ_eff = μ_b − P₀
+
+— the WD effective-moduli dictionary with its gravity terms switched
+off (∇p⁰ = 0 exactly). The rung-0 power-law basis therefore carries
+over verbatim with (λ_eff, μ_eff); no new exponent eigenproblem is
+needed after all.
+
+**(2) The fluid's P₀-stiffness is a null Lagrangian.** The fluid's
+effective shear is μ_eff,f = P₀ − P₀ = 0 (the dictionary's fluid
+statement), and the residual geometric+material combination
+
+    ∫_fluid P₀ [ Du : Duᵀ − (div u)² ] dA
+
+is a pure boundary functional of the interface trace, so the fluid
+again enters only through (i) the κ_f area spring at l = 0 and (ii)
+an explicit P₀-weighted boundary quadratic in its trace amplitudes
+(U_f, V_f), computable in closed form on the circle. The fluid
+displacement's volume indeterminacy survives exactly as in rung 0.
+
+**(3) The traction rows gain closed-form cof corrections.** With
+cof(A) = tr(A) I − Aᵀ in 2-D,
+
+    δP·N = σ_eff·N − P₀ cof(Du) N,
+
+and cof(Du)N is tangential-derivative-only on the boundary: in
+amplitudes, the radial traction row gains −P₀ (U + lV)/r and the
+tangential row −P₀ (lU + V)/r. (Sanity at l = 0: this reproduces
+λ_b(U′+U/r) + (2μ_b−P₀)U′ directly from δP.) Both the loaded surface
+rows and the interface rows carry these corrections. The slipping
+problem's interface conditions then follow from 1-D stationarity of
+the per-degree functional — solid and fluid volume terms, the fluid's
+boundary quadratic from (2), and B_Σ with π = P₀, whose 2-D
+amplitude form on the circle of radius c is explicit
+(ν̂·∇_Σv[s] on the circle = s_θ(∂_θ v_r − v_θ)/r, so B_Σ contracts
+to −(π_pres/c)·S·[l(U_s+U_f) + (V_s+V_f)] per unit angular
+normalisation, S = V_f − V_s the tangential-jump amplitude). The
+natural interface conditions of that stationarity are exactly what
+the FE slip solve assembles (constraint row + B_Σ + cof-corrected
+tractions): rung 1 tests B_Σ and the multiplier physics with no
+potential block anywhere.
+
+The welded variant keeps the volume geometric terms and the
+cof-corrected surface rows but has no interface term (continuous
+trace and continuous π: the two sides cancel); welded ≡ slip remains
+exact (the slip is still removable without gravity), so the identity
+stays the machinery test — now with B_Σ active on the slip side.
+Rotations are near-null through moment balance (dead loads), matching
+the Traction class's RigidPairResiduals expectation.
 
 ## Rung 2: gravity on the disc — the radial-ODE reference
 
