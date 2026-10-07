@@ -228,8 +228,13 @@ model").
 ### Broken-ζ interface forms when F jumps across Σ
 
 **Status:** decided for the benchmarks (interface-shift maps are run with
-interpolated F, forced by the driver); open in the library (the side
-conventions of the broken-ζ forms under a jump of F are not settled).
+interpolated F, forced by the driver); theory pass and implementation
+audit complete 7 Oct 2026 ([f_jump_side_conventions.md](f_jump_side_conventions.md)):
+the derivation needs no `[[F]] = 0` and the implemented one-sided data
+are internally consistent, so no side convention is missing — the
+remaining open item here is the library-level rule for exact branching
+maps (below), and the shift-derivative question moves to the
+discretisation/physics axes.
 
 Interface-shift mappings are the only configurations in which the
 mapping gradient F jumps across Σ (the relabelling maps have identity

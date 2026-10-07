@@ -91,6 +91,11 @@ benchmark_launcher(love_numbers love_numbers plot)
 benchmark_launcher(love_numbers love_numbers cmb_report)
 benchmark_launcher(common love_numbers make_case)
 
+# --- Disc (the 2-D family; rung 0 is gravity-free) --------------------------
+
+benchmark_driver(disc disc_benchmark)
+benchmark_launcher(disc disc check ${BENCHMARK_LAUNCHER_ARGUMENTS})
+
 # --- Relabelling ------------------------------------------------------------
 
 foreach(driver relabelled_identity aspherical_reference)
