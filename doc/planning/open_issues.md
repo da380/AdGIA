@@ -39,32 +39,49 @@ interpolation floor of the certified constraint kernels. The slip leg
 of `relabelled_identity` is now STRICT (same 1e-5 criterion as the
 welded runs); the welded legs are unchanged (u 1.6e-7).
 
-**What remains open: Leg A (exact F, `love_benchmark -map 0.02`).**
-Lateral leakage in the Love numbers: the `spurious` column is 0.36 at
-degree 1 and 6–8.5e-2 at degree ≥ 2 (remeasured 7 Oct 2026, identical
-before and after the kernel fix to every printed digit and iteration
-count), against 6e-3–1e-2 unmapped and 2–8e-3 for the mapped
-referential method. The kernel fix is provably not the cause here: the
-exact `InteriorRelabelling` has its per-layer bumps vanishing WITH
-their first derivative at the layer boundaries, so `F = 1` exactly on
-every interface and the interface kernels assemble as unmapped — the
-Leg-A mechanism is elsewhere. Best current reading: `G_Σ`'s
-coefficients `b`, `q` come from the MAPPED background solve, whose
-lateral discretisation error (an exact-F mapped Poisson solve is not
-discretely identical to the unmapped one) perturbs `G_Σ` inside its
-sharp degree-1 cancellation — `-gs-scale 0.5` raises the *unmapped*
-degree-1 spurious value to 0.46 and makes the mapped solve diverge —
-so a small relative perturbation is strongly amplified. If so the
-leakage is amplified discretisation error, and should fall under
-refinement in h or order where the pre-fix defect GREW; the refinement
-ladder of the mapped run is the next instrument. A strong post-fix
-data point: the SAME Leg-A run with INTERPOLATED F (`-map-interp`,
-side-consistent, and identity-exact with the fixed kernels) gives
-spurious 0.016 / 0.011 / 0.010 / 0.014 / 0.006 at degrees 0–4 — the
-mapped-referential level, and below the pre-fix unmapped slip values —
-with ~10 % fewer iterations. The exact-F channel is therefore the only
-remaining anomaly, and interpolated F is the sensible default mode for
-mapped `slip_broken` runs meanwhile. The rigid null-pair
+**Leg A (exact F, `love_benchmark -map 0.02`): RESOLVED 8 Oct 2026 —
+convergent discretisation error, not a defect.** The symptom: spurious
+0.36 at degree 1 and 6–8.5e-2 at degree ≥ 2 at order 2, h = 0.3
+(identical before and after the kernel fix to every digit — provably
+disjoint from the covariance defect, since the exact
+`InteriorRelabelling`'s bumps vanish WITH their first derivative at
+the layer boundaries, so `F = 1` exactly on every interface and the
+interface kernels assemble as unmapped). The chain that closed it:
+
+1. *The amplification hypothesis was falsified first*: perturbing
+   `G_Σ` by a known amount on the unmapped run (`-gs-scale` 0.999 /
+   0.99) moves h'₁ LINEARLY with slope ≈ 0.8 and leaves `spurious`
+   untouched — the degree-1 response is not a sharp amplifier of
+   small coefficient errors (the 0.46 at scale 0.5 is a
+   large-perturbation effect). So the mapped background's b-error
+   cannot reach 0.36 through `G_Σ`'s coefficients.
+2. *The order ladder settles it*: at ORDER 3 the exact-F mapped run
+   collapses to spurious 0.0071 / 0.016 / 0.0047 at degrees 0–2
+   (from 0.033 / 0.36 / 0.085), and the matched-resolution identity
+   is restored — mapped vs unmapped order-3 `slip_broken` agree to
+   1.3–1.6e-3 in every Love number with the SAME spurious level
+   (l = 1: 0.016 vs 0.017). The mapped referential control behaves
+   identically (3e-4). INTERPOLATED F was already clean at order 2
+   (spurious 0.006–0.016 at all degrees, ~10 % fewer iterations).
+
+Conclusion: the exact-F mapped `slip_broken` at order 2, h = 0.3 is
+simply under-resolved in its exact-F-specific channels (the
+non-polynomial mapped integrands and the mapped-background data in
+the broken constraint row), and degree 1 displays it loudly.
+Production guidance: mapped slip runs use INTERPOLATED F by default
+(side-consistent, identity-exact with the fixed kernels, cheaper);
+exact F is fine at adequate resolution. With this and the kernel fix,
+the mapped slipping-interface results are certified at the method's
+own level; the reference docs' "mapped slipping results are
+unverified" can be retired once the shift-derivative re-measurement
+below lands.
+
+*Residual observation (separate, unmapped):* at order 3 the
+`slip_broken` degree-1 response sits 2.6 % from the welded
+referential's (h'₁ −1.281 vs −1.248) with spurious 0.017 vs 0.0023 —
+the slip family's degree-1 behaviour (near-null translation pairs of
+the broken organisation?) deserves its own look; it is unrelated to
+mapping (present unmapped). The rigid null-pair
 residuals of the slip class (`love_benchmark -diag`) survive the map
 essentially unchanged (translations 2.4e-3 vs 2.6e-3; rotations about
 doubled, ~1e-3).
@@ -165,13 +182,24 @@ interface submesh.
 
 ### `slip_broken` interface-shift derivatives disagree with the 1-D reference
 
-**Status:** open; RE-MEASURE after the 7 Oct 2026 direction-slot fix.
-The shift maps run with interpolated F (forced), exactly the regime
-the fix repairs — its adjacent-element evaluation produces the
-face-fixing shears the old `P_T F⁻¹` slot was not invariant under —
-and the build-to-build drift noted below is consistent with the
-off-manifold sensitivity the fix removes. The numbers below are
-pre-fix.
+**Status:** open; RE-MEASURED 8 Oct 2026 after the direction-slot fix:
+UNCHANGED (slip_broken h'₂ 25.1 %, l'₂ 11.5 %, k'₂ 18.7 %, h'₃ 5.6 %,
+l'₃ 23.2 %, k'₃ 4.9 % — the pre-fix numbers to within noise;
+referential identical to its pre-fix row too). The fix is PROVABLY
+inert here: the shift maps are radial, so their interpolated-F shears
+at the interface are normal–normal (`F = 1 + a⊗N` with `a ∥ N`), and
+for those the old `P_T F⁻¹` slot was already invariant (`P_T a = 0`) —
+the covariance defect only ever acted on tangential shears (the
+lateral relabelling). The earlier "probably the same defect" guess is
+retracted. The sharpened suspect is the next item — the broken-ζ side
+conventions under `[[F]] ≠ 0` across Σ, the one configuration the
+shift maps uniquely create: a one-sided data choice errs by
+O([[F]]) ∝ ε, invisible in the absolute solve (measured: 4e-3 at
+degrees 0 and 3) but O(1) in the ε-derivative — exactly the observed
+signature. The constraint-row b was already exonerated in the 2-D lab;
+`G_Σ`'s b, q and `B_Σ`'s data sides under a jumping F remain, and the
+resolution is the theory pass of the next item (what the §brokenzeta
+derivation says each form must consume when F jumps), paper-first.
 
 On `fluid_core`, `h = 0.3`, order 2, shifts ε = ±0.02 of the CMB
 (interpolated-F shift maps, exact sweeps), the derivatives of the Love

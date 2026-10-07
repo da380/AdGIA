@@ -597,6 +597,8 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
       pext_Ct_total_;
 #endif
   mfem::OperatorHandle A_aug_;
+  mfem::OperatorHandle A_aug_clean_;  // clean-A augmentation of the
+                                      // SetGaugePreconditionerOnly mode
 
   // loads
   std::unique_ptr<mfem::LinearForm> b_zeta_;
@@ -732,6 +734,18 @@ class LinearQuasiStaticReferentialSelfGravitatingSlipProblem
    * first Solve().
    */
   void SetFluidGauge(mfem::Coefficient& mu_gauge, mfem::real_t epsilon);
+
+  /** @brief The solid-everywhere preconditioner experiment for the
+   * slipping organisations: the Krylov operator keeps the CLEAN fluid
+   * block (physics + the AL constraint penalty, no gauge term) while
+   * the fluid-block preconditioner stays on the
+   * @f$+\epsilon_{\mathrm{prec}} Q_f@f$ matrix, and the per-sweep
+   * Tikhonov term @f$\epsilon Q u_f@f$ of the AL right-hand side is
+   * dropped (no operator bias to remove). @p eps_prec replaces the
+   * SetFluidGauge() epsilon for the preconditioner matrix. AL paths
+   * only (EnableKKT refuses the mode); combine with
+   * SetGaugePlateauStop() for the per-sweep stagnation stop. */
+  void SetGaugePreconditionerOnly(mfem::real_t eps_prec) override;
 
   /** @brief Constraint penalty @f$\theta@f$ (default 100) and the number
    * of augmented-Lagrangian iterations per Solve() (default 8; each
@@ -976,6 +990,13 @@ class LinearQuasiStaticReferentialSelfGravitatingSlipProblem
 #endif
   mfem::Coefficient* fluid_mu_gauge_ = nullptr;
   mfem::real_t fluid_gauge_eps_ = 0.0;
+  // The gauge-free (1,1) solver block of SetGaugePreconditionerOnly:
+  // physics + constraint penalty, no eps Q_f (the Krylov operator's
+  // fluid block; the preconditioner keeps the +Q_f matrix).
+  std::unique_ptr<mfem::SparseMatrix> S11_noq_;
+#ifdef MFEM_USE_MPI
+  std::unique_ptr<mfem::HypreParMatrix> pS11_noq_;
+#endif
   mfem::real_t theta_ = 1.0e2;
   int al_iterations_ = 8;
   mfem::real_t sweep_loose_rel_ = 0.0;  ///< 0: every sweep at full tol

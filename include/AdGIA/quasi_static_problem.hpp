@@ -270,6 +270,37 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   void SetGaugeEpsilon(mfem::real_t epsilon);
   mfem::real_t GaugeEpsilon() const;
 
+  /** @brief The solid-everywhere preconditioner experiment
+   * (doc/planning/solvers.md, "Solid-everywhere preconditioner for the
+   * clean gauged system"): the Krylov operator becomes the CLEAN
+   * @f$A@f$ — no penalty in the operator — while the preconditioner is
+   * built on @f$A + \epsilon_{\mathrm{prec}} Q@f$ with
+   * @f$\epsilon_{\mathrm{prec}}@f$ of order one (the model made solid
+   * everywhere). The gauge refinements are disabled: there is no
+   * @f$O(\epsilon)@f$ bias to remove, and the regularisation moves into
+   * the STOPPING RULE — MINRES ignores the exact gauge kernel (zero
+   * right-hand side under an SPD preconditioner), but the near-gauge
+   * modes keep eigenvalue @f$\lambda \sim h^p@f$, so the residual is
+   * expected to plateau at the near-kernel content of the load and
+   * drift semi-convergently beyond it; run at a matched tolerance.
+   * Call after SetGaugedFluid(); supported by the block-MINRES paths
+   * only. (The slipping class overrides it: there the fluid gauge is
+   * SetFluidGauge(), the AL constraint penalty stays in the operator,
+   * and the per-sweep Tikhonov term is dropped.) */
+  virtual void SetGaugePreconditionerOnly(mfem::real_t eps_prec);
+  bool GaugePreconditionerOnly() const { return gauge_prec_only_; }
+
+  /** @brief Stagnation (plateau) stop for the SetGaugePreconditionerOnly
+   * mode: the block solve runs as warm-started restarts of @p chunk
+   * iterations and stops when the residual of a chunk exceeds @p ratio
+   * times the previous chunk's — the plateau at the load's near-kernel
+   * content, which IS the intended stopping point (early stopping is
+   * the regulariser there; iterating past it semi-converges). With the
+   * stop active one tight relative tolerance serves every load: where
+   * no plateau exists the tolerance fires, where one does the
+   * stagnation fires first. */
+  void SetGaugePlateauStop(mfem::real_t ratio = 0.5, int chunk = 25);
+
   void SetGaugeRefinements(int n) { gauge_refinements_ = n; }
   int GaugeRefinements() const { return gauge_refinements_; }
 
@@ -442,6 +473,18 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   std::unique_ptr<mfem::BilinearForm> gauge_integrators_;
   mfem::BilinearFormIntegrator* gauge_integ_ = nullptr;
   int gauge_refinements_ = 2;
+  bool gauge_prec_only_ = false;  // clean-A operator, A + eps_prec Q prec
+  mfem::real_t gauge_plateau_ratio_ = 0.0;  // 0: no stagnation stop
+  int gauge_plateau_chunk_ = 25;
+
+  /** @brief The chunked solve of SetGaugePlateauStop: repeated
+   * warm-started @p krylov restarts through @p outer until convergence
+   * or the per-chunk residual ratio exceeds gauge_plateau_ratio_.
+   * Returns the total iterations; @p converged reports tolerance OR
+   * plateau (both are intended stops). Restores the solver's
+   * iteration cap. */
+  int PlateauMult(mfem::Solver& outer, mfem::IterativeSolver& krylov,
+                  const mfem::Vector& B, mfem::Vector& X, bool& converged);
   std::unique_ptr<mfem::BilinearForm> q_form_, a_solve_form_;
   mfem::OperatorHandle Q_, A_solve_;
   std::vector<mfem::real_t> gauge_residuals_;

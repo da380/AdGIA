@@ -188,9 +188,90 @@ behaviour"; `src/quasi_static_problem.cpp` (`WarnGaugeContraction`).
 
 ### Solid-everywhere preconditioner for the clean gauged system
 
-**Status:** proposal, untested, not implemented (no preconditioner-only ε
-option exists). The first experiment to run when the fluid premium
-matters, before any further gauge-KKT work.
+**Status:** IMPLEMENTED, MEASURED AND MADE HANDS-OFF 7 Oct 2026 —
+with the stagnation stop (below) one setting serves every degree at
+7–10× over the penalty path with penalty-grade quality, degree 1
+included. EXTENDED TO THE SLIP CLASSES 8 Oct 2026 (next paragraph).
+Open items: the `prem_4` near-neutral check on the server profile,
+and the default-ness call (finer-h validation before any production
+default changes, as for AL-3).
+
+**The slip classes** (8 Oct 2026): the slip override of
+`SetGaugePreconditionerOnly` keeps the AL constraint penalty θB_n in
+the operator, drops εQ_f from the (1,1) operator block only (the
+fluid-block smoother/AMG stays on the +Q_f matrix), and drops the
+per-sweep Tikhonov term; both organisations, serial and parallel;
+EnableKKT refuses the mode. Measured (`fluid_core` h = 0.3, order 2,
+np 8, `-gpe 1 -gps 0.7 -rt 1e-8`): slip 425–450 its per degree vs
+513–1674 AL-8 penalty, slip_broken 475–525 vs 2462–3036 (≈ 4–6×
+iterations, ≈ 3–4× wall), spurious 0.004–0.008 vs 0.003–0.015.
+TWO ESSENTIAL FINDINGS: (1) the plateau stop is LOAD-BEARING for
+slip, not an optimisation — without it the clean-operator sweeps
+semi-converge catastrophically (rt 1e-4: 55k iterations, h'₂ −0.42,
+spurious 2.5); (2) the endpoints move by up to 3e-2 from the AL-8
+penalty answers — but this is WITHIN the slip method's own AL
+enforcement floor at this mesh: against the θ-independent KKT
+reference (h'₂ = −0.99299, 1707 its) the AL-8 penalty sits 1.4e-2 on
+one side and gpe+plateau 1.6e-2 on the other. The two modes bracket
+the discrete solution equally well; KKT remains the precision
+referee. One blemish to watch: slip_broken degree-0 k' comes out
+−2.4e-3 under gpe (penalty: −7e-6, physical ≈ 0) — the degree-0
+scalar-jump channel is plateau-sensitive; keep the penalty path for
+slip_broken l = 0 until understood.
+
+**The stagnation stop** (`SetGaugePlateauStop(ratio, chunk)`,
+benchmark `-gps`): the block solve runs as warm-started MINRES
+restarts of `chunk` (default 25) iterations and stops when a chunk's
+final residual exceeds `ratio` times the previous chunk's — the
+plateau at the load's near-kernel content, which is the intended
+stopping point. HANDS-OFF RECIPE, measured on `fluid_core` h = 0.3,
+order 2, np 8, degrees 0–4 (`-gpe 1 -gps 0.7 -rt 1e-8`):
+
+- gauged: 75–100 its per degree against 754–816 penalty (sweep 475 vs
+  ~3900 its), every Love number within a few e-4 of the penalty
+  truth, spurious at or below penalty levels at every degree;
+- referential: 75–150 its against 786–885 (7× wall), spurious
+  IDENTICAL to the penalty path degree by degree;
+- degree 1, the tolerance-stopped mode's failure case, is FIXED by
+  the stop + cross-degree warm start: 50–75 its, spurious 1.6–2.1e-3
+  (penalty: 2.0–2.3e-3) — no penalty fallback needed;
+- ratio sensitivity: 0.3 and 0.5 stop one chunk earlier and leak at
+  high degrees (spurious 0.13–0.14 at l = 4); 0.7 is the measured
+  default. The earlier manual-tolerance scan (kept below for the
+  record) is superseded by the stop.
+
+*Implementation.* `SetGaugePreconditionerOnly(eps_prec)` on the base
+class (call after `SetGaugedFluid`): the gauge ε becomes the
+preconditioner value, the refinements are disabled, and the
+block-MINRES setups of the mixed and referential classes put the CLEAN
+A in the (0,0) operator block while `prec_` is built on
+A + ε_prec Q (the referential class augments both by EᵀGE). The Schur,
+base-CG and gauge-KKT paths refuse the mode. Benchmark flag `-gpe`.
+
+*Measured (`fluid_core`, h = 0.3, order 2, np 8, loads+tides).*
+Penalty production (ε = 1e-2, 3 refinements): 754–816 its, 3.3–7.0 s
+per degree. Solid-everywhere, ε_prec = 1:
+
+| degree | rt | its | s | endpoint vs penalty truth |
+|---|---|---|---|---|
+| 0 | 1e-6 | 79 | 0.71 | h'₀ to 2e-4 (1e-5: 32 its, 2e-4) |
+| 1 | 1e-4 | 1665 | 7.4 | h'₁ 0.6 %, spurious 4.1e-3 — NO WIN |
+| 2 | 1e-3 | 49 | 0.45 | h'₂ 1.6e-3, spurious identical |
+| 3 | 1e-3 | 53 | 0.43 | h'₃ 5e-4 |
+| 4 | 1e-3 | 40 | 0.34 | h'₄ 4e-4, spurious 0.048 vs 0.023 |
+
+ε_prec ∈ {1, 0.3, 0.1} barely matters (49/55/87 its at l = 2): the
+plateau, not the condition number, is the controlling feature, as the
+analysis below predicted. Over-solving is the failure mode on cue:
+l = 2 at rt 1e-5 burns 5911 its and semi-converges into lateral junk
+(spurious 0.13); l = 1 pollutes already at rt 1e-5 (0.45). The
+referential class: 885 → 100 its (4.9 → 0.93 s) at l = 2, endpoint to
+1.9e-4. Degree 1 is the one load whose near-kernel (rigid-adjacent)
+content is large, exactly the known worst case of the penalty
+analysis; the penalty path stays the degree-1 production answer.
+Production recipe candidate: gpe at rt 1e-3 for l ≥ 2, rt ~1e-5–1e-6
+for l = 0, penalty for l = 1 — pending the stagnation stop and the
+`prem_4` check.
 
 *Idea.* Solve the clean system A u = f (no ε in the operator) with
 MINRES preconditioned by L = A + ε_prec Q — the model made solid

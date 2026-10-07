@@ -238,6 +238,8 @@ struct CaseOptions {
   bool gauged = false;
   real_t gauge_eps = 1e-2;
   int gauge_refinements = 3;
+  real_t gauge_prec_eps = 0.0;    // > 0: solid-everywhere prec experiment
+  real_t gauge_plateau = 0.0;     // > 0: stagnation stop ratio (with -gpe)
   const char* cmb = "full";
   const char* method = "dahlen";
   real_t slip_theta = 1e2;
@@ -344,6 +346,19 @@ struct CaseOptions {
                    "Gauge penalty factor epsilon (gauged fluid).");
     args.AddOption(&gauge_refinements, "-gref", "--gauge-refinements",
                    "Tikhonov refinement steps per solve (gauged fluid).");
+    args.AddOption(&gauge_prec_eps, "-gpe", "--gauge-prec-epsilon",
+                   "Solid-everywhere preconditioner experiment (gauged "
+                   "fluid, block MINRES only): the Krylov operator is the "
+                   "CLEAN A, the preconditioner is built on A + eps_prec "
+                   "Q with this eps_prec, refinements off; run with a "
+                   "matched -rt (the residual plateaus at the load's "
+                   "near-kernel content). 0: off.");
+    args.AddOption(&gauge_plateau, "-gps", "--gauge-plateau-stop",
+                   "Stagnation stop for -gpe: chunked MINRES restarts, "
+                   "stopping when a chunk's residual exceeds this ratio "
+                   "of the previous one (the near-kernel plateau); run "
+                   "with a tight -rt and one tolerance serves every "
+                   "degree. 0: off.");
     args.AddOption(&manifest, "-c", "--case", "Manifest of the case.");
     args.AddOption(&order, "-o", "--order", "Finite element order.");
     args.AddOption(&dtn_degree, "-deg", "--dtn-degree",
@@ -575,6 +590,12 @@ class Case {
           problem->SetGaugedFluid(gauge_marker_, *kappa_c_,
                                   options.gauge_eps,
                                   options.gauge_refinements);
+          if (options.gauge_prec_eps > 0.0) {
+            problem->SetGaugePreconditionerOnly(options.gauge_prec_eps);
+            if (options.gauge_plateau > 0.0) {
+              problem->SetGaugePlateauStop(options.gauge_plateau);
+            }
+          }
         }
         if (root) {
           if (options.gauge_kkt > 0) {
@@ -582,6 +603,10 @@ class Case {
                       << (options.gauge_kkt == 2 ? " (MGW preconditioner)"
                                                  : "")
                       << ".\n";
+          } else if (options.gauge_prec_eps > 0.0) {
+            std::cout << "Gauged fluid: solid-everywhere preconditioner, "
+                         "clean operator, eps_prec "
+                      << options.gauge_prec_eps << ", no refinements.\n";
           } else {
           std::cout << "Gauged fluid: eps " << options.gauge_eps << ", "
                     << options.gauge_refinements << " refinements.\n";
@@ -1288,11 +1313,25 @@ class Case {
         ref_problem->SetGaugedFluid(gauge_marker_, *kappa_c_,
                                     options.gauge_eps,
                                     options.gauge_refinements);
+        if (options.gauge_prec_eps > 0.0) {
+          ref_problem->SetGaugePreconditionerOnly(options.gauge_prec_eps);
+          if (options.gauge_plateau > 0.0) {
+            ref_problem->SetGaugePlateauStop(options.gauge_plateau);
+          }
+        }
       }
       if (root) {
-        std::cout << "Referential (welded, gauged fluid): eps "
-                  << options.gauge_eps << ", "
-                  << options.gauge_refinements << " refinements.\n";
+        std::cout << "Referential (welded, gauged fluid): "
+                  << (options.gauge_prec_eps > 0.0
+                          ? "solid-everywhere preconditioner, clean "
+                            "operator, eps_prec " +
+                                std::to_string(options.gauge_prec_eps) +
+                                ", no refinements"
+                          : "eps " + std::to_string(options.gauge_eps) +
+                                ", " +
+                                std::to_string(options.gauge_refinements) +
+                                " refinements")
+                  << ".\n";
       }
     } else {
       // The interface pressure and the interface marker on the solid
@@ -1335,6 +1374,20 @@ class Case {
                                   options.gauge_eps);
       slip_problem->SetConstraint(options.slip_theta,
                                   options.al_iterations);
+      if (options.gauge_prec_eps > 0.0) {
+        slip_problem->SetGaugePreconditionerOnly(options.gauge_prec_eps);
+        if (options.gauge_plateau > 0.0) {
+          slip_problem->SetGaugePlateauStop(options.gauge_plateau);
+        }
+        if (root) {
+          std::cout << "Slip fluid gauge: solid-everywhere "
+                       "preconditioner, clean operator, eps_prec "
+                    << options.gauge_prec_eps
+                    << (options.gauge_plateau > 0.0 ? ", plateau stop"
+                                                    : "")
+                    << ".\n";
+        }
+      }
       if (options.gs_scale != 1.0) {
         slip_problem->ScaleBrokenGravityInterface(options.gs_scale);
         if (root) {

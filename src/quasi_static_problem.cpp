@@ -288,6 +288,64 @@ real_t LinearQuasiStaticProblemBase::GaugeEpsilon() const {
   return gauge_eps_coef_ ? gauge_eps_coef_->constant : 0.0;
 }
 
+void LinearQuasiStaticProblemBase::SetGaugePreconditionerOnly(
+    real_t eps_prec) {
+  MFEM_VERIFY(gauge_eps_coef_,
+              "SetGaugePreconditionerOnly: no gauged fluid is set.");
+  MFEM_VERIFY(eps_prec > 0.0,
+              "SetGaugePreconditionerOnly: eps_prec must be positive.");
+  // The penalty scale now serves the PRECONDITIONER matrix A + eps_prec Q
+  // only; the solver operator is the clean A, and without an O(eps) bias
+  // in the operator the Tikhonov refinements have nothing to remove.
+  gauge_eps_coef_->constant = eps_prec;
+  gauge_refinements_ = 0;
+  gauge_prec_only_ = true;
+  operator_dirty_ = true;
+}
+
+void LinearQuasiStaticProblemBase::SetGaugePlateauStop(real_t ratio,
+                                                       int chunk) {
+  MFEM_VERIFY(gauge_prec_only_,
+              "SetGaugePlateauStop: only meaningful with "
+              "SetGaugePreconditionerOnly (the penalty path has no "
+              "plateau to detect).");
+  MFEM_VERIFY(ratio > 0.0 && ratio < 1.0 && chunk > 0,
+              "SetGaugePlateauStop: 0 < ratio < 1 and chunk > 0.");
+  gauge_plateau_ratio_ = ratio;
+  gauge_plateau_chunk_ = chunk;
+}
+
+int LinearQuasiStaticProblemBase::PlateauMult(Solver& outer,
+                                              IterativeSolver& krylov,
+                                              const Vector& B, Vector& X,
+                                              bool& converged) {
+  const int chunk = gauge_plateau_chunk_;
+  const int cap = 10000;
+  krylov.SetMaxIter(chunk);
+  int total = 0;
+  real_t prev = 0.0;
+  converged = false;
+  for (int c = 0; total < cap; ++c) {
+    outer.Mult(B, X);
+    total += krylov.GetNumIterations();
+    if (krylov.GetConverged()) {
+      converged = true;
+      break;
+    }
+    const real_t r = krylov.GetFinalNorm();
+    if (c > 0 && r > gauge_plateau_ratio_ * prev) {
+      // Stagnation: the residual has reached the load's near-kernel
+      // plateau — the intended stopping point of the clean-operator
+      // mode (iterating on semi-converges into gauge junk).
+      converged = true;
+      break;
+    }
+    prev = r;
+  }
+  krylov.SetMaxIter(cap);
+  return total;
+}
+
 const OperatorHandle& LinearQuasiStaticProblemBase::RegularizedMatrix() {
   EnsureOperator();
   return HasGaugedFluid() ? A_solve_ : A_;
@@ -372,6 +430,9 @@ void LinearQuasiStaticProblemBase::SetupCG(const Operator& op, Solver& prec) {
 }
 
 void LinearQuasiStaticProblemBase::SetupSolver(OperatorHandle& A) {
+  MFEM_VERIFY(!gauge_prec_only_,
+              "SetGaugePreconditionerOnly: supported by the block-MINRES "
+              "paths only, not the base CG solver.");
   SetupDefaultCG(A);
 }
 

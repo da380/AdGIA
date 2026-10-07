@@ -893,11 +893,17 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetupSolver(OperatorHandle& A
     SetupMinres(A);
   }
   if (gauge_kkt_) {
+    MFEM_VERIFY(!GaugePreconditionerOnly(),
+                "SetGaugePreconditionerOnly: incompatible with the "
+                "gauge-KKT saddle.");
     SetupKKTGauge();
   }
 }
 
 void LinearQuasiStaticMixedSelfGravitatingProblem::SetupSchur(OperatorHandle& A) {
+  MFEM_VERIFY(!GaugePreconditionerOnly(),
+              "SetGaugePreconditionerOnly: block-MINRES (or BlockCG) only; "
+              "the Schur path eliminates through the regularised block.");
   schur_ = std::make_unique<SchurOperator>(*this, *A.Ptr());
   projected_op_ = std::make_unique<ProjectedOperator>(*schur_, *projector_u_);
   projected_prec_ = std::make_unique<ProjectedSolver>(*projector_u_);
@@ -914,7 +920,13 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetupSchur(OperatorHandle& A)
 
 void LinearQuasiStaticMixedSelfGravitatingProblem::SetupMinres(OperatorHandle& A) {
   block_op_ = std::make_unique<BlockOperator>(offsets_);
-  block_op_->SetBlock(0, 0, A.Ptr());
+  // The solid-everywhere preconditioner experiment: the Krylov operator
+  // keeps the CLEAN displacement block while prec_ (built by
+  // SetupDefaultCG on the handle passed in) sits on A + eps_prec Q;
+  // MINRES ignores the exact gauge kernel, the near-gauge modes move
+  // into the stopping rule (SetGaugePreconditionerOnly).
+  block_op_->SetBlock(0, 0,
+                      GaugePreconditionerOnly() ? A_.Ptr() : A.Ptr());
   block_op_->SetBlock(0, 1, const_cast<Operator*>(C_op_));
   block_op_->SetBlock(1, 0, const_cast<Operator*>(Ct_op_));
   block_op_->SetBlock(1, 1, const_cast<Operator*>(A_phiphi_));
@@ -1265,10 +1277,18 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveLinearSystem(
       Phi_true_ = 0.0;
       *X_block_ = 0.0;
     } else {
-      // Warm start from the previous MINRES iterate.
-      projected_->Mult(*B_block_, *X_block_);
-      ok = minres_->GetConverged();
-      outer_its_ = minres_->GetNumIterations();
+      if (GaugePreconditionerOnly() && gauge_plateau_ratio_ > 0.0) {
+        // Chunked restarts with the stagnation stop (PlateauMult).
+        bool conv = false;
+        outer_its_ = PlateauMult(*projected_, *minres_, *B_block_,
+                                 *X_block_, conv);
+        ok = conv;
+      } else {
+        // Warm start from the previous MINRES iterate.
+        projected_->Mult(*B_block_, *X_block_);
+        ok = minres_->GetConverged();
+        outer_its_ = minres_->GetNumIterations();
+      }
       NoteIterations(outer_its_);
       X = X_block_->GetBlock(0);
       if (mass_gauge_) {
