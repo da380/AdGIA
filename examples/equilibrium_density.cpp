@@ -12,27 +12,37 @@
 // is positive, with the minimising multiplier u the creeping flow the
 // unbalanced buoyancy would drive.
 //
-// The model. By default the GEOMETRY denies the equilibrium: the
-// starting density is a simple radial profile, but the container is
-// aspherical — -shape flat (the default) flattens every interface
-// (ellipse in 2-D, oblate ellipsoid in 3-D), -shape cmb puts
-// oscillatory topography on the CMB alone, -shape bump a single
-// Gaussian topographic bump there — so rho(r) is not constant
-// on the equipotentials, and the restoration has to GENERATE the
-// non-spherical equilibrium density of the container (the before/after
-// density windows show it). -shape sphere keeps the spherical meshes,
-// where the disequilibrium is instead the hand-inserted lateral
-// density term -amp (its default: 0.1 on the sphere, 0 — pure radial —
-// on the aspherical shapes; on a sphere -amp 0 starts at the mesh's
-// own discretisation imbalance). -blob adds a fixed Gaussian density
-// anomaly in the mantle: not part of the control, but its gravity
-// stresses the mantle and shifts the equipotentials, so the core's
-// equilibrium density moves in response. -dim picks the dimension (2,
-// the default, for the disc section; 3 for the ball — an order of
-// magnitude dearer) and -ic / -no-ic the layering (the three-layer
-// Earth with a solid inner core, the default, or the two-layer one
-// whose fluid core reaches the centre); together with -shape they name
-// one of the sixteen
+// The model. The fluid's starting density is CONSTANT — and a
+// confined constant-density fluid is hydrostatic in ANY container
+// (p = -rho Phi + c balances it whatever the shape), so geometry
+// alone denies nothing: what asphericity breaks is the force balance
+// of the ENCLOSED SOLID. By default (-shape bump) a single Gaussian
+// topographic bump on the CMB skews the potential, constant-density
+// buoyancy cannot balance the inner core's weight — the clamped
+// functional starts at the discretisation floor while the rigid
+// certificate sees the imbalance, so the certificate gap IS the
+// signal — and the restoration has to make the core's density
+// laterally variable to rebalance it (the density-change window
+// shows exactly the variability the equilibrium demands). -shape
+// flat (flattened interfaces: ellipse in 2-D, oblate ellipsoid in
+// 3-D) and -shape cmb (oscillatory CMB topography) leave the core
+// balanced by symmetry, so from a constant start they sit at the
+// floor unless the -amp lateral density term supplies the
+// disequilibrium; the same holds for every shape without an inner
+// core (-no-ic). -shape sphere keeps the spherical meshes, where
+// -amp is the only disequilibrium. -amp defaults to 0.1 except on
+// bump and with -blob, where it is 0 so the core-driven story is
+// pure; -amp 0 on a sphere starts at the mesh's own discretisation
+// imbalance. -blob adds a fixed Gaussian density anomaly in the
+// mantle — not part of the control — and, unless -shape says
+// otherwise, makes the body OTHERWISE SPHERICAL (the blob is the
+// only asphericity): its gravity pulls the inner core sideways, and
+// the core's equilibrium density moves in response. -dim picks the
+// dimension (2, the default, for the disc section; 3 for the ball —
+// an order of magnitude dearer) and -ic / -no-ic the layering (the
+// three-layer Earth with a solid inner core, the default, or the
+// two-layer one whose fluid core reaches the centre); together with
+// -shape they name one of the sixteen
 // {flattened,cmb_topo,cmb_bump}_{two,three}_layer_{2,3}d.mesh /
 // elastogravity_{two,three}_layer_{2,3}d.msh meshes, and -m overrides
 // with any layered mesh of the same conventions (meshes/README.md:
@@ -57,16 +67,14 @@
 // Discretisation: -o sets the velocity and control order (pressure one
 // below, Taylor-Hood), -deg the truncation degree of the DtN expansion
 // on the outer boundary. The default order is 3 on a disc and 2 on a
-// ball (cost): MEASURED, the aspherical shapes' geometric
-// disequilibrium is weak — eta scales like 8e-3 x flattening, the
-// degree-2 potential perturbation decaying into the fluid — and sits
-// BELOW the order-2 floor (2e-3 in 2-D), while at order 3 (floor
-// 2e-4) the flattened disc starts at eta = 8e-4 and J falls 18x in 16
-// iterations. A 3-D aspherical run at its default order 2 is
-// floor-bound: give it -o 3 and patience, or -shape sphere. The cmb
-// signal is an order of magnitude weaker still (the CMB density jump
-// is 0.1 against the surface's 1.0) and at order 3 is limited by the
-// order-2 GEOMETRY of the wavy interface — the qualitative variant.
+// ball (cost): MEASURED, the core-imbalance signals are small — the
+// bump starts at eta = 3.0e-3, -blob 0.5 at 7.6e-3 — and at order 2
+// the bump is floor-bound (eta 3.8e-3 -> 2.3e-3, the order-2 floor),
+// while at order 3 it falls to 4.4e-4 with J down 47x in 13
+// iterations. A 3-D aspherical run at its default order 2 is likewise
+// floor-bound: give it -o 3 and patience, or -shape sphere. The -amp
+// lateral starts (flat, cmb, sphere) sit two orders above the floor
+// (eta = 6e-2 at -amp 0.1) and restore cleanly at either order.
 //
 // The example drives J to its floor by moving the fluid density, three
 // ways (the default is the study's measured recipe, doc/planning/
@@ -82,12 +90,12 @@
 //                 roughness prior (-prior) selects the smooth member
 //                 of J's near-null family, so the loop converges onto
 //                 the regularised solution instead of fitting
-//                 discretisation error. The prior defaults to 1e-7,
-//                 EXCEPT for -shape cmb, where it defaults to 0: the
-//                 wavy CMB demands an oscillatory, boundary-following
-//                 correction that the H1 prior blocks (measured: 189
-//                 iterations stuck at the start with it, 29 to the
-//                 floor without; the damping alone protects there).
+//                 discretisation error. The prior defaults to 1e-7:
+//                 from the constant start every shape's correction is
+//                 smooth and the prior helps everywhere (cmb stops at
+//                 the floor in 19 iterations with it against 40+
+//                 without; the earlier RADIAL starting profile needed
+//                 prior 0 there, its correction then oscillatory).
 //
 //   -loop cg      nonlinear conjugate gradients (Polak-Ribiere+, a
 //                 forward-tracking line search) on the density, the
@@ -136,7 +144,9 @@
 // none) with J, the step or damping, the mass drift, eta, the energy
 // and the core motion by iteration, and a *_barotropy.csv named after
 // it with the scatter, both for plot_csv.py. With -vis (start `glvis`
-// first), five windows: the whole-body density and |dev T|/p_rms maps
+// first), six windows: the density change (final - initial) on the
+// fluid — from the constant start, exactly the variability the
+// equilibrium demands — the whole-body density and |dev T|/p_rms maps
 // before and after (|dev T| against the RMS of the PHYSICAL fluid
 // pressure, anchored by the recovered datum — a single scalar, since
 // any pointwise pressure division is singular where the pressure
@@ -169,18 +179,23 @@
 // equilibrium_stress.cpp; the barotropy scatter is gathered to the root.
 //
 // Sample runs (with mpiexec -np N in front in a parallel build):
-//    ./equilibrium_density -vis                the flattened disc: the
-//                                              geometry-driven restoration
+//    ./equilibrium_density -vis                the CMB bump: the core-
+//                                              driven restoration
+//    ./equilibrium_density -blob 0.5 -vis      otherwise-spherical body, a
+//                                              mantle anomaly pulling the
+//                                              core off balance
+//    ./equilibrium_density -shape flat         flattened interfaces, the
+//                                              lateral term restored
 //    ./equilibrium_density -shape cmb          wavy CMB, spherical surface
-//    ./equilibrium_density -shape bump -vis    one Gaussian CMB bump (the
-//                                              strongest geometric signal;
-//                                              floor-bound without -ic)
-//    ./equilibrium_density -no-ic              no inner core (two layers)
-//    ./equilibrium_density -blob 0.5 -vis      a mantle anomaly stressing
-//                                              the solid, moving the core
-//    ./equilibrium_density -core clamped       the optimistic certificate
-//    ./equilibrium_density -amp 0.1            flattening AND the lateral
-//                                              density term together
+//    ./equilibrium_density -shape sphere -no-ic
+//                                              no inner core: the lateral
+//                                              term is the only signal
+//                                              a constant start admits
+//    ./equilibrium_density -core clamped       the optimistic certificate,
+//                                              blind to the core imbalance
+//    ./equilibrium_density -shape flat -amp 0  flat from the constant
+//                                              start: already hydrostatic,
+//                                              the loop stops at the floor
 //    ./equilibrium_density -dim 3 -shape sphere
 //                                              the 3-D ball (aspherical
 //                                              shapes in 3-D need -o 3)
@@ -267,14 +282,14 @@ constexpr double kG = 0.05;
 double lateral_amplitude = 0.1;
 double blob_amplitude = 0.0;
 
-// The fluid's starting density: a radial base — which on the
-// aspherical shapes is already non-barotropic, the geometry's doing —
-// plus an optional lateral part of amplitude -amp, which no
-// rearrangement-free relabelling can remove (the spherical meshes'
-// disequilibrium).
+// The fluid's starting density: a CONSTANT base — hydrostatic in any
+// container on its own (p = -rho Phi + c), so every disequilibrium is
+// explicit — plus an optional lateral part of amplitude -amp, which no
+// relabelling can remove. With the constant base the aspherical
+// shapes' signal is the enclosed core's force imbalance (the header).
 double FluidRho(const Vector& x) {
   const double r = x.Norml2();
-  return 1.2 - 0.3 * r * r + lateral_amplitude * (r > 0.0 ? x[1] / r : 0.0);
+  return 1.2 + lateral_amplitude * (r > 0.0 ? x[1] / r : 0.0);
 }
 
 // The mantle's density: 1, plus the -blob Gaussian anomaly (width 0.1
@@ -521,7 +536,7 @@ int main(int argc, char* argv[]) {
   const char* mesh_file = "";
   int mesh_dim = 2;
   bool inner_core = true;
-  const char* shape = "flat";
+  const char* shape = "";  // resolved below: sphere with -blob, else bump
   const char* loop = "gn";
   const char* core = "rigid";
   const char* metric_name = "h2";
@@ -552,11 +567,13 @@ int main(int argc, char* argv[]) {
                  "Default mesh with a solid inner core (three layers) "
                  "or without one (two layers).");
   args.AddOption(&shape, "-shape", "--shape",
-                 "Shape of the default mesh: flat (flattened "
-                 "interfaces), cmb (oscillatory CMB topography), bump "
-                 "(one Gaussian CMB bump) — the geometry denies a "
-                 "radial density equilibrium — or sphere (equilibrium "
-                 "needs the -amp lateral term).");
+                 "Shape of the default mesh: bump (one Gaussian CMB "
+                 "bump — the core-imbalance signal; the default), flat "
+                 "(flattened interfaces), cmb (oscillatory CMB "
+                 "topography) or sphere; with -blob the default is "
+                 "sphere (the blob the only asphericity). From the "
+                 "constant start, flat, cmb and sphere need the -amp "
+                 "lateral term.");
   args.AddOption(&loop, "-loop", "--loop", "gn, cg or advect.");
   args.AddOption(&metric_name, "-metric", "--metric",
                  "Gradient metric of the cg loop: l2, h1 or h2.");
@@ -570,8 +587,7 @@ int main(int argc, char* argv[]) {
   args.AddOption(&prior, "-prior", "--prior",
                  "Roughness (H1-seminorm) prior weight: selects the "
                  "smooth member of the near-null family (0: off; "
-                 "negative: 1e-7, except 0 for -shape cmb, whose "
-                 "oscillatory correction the prior blocks).");
+                 "negative: 1e-7).");
   args.AddOption(&order, "-o", "--order",
                  "Velocity and control order (negative: 3 on a disc — "
                  "the aspherical signals need the lower floor — and 2 "
@@ -580,14 +596,14 @@ int main(int argc, char* argv[]) {
   args.AddOption(&iters, "-iters", "--iterations", "Iteration budget.");
   args.AddOption(&amplitude, "-amp", "--amplitude",
                  "Lateral (non-barotropic) amplitude of the starting "
-                 "density (negative: 0.1 on the sphere, where it is "
-                 "the only disequilibrium, 0 on the aspherical "
-                 "shapes).");
+                 "density (negative: 0.1 on sphere, flat and cmb, "
+                 "where it is the disequilibrium; 0 on bump and with "
+                 "-blob, whose core-driven stories are pure).");
   args.AddOption(&blob, "-blob", "--blob",
                  "Amplitude of a Gaussian density anomaly fixed in the "
                  "mantle (width 0.1 at mid-mantle radius on the +x "
-                 "axis): stresses the mantle and shifts the core's "
-                 "equilibrium (0: off).");
+                 "axis): pulls the core and shifts its equilibrium "
+                 "density (0: off; defaults the shape to sphere).");
   args.AddOption(&eta, "-eta", "--eta",
                  "Stop when |dev T|/|p| falls below this (0: stop when "
                  "it stagnates — the discretisation floor).");
@@ -605,21 +621,26 @@ int main(int argc, char* argv[]) {
     }
     return 1;
   }
-  const std::string shape_s = shape;
+  std::string shape_s = shape;
+  if (shape_s.empty()) {
+    // The -blob story is a mantle anomaly in an OTHERWISE SPHERICAL
+    // body; without it the bump supplies the core-imbalance signal.
+    shape_s = blob != 0.0 ? "sphere" : "bump";
+  }
   MFEM_VERIFY(shape_s == "flat" || shape_s == "cmb" || shape_s == "bump" ||
                   shape_s == "sphere",
               "-shape must be flat, cmb, bump or sphere.");
   if (amplitude < 0.0) {
-    amplitude = shape_s == "sphere" ? 0.1 : 0.0;
+    // From the constant start, bump and -blob carry their own (core-
+    // driven) disequilibrium; the other shapes need the lateral term.
+    amplitude = (blob != 0.0 || shape_s == "bump") ? 0.0 : 0.1;
   }
   if (prior < 0.0) {
-    // The measured calibration (doc/planning/equilibrium_figures.md):
-    // the H1 prior selects the smooth member of the near-null family,
-    // but the wavy CMB demands an OSCILLATORY correction, which the
-    // prior blocks (189 iterations stuck at the start against 29 to
-    // the floor without it); the LM damping alone is the
-    // semi-convergence protection there.
-    prior = shape_s == "cmb" ? 0.0 : 1e-7;
+    // From the constant start every shape's correction is smooth and
+    // the H1 prior helps on all of them (the earlier RADIAL starting
+    // profile needed prior 0 on cmb, whose correction was then
+    // oscillatory and boundary-following).
+    prior = 1e-7;
   }
   lateral_amplitude = amplitude;
   blob_amplitude = blob;
@@ -740,8 +761,10 @@ int main(int argc, char* argv[]) {
       .Meta("group", "state")
       .Meta("note", "barotropy restored = the scatter collapses to a curve");
 
-  // Five windows: the whole-body density and stress before and after,
-  // and the initial relaxation flow on the fluid.
+  // Six windows: the whole-body density and stress before and after,
+  // the initial relaxation flow on the fluid, and the density change
+  // (final - initial) on the fluid — the variability the equilibrium
+  // demands, exactly the control perturbation.
   examples::GLVisWindow flow("initial relaxation flow |u|",
                              examples::DefaultKeys(dim));
   examples::GLVisWindow body_rho_before("initial density (body)",
@@ -753,6 +776,8 @@ int main(int argc, char* argv[]) {
       examples::DefaultKeys(dim));
   examples::GLVisWindow body_stress_after("final |dev T| / p_rms (body)",
                                           examples::DefaultKeys(dim));
+  examples::GLVisWindow rho_change("density change (final - initial, fluid)",
+                                   examples::DefaultKeys(dim));
 
   // The pointwise |dev T| against a SINGLE pressure scale — where the
   // body is being asked to carry shear. The scale must be one number:
@@ -1446,6 +1471,7 @@ int main(int argc, char* argv[]) {
   if (visualisation) {
     send_body_state(*J_last, "final", /*global=*/false, body_rho_after,
                     body_stress_after);
+    rho_change.Send(fluid, rho.c_fluid);
   }
   history.Write();
   scatter.Write();

@@ -1309,6 +1309,48 @@ void BoundaryNormalNormalIntegrator::AssembleElementMatrix(
   }
 }
 
+namespace {
+
+/// The covariant direction slot of the interface kernels:
+/// dir = P_T F^{-1} (1 - nu nu^T / |nu|^2). The deformed-face kernel
+/// sanitises its direction with ITS OWN tangential projector, and the
+/// pullback of that projector is nu-orthogonal projection BEFORE
+/// F^{-1} (F^{-1} maps nu-perp onto the referential tangent plane
+/// exactly, by Nanson). P_T F^{-1} alone agrees on the constraint set
+/// (nu . jump = 0) but is NOT invariant under face-fixing shears of F
+/// off it -- which broke the discrete change-of-variables identity
+/// through the slipping interface (doc/planning/open_issues.md;
+/// TestSlipInterface, InterfaceKernelsFaceShearCovariance). Unmapped
+/// kernels are untouched: there nu = n and the extra projector is
+/// contained in P_T.
+void SlipDirection(const mfem::DenseMatrix& PT, const mfem::DenseMatrix& Fi,
+                   const mfem::Vector& nu, bool mapped,
+                   mfem::DenseMatrix& dir) {
+  using namespace mfem;
+  const int dim = PT.Height();
+  dir.SetSize(dim);
+  Mult(PT, Fi, dir);
+  if (!mapped) {
+    return;
+  }
+  const real_t n2 = nu * nu;
+  if (n2 <= 0.0) {
+    return;
+  }
+  DenseMatrix Pnu(dim), tmp(dim);
+  Pnu = 0.0;
+  for (int i = 0; i < dim; i++) {
+    Pnu(i, i) = 1.0;
+    for (int j = 0; j < dim; j++) {
+      Pnu(i, j) -= nu[i] * nu[j] / n2;
+    }
+  }
+  Mult(dir, Pnu, tmp);
+  dir = tmp;
+}
+
+}  // namespace
+
 const mfem::IntegrationRule& SlipInterfacePressureIntegrator::GetRule(
     const mfem::FiniteElement& el, const mfem::ElementTransformation& Trans) {
   const auto order = 2 * el.GetOrder() + Trans.OrderW();
@@ -1384,8 +1426,7 @@ void SlipInterfacePressureIntegrator::AssembleElementMatrix(
         Fi_(d, d) = 1.0;
       }
     }
-    dir_.SetSize(dim);
-    Mult(PT_, Fi_, dir_);
+    SlipDirection(PT_, Fi_, nu_, map_ != nullptr, dir_);
     Mult(gshape_, dir_, T);
 
     const auto w = ip.weight * Trans.Weight() * pi_->Eval(Trans, ip);
@@ -1497,8 +1538,7 @@ void SlipInterfaceGravityIntegrator::AssembleElementMatrix(
                          nu_, F_, Fi_, PT_, Jt_, JtJ_)) {
       continue;
     }
-    dir_.SetSize(dim);
-    Mult(PT_, Fi_, dir_);
+    SlipDirection(PT_, Fi_, nu_, map_ != nullptr, dir_);
     Mult(gshape_, dir_, T);
 
     // b = F^{-T} grad zeta0 (identity map: b = grad zeta0), and
@@ -1569,8 +1609,7 @@ void SlipInterfaceGravityScalarIntegrator::AssembleElementMatrix2(
                          normal_, nu_, F_, Fi_, PT_, Jt_, JtJ_)) {
       continue;
     }
-    dir_.SetSize(dim);
-    Mult(PT_, Fi_, dir_);
+    SlipDirection(PT_, Fi_, nu_, map_ != nullptr, dir_);
     Mult(gshape_, dir_, T_);
     test_fe.CalcShape(ip, test_shape);
 

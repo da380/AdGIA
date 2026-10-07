@@ -46,10 +46,13 @@
 //    plain pull-back — so the two sides gauge-fix identically and
 //    every WELDED case is STRICT, the gauged fluid included
 //    (u 1.6e-7 at A = 0.02, h = 0.3, the DtN-centring floor).
-//    Through the SLIPPING interface the run is informational (u 1.2e-2,
-//    zeta 8e-3 at A = 0.02, h = 0.3 on fluid_core): the identity does
-//    not hold there, and the slipping-interface forms are not certified
-//    covariant. For the welded organisation the driver prints the
+//    Through the SLIPPING interface the run is STRICT too (u 1.6e-6,
+//    zeta 7.2e-7 at A = 0.02, h = 0.3 on fluid_core) since the
+//    interface kernels' direction slot became the pullback-consistent
+//    P_T F^{-1}(1 - nu nu^T/|nu|^2) (7 Oct 2026; the old P_T F^{-1}
+//    slot, not invariant under face-fixing shears of F, broke the
+//    identity at u 1.2e-2, zeta 8e-3, growing under refinement).
+//    For the welded organisation the driver prints the
 //    operator-action probes and the per-attribute breakdown; for
 //    slip_broken it prints, after the solves, the sixteen broken blocks
 //    and the stored constraint kernels of both sides, which locate the
@@ -630,12 +633,15 @@ int main(int argc, char* argv[]) {
                   MPITypeMap<real_t>::mpi_type, MPI_SUM, MPI_COMM_WORLD);
   }
 
-  // Strict wherever every assembled term is covariant: all welded
+  // Strict everywhere: every assembled term is covariant — the welded
   // cases, the gauged fluid included, since the gauge penalty is
   // assembled as the exact pull-back (ElasticTensorIntegrator with the
-  // pulled-back deviatoric tensor and the map). The slipping interface
-  // is informational: its forms are not certified covariant.
-  const bool strict = !slip;
+  // pulled-back deviatoric tensor and the map), and since 7 Oct 2026
+  // the slipping-interface forms too, whose direction slot is the
+  // pullback-consistent P_T F^{-1}(1 - nu nu^T/|nu|^2)
+  // (TestSlipInterface, InterfaceKernelsFaceShearCovariance; the old
+  // P_T F^{-1} slot broke this identity at 1.2e-2).
+  const bool strict = true;
   const bool pass = okA && okB && (!strict || (du < 1e-5 && dz < 1e-5));
   if (root) {
     std::cout << "\nrelabelled identity (" << m << ", order " << order
@@ -656,14 +662,8 @@ int main(int argc, char* argv[]) {
                                       real_t{1e-300}))
                 << "\n";
     }
-    if (strict) {
-      std::cout << (pass ? "  IDENTITY HOLDS (to the DtN-centring floor)\n"
-                         : "  MISMATCH: an unmapped assembly term\n");
-    } else {
-      std::cout << "  informational: the slip interface forms are not "
-                   "certified covariant (the welded runs, gauged "
-                   "included, are strict)\n";
-    }
+    std::cout << (pass ? "  IDENTITY HOLDS (to the DtN-centring floor)\n"
+                       : "  MISMATCH: an unmapped assembly term\n");
   }
   return pass ? 0 : 1;
 }

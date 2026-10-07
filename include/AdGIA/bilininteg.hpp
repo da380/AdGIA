@@ -1762,14 +1762,21 @@ class BoundaryNormalNormalIntegrator : public mfem::BilinearFormIntegrator {
  * elements of one (solid-side) vector space,
  * \f[
  *   G(\bvec{u}, \bvec{w}) = \oint_\Sigma \pi\;
- *     \bnu\cdot\nabla_\Sigma \bvec{u}\,[\,P_T F_e^{-1}\bvec{w}\,]\,\dd S,
+ *     \bnu\cdot\nabla_\Sigma \bvec{u}\,
+ *     [\,P_T F_e^{-1}(1 - \hat\bnu\otimes\hat\bnu)\,\bvec{w}\,]\,\dd S,
  * \f]
  * with \f$\bnu = \mathrm{cof}(F_e)\,\bvec{n}\f$ the unnormalised Nanson
  * normal of the mapping (identity map: \f$\bnu = \bvec{n}\f$),
  * \f$\nabla_\Sigma\f$ the tangential (surface shape-function) gradient,
- * and \f$P_T\f$ the tangential projector (the direction slot is
- * tangential on the slip constraint; the projector makes the discrete
- * form well defined off it). NON-symmetric by design: \f$\bvec{u}\f$
+ * and \f$P_T\f$ the tangential projector. The direction slot is
+ * tangential on the slip constraint; off it the discrete form needs a
+ * sanitiser, and the \f$\bnu\f$-orthogonal projection BEFORE
+ * \f$F_e^{-1}\f$ is the pullback of the deformed face's own tangential
+ * projector -- the unique choice invariant under face-fixing shears of
+ * \f$F_e\f$, i.e. the one that preserves the discrete
+ * change-of-variables identity (TestSlipInterface,
+ * InterfaceKernelsFaceShearCovariance). Unmapped, it is contained in
+ * \f$P_T\f$ and changes nothing. NON-symmetric by design: \f$\bvec{u}\f$
  * occupies the test (row) slot and \f$\bvec{w}\f$ the trial (column)
  * slot, and the symmetrised two-field interface blocks are built from
  * \f$G\f$ and the pairing by NewSlipInterfaceMatrix
@@ -1818,8 +1825,8 @@ class SlipInterfacePressureIntegrator : public mfem::BilinearFormIntegrator {
  * interface form"): on boundary elements of one (solid-side) vector space,
  * \f[
  *   G_A(\bvec{u}, \bvec{w}) = \oint_\Sigma
- *     \mathbf{A}\cdot\nabla_\Sigma \bvec{u}\,[\,P_T F_e^{-1}\bvec{w}\,]
- *     \,\dd S,
+ *     \mathbf{A}\cdot\nabla_\Sigma \bvec{u}\,
+ *     [\,P_T F_e^{-1}(1 - \hat\bnu\otimes\hat\bnu)\,\bvec{w}\,]\,\dd S,
  *   \qquad
  *   \mathbf{A} = \frac{|\mathbf{b}|^2}{8\pi G}\,\bnu
  *              - \frac{\mathbf{b}\cdot\bnu}{4\pi G}\,\mathbf{b},
@@ -1877,7 +1884,8 @@ class SlipInterfaceGravityIntegrator : public mfem::BilinearFormIntegrator {
  * \f$\bvec{w}\f$ (the slip slot),
  * \f[
  *   G_q(\zeta, \bvec{w}) = \oint_\Sigma
- *     q\,\nabla_\Sigma\zeta\cdot\bigl(P_T F_e^{-1}\bvec{w}\bigr)\,\dd S,
+ *     q\,\nabla_\Sigma\zeta\cdot\bigl(P_T F_e^{-1}
+ *     (1 - \hat\bnu\otimes\hat\bnu)\,\bvec{w}\bigr)\,\dd S,
  *   \qquad q = \frac{\mathbf{b}\cdot\bnu}{4\pi G},
  * \f]
  * coefficients as SlipInterfaceGravityIntegrator. Rows (test) are the

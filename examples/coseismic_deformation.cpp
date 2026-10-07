@@ -76,6 +76,9 @@
 //   -topo    height of the Gaussian surface topography         [0]
 //   -tx      x of the topography centre                        [0]
 //   -tr      Gaussian radius of the topography                 [1.5]
+//   -hill    asymmetric hill: right of the crest a smooth,
+//            roughly linear ramp keeping this fraction of the
+//            height at the right edge (negative: symmetric)    [-1]
 // the output:
 //   -vis / -no-vis   u_z, the vector displacement, kappa and
 //                    mu in GLVis                               [on]

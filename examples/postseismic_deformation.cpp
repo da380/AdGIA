@@ -44,7 +44,7 @@
 //            delta artifacts, same far field; -taper, on by default:
 //            cos^2 slip taper to zero at the fault ends, -s the peak)
 //   -beta -alpha -gamma -bx -bz -br                 the elastic structure
-//   -topo -tx -tr                                   the topography
+//   -topo -tx -tr -hill                             the topography
 // and its own (defaults in brackets):
 //   -nl      lid thickness in element rows (0: no lid;
 //            -1: 3 nz / 8, rounded up)                         [-1]

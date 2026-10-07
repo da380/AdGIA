@@ -8,7 +8,8 @@
 //                     their material fields: depth dependence, a lateral
 //                     gradient and a Gaussian anomaly, multiplied.
 //   FaultBox          the Cartesian box with its free surface at z = 0,
-//                     optional Gaussian topography mapped directly onto
+//                     optional surface topography (a Gaussian, or an
+//                     asymmetric hill) mapped directly onto
 //                     the mesh nodes (no remeshing), the elastic-moduli
 //                     factor, and an optional elastic lid assigned by
 //                     element rows, so the material discontinuity falls
@@ -88,6 +89,7 @@ struct FaultBox {
   mfem::real_t W = 8.0, D = 4.0;
   ParametricFactor moduli;                        // -beta, -alpha, -gamma...
   mfem::real_t h0 = 0.0, tx = 0.0, tr = 1.5;      // topography
+  mfem::real_t hill = -1.0;                       // < 0: symmetric Gaussian
 
   void AddOptions(mfem::OptionsParser& args) {
     args.AddOption(&nx, "-nx", "--num-elements-x",
@@ -115,6 +117,11 @@ struct FaultBox {
                    "x of the topography centre.");
     args.AddOption(&tr, "-tr", "--topography-radius",
                    "Gaussian radius of the topography.");
+    args.AddOption(&hill, "-hill", "--hill-far-fraction",
+                   "Asymmetric hill: right of the crest the Gaussian flank "
+                   "becomes a smooth, roughly linear ramp that keeps this "
+                   "fraction of the height at the right edge of the box "
+                   "(negative: symmetric Gaussian).");
   }
 
   // Per-dimension mesh defaults and the range checks.
@@ -126,13 +133,33 @@ struct FaultBox {
       nz = dim == 2 ? 32 : 12;
     }
     moduli.Verify(D, h0, "modulus");
+    MFEM_VERIFY(hill < 0.0 || (hill <= 1.0 && tx < 0.5 * W),
+                "The hill fraction must lie in [0, 1] and its crest left of "
+                "the right edge of the box.");
   }
 
-  // Gaussian topography height at (x, y) (y ignored in 2-D).
+  // Topography height at (x, y) (y ignored in 2-D). The cross-section
+  // through the crest is a Gaussian flank for x <= tx and, in hill mode,
+  // a half-cosine ramp for x > tx — zero slope at the crest (so the
+  // profile stays C^1 there) and at the right edge of the box, where a
+  // fraction `hill` of the height remains: the asymmetric range-front /
+  // long-back-slope shape of active tectonics. In 3-D the cross-section
+  // is modulated by the Gaussian in y; with hill < 0 the product is
+  // exactly the original radially symmetric Gaussian.
   mfem::real_t Topography(int dim, mfem::real_t x, mfem::real_t y) const {
     const mfem::real_t dx = x - tx;
-    const mfem::real_t r2 = dx * dx + (dim == 3 ? y * y : mfem::real_t{0});
-    return h0 * std::exp(-r2 / (2.0 * tr * tr));
+    mfem::real_t h;
+    if (hill >= 0.0 && dx > 0.0) {
+      constexpr mfem::real_t pi = std::numbers::pi_v<mfem::real_t>;
+      const mfem::real_t u = std::min(dx / (0.5 * W - tx), mfem::real_t{1});
+      h = h0 * (hill + (1.0 - hill) * 0.5 * (1.0 + std::cos(pi * u)));
+    } else {
+      h = h0 * std::exp(-dx * dx / (2.0 * tr * tr));
+    }
+    if (dim == 3) {
+      h *= std::exp(-y * y / (2.0 * tr * tr));
+    }
+    return h;
   }
 
   // The factor scaling both moduli.
@@ -461,7 +488,21 @@ class SurfaceProfile {
   SurfaceProfile(mfem::Mesh& mesh, const FaultBox& box, int dim,
                  int npts = 201)
       : dim_(dim), npts_(npts), pts_(dim, npts) {
-    const mfem::real_t inset = 1e-6 * box.D;
+    // The sample points sit on the ANALYTIC topography, but the mesh
+    // surface is its nodal interpolant, which sags below the curve
+    // between nodes by up to max|h''| dx^2 / 8; inset by that bound
+    // (doubled: in 3-D the section at y = 0 can also sag in y, and the
+    // ramp bound is taken at the crest) plus a round-off floor, so
+    // every sample lands inside the discrete mesh.
+    mfem::real_t curv = std::abs(box.h0) / (box.tr * box.tr);
+    if (box.hill >= 0.0) {
+      constexpr mfem::real_t pi = std::numbers::pi_v<mfem::real_t>;
+      const mfem::real_t L = 0.5 * box.W - box.tx;
+      curv = std::max(curv, std::abs(box.h0) * (1.0 - box.hill) * 0.5 * pi *
+                                pi / (L * L));
+    }
+    const mfem::real_t dx = box.W / box.nx;
+    const mfem::real_t inset = 1e-6 * box.D + 0.25 * curv * dx * dx;
     for (int i = 0; i < npts; i++) {
       const mfem::real_t x = -0.5 * box.W + i * (box.W / (npts - 1));
       pts_(0, i) = std::clamp(x, -0.5 * box.W + inset, 0.5 * box.W - inset);

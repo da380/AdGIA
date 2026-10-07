@@ -252,7 +252,10 @@ DescentResult LevenbergMarquardt(const DescentFunctional& f,
       lm.lambda = lambda;
       std::unique_ptr<CGSolver> cg;
 #ifdef MFEM_USE_MPI
-      cg = std::make_unique<CGSolver>(MPI_COMM_WORLD);
+      // Serial callers (the serial tests link no MPI main) must not touch
+      // the communicator: MPICH aborts on any MPI call before MPI_Init.
+      cg = Mpi::IsInitialized() ? std::make_unique<CGSolver>(MPI_COMM_WORLD)
+                                : std::make_unique<CGSolver>();
 #else
       cg = std::make_unique<CGSolver>();
 #endif

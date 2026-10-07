@@ -11,64 +11,77 @@ nominal mesh size of the benchmark meshes, "order" the displacement order.
 
 ### Mapped `slip_broken`: the slipping-interface forms are not covariant
 
-**Status:** open. Mapped slipping-interface results are unverified; this
-blocks slipping-interface topography and aspherical slip runs.
+**Status:** symptom 1 (Leg B) RESOLVED 7 Oct 2026 — an implementation
+defect, not a derivation defect, found and fixed; symptom 2 (Leg A)
+remains open, now isolated as a separate mechanism (below).
 
-Two distinct symptoms, both on `fluid_core` with the lateral relabelling
-of amplitude `A = 0.02`:
+**The defect and the fix.** The continuous `B_Σ`/`G_Σ` of
+`doc/slip_interface.tex` are covariant (as they must be: MA24 and AC18
+derive on an arbitrary reference body). The implementation was not: the
+kernels' direction slot sanitised the jump as `P_T F⁻¹`, which agrees
+with the derivation ON the constraint set (`ν·[[v]] = 0`) but is not
+invariant under face-fixing shears of F (`F = 1 + a⊗N` on a face —
+exactly what adjacent-element evaluation of an interpolated map
+produces) off it, where the block probes and the AL/penalty iterates
+live. The pullback of the deformed face's own tangential projector is
+ν-orthogonal projection BEFORE `F⁻¹`; the slot is now
+`P_T F⁻¹(1 − ν̂⊗ν̂)` in all three kernels (`SlipDirection`,
+`src/bilininteg.cpp`), identical unmapped. Instrument: the proposed
+element-level identity test now exists —
+`TestSlipInterface.InterfaceKernelsFaceShearCovariance` assembles each
+kernel mapped on the reference mesh against unmapped on the
+nodally-deformed mesh (the isoparametric identity): 0.165 / 0.155 /
+0.091 relative on the old slot, < 1e-10 on the new one. Measured on
+Leg B (`relabelled_identity -method slip_broken`, `fluid_core`,
+`h = 0.3`, A = 0.02): δu 1.2e-2 → 1.6e-6, δζ 8.1e-3 → 7.2e-7 — welded
+level; the u-block probes fell from 1–2.5e-4 to the 1.45e-7
+interpolation floor of the certified constraint kernels. The slip leg
+of `relabelled_identity` is now STRICT (same 1e-5 criterion as the
+welded runs); the welded legs are unchanged (u 1.6e-7).
 
-1. **Interpolated F (relabelling family, Leg B,
-   `relabelled_identity -method slip_broken`).** The discrete
-   change-of-variables identity, which holds to about 1e-6 on every
-   welded case including the gauged fluid (welded gauged: u 1.6e-7,
-   ζ 4e-8 at `h = 0.3`), fails through the slipping interface:
-   δu = 1.2e-2, δζ = 8.1e-3 at `h = 0.3`, and 4.5e-2 / 5.6e-2 at
-   `h = 0.2`. It grows under refinement, so it is a genuine defect, not
-   interpolation noise. The driver's block probes localise it: of the
-   sixteen broken blocks every ζ–ζ block agrees to machine precision and
-   every u-involving block differs at 1–2.5e-4. The constraint kernels
-   are exonerated: `B_n` 2.2e-16 (the Nanson normal ν = adj(F)ᵀN is
-   invariant under face-fixing shears of F), `P_b` 1.5e-7, `K_vz`
-   9.5e-8; the base rows and the C couplings are certified by the
-   welded identity. By elimination the non-covariant content is in
-   `B_Σ` / `G_Σ` themselves: their `P_T F⁻¹` slot and the gravity
-   vector are not invariant under face-fixing shears of the interpolated
-   F, which MFEM evaluates from the adjacent volume element. The
-   relabelling is the identity on the interfaces (no jump of F across
-   Σ), so this is unrelated to the side-selection defect of the shift
-   maps (next items).
-2. **Exact F (relabelling family, Leg A, `love_benchmark -map 0.02`).**
-   Lateral leakage in the Love numbers: the `spurious` column is
-   0.36–0.4 at degree 1 and 6–9e-2 at degree ≥ 2 on the current code
-   (an earlier build gave 0.63 / 6–7e-2), against 6e-3–1e-2 unmapped and
-   2–8e-3 for the mapped referential method. A separate mechanism is
-   suspected: `G_Σ` sits inside a sharp degree-1 cancellation —
-   `-gs-scale 0.5` raises the *unmapped* degree-1 spurious value to 0.46
-   and makes the mapped solve diverge — so the mapped leakage is
-   plausibly a small relative perturbation of `G_Σ`, strongly amplified.
-   The rigid null-pair residuals of the slip class (`love_benchmark
-   -diag`) survive the map essentially unchanged (translations 2.4e-3
-   vs 2.6e-3; rotations about doubled, ~1e-3).
+**What remains open: Leg A (exact F, `love_benchmark -map 0.02`).**
+Lateral leakage in the Love numbers: the `spurious` column is 0.36 at
+degree 1 and 6–8.5e-2 at degree ≥ 2 (remeasured 7 Oct 2026, identical
+before and after the kernel fix to every printed digit and iteration
+count), against 6e-3–1e-2 unmapped and 2–8e-3 for the mapped
+referential method. The kernel fix is provably not the cause here: the
+exact `InteriorRelabelling` has its per-layer bumps vanishing WITH
+their first derivative at the layer boundaries, so `F = 1` exactly on
+every interface and the interface kernels assemble as unmapped — the
+Leg-A mechanism is elsewhere. Best current reading: `G_Σ`'s
+coefficients `b`, `q` come from the MAPPED background solve, whose
+lateral discretisation error (an exact-F mapped Poisson solve is not
+discretely identical to the unmapped one) perturbs `G_Σ` inside its
+sharp degree-1 cancellation — `-gs-scale 0.5` raises the *unmapped*
+degree-1 spurious value to 0.46 and makes the mapped solve diverge —
+so a small relative perturbation is strongly amplified. If so the
+leakage is amplified discretisation error, and should fall under
+refinement in h or order where the pre-fix defect GREW; the refinement
+ladder of the mapped run is the next instrument. A strong post-fix
+data point: the SAME Leg-A run with INTERPOLATED F (`-map-interp`,
+side-consistent, and identity-exact with the fixed kernels) gives
+spurious 0.016 / 0.011 / 0.010 / 0.014 / 0.006 at degrees 0–4 — the
+mapped-referential level, and below the pre-fix unmapped slip values —
+with ~10 % fewer iterations. The exact-F channel is therefore the only
+remaining anomaly, and interpolated F is the sensible default mode for
+mapped `slip_broken` runs meanwhile. The rigid null-pair
+residuals of the slip class (`love_benchmark -diag`) survive the map
+essentially unchanged (translations 2.4e-3 vs 2.6e-3; rotations about
+doubled, ~1e-3).
 
-Which forms are uncertified: the KKT constraint row is covariant by
-construction (Nanson-exact flux kernel); the mapped broken solver
-reproduces the identity solution under an interface-fixing twist
-relabelling to 5e-4 / 2e-4. Uncertified: `B_Σ`
-(`SlipInterfacePressureIntegrator`), `G_Σ`
-(`SlipInterfaceGravityIntegrator`, `SlipInterfaceGravityScalarIntegrator`),
-and possibly the AL normal–normal penalty with its 1/|ν| factor. The
-single-valued organisation's mismatch gravity pieces are assembled at
-φ_e = id and refuse maps outright (`Diffeomorphism::IsIdentity` guard); that
-limitation is separate.
-
-Proposed instruments: a `B_Σ` counterpart of the `-gs-scale` hook; a
-difference-field map of mapped-vs-unmapped solutions; an element-level
-identity test for each interface form on a mapped mesh, like those of the
-domain and Nanson boundary integrators; a theory pass on the mapped
-`B_Σ`/`G_Σ` derivation, using the degree-1 cancellation to identify the
-combination the mapped assembly must preserve. Decide afterwards which
-forms are certified and update the reference docs (they currently call
-mapped slipping results unverified).
+Certification state after the fix: the KKT constraint row was already
+covariant by construction (Nanson-exact flux kernel); `B_n` 2.2e-16,
+`P_b` 1.5e-7, `K_vz` 9.5e-8; `B_Σ` and `G_Σ` are now certified at
+kernel level (the isoparametric element test) and at solution level
+through Leg B. The AL normal–normal penalty with its 1/|ν| factor
+passes inside the strict Leg-B identity. The single-valued
+organisation's mismatch gravity pieces are assembled at φ_e = id and
+refuse maps outright (`Diffeomorphism::IsIdentity` guard); that
+limitation is separate. The reference docs still call mapped slipping
+results unverified: update them once the Leg-A refinement ladder is
+run (and the interface-shift derivative item below retested — it was
+predicted to share this defect and must be re-measured against the
+1-D reference with the fixed kernels).
 
 A data point from `examples/slipping_interface.cpp`: on the
 aspherical fluid-core meshes (radial-stretch reference, eps = 0.05,
@@ -152,8 +165,13 @@ interface submesh.
 
 ### `slip_broken` interface-shift derivatives disagree with the 1-D reference
 
-**Status:** open; probably the same defect as the previous item, to be
-covered by the same diagnostic.
+**Status:** open; RE-MEASURE after the 7 Oct 2026 direction-slot fix.
+The shift maps run with interpolated F (forced), exactly the regime
+the fix repairs — its adjacent-element evaluation produces the
+face-fixing shears the old `P_T F⁻¹` slot was not invariant under —
+and the build-to-build drift noted below is consistent with the
+off-manifold sensitivity the fix removes. The numbers below are
+pre-fix.
 
 On `fluid_core`, `h = 0.3`, order 2, shifts ε = ±0.02 of the CMB
 (interpolated-F shift maps, exact sweeps), the derivatives of the Love

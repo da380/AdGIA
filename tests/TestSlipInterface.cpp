@@ -1664,3 +1664,162 @@ TEST(SlipInterface, DiscreteGravityInterfaceMatchesQuadrature) {
 
   rc = rc_saved;
 }
+
+// Covariance of the one-sided interface kernels: the discrete
+// change-of-variables identity at matrix level. For a mapping
+// interpolated in the mesh's own nodal space, assembling the MAPPED
+// kernels on the reference mesh must reproduce, dof for dof, the
+// UNMAPPED kernels assembled on the mesh whose nodes are displaced by
+// the same interpolant (the isoparametric identity every certified
+// volume integrator satisfies; doc/mappings.md). This is the
+// element-level instrument proposed in doc/planning/open_issues.md
+// ("Mapped slip_broken: the slipping-interface forms are not
+// covariant"): it fails, at the 10 % level under an O(0.2) shear, for
+// a direction slot sanitised as P_T F^{-1} -- not invariant under the
+// face-fixing shears an adjacent-element F evaluation produces off the
+// constraint set -- and passes for the pullback-consistent
+// P_T F^{-1} (1 - nu nu^T / |nu|^2), which is the deformed face's own
+// tangential projector pulled back. The gravity data transform with
+// the map (g on the deformed side, F^T g o xi on the reference side),
+// so any residual is the kernels' own.
+TEST(SlipInterface, InterfaceKernelsFaceShearCovariance) {
+  using namespace mfem;
+  using namespace AdGIA;
+
+  const double r_c = 3483.0 / 6371.0;  // the two-layer mesh's interface
+  const double cshear = 0.2;
+  Vector a_vec(2);
+  a_vec(0) = 0.3;
+  a_vec(1) = 0.7;
+
+  // Displacement d(x) = c (r^2 - rc^2) a: identity on the continuous
+  // interface, a shear d(dir)/dN != 0 across it.
+  VectorFunctionCoefficient disp(2, [=](const Vector& x, Vector& d) {
+    const double h = cshear * (x * x - r_c * r_c);
+    d.SetSize(2);
+    d(0) = h * a_vec(0);
+    d(1) = h * a_vec(1);
+  });
+
+  auto g_fun = [](const Vector& y, Vector& g) {
+    g.SetSize(2);
+    g(0) = 0.4 - 0.3 * y(1);
+    g(1) = 0.9 + 0.2 * y(0) + 0.1 * y(1);
+  };
+
+  Mesh parent("../data/elastogravity_two_layer_2d.msh", 1, 1);
+  Array<int> solid_attr({2});
+  SubMesh solid(SubMesh::CreateFromDomain(parent, solid_attr));
+  solid.SetCurvature(2);
+
+  // The interpolated mapping, and the mesh displaced by the SAME
+  // interpolant (nodes share layout with the copy).
+  GridFunction h_h(solid.GetNodes()->FESpace());
+  h_h.ProjectCoefficient(disp);
+  GridFunctionDiffeomorphism map(h_h);
+  Mesh deformed(solid);
+  *deformed.GetNodes() += h_h;
+
+  // g in the deformed description, and its referential pull-back
+  // F^T (g o xi) through the interpolated map.
+  VectorFunctionCoefficient g_deformed(2, [=](const Vector& y, Vector& g) {
+    g_fun(y, g);
+  });
+  class PulledBackGravity : public VectorCoefficient {
+   public:
+    PulledBackGravity(Diffeomorphism& m,
+                      std::function<void(const Vector&, Vector&)> g)
+        : VectorCoefficient(2), map_(&m), g_(std::move(g)) {}
+    void Eval(Vector& V, ElementTransformation& T,
+              const IntegrationPoint& ip) override {
+      map_->Eval(y_, T, ip);
+      g_(y_, gy_);
+      map_->EvalGradient(F_, T, ip);
+      V.SetSize(2);
+      F_.MultTranspose(gy_, V);
+    }
+
+   private:
+    Diffeomorphism* map_;
+    std::function<void(const Vector&, Vector&)> g_;
+    Vector y_, gy_;
+    DenseMatrix F_;
+  } g_reference(map, g_fun);
+
+  H1_FECollection fec(2, 2);
+  FiniteElementSpace fes_v_ref(&solid, &fec, 2), fes_z_ref(&solid, &fec);
+  FiniteElementSpace fes_v_def(&deformed, &fec, 2), fes_z_def(&deformed, &fec);
+
+  Array<int> marker(solid.bdr_attributes.Max());
+  marker = 0;
+  for (int i = 0; i < solid.GetNBE(); i++) {
+    auto* tr = solid.GetBdrElementTransformation(i);
+    Vector c(2);
+    tr->Transform(Geometries.GetCenter(solid.GetBdrElementGeometry(i)), c);
+    const double r = c.Norml2();
+    if (r > 0.9 * r_c && r < 1.1 * r_c) {
+      marker[solid.GetBdrAttribute(i) - 1] = 1;
+    }
+  }
+
+  ConstantCoefficient piC(0.3);
+
+  auto assemble = [&](FiniteElementSpace& fes, auto make_integ) {
+    BilinearForm g_form(&fes);
+    g_form.AddBoundaryIntegrator(make_integ(), marker);
+    g_form.Assemble();
+    g_form.Finalize();
+    return SparseMatrix(g_form.SpMat());
+  };
+  auto rel_diff = [](const SparseMatrix& A, const SparseMatrix& B) {
+    DenseMatrix Ad, Bd;
+    A.ToDenseMatrix(Ad);
+    B.ToDenseMatrix(Bd);
+    Ad -= Bd;
+    return Ad.MaxMaxNorm() / std::max(Bd.MaxMaxNorm(), 1e-300);
+  };
+
+  // The pressure kernel B_Sigma.
+  {
+    SparseMatrix mapped = assemble(fes_v_ref, [&] {
+      return new SlipInterfacePressureIntegrator(piC, map);
+    });
+    SparseMatrix plain = assemble(fes_v_def, [&] {
+      return new SlipInterfacePressureIntegrator(piC);
+    });
+    EXPECT_LT(rel_diff(mapped, plain), 1e-10)
+        << "B_Sigma kernel breaks the change-of-variables identity";
+  }
+
+  // The gravity vector kernel G_A.
+  {
+    SparseMatrix mapped = assemble(fes_v_ref, [&] {
+      return new SlipInterfaceGravityIntegrator(g_reference, 0.05, map);
+    });
+    SparseMatrix plain = assemble(fes_v_def, [&] {
+      return new SlipInterfaceGravityIntegrator(g_deformed, 0.05);
+    });
+    EXPECT_LT(rel_diff(mapped, plain), 1e-10)
+        << "G_A kernel breaks the change-of-variables identity";
+  }
+
+  // The scalar--vector kernel M_q.
+  {
+    auto assemble_mixed = [&](FiniteElementSpace& fz, FiniteElementSpace& fv,
+                              auto make_integ) {
+      MixedBilinearForm m(&fz, &fv);
+      m.AddBoundaryIntegrator(make_integ(), marker);
+      m.Assemble();
+      m.Finalize();
+      return SparseMatrix(m.SpMat());
+    };
+    SparseMatrix mapped = assemble_mixed(fes_z_ref, fes_v_ref, [&] {
+      return new SlipInterfaceGravityScalarIntegrator(g_reference, 0.05, map);
+    });
+    SparseMatrix plain = assemble_mixed(fes_z_def, fes_v_def, [&] {
+      return new SlipInterfaceGravityScalarIntegrator(g_deformed, 0.05);
+    });
+    EXPECT_LT(rel_diff(mapped, plain), 1e-10)
+        << "M_q kernel breaks the change-of-variables identity";
+  }
+}
