@@ -1,8 +1,35 @@
 # Fluid-treatment class structure: making Maxwell the visible default
 
-**Status:** design for review, 8 Oct 2026. Step 1 is implemented;
-steps 2–4 are proposed. Context: doc/static_fluid_core.tex ("The
-Maxwell relaxation method" and "The status of the formulations").
+**Status:** steps 1–3 are implemented (step 1 and, later the same day, steps 2–3,
+all test gates green in both builds, example numbers
+unchanged); step 4 remains optional/deferred. Context:
+doc/static_fluid_core.tex ("The Maxwell relaxation method" and "The
+status of the formulations").
+
+**As built (8 Oct, second session).** `FluidRegionOperator` now exists at namespace
+scope in quasi_static_problem.hpp: it owns the marker, the scaled
+coefficients, the (covariant) penalty integrator, the assembled
+`eps mu Q`, the unit-epsilon cache and the Rescale fast path, with
+`Configure/Clear/SetEpsilon/Assemble/Rescale/ApplyQ/Q/Integrator/
+Marker`. The problem base keeps the composition (`a_solve_form_`,
+`A_solve_`), the solvers, and the two drivers; its mode flags
+collapsed to one slot, `enum class FluidTreatment { None, Penalty,
+Maxwell }` (`SetGaugedFluid` selects Penalty, `SetMaxwellFluid`
+re-selects Maxwell after it, `ClearGaugedFluid` resets — the
+treatment-switching bug class is structurally gone). `GaugePenalty`
+moved to namespace scope with a nested alias for the historical
+spelling; derived drivers reach the engine's matrix through the
+protected `GaugeQ()` (four sites migrated: the referential refine
+loop, the mixed gauge-KKT block, its residuals and its refine loop).
+Step 3 resolved into this structure: the vacuum extension and the
+preconditioner-only mode configure the same engine through the
+`SetGaugedFluid` internals, while every public verb
+(`SetFluid`, `SetVacuumExtension`, `SetGaugePreconditionerOnly`)
+names its own intent. En route, the slip solver-setup audit for the
+referential keep-alive bug came back clean: all three slip paths
+already pin `prec_stale_ = true` before their preconditioner calls
+(reuse deliberately defeated), so the referential path was the only
+instance.
 
 ## The problem
 
