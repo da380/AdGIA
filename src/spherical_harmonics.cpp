@@ -5,6 +5,8 @@
 
 #include "AdGIA/spherical_harmonics.hpp"
 
+#include "AdGIA/mappings.hpp"
+
 #include <cmath>
 #include <numbers>
 
@@ -519,11 +521,89 @@ void BoundaryHarmonicCoefficients::LoadVector(const Vector& c,
   b *= std::pow(R_, dim_ - 1);
 }
 
+// ---------------------------------------------------------------------------
+// HarmonicExpansionGradientCoefficient
+
+HarmonicExpansionGradientCoefficient::HarmonicExpansionGradientCoefficient(
+    const SurfaceHarmonics& basis, const Vector& coefficients,
+    const Vector& centre, real_t radius, Diffeomorphism* map)
+    : VectorCoefficient(basis.Dim()),
+      basis_(&basis),
+      map_(map),
+      c_(coefficients),
+      x0_(centre),
+      R_(radius) {
+  MFEM_VERIFY(c_.Size() == basis_->Size(),
+              "HarmonicExpansionGradientCoefficient: coefficient vector "
+              "size.");
+  if (x0_.Size() == 0) {
+    x0_.SetSize(basis_->Dim());
+    x0_ = 0.0;
+  }
+  MFEM_VERIFY(x0_.Size() == basis_->Dim(),
+              "HarmonicExpansionGradientCoefficient: centre dimension.");
+  MFEM_VERIFY(R_ > 0.0, "HarmonicExpansionGradientCoefficient: radius.");
+}
+
+void HarmonicExpansionGradientCoefficient::SetCoefficients(const Vector& c) {
+  MFEM_VERIFY(c.Size() == basis_->Size(),
+              "HarmonicExpansionGradientCoefficient: coefficient vector "
+              "size.");
+  c_ = c;
+}
+
+void HarmonicExpansionGradientCoefficient::Eval(Vector& V,
+                                                ElementTransformation& T,
+                                                const IntegrationPoint& ip) {
+  V.SetSize(vdim);
+  V = 0.0;
+  if (map_) {
+    map_->Eval(x_, T, ip);
+  } else {
+    T.Transform(ip, x_);
+  }
+  x_ -= x0_;
+  const real_t r = x_.Norml2();
+  basis_->EvalWithGradient(x_, Y_, gradY_);
+  // nabla(r^l Y) = (1/R)(r/R)^{l-1}(l Y rhat + grad_1 Y). At the exact
+  // centre only l = 1 survives ((r/R)^0 = 1), where the combination is
+  // direction-independent and EvalWithGradient's theta = 0 convention
+  // gives it correctly with rhat along the axis; elsewhere rhat = x/r.
+  const real_t q = r / R_;
+  real_t ql = 1.0;  // (r/R)^{l-1}
+  int l_prev = 1;
+  for (int i = 0; i < c_.Size(); i++) {
+    const int l = basis_->Degree(i);
+    if (l == 0) {
+      continue;
+    }
+    while (l_prev < l) {
+      ql *= q;
+      l_prev++;
+    }
+    if (c_[i] == 0.0 || ql == 0.0) {
+      continue;
+    }
+    const real_t s = c_[i] * ql / R_;
+    for (int d = 0; d < vdim; d++) {
+      const real_t rhat = r > 0.0 ? x_[d] / r : (d == vdim - 1 ? 1.0 : 0.0);
+      V[d] += s * (l * Y_[i] * rhat + gradY_(d, i));
+    }
+  }
+}
+
 std::unique_ptr<HarmonicExpansionCoefficient>
 BoundaryHarmonicCoefficients::Expansion(const Vector& c,
                                         bool interior_harmonic) const {
   return std::make_unique<HarmonicExpansionCoefficient>(basis_, c, x0_, R_,
                                                         interior_harmonic);
+}
+
+std::unique_ptr<HarmonicExpansionGradientCoefficient>
+BoundaryHarmonicCoefficients::GradientExpansion(const Vector& c,
+                                                Diffeomorphism* map) const {
+  return std::make_unique<HarmonicExpansionGradientCoefficient>(basis_, c, x0_,
+                                                                R_, map);
 }
 
 }  // namespace AdGIA

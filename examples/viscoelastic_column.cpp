@@ -47,6 +47,24 @@
 // One source serves the serial and the parallel build; the genuine
 // difference is the partitioning of the (periodic) mesh.
 //
+// Options (defaults in brackets):
+//   -d      space dimension, 2 or 3 [2].
+//   -o      finite element order [2]; higher order does not cure
+//           the kink in the cutting run.
+//   -nx     elements across the (periodic) width, >= 3 [3].
+//   -nz     elements up the column, even so that z = H/2 is a face
+//           [4]; finer, the cut run's error shrinks like 1/nz.
+//   -kappa  bulk modulus [1].
+//   -mu     shear modulus, both layers [1].
+//   -tb     Maxwell time of the bottom layer, the time unit [1].
+//   -tt     Maxwell time of the top layer [0.1].
+//   -p0     traction on the top [0.01].
+//   -tf     final time [5].
+//   -n      time steps per unit time [16].
+//   -vis / -no-vis   final errors in GLVis on or off [on].
+//   -csv    table of the histories for plot_csv.py
+//           [viscoelastic_column.csv]; "" writes none.
+//
 // Sample runs (with mpiexec -np N in front in a parallel build):
 //    ./viscoelastic_column
 //    ./viscoelastic_column -nz 16       (finer: the cut error shrinks ~1/nz)

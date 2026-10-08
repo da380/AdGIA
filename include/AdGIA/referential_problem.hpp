@@ -385,6 +385,27 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
                       const mfem::Array<int>& bdr_marker);
 
   /**
+   * @brief Tidal (applied-potential) load from the PHYSICAL gradient
+   * @f$\nabla\psi@f$ of an external potential, evaluated at the
+   * equilibrium-mapped position: a displacement-row load only,
+   * @f$\ell_u(v) = -\int_B \tilde\rho\,(\nabla\psi\circ\varphi_e)
+   * \cdot v\,dV@f$ with @f$\tilde\rho@f$ the referential density.
+   * This is the whole referential statement: by the chain rule
+   * @f$F_e^{-T}\nabla_X(\psi\circ\varphi_e) = (\nabla\psi)\circ
+   * \varphi_e@f$, so composing analytic physical data with the mapping
+   * (HarmonicExpansionGradientCoefficient takes the mapping directly) is
+   * the same as differentiating the referential tidal potential — and
+   * unlike the Eulerian classes nothing loads the potential row, whose
+   * fluid term belongs to the mixed formulation's fluid-density unknown.
+   * The centrifugal potential's force fits the same door (its
+   * degree-zero @f$r^2@f$ part is not an interior harmonic, so pass its
+   * gradient as plain analytic data), which is where rotational
+   * feedbacks will later enter (Maitra & Al-Attar 2024). Registered as
+   * time-dependent; call before the first AssembleForce().
+   */
+  void SetTidalLoad(mfem::VectorCoefficient& grad_psi);
+
+  /**
    * @brief Ball-wide mode: regularise the pure-gauge vacuum-extension
    * field with the harmonic penalty @f$\epsilon\mu_g\int \nabla u :
    * \nabla v@f$ on the marked (buffer) attributes, through the fluid
@@ -547,6 +568,8 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
   // physics
   const ReferentialElasticRheology* ref_rheology_;
   mfem::Coefficient* rho_;
+  std::vector<std::unique_ptr<mfem::Coefficient>> tidal_scalar_coefs_;
+  std::vector<std::unique_ptr<mfem::VectorCoefficient>> tidal_coefs_;
   mfem::real_t G_, four_pi_G_;
   int dtn_degree_;
   mfem::ConstantCoefficient one_, inv_four_pi_G_, shift_coef_;
@@ -677,6 +700,17 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
 class LinearQuasiStaticReferentialSelfGravitatingSlipProblem
     : public LinearQuasiStaticReferentialSelfGravitatingProblem {
  public:
+  /** @brief Refused: the slipping classes do not yet carry the tidal
+   * body force on the fluid displacement row, and a solid-row-only
+   * load under-drives a fluid core by tens of percent. Welded
+   * referential and maxwell solve tides (the base class). */
+  void SetTidalLoad(mfem::VectorCoefficient&) {
+    MFEM_ABORT(
+        "SetTidalLoad: not yet supported by the slipping classes (the "
+        "fluid row carries no tidal force); use the welded referential "
+        "or maxwell treatment for tides.");
+  }
+
   /**
    * @param fes_s Solid displacement space on a SubMesh of the ball; the
    * base class's displacement space.

@@ -103,6 +103,57 @@
 // in parallel) and the reduction of the sampled profile, each point of
 // which is found on exactly one rank (ParMesh::FindPoints).
 //
+// Options (defaults in brackets):
+//   -d       space dimension, 2 or 3 [2].
+//   -o       finite element order for the displacement [2].
+//   -nx      elements across the width (3-D: each horizontal direction)
+//            [-1: 64 in 2-D, 24 in 3-D].
+//   -nz      elements through the depth [-1: 32 in 2-D, 12 in 3-D].
+//   -W       width of the box [8].
+//   -D       depth of the box [4].
+//   -beta    depth stiffening: moduli grow by 1 + beta |z| / D
+//            (0: homogeneous) [0].
+//   -alpha   lateral gradient: moduli grow by 1 + alpha x / W
+//            (|alpha| < 2 keeps them positive) [0].
+//   -gamma   relative moduli reduction at the centre of the Gaussian
+//            basin (< 1) [0].
+//   -bx      x of the basin centre [0].
+//   -bz      depth of the basin centre below z = 0 [0].
+//   -br      Gaussian radius of the basin [1].
+//   -topo    height of the Gaussian surface topography (0: flat) [0].
+//   -tx      x of the topography centre [0].
+//   -tr      Gaussian radius of the topography [1.5].
+//   -hill    asymmetric hill: right of the crest the Gaussian flank
+//            becomes a smooth, roughly linear ramp that keeps this
+//            fraction of the height at the right edge of the box
+//            (negative: symmetric Gaussian) [-1].
+//   -dip     dip of the fault in degrees from horizontal, towards +x
+//            [30].
+//   -rake    rake in degrees, anticlockwise in the fault plane from
+//            the strike: 90 thrust, 0 left-lateral strike-slip (3-D;
+//            2-D is pure dip-slip) [90].
+//   -strike  strike in degrees clockwise from the y axis (3-D) [0].
+//   -fd      depth of the fault centre below z = 0 [1].
+//   -fx      x of the fault centre [0].
+//   -fl      along-dip length of the fault [1.5].
+//   -fw      along-strike width of the fault (3-D) [1.5].
+//   -s       slip; in 2-D > 0 thrust, < 0 normal; the PEAK value when
+//            tapered [0.01].
+//   -nd      point-source patches along dip [12].
+//   -ns      point-source patches along strike (3-D); -nd 1 -ns 1 is a
+//            single point source [12].
+//   -smooth  replace each point source by a normalised Gaussian of
+//            this sigma in ELEMENT widths: same moment, same far
+//            field, but a resolved density instead of mesh-scale
+//            artifacts near the fault (0: point sources) [0].
+//   -taper / -no-taper   cos^2 slip taper to zero at the fault ends
+//            (3-D: all edges); -s is then the peak, and midpoint
+//            patches leave -nd 1 a full point source [on].
+//   -vis / -no-vis   u_z, the vector displacement, kappa and mu in
+//            GLVis [on].
+//   -csv     surface-profile table for plot_csv.py ("": none)
+//            [coseismic_deformation.csv].
+//
 // Sample runs (with mpiexec -np N in front in a parallel build):
 //    ./coseismic_deformation
 //    ./coseismic_deformation -dip 60 -s -0.01            (normal fault)

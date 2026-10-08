@@ -22,6 +22,20 @@
 // maximum difference from the mfem::ElasticityIntegrator solution); with
 // -vis (on by default) the displacement in GLVis.
 //
+// Options (defaults in brackets):
+//   -m    mesh file [../data/star.mesh].
+//   -o    finite element order [1].
+//   -r    number of uniform mesh refinements [0].
+//   -A    Love constant A [3.1].
+//   -C    Love constant C [2.7].
+//   -F    Love constant F [1.1].
+//   -L    Love constant L [0.9].
+//   -N    Love constant N [1.2].
+//   -iso / -no-iso   use the isotropic Love constants (lambda = mu =
+//         1), overriding -A ... -N, and compare with the
+//         mfem::ElasticityIntegrator solution [off].
+//   -vis / -no-vis   GLVis windows on or off [on].
+//
 // Sample runs (with mpiexec -np N in front in a parallel build):
 //    ./anisotropic_elasticity -m ../data/star.mesh -o 2
 //    ./anisotropic_elasticity -m ../data/beam-tet.mesh -o 1 -iso

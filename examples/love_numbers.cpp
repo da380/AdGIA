@@ -48,6 +48,26 @@
 // love_numbers.csv); with -vis, the displacement and the potential
 // perturbation of the load solve at degree -vl in GLVis.
 //
+// Options (defaults in brackets):
+//   -m      mesh file [../data/elastogravity_2d.msh]: a disc (2-D) or
+//           ball (3-D) inside its buffer shell.
+//   -o      finite element order [2].
+//   -deg    DtN expansion degree [12].
+//   -lmin   lowest harmonic degree [2].
+//   -lmax   highest harmonic degree [6].
+//   -G      gravitational constant [0.05].
+//   -rho    density [1].
+//   -kappa  bulk modulus [100]: large against -mu, so the run sits
+//           near the incompressible closed form it is compared with.
+//   -mu     shear modulus [0.5].
+//   -rt     relative solver tolerance [1e-10].
+//   -analytic / -no-analytic   compare with the incompressible
+//           homogeneous sphere (3-D only) [on].
+//   -vis / -no-vis   show one degree's load solution in GLVis [on].
+//   -vl     the degree whose load solution is shown [2].
+//   -csv    file for the Love-number table, read by plot_csv.py
+//           ["love_numbers.csv"; "": none].
+//
 // Sample runs (with mpiexec -np N in front in a parallel build):
 //    ./love_numbers -o 2 -lmax 6
 //    ./love_numbers -m ../data/coupled_poisson.msh -o 2 -lmax 4 -kappa 100
@@ -148,7 +168,8 @@ int main(int argc, char* argv[]) {
   const char* csv_file = "love_numbers.csv";
 
   OptionsParser args(argc, argv);
-  args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file (ball in a ball).");
+  args.AddOption(&mesh_file, "-m", "--mesh",
+                 "Mesh file: a disc (2-D) or ball (3-D) in its buffer.");
   args.AddOption(&order, "-o", "--order", "Finite element order.");
   args.AddOption(&dtn_degree, "-deg", "--dtn-degree", "DtN expansion degree.");
   args.AddOption(&lmin, "-lmin", "--min-degree", "Lowest harmonic degree.");

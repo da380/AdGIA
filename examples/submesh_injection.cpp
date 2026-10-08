@@ -58,6 +58,15 @@
 // iteration count and the two check errors, all of which should be at
 // round-off or solver tolerance; with -vis, φ and u are sent to GLVis.
 //
+// Options (defaults in brackets):
+//   -m    mesh file [../data/circular_offset.msh]: the off-centre
+//         disk M (attribute 1) inside the larger disk (attribute 2).
+//   -o    finite element order [2].
+//   -rt   relative tolerance of the solves [1e-12]: the MINRES block
+//         solve and the CG solve of the monolithic check; the two
+//         check errors of Part B sit at this level.
+//   -vis / -no-vis   send phi and u to GLVis [off].
+//
 // Sample runs:  ./submesh_injection -o 2 -vis
 //               mpiexec -np 4 ./submesh_injection -o 2   (parallel build)
 // -----------------------------------------------------------------------------

@@ -28,6 +28,15 @@
 //   L2 errors of ψ1, of ψ2 and of ψ2 restricted to the submesh. With
 //   -vis, ψ1 and ψ2 are shown on the submesh beside their exact values.
 //
+// Options (defaults in brackets):
+//   -m    mesh file [../data/coupled_poisson.msh]: the two-sphere mesh
+//         from meshes/ball_with_buffer.py (deliberately coarse; halve
+//         the sizes there for a converged run).
+//   -rt   relative tolerance of the block CG solve [1e-10].
+//   -o    finite element order [1]; raise it (with a finer mesh) to
+//         tighten the printed L2 errors.
+//   -vis / -no-vis   GLVis windows on or off [off].
+//
 // Sample runs:  ./coupled_poisson -o 2
 //               mpiexec -np 4 ./coupled_poisson -o 2 -vis   (parallel build)
 // -----------------------------------------------------------------------------

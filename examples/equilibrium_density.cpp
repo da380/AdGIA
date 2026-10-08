@@ -178,6 +178,54 @@
 // One source serves the serial and the parallel build, as in
 // equilibrium_stress.cpp; the barotropy scatter is gathered to the root.
 //
+// Options (defaults in brackets):
+//   -m       mesh file [chosen by -dim, -ic and -shape]: any layered
+//            model with a buffer (meshes/README.md conventions)
+//            overrides those three flags.
+//   -dim     dimension of the default mesh [2]: 2 for the disc
+//            section, 3 for the ball — an order of magnitude dearer,
+//            and at its default order 2 the aspherical shapes' signal
+//            sits below the floor (use -o 3, or -shape sphere).
+//   -ic / -no-ic   default mesh with a solid inner core (three
+//            layers) or without one (two layers) [on].
+//   -shape   shape of the default mesh [bump; sphere with -blob]:
+//            bump (one Gaussian CMB bump — the core-imbalance
+//            signal), flat (flattened interfaces), cmb (oscillatory
+//            CMB topography) or sphere. From the constant start,
+//            flat, cmb and sphere need the -amp lateral term.
+//   -loop    the restoration loop [gn]: gn (Levenberg-Marquardt
+//            Gauss-Newton, the measured recipe), cg (nonlinear
+//            conjugate gradients) or advect (the exploratory
+//            advection flow).
+//   -metric  gradient metric of the cg loop [h2]: l2, h1 or h2.
+//   -length  smoothing length of the Sobolev metrics [0.3].
+//   -core    rigid (the exact certificate: the inner core's force
+//            and torque balance joins the constraints) or clamped
+//            (the connected-solid functional, optimistic here)
+//            [rigid]. Moot without an inner core.
+//   -prior   roughness (H1-seminorm) prior weight [1e-7]: selects
+//            the smooth member of the near-null family (0: off).
+//   -o       velocity and control order [3 on a disc, 2 on a ball]:
+//            the aspherical signals need the disc's lower floor; the
+//            ball's lower default is cost.
+//   -deg     DtN truncation degree [8].
+//   -iters   iteration budget [40].
+//   -amp     lateral (non-barotropic) amplitude of the starting
+//            density [0.1 on sphere, flat and cmb, where it is the
+//            disequilibrium; 0 on bump and with -blob, whose
+//            core-driven stories are pure].
+//   -blob    amplitude of a Gaussian density anomaly fixed in the
+//            mantle (width 0.1 at mid-mantle radius on the +x axis)
+//            [0: off]: pulls the core and shifts its equilibrium
+//            density; defaults the shape to sphere.
+//   -eta     stop when |dev T|/|p| falls below this [0: stop when it
+//            stagnates — the discretisation floor].
+//   -tol     stop when J falls below this fraction of its start
+//            [0: off]; the floor makes small values unreachable.
+//   -vis / -no-vis   GLVis windows on or off [off].
+//   -csv     history table for plot_csv.py
+//            [equilibrium_density.csv] ("": none).
+//
 // Sample runs (with mpiexec -np N in front in a parallel build):
 //    ./equilibrium_density -vis                the CMB bump: the core-
 //                                              driven restoration
@@ -541,7 +589,7 @@ int main(int argc, char* argv[]) {
   const char* core = "rigid";
   const char* metric_name = "h2";
   double length = 0.3;
-  double prior = -1.0;  // resolved by -shape: 0 for cmb, else 1e-7
+  double prior = -1.0;  // negative: resolved to the 1e-7 default
   int order = -1;       // resolved by the mesh: 3 on a disc, 2 on a ball
   int dtn_degree = 8;
   int iters = 40;

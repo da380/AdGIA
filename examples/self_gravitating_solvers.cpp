@@ -91,6 +91,32 @@
 // One source serves the serial and the parallel build, and the same
 // source serves 2-D and 3-D (the mesh decides).
 //
+// Options (defaults in brackets):
+//   -m       two-layer mesh, 2-D or 3-D (fluid core 1, mantle 2,
+//            buffer 3) [../data/elastogravity_two_layer_2d.msh].
+//   -model   uniform (the solver demo), fc (non-neutral core) or aw
+//            (the Adams-Williamson neutral twin) [uniform].
+//   -l       degree of the surface mass load, >= 1 [2].
+//   -G       gravitational constant [-1: the model's default, 0.05
+//            uniform, 1 fc/aw].
+//   -kappa-scale   scale on the fc core bulk modulus (N^2 ~ 1/scale)
+//            [1]; -model aw rejects any other value.
+//   -o       finite element order [2].
+//   -rt      relative solver tolerance [1e-10].
+//   -geps    fluid gauge penalty factor [-1: the model default, 1e-2
+//            uniform, 1e-1 fc/aw].
+//   -gref    Tikhonov gauge refinements per solve [3].
+//   -theta   slip normal-jump penalty [-1: the model default, 1e2
+//            uniform, 1e3 fc/aw].
+//   -nal     augmented-Lagrangian iterations of the slip solvers [12].
+//   -mxbeta  Maxwell physical-phase dt/tau [-1: the library default].
+//   -mxaa    Anderson-mixing depth on the Maxwell memory map (0: plain
+//            backward Euler) [-1: the library default].
+//   -slip / -no-slip   run the slipping-interface architectures as
+//            well [on].
+//   -vis / -no-vis   show the solution and the largest disagreement in
+//            GLVis [on].
+//
 // Sample runs (with mpiexec -np N in front in a parallel build):
 //    ./self_gravitating_solvers
 //    ./self_gravitating_solvers -model aw            (all must agree)

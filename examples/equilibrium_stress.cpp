@@ -37,6 +37,16 @@
 // One source serves the serial and the parallel build, as in
 // gauged_fluid_cavity.cpp.
 //
+// Options (defaults in brackets):
+//   -m    mesh file [../data/elastogravity_2d.msh]: the 2-D disc whose
+//         body is deformed to the ellipse.
+//   -o    velocity/displacement order [3]; the pressure space sits one
+//         order lower (Taylor-Hood).
+//   -e    ellipticity [0.2]: semi-axes a = 1 + e, b = 1/a; 0 recovers
+//         the disc, where the deviatoric fraction collapses and the
+//         pressure reproduces the hydrostatic p0.
+//   -vis / -no-vis   GLVis windows on or off [on].
+//
 // Sample runs (with mpiexec -np N in front in a parallel build):
 //    ./equilibrium_stress
 //    ./equilibrium_stress -e 0

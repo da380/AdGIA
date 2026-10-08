@@ -26,6 +26,23 @@
 // differences are the mesh partitioning and the pole observation point,
 // which in parallel lives on one rank and is reduced globally.
 //
+// Options (defaults in brackets):
+//   -m      two- or three-layer mesh
+//           [../data/elastogravity_two_layer_2d.msh].
+//   -o      finite element order [1].
+//   -deg    truncation degree of the DtN expansion [16].
+//   -rt     relative solver tolerance [1e-9].
+//   -eta    mantle viscosity [1e21 Pa s]; with the mantle's mean shear
+//           modulus it sets the Maxwell time tau = eta / mu in which
+//           the run is measured.
+//   -tf     final time, in Maxwell times of the mantle [5].
+//   -n      number of steps (output times when adaptive) [20].
+//   -rtol   relative tolerance of adaptive stepping [0: fixed dt].
+//   -pv / -no-pv   write a ParaView data collection [off].
+//   -vis / -no-vis   animate the mantle displacement in GLVis [on].
+//   -csv    file for the time history, read by plot_csv.py
+//           ["self_gravitating_relaxation.csv"; "": none].
+//
 // Sample runs (with mpiexec -np N in front in a parallel build):
 //    ./self_gravitating_relaxation -o 2 -n 20 -tf 5
 //    ./self_gravitating_relaxation -m ../data/elastogravity_three_layer_2d.msh

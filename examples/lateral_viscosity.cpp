@@ -44,6 +44,33 @@
 // differences are the mesh partitioning and the observation points, each
 // on one rank and reduced globally.
 //
+// Options (defaults in brackets):
+//   -m       mesh file [../data/elastogravity_2d.msh]: a body
+//            (attribute 1) in a buffer (attribute 2) for the DtN
+//            condition.
+//   -o       finite element order [2].
+//   -deg     DtN expansion degree [16].
+//   -G       gravitational constant [0.2].
+//   -kappa   bulk modulus [3].
+//   -mu-inf  long-term (relaxed) shear modulus [0.2]; keeping it
+//            positive keeps the relaxed body an elastic solid.
+//   -mu1     shear modulus that relaxes [0.8].
+//   -taus    relaxation time on the west [1]: the time unit.
+//   -tauf    relaxation time on the east [0.01]; -tauf 1 -taus 1 is
+//            the uniform body, the symmetry floor.
+//   -w       width of the tanh transition across x = 0 [0.1].
+//   -s       load amplitude sigma0 [0.01].
+//   -t0      first output time [1e-3]; must be positive.
+//   -T       final time [30].
+//   -nout    number of output times [30], spaced logarithmically
+//            from -t0 to -T.
+//   -n       exponential-trapezoid steps between output times [2].
+//   -rt      relative solver tolerance [1e-8].
+//   -vis / -no-vis   GLVis windows (log10 tau and the u_r animation)
+//            on or off [on].
+//   -csv     table of the histories for plot_csv.py
+//            [lateral_viscosity.csv] ("": none).
+//
 // Sample runs (with mpiexec -np N in front in a parallel build):
 //    ./lateral_viscosity
 //    ./lateral_viscosity -tauf 1 -taus 1       (uniform: no asymmetry)

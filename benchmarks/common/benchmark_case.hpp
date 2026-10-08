@@ -747,6 +747,15 @@ class Case {
     } else {
       ref_problem->SetSurfaceLoad(*sigma,
                                   analyses[surface].radial->Marker());
+      if (SupportsTide()) {
+        // The referential tidal load: the physical gradient of the same
+        // interior harmonic, composed with the equilibrium mapping
+        // (identity on a spherical reference; F^{-T} folded in, see
+        // SetTidalLoad).
+        psi_grad = analyses[surface].scalar->GradientExpansion(
+            zero, ref_rheology_->EquilibriumMapping());
+        ref_problem->SetTidalLoad(*psi_grad);
+      }
     }
 
     if (options.diagnostics && eulerian) {
@@ -799,7 +808,10 @@ class Case {
   // What the method supports: the referential family is driven by
   // surface loads only (Solve() refuses a tide), and its potential is
   // meaningful (an observable) on the displacement region, not by layer.
-  bool SupportsTide() const { return eulerian; }
+  bool SupportsTide() const {
+    // The slipping classes carry no tidal force on the fluid row yet.
+    return method != "slip" && method != "slip_broken";
+  }
   bool SupportsProfiles() const { return eulerian; }
 
   int OuterIterations() const {
@@ -849,8 +861,11 @@ class Case {
       problem->AssembleForce(0.0);
       return problem->Solve();
     }
-    MFEM_VERIFY(load,
-                "The referential methods solve the load problems only.");
+    if (psi_grad) {
+      psi_grad->SetCoefficients(load ? zero : coefficients);
+    } else {
+      MFEM_VERIFY(load, "tidal solve requested without tidal support");
+    }
     // Independent forcings: do not warm-start across degrees (the gauge
     // refinement would carry the previous gauge component forward).
     ref_problem->ResetSolution();
@@ -1556,6 +1571,7 @@ class Case {
   std::vector<InterfaceAnalysis> analyses;
   int surface = -1;
   std::unique_ptr<HarmonicExpansionCoefficient> sigma, psi;
+  std::unique_ptr<HarmonicExpansionGradientCoefficient> psi_grad;
 
  private:
   std::vector<std::unique_ptr<ParFiniteElementSpace>> spaces_;

@@ -107,6 +107,50 @@ energies). Shows (`-vis`): the two densities, the two displacements,
 and the relabelled solution pushed forward onto the deformed body.
 `./relabelled_elasticity -a 0.15 -o 3`
 
+**`adjoint_elasticity`**: first-order sensitivity kernels for static
+isotropic elasticity, and the kernel-versus-gradient distinction. The
+physical body is the inner layer of the two-layer disc alone (the rest
+of the mesh is the Sobolev extension buffer); the observable is the
+geodetic one, the linearised distance change between two surface
+stations, assembled as a boundary integral of narrow opposite-signed
+angular windows (rigid-mode invariant; the adjoint is the same traction
+problem loaded by the station pair, by self-adjointness). The kernels
+`K_kappa = -(div u)(div u+)`, `K_mu = -2 dev eps(u):dev eps(u+)` are
+verified against central finite differences of fresh forward solves
+(inner-disc, Gaussian-blob and whole-body perturbations of each
+modulus; agreement printed, ~1e-6 and improving with refinement). The
+closing section turns each derivative into a gradient through the
+library's Riesz maps (`riesz.hpp`) — L2, and Sobolev metrics of order 1
+and 2 posed on the buffered mesh with outer Dirichlet conditions — with
+only the H2 representative mathematically right for continuous moduli.
+Conventions are stated in the header; the gravitating version, where
+the equilibrium state varies too, is deliberately left to a later
+example (Yu et al. 2025, `doc/Elasticity/ggae388.pdf`). Shows (`-vis`):
+the forward and adjoint displacements and each modulus's sensitivity in
+the three metrics, on the physical sub-domain. `-vd`/`-va` add a smooth
+radial / harmonic-polynomial variation of the base moduli. `./adjoint_elasticity -r 1`
+
+**`viscoelastic_adjoint`**: the same disc, stations and localised step
+load, now over a uniform Maxwell body: first-order sensitivity kernels
+of a FINAL-TIME observation with respect to kappa, mu and the viscosity
+eta (Yu et al. 2025 specialised to the non-gravitating case). The
+adjoint is the same forward Maxwell machinery run in reversed time with
+zero load: the measurement's impulsive elastic response jumps the
+adjoint internal variable to `dev eps(u+_g)/tau`, which then relaxes
+freely; the kernels pair the stored forward trajectory at `t` with the
+adjoint one at `t1 - t` (store-all checkpointing — the dissipative
+forward field cannot be recovered by backward integration, the key
+practical difference from the seismological adjoint). The FD
+verification table converges as O(dt^2) in `-n` down to a spatial floor
+that is O(h) in `-r` for the rows touching the viscous coupling (nodal
+mu/tau sampling; see the header). The same Riesz-map section as the
+static example turns all three derivatives into L2/H1/H2 gradients on
+the buffered mesh, and `-vd`/`-va` add a smooth radial /
+harmonic-polynomial variation of the moduli, and `-ba`/`-bs`/`-bphi`
+give the viscosity a localised Gaussian anomaly of variable amplitude,
+size and angular position (tau varies with it). Shows (`-vis`): the viscosity field and each kernel
+in the three metrics. `./viscoelastic_adjoint -n 96`
+
 **`submesh_injection`**: a tour of `SubMeshDofInjection`: moving fields
 between a mesh and a submesh and assembling coupling blocks, serially by
 re-indexing and in parallel by hypre products. Shows (`-vis`): the two

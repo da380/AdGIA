@@ -45,6 +45,14 @@
 // (on by default) both displacements and the referential potential in
 // GLVis.
 //
+// Options (defaults in brackets):
+//   -m    mesh file [../data/elastogravity_2d.msh]: the uniform body
+//         in its buffer; ../data/coupled_poisson.msh runs the 3-D
+//         ball (see the sample runs).
+//   -o    finite element order [2]; raising it shrinks the rigid pair
+//         residuals and the cross-formulation differences together.
+//   -vis / -no-vis   GLVis windows on or off [on].
+//
 // Sample runs (with mpiexec -np N in front in a parallel build):
 //    ./referential_elastogravity
 //    ./referential_elastogravity -o 3

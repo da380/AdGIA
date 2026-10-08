@@ -41,20 +41,25 @@ Gauss-Seidel, the comm-aware OrthoSolver, and per-rank output files.
 ---
 ### Command-Line Options
 
-[-m, --mesh]:       Mesh file. Must have attributes as described above.
-[-o, --order]:      Finite element polynomial order. Default is 1.
-[-r, --refinement]: Number of uniform mesh refinements (before
-                    partitioning in parallel). Default is 0.
-[-pr, --parallel_refinement]: Number of uniform refinements of the
-                    partitioned mesh (parallel build only). Default is 0.
-[-deg, --degree]:   Expansion degree for DtN/Multipole methods. Default is 8.
-[-res, --residual]: Set to 1 to output the pointwise error against an exact
-                    solution (requires a spherical source). Default is 0.
-[-mth, --method]:   Solution method: 0=Neumann, 1=DtN, 2=Multipole.
-                    Default is 0.
-[-lin, --linearised]: Problem type: 0=Reference, 1=Linearised. Default is 0.
+Options (defaults in brackets):
+  -m    mesh file [../data/circular_offset.msh]: attribute 1 is the
+        source body, as described above; the DtN and multipole
+        methods need a spherical exterior boundary.
+  -o    finite element polynomial order [1].
+  -r    uniform mesh refinements, before partitioning in the
+        parallel build [0].
+  -pr   further uniform refinements of the partitioned mesh [0];
+        parallel build only.
+  -deg  truncation degree of the DtN / multipole expansion [8]; used
+        by methods 1 and 2 only.
+  -res  set to 1 to output the pointwise error against the exact
+        uniform-sphere solution instead of the potential [0]; needs
+        a spherical source body.
+  -mth  solution method [0]: 0 = Neumann, 1 = DtN, 2 = multipole
+        (1 and 2 need a spherical exterior boundary).
+  -lin  problem type [0]: 0 = reference density, 1 = the linearised
+        density perturbation of a rigid translation.
 
----
 ### Sample runs
 
     ./poisson_dtn -o 2
@@ -143,8 +148,7 @@ int main(int argc, char *argv[]) {
   OptionsParser args(argc, argv);
   args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
   args.AddOption(&order, "-o", "--order",
-                 "Finite element order (polynomial degree) or -1 for"
-                 " isoparametric space.");
+                 "Finite element order (polynomial degree).");
   args.AddOption(&refinement, "-r", "--refinement",
                  "number of mesh refinements (before partitioning)");
   args.AddOption(&parallel_refinement, "-pr", "--parallel_refinement",

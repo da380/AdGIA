@@ -40,6 +40,23 @@
 // and the fluid pressure are shown: the pressure window is the instructive
 // one — flat in the fluid, however the (gauge) displacement there looks.
 //
+// Options (defaults in brackets):
+//   -m     mesh file [../data/elastogravity_two_layer_2d.msh]: a
+//          layered mesh from meshes/layered_earth.py (attribute 1,
+//          and 2 as well with three layers, is the fluid).
+//   -o     finite element order [2].
+//   -eps   gauge penalty factor epsilon [1e-2]: sets the O(eps) bias
+//          of the penalised solve and the refinement contraction
+//          O(eps mu_g / mu_solid); with 3 refinements this is the
+//          recommended operating point.
+//   -nref  Tikhonov refinement steps per solve [3]: each step removes
+//          a factor of the O(eps) gauge-penalty bias.
+//   -P0    uniform external pressure amplitude [0.01].
+//   -P2    degree-2 pressure pattern amplitude [0]; 0 keeps the exact
+//          Lame comparison.
+//   -vis / -no-vis   GLVis windows of the displacement and the fluid
+//          pressure [on].
+//
 // Sample runs (with mpiexec -np N in front in a parallel build):
 //    ./gauged_fluid_cavity          (eps = 1e-2, 3 refinements: the
 //                                    recommended operating point)

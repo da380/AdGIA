@@ -51,6 +51,18 @@
 //
 // One source serves the serial and the parallel build, as throughout.
 //
+// Options (defaults in brackets):
+//   -m    mesh file [../data/elastogravity_two_layer_2d.msh]: the
+//         two-layer disc; only its inner layer is used here.
+//   -o    finite element order [2]; raising it tightens the agreement
+//         checks (the map is resolved by the geometry order).
+//   -r    uniform refinements of the serial mesh [0]; likewise.
+//   -a    amplitude of the quadrupole relabelling map [0.1]: how far
+//         the deformed body departs from the circular reference; the
+//         identity of the two descriptions holds at ANY amplitude, so
+//         pushing it up is a stress test, not a small-parameter limit.
+//   -vis / -no-vis   GLVis windows on or off [on].
+//
 // Sample runs:  ./relabelled_elasticity
 //               ./relabelled_elasticity -a 0.15 -o 3
 //               mpiexec -np 4 ./relabelled_elasticity -r 1  (parallel build)

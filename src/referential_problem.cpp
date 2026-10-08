@@ -1574,6 +1574,21 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetSurfaceLoad(
 }
 
 
+void LinearQuasiStaticReferentialSelfGravitatingProblem::SetTidalLoad(
+    VectorCoefficient& grad_psi) {
+  RegisterTimeDependent(grad_psi);
+  // -rho_tilde (grad psi o phi_e) . v on the displacement row; the
+  // composition with the mapping is the caller's (the coefficient's),
+  // see the header note.
+  auto minus_rho = std::make_unique<ProductCoefficient>(-1.0, *rho_);
+  auto load = std::make_unique<ScalarVectorProductCoefficient>(*minus_rho,
+                                                               grad_psi);
+  ExternalLoad().AddDomainIntegrator(new VectorDomainLFIntegrator(*load));
+  tidal_scalar_coefs_.push_back(std::move(minus_rho));
+  tidal_coefs_.push_back(std::move(load));
+}
+
+
 void LinearQuasiStaticReferentialSelfGravitatingProblem::SetPrescribedVacuumExtension(
     FiniteElementSpace& fes_buffer, const SparseMatrix& E) {
   MFEM_VERIFY(!ball_wide_,

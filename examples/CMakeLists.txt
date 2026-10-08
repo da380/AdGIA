@@ -8,6 +8,8 @@ set(EXAMPLES
     poisson_dtn                 # Poisson on the whole space: Neumann / DtN / multipole
     transformed_diffusion       # pull-back Laplacian on a mapped domain
     relabelled_elasticity       # one aspherical body, natural vs relabelled description
+    adjoint_elasticity          # first-order sensitivity kernels (kappa, mu) + FD check + Riesz gradients
+    viscoelastic_adjoint        # final-time observation kernels (kappa, mu, eta) via the time-reversed adjoint
     submesh_injection           # tour of SubMeshDofInjection
     coupled_poisson             # coupled Poisson pair across mesh / submesh
     elastogravity_layered       # LinearQuasiStaticMixedSelfGravitatingProblem: uniform, fluid core (+ inner core)
