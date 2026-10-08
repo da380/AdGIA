@@ -1,8 +1,8 @@
 # Fluid-treatment class structure: making Maxwell the visible default
 
-**Status:** steps 1–3 are implemented (step 1 and, later the same day, steps 2–3,
-all test gates green in both builds, example numbers
-unchanged); step 4 remains optional/deferred. Context:
+**Status:** COMPLETE — all four steps implemented 8 Oct (step 4 on
+David's instruction the same evening), test gates green in both
+builds at every stage, example numbers unchanged. Context:
 doc/static_fluid_core.tex ("The Maxwell relaxation method" and "The
 status of the formulations").
 
