@@ -1,4 +1,4 @@
-# AdGIA
+# AdGIA: An FEM code for forward and adjoint modelling of GIA
 
 [![CI](https://github.com/da380/AdGIA/actions/workflows/ci.yml/badge.svg)](https://github.com/da380/AdGIA/actions/workflows/ci.yml)
 
