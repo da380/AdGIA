@@ -304,15 +304,17 @@ Analytic continuous b in the constraint kernels had no effect in the lab.
 
 ### Which tangential slips are removable by relabelling (including N² = 0)
 
-**Status:** open; the N² = 0 premise is confirmed numerically in 2-D
-(7 Oct 2026, below), the 3-D `aw_core` degree-1 null test remains. The
-reference documents state the conservative
-position — tangential slip is not gauge in general; the slipping
-formulation is the general one; the welded gauged formulation is used
-where the suppressed slip is absent or removable, e.g. on spherically
-symmetric models, where welded and slipping solutions agree to
-discretisation level (1.1e-3 solid displacement on the 2-D two-layer
-disc). The N² = 0 case is deliberately left open there.
+**Status:** adjudicated at the level the benchmarks can measure
+(8 Oct 2026, below): the N² = 0 removability is confirmed in 2-D AND
+3-D (the `aw_core` degree-1 null test passes at 6e-5), the
+`fluid_core` degree-1 welded–slip gap is genuine non-removability
+physics, and the formulation hierarchy has been inverted —
+free slip is the inviscid boundary-layer asymptotics of the
+dissipative completion, the Maxwell relaxation
+(`doc/static_fluid_core.tex`) is the general method, and welded and
+slip are its finite idealisations. What remains open is the
+functional-analytic premise (below) and the aspherical
+characterisation; neither blocks production.
 
 *The question.* A tangential slip j on a fluid–solid interface Σ is
 removable by relabelling iff it extends into the fluid as an
@@ -395,6 +397,29 @@ against pyslfp previously read as one of these are not attributable;
 (iii) remaining: the 3-D `aw_core` degree-1 null test (welded ≡ slip ≡
 Dahlen expected), and the N²-scaling of the envelope, which the 2-D
 instrument can measure but has not run.
+
+*3-D adjudication (8 Oct 2026).* Item (iii)'s null test is run and
+passes: on the `aw_core` h = 0.3 order-2 case (N² = 0), the degree-1
+h' of referential (welded, −1.2462882), slip (−1.2463654) and the
+Maxwell relaxation (−1.2463161) coincide to 6e-5 — the fluid_core
+degree-1 welded–slip gap (1–2.6 %) vanishes identically on the
+neutral twin, so that gap is genuine non-removability physics, as
+conjectured. On `fluid_core` itself (same case family, order 2,
+lmax 4, `-method maxwell` now in `love_benchmark`) the Maxwell
+relaxation lands on the welded cluster at every degree (h'₂ within
+3.4e-4 of referential) including degree 1 (−1.2442602, 1.77 % from
+Dahlen's −1.2226460, against welded 1.87 % and slip_broken 1.96 %),
+with an honestly reported degree-1 stop floor of ~1e-2 (the l = 1
+relaxation stalls at the band: the soft core–shell translation IS the
+band's soft mode on this violently non-neutral model, and no
+full-elastic method resolves below it — at order 3 the referential
+h'₂ itself moves 1.4 % while Maxwell moves 0.2 %, the familiar
+wandering). Reading per the inverted hierarchy (referee = Dahlen,
+the converged secular closure): at N² = 0 everything coincides; at
+N² ≠ 0 the degree-1 response is defined only to the band, every
+formulation sits inside it, and the Maxwell method is the one that
+*says so* in its stop diagnostics rather than silently returning a
+point of the band.
 
 **See:** `doc/gravitating_elasticity.md` §5, §5.1, §5.2;
 `doc/gauged_fluid.md` §2 "Tangential slip and the welded space",

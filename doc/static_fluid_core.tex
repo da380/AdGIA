@@ -643,18 +643,28 @@ space. On \code{fluid\_core} the solver stops honestly at the
 plateau (increment floor $7\times10^{-4}$), landing between the
 welded and slip answers --- inside the band, as it must.
 
-\paragraph{The one caveat.} The discrete limit is the \emph{welded}
-limit: the fluid-relabelling suppression of the welded space is
-inherited, not released (the welded--slip gap at $N^2 \ne 0$ is
-gravitational, not elastic, so zero shear does not remove it). At
-$\ell \ge 2$ this is inside the band and immaterial; at degree 1 on
-non-neutral cores the three-dimensional evidence suggests a
-$\sim 2\,\%$ effect riding the soft core--shell translation. The
-referee for that question is not the slip formulation (itself a
-band-wanderer) but the converged spherical secular answer --- Dahlen
---- and the measurement (relaxation versus Dahlen at degree 1 on
-\code{fluid\_core}, with \code{aw\_core} as the null control) is the
-one open item between this method and unqualified production status.
+\paragraph{The one caveat, now measured.} The discrete limit is the
+\emph{welded} limit: the fluid-relabelling suppression of the welded
+space is inherited, not released (the welded--slip gap at
+$N^2 \ne 0$ is gravitational, not elastic, so zero shear does not
+remove it). The three-dimensional adjudication (8 October,
+\code{love\_benchmark}, \code{-method maxwell}): on the neutral
+control \code{aw\_core} the degree-1 welded, slip and Maxwell
+answers coincide to $6\times10^{-5}$ --- the suppression vanishes
+with $N^2$, as it must; on \code{fluid\_core} the Maxwell answer
+sits on the welded cluster at every degree, at degree 1
+$1.77\,\%$ from Dahlen (welded $1.87\,\%$, the slipping pair
+$2.0$--$4.2\,\%$), and its degree-1 relaxation stops at an
+increment floor of $\sim10^{-2}$: the soft core--shell translation
+is the band's own soft mode, and on a model with $|N^2|$ of order
+the scale no full-elastic method resolves below the band there
+(under $p$-refinement the welded answer itself moves $1.4\,\%$, the
+Maxwell $0.2\,\%$). The right reading is not a defect but the
+method's defining honesty: at $N^2 \ne 0$ the degree-1 static
+response \emph{is} defined only to the band, every formulation
+returns some point of it, and the relaxation is the one that reports
+the fact in its stop diagnostics. For near-neutral (Earth-like)
+cores the band closes and with it the caveat.
 
 %=====================================================================
 \section{Numerical evidence}
@@ -833,11 +843,12 @@ for the dynamic conjecture as well.
 Claim~\ref{claim:nonexist} and Proposition~\ref{prop:quotient} ---
 now best approached jointly with the dynamic argument above.
 (ii) The Maxwell relaxation (\S\ref{sec:maxwell}): the degree-1
-adjudication (relaxation versus Dahlen on \code{fluid\_core},
-\code{aw\_core} as control --- the one open question between the
-method and unqualified production status), the benchmark-grade
-Love-number runs, and the aspherical demonstration --- a static
-fluid-core response on a geometry where no other method exists.
+adjudication and the first benchmark-grade Love-number runs are done
+(8 October; the measured paragraph of \S\ref{sec:maxwell} and
+\code{doc/benchmarks.tex}, ``The 3-D adjudication''); remaining are
+the broader campaign (orders, resolutions, PREM-class models) and
+the aspherical demonstration --- a static fluid-core response on a
+geometry where no other method exists.
 (iii) A clean measurement of the band's $N^2$-scaling (the
 one-dimensional tool does each point in seconds; the current
 two-resolution estimator is noisy).

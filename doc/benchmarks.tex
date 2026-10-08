@@ -515,14 +515,15 @@ makes the cases and runs the sweeps; \code{plot.py} and
 \code{dahlen} & Eulerian, fluid eliminated. The fluid enters through the interface terms (F2), (F3) and the fluid mass term (F1) of the potential equation; \code{-cmb} selects the interface treatment (\S\ref{sec:cmb}). \\
 \code{gauged} & Eulerian, the fluid in the displacement space with its bulk modulus and a gauge shear penalty $\eps\,2\mu_g\,\mathrm{dev}\,e(\vu):\mathrm{dev}\,e(\vu')$, $\eps=10^{-2}$ (\code{-geps}), three iterated-Tikhonov refinements per solve (\code{-gref}); \code{-gauge-kkt} replaces the penalty by the exact-gauge saddle (\S\ref{sec:solver-meas}). \\
 \code{referential} & welded gauged referential formulation: bare moduli from $p_0$, equilibrium stress $\mathbf{S}_e=-p_0\mathbf{I}$, the same gauge penalty, prescribed vacuum extension in the buffer. \\
+\code{maxwell} & the referential problem with the fluid treated by MAXWELL RELAXATION (\code{SetFluid}; \code{doc/static\_fluid\_core.tex}, ``The Maxwell relaxation method''): the secular static response by backward-Euler relaxation of an artificial Maxwell core, stopping on the solid increment; \code{-mxbeta} sets the physical-phase $\Delta t/\tau$ (default 3, the $N^2<0$-safe choice). Per-degree stop diagnostics are printed; the degree-1 stop floor on a strongly non-neutral model is the ambiguity band, reported rather than hidden. \\
 \code{slip} & slipping fluid--solid interface: broken displacement pair, single-valued potential; the normal-jump constraint by penalty ($\theta=100$, \code{-theta}) and augmented Lagrangian (8 sweeps, \code{-al}), the early sweeps at the loose relative tolerance $10^{-3}$ (\code{-sweep-tol}, tightened geometrically to the final tolerance); or by a KKT multiplier block (\code{-kkt}, multiplier order \code{-kkt-order}). \\
 \code{slip\_broken} & the same with the potential broken per region too (augmented Lagrangian only). \\
 \bottomrule
 \end{tabular}
 \end{center}
-\noindent Restrictions recorded in the code: the referential and slipping
-methods solve load problems only, so no tidal numbers and no radial
-profiles. The slipping methods support one fluid core inside one solid
+\noindent Restrictions recorded in the code: the referential family
+(\code{referential}, \code{maxwell}) and the slipping methods solve
+load problems only, so no tidal numbers and no radial profiles. The slipping methods support one fluid core inside one solid
 shell, so no inner core. The Eulerian pair have two linear solvers, block
 MINRES (\code{-s 1}) and Schur-complement CG (\code{-s 0}); the referential
 family uses its own projected MINRES. In shift runs
@@ -561,9 +562,32 @@ welded and free-slip solves drift non-monotonically within an envelope of
 about $0.3\,\%$ under $p$-refinement and move with the fluid regulariser;
 neither (i) nor (ii) is resolved separately from (iii) at the resolutions
 run. Offsets of the welded methods against pyslfp on \code{fluid\_core} are
-therefore not attributed to any one of the three. The corresponding 3-D
-decomposition (on \code{aw\_core}) has not been run, nor has the
-$N^2$-scaling of the 2-D envelope.
+therefore not attributed to any one of the three. The
+$N^2$-scaling of the 2-D envelope has not been run.
+
+\paragraph{The 3-D adjudication (8 October 2026).} The \code{aw\_core}
+null test is run and settles the degree-1 question: on the neutral twin
+($h=0.3$, order 2) the degree-1 $h'$ of \code{referential}
+($-1.2462882$), \code{slip} ($-1.2463654$) and \code{maxwell}
+($-1.2463161$) coincide to $6\times10^{-5}$, so the 1--2.6\,\%
+degree-1 welded--slip gap on \code{fluid\_core} is genuine
+non-removability physics, not machinery. On \code{fluid\_core} the
+\code{maxwell} method lands on the welded cluster at every degree
+($h'_2$ within $3.4\times10^{-4}$ of \code{referential}; degree-1
+$h'$ $-1.2442602$, i.e.\ $1.77\,\%$ from Dahlen against welded
+$1.87\,\%$ and \code{slip\_broken} $1.96\,\%$), with its degree-1
+relaxation stopping at an increment floor of $\sim10^{-2}$ --- the
+soft core--shell translation is the band's soft mode, and no
+full-elastic method resolves below the band there (under
+$p$-refinement to order 3 the referential $h'_2$ itself moves
+$1.4\,\%$, the Maxwell $0.2\,\%$). The hierarchy this supports is the
+one of \code{doc/static\_fluid\_core.tex}, ``The status of the
+formulations'': free slip is the inviscid boundary-layer asymptotics
+of the dissipative completion, the Maxwell relaxation is the general
+method (and the honest one: its stop diagnostics report the band),
+Dahlen is its converged spherical closure, and the welded and
+slipping formulations are finite idealisations retained as
+instruments.
 
 \subsection{The CMB treatments}
 \label{sec:cmb}
@@ -2838,6 +2862,7 @@ the stored references (\code{viscoelastic/love/references/}):
 case & $h'$ & $k'$ & $l'_{2}$ / $l'_3$ / $l'_4$ & wall \\
 \midrule
 \code{fluid\_core}, $h=0.3$ & $0.5$--$1.1\times10^{-2}$ & $0.6$--$1.3\times10^{-2}$ & $1.5\times10^{-2}$ / $6.3\times10^{-2}$ / $0.46$ & 90\,s \\
+\code{fluid\_core}, $h=0.3$, order 3 & $1.7$--$3.2\times10^{-4}$ & $1.8$--$4.5\times10^{-4}$ & $4.5\times10^{-3}$ / $8.3\times10^{-3}$ / $1.8\times10^{-2}$ & 393\,s \\
 \code{homogeneous}, $h=0.3$ & $0.6$--$2.3\times10^{-2}$ & $0.7$--$2.9\times10^{-2}$ & $0.19$ / $0.40$ / $1.04$ & 38\,s \\
 \code{homogeneous}, $h=0.2$ & $0.2$--$1.0\times10^{-2}$ & $0.3$--$1.2\times10^{-2}$ & $0.08$ / $0.13$ / $0.30$ & 85\,s \\
 \code{homogeneous\_\allowbreak lithosphere} ($\tau=1,\infty$), $h=0.3$ & $0.3$--$1.0\times10^{-2}$ & $0.4$--$1.6\times10^{-2}$ & $1.8\times10^{-2}$ / $5.1\times10^{-2}$ / $0.10$ & 78\,s \\
@@ -2854,23 +2879,30 @@ $2.2\times10^{-2}\to1.0\times10^{-2}$ from $h=0.3$ to $0.2$), the
 relaxation part more slowly than the elastic part. $l'_4$ is the worst
 resolved: it is small, changes sign, and its error grows late, where the
 buoyancy modes start to matter. A Stehfest order of 16 moves the reference
-by less than $5\times10^{-4}$ there. The local campaign stage
-(\code{--stages viscoelastic plot}) reproduces the \code{fluid\_core} row.
+by less than $5\times10^{-4}$ there. Being spatial, these errors collapse
+under $p$-refinement: the order-3 row (8 October, same stepping) improves
+$h'$ and $k'$ by $16$--$75\times$ and the $l'$ column most dramatically
+--- $l'_4$ from $46\,\%$ to $1.8\,\%$, $l'_3$ from $6.3\,\%$ to
+$0.83\,\%$ --- at $4.4\times$ the wall time (the time stepping unchanged
+at 79 steps, confirming that nothing here is temporal). The local
+campaign stage (\code{--stages viscoelastic plot}) reproduces the
+order-2 \code{fluid\_core} row.
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.75\textwidth]{ve_fc_history.png}
-\caption{Histories on a logarithmic time axis (\code{fluid\_core}, local
-campaign): reference (line) and FE (markers) at the 13 default times.}
+\caption{Histories on a logarithmic time axis (\code{fluid\_core},
+order 3): reference (line) and FE (markers) at the 13 default times.}
 \end{figure}
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.85\textwidth]{ve_fc_error.png}
 \caption{Pointwise error over the history, relative to the largest
-reference value. The dip of $h'_2$ through zero near $t=2$ is why a
-single-time check would mislead: it scores $2\times10^{-4}$ there against
-a history error of $10^{-2}$.}
+reference value (order 3; the order-2 errors sit $16$--$75\times$
+higher, per the table). At order 2 the dip of $h'_2$ through zero near
+$t=2$ is why a single-time check would mislead: it scores
+$2\times10^{-4}$ there against a history error of $10^{-2}$.}
 \end{figure}
 
 \paragraph{Time series (Figure~\ref{fig:series}).}
