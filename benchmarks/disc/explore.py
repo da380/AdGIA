@@ -68,8 +68,12 @@ def main() -> int:
                    help="scale the fc core bulk modulus (N^2 ~ 1/scale)")
     p.add_argument("--l", type=int, default=2, help="degree (0 or >= 2)")
     p.add_argument("--methods", nargs="+", default=["welded", "slip",
-                                                    "dahlen"],
-                   choices=["welded", "slip", "dahlen"])
+                                                    "dahlen", "maxwell"],
+                   choices=["welded", "slip", "dahlen", "maxwell"])
+    p.add_argument("--maxwell-mode", choices=["converge", "plateau"],
+                   default="converge",
+                   help="maxwell: escalate to the secular limit "
+                        "(default) or stop at the physical plateau")
     p.add_argument("--p", type=int, default=8, help="element order")
     p.add_argument("--nel", type=int, nargs=3, default=[10, 10, 6],
                    metavar=("FLUID", "MANTLE", "BUFFER"))
@@ -90,9 +94,15 @@ def main() -> int:
           f"l = {args.l}, p = {args.p}, nel = {tuple(args.nel)}, "
           f"eps_reg = {args.eps_reg:g}")
     for m in args.methods:
-        s = disc_radial.solve_degree(model, args.l, p=args.p,
-                                     nel=tuple(args.nel),
-                                     eps_reg=args.eps_reg, method=m)
+        if m == "maxwell":
+            s = disc_radial.solve_degree_maxwell(model, args.l,
+                                                 p=args.p,
+                                                 nel=tuple(args.nel),
+                                                 mode=args.maxwell_mode)
+        else:
+            s = disc_radial.solve_degree(model, args.l, p=args.p,
+                                         nel=tuple(args.nel),
+                                         eps_reg=args.eps_reg, method=m)
         sols[m] = s
         r = s.responses()
         # the welded/slip potential variable is zeta = phi + u.gradPhi0;
@@ -102,6 +112,14 @@ def main() -> int:
         extra = ""
         if hasattr(s, "slip_amplitude"):
             extra = f"  slip amplitude {s.slip_amplitude:+.3e}"
+        if hasattr(s, "maxwell"):
+            mx = s.maxwell
+            extra = (f"  [{mx['steps']} steps, {mx['operators']} ops, "
+                     f"{mx['stop']}")
+            if mx["plateau_ur_a"] is not None:
+                extra += (f"; physical plateau {mx['plateau_ur_a']:+.7f}"
+                          f" at step {mx['stag_step']}")
+            extra += "]"
         print(f"  {m:>7}: ur_a {r['ur_a']:+.7f}"
               + (f"  ut_a {r['ut_a']:+.7f}" if "ut_a" in r else "")
               + f"  phi_a {phi_a:+.7f}" + extra)
@@ -156,7 +174,39 @@ def main() -> int:
     if args.out:
         fig.savefig(args.out, dpi=150)
         print(f"wrote {args.out}")
-    else:
+
+    if "maxwell" in sols:
+        # the relaxation trajectory: elastic phase, configurational
+        # cascade / RT growth, escalation endgame
+        h = sols["maxwell"].maxwell["history"]
+        tt = [e["t_over_tau"] for e in h]
+        fig2, (axr, axd) = plt.subplots(1, 2, figsize=(10, 4))
+        axr.semilogx(tt, [e["ur_a"] for e in h], ".-", label="maxwell")
+        for m, col in (("dahlen", "C1"), ("welded", "C2")):
+            if m in sols:
+                axr.axhline(sols[m].responses()["ur_a"], ls="--",
+                            lw=0.8, color=col, label=m)
+        axr.set_xlabel("t / tau"), axr.set_ylabel("ur_a")
+        axr.legend(fontsize=8)
+        axd.loglog(tt, [e["delta_solid"] for e in h], ".-")
+        axd.set_xlabel("t / tau")
+        axd.set_ylabel("solid increment (relative)")
+        st = sols["maxwell"].maxwell["stag_step"]
+        if st is not None:
+            for ax in (axr, axd):
+                ax.axvline(tt[st - 1], color="k", lw=0.5, ls=":")
+        fig2.suptitle(f"maxwell relaxation, {args.model}, l = {args.l}"
+                      + ("; dotted: stagnation -> escalation"
+                         if st is not None else ""))
+        fig2.tight_layout()
+        if args.out:
+            relax_out = Path(args.out)
+            relax_out = relax_out.with_name(relax_out.stem + "_relax"
+                                            + relax_out.suffix)
+            fig2.savefig(relax_out, dpi=150)
+            print(f"wrote {relax_out}")
+
+    if not args.out:
         plt.show()
     return 0
 

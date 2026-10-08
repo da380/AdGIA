@@ -194,6 +194,9 @@ const OperatorHandle& LinearQuasiStaticProblemBase::SystemMatrix() {
 
 bool LinearQuasiStaticProblemBase::Solve() {
   solves_++;
+  if (maxwell_) {
+    return MaxwellSolve();
+  }
   EnsureOperator();
   rhs_ = *b_;
   rhs_ += increment_;
@@ -265,6 +268,7 @@ void LinearQuasiStaticProblemBase::ApplyGaugePenalty(const Vector& u_true,
 }
 
 void LinearQuasiStaticProblemBase::ClearGaugedFluid() {
+  maxwell_ = false;  // the Maxwell mode rides this machinery
   gauge_integrators_.reset();
   gauge_integ_ = nullptr;
   gauge_mu_eps_.reset();
@@ -292,6 +296,9 @@ void LinearQuasiStaticProblemBase::SetGaugePreconditionerOnly(
     real_t eps_prec) {
   MFEM_VERIFY(gauge_eps_coef_,
               "SetGaugePreconditionerOnly: no gauged fluid is set.");
+  MFEM_VERIFY(!maxwell_,
+              "SetGaugePreconditionerOnly: incompatible with "
+              "SetMaxwellFluid.");
   MFEM_VERIFY(eps_prec > 0.0,
               "SetGaugePreconditionerOnly: eps_prec must be positive.");
   // The penalty scale now serves the PRECONDITIONER matrix A + eps_prec Q
@@ -371,6 +378,260 @@ bool LinearQuasiStaticProblemBase::GaugeRefine(Vector& X) {
     prev = d;
   }
   WarnGaugeContraction();
+  return ok;
+}
+
+void LinearQuasiStaticProblemBase::SetMaxwellFluid(
+    const Array<int>& fluid_marker, Coefficient& mu_core,
+    const MaxwellRelaxationOptions& opts, Diffeomorphism* map) {
+  MFEM_VERIFY(!gauge_prec_only_,
+              "SetMaxwellFluid: incompatible with "
+              "SetGaugePreconditionerOnly.");
+  MFEM_VERIFY(opts.dt_over_tau > 0.0 && opts.escalate >= 1.0 &&
+                  opts.beta_max >= opts.dt_over_tau && opts.max_steps > 0,
+              "SetMaxwellFluid: invalid schedule options.");
+  maxwell_opts_ = opts;
+  // The per-step operator is the gauge machinery's A + eps mu_c Q at
+  // eps = 1/(1 + beta), with no Tikhonov refinements (the Maxwell term
+  // is the regulariser, and MaxwellSolve owns the iteration). The call
+  // is virtual, so a derived class's covariant assembly applies.
+  SetGaugedFluid(fluid_marker, mu_core,
+                 1.0 / (1.0 + opts.dt_over_tau), /*refinements=*/0,
+                 GaugePenalty::Deviatoric, map);
+  maxwell_ = true;
+  maxwell_solid_tdofs_.SetSize(0);
+}
+
+void LinearQuasiStaticProblemBase::ClearMaxwellFluid() {
+  maxwell_ = false;
+  maxwell_solid_tdofs_.SetSize(0);
+  maxwell_report_ = MaxwellRelaxationReport();
+  ClearGaugedFluid();
+}
+
+void LinearQuasiStaticProblemBase::BuildMaxwellSolidDofs() {
+  // L-dof indicator of the elements OUTSIDE the fluid marker; a dof
+  // shared with a fluid element (the interface trace) counts as solid.
+  Vector ind(fes_->GetVSize());
+  ind = 0.0;
+  Array<int> vdofs;
+  for (int e = 0; e < fes_->GetNE(); ++e) {
+    const int attr = fes_->GetMesh()->GetAttribute(e);
+    if (attr <= gauge_marker_.Size() && gauge_marker_[attr - 1]) {
+      continue;
+    }
+    fes_->GetElementVDofs(e, vdofs);
+    for (int j : vdofs) {
+      ind[j < 0 ? -1 - j : j] = 1.0;
+    }
+  }
+  maxwell_solid_tdofs_.SetSize(0);
+  maxwell_solid_tdofs_.Reserve(fes_->GetTrueVSize());
+  const Operator* P = fes_->GetProlongationMatrix();
+  if (P) {
+    // P^T assembles the indicator onto true dofs across ranks: positive
+    // wherever any sharing element is solid.
+    Vector t(fes_->GetTrueVSize());
+    P->MultTranspose(ind, t);
+    for (int i = 0; i < t.Size(); ++i) {
+      if (t[i] > 0.5) {
+        maxwell_solid_tdofs_.Append(i);
+      }
+    }
+  } else {
+    for (int i = 0; i < ind.Size(); ++i) {
+      if (ind[i] > 0.5) {
+        maxwell_solid_tdofs_.Append(i);
+      }
+    }
+  }
+}
+
+real_t LinearQuasiStaticProblemBase::MaxOverSolidDofs(const Vector& x) const {
+  real_t m = 0.0;
+  for (int i = 0; i < maxwell_solid_tdofs_.Size(); ++i) {
+    m = std::max(m, std::abs(x[maxwell_solid_tdofs_[i]]));
+  }
+#ifdef MFEM_USE_MPI
+  if (pfes_) {
+    real_t g = 0.0;
+    MPI_Allreduce(&m, &g, 1, MPITypeMap<real_t>::mpi_type, MPI_MAX,
+                  pfes_->GetComm());
+    return g;
+  }
+#endif
+  return m;
+}
+
+bool LinearQuasiStaticProblemBase::MaxwellSolve() {
+  const MaxwellRelaxationOptions& o = maxwell_opts_;
+  maxwell_report_ = MaxwellRelaxationReport();
+  maxwell_report_.stop = "max_steps";
+
+  real_t beta = o.dt_over_tau;
+  real_t eps_cur = -1.0;
+  Vector w, r, Bn, prev;
+  real_t ref = 0.0, prev_delta = -1.0, t_phys = 0.0;
+  bool stagnated = false, ok = true, first = true;
+
+  // The best state seen (lowest solid increment at a successful step).
+  // The iterate is a function of (w, eps) plus a warm start, so the
+  // checkpoint is the memory vector alone and a restore is one warm
+  // re-solve — which also restores any companion blocks a derived
+  // SolveLinearSystem carries (a potential, say) to consistency.
+  Vector w_best;
+  real_t eps_best = -1.0, delta_best = infinity(), beta_best = 0.0;
+
+  // Switch the per-step operator to eps (reassembling), and rebuild the
+  // reduced system around the current u_ so warm starts survive.
+  auto set_operator = [&](real_t eps) {
+    if (!first) {
+      a_->RecoverFEMSolution(X_, rhs_, *u_);
+    }
+    SetGaugeEpsilon(eps);
+    EnsureOperator();
+    rhs_ = *b_;
+    rhs_ += increment_;
+    a_->FormLinearSystem(ess_tdof_list_, *u_, rhs_, A_, X_, B_, 1);
+    eps_cur = eps;
+    maxwell_report_.operators++;
+  };
+  // One backward Euler step at the current operator:
+  // (A + gamma Qhat) u = f + gamma Qhat w, with Q_ = eps mu_c Qhat =
+  // gamma Qhat at eps = 1/(1 + beta).
+  auto step_solve = [&]() {
+    Q_.Ptr()->Mult(w, r);
+    if (ess_tdof_list_.Size() > 0) {
+      r.SetSubVector(ess_tdof_list_, 0.0);
+    }
+    Bn = B_;
+    Bn += r;
+    return SolveLinearSystem(Bn, X_);
+  };
+
+  const char* stop = "max_steps";
+  real_t delta = infinity();
+  long its_first = -1;
+  int at_cap = 0;
+  for (int n = 1; n <= o.max_steps; ++n) {
+    if (1.0 / (1.0 + beta) != eps_cur) {
+      set_operator(1.0 / (1.0 + beta));
+      if (first) {
+        w.SetSize(X_.Size());
+        w = 0.0;
+        r.SetSize(X_.Size());
+        BuildMaxwellSolidDofs();
+        first = false;
+      }
+    }
+    const long its_before = total_its_;
+    if (!step_solve()) {
+      // The iterative solver's conditioning floor (the per-step fluid
+      // shear got too small for the preconditioner). The best state is
+      // restored below; the failed increment is discarded.
+      stop = "solver_floor";
+      delta = infinity();
+      break;
+    }
+    const long its_step = total_its_ - its_before;
+    if (its_first < 0) {
+      its_first = std::max(its_step, 1L);
+    }
+    w.Add(beta, X_);
+    w *= 1.0 / (1.0 + beta);
+    t_phys += beta;
+
+    // The stopping metric: the relative per-step SOLID displacement
+    // increment (the fluid displacement does not converge at N^2 != 0
+    // and is not monitored).
+    if (n == 1) {
+      ref = MaxOverSolidDofs(X_);
+      if (ref <= 0.0) {
+        ref = 1.0;
+      }
+      delta = infinity();
+    } else {
+      r = X_;
+      r -= prev;
+      delta = MaxOverSolidDofs(r) / ref;
+    }
+    prev = X_;
+    maxwell_report_.t_over_tau.push_back(t_phys);
+    maxwell_report_.delta_solid.push_back(delta);
+
+    if (delta < delta_best) {
+      delta_best = delta;
+      w_best = w;
+      eps_best = eps_cur;
+      beta_best = beta;
+    }
+    if (delta <= o.tol) {
+      stop = "converged";
+      break;
+    }
+    if (!stagnated && n > o.min_steps && prev_delta > 0.0 &&
+        delta > o.stag_ratio * prev_delta) {
+      // The solid increment has stopped contracting: the physical
+      // plateau (the configurational cascade and, at N^2 < 0, the
+      // onset of Rayleigh-Taylor growth). Stop here in plateau mode;
+      // otherwise escalate beta — backward Euler is L-stable, so the
+      // growing modes are damped and the iteration continues toward
+      // the fixed point (regulariser continuation), guarded by the
+      // best-state checkpoint.
+      stagnated = true;
+      maxwell_report_.stag_step = n;
+      if (o.plateau_mode) {
+        stop = "stagnation";
+        break;
+      }
+    }
+    if (stagnated) {
+      if (o.iter_budget > 0.0 && its_step > o.iter_budget * its_first) {
+        // The escalated solves have become disproportionately
+        // expensive: the solver is approaching its conditioning floor.
+        // Stop here; the best state is restored below.
+        stop = "solver_floor";
+        break;
+      }
+      if (beta >= o.beta_max) {
+        // At the cap the iteration is a fixed-regulariser solve; stop
+        // when it stagnates by the same criterion as the physical
+        // phase (a couple of steps to settle after the operator
+        // change).
+        if (++at_cap >= 3 && delta > o.stag_ratio * prev_delta) {
+          stop = "beta_max";
+          break;
+        }
+      } else {
+        beta = std::min(beta * o.escalate, o.beta_max);
+      }
+    }
+    if (delta < infinity()) {
+      prev_delta = delta;
+    }
+  }
+
+  maxwell_report_.stop = stop;
+  maxwell_report_.delta_returned = delta;
+  if (stop != std::string("converged") && stop != std::string("stagnation")) {
+    if (eps_best < 0.0) {
+      ok = false;  // no successful step to return
+    } else if (delta > delta_best) {
+      // The escalation overshot (noise injection past the solver's
+      // floor, or drift at the cap): restore the best state with one
+      // warm re-solve — one more backward Euler step from (w_best,
+      // eps_best), which only improves on it.
+      w = w_best;
+      set_operator(eps_best);
+      ok = step_solve() && ok;
+      w.Add(beta_best, X_);
+      w *= 1.0 / (1.0 + beta_best);
+      maxwell_report_.delta_returned = delta_best;
+    }
+  }
+  maxwell_report_.steps =
+      static_cast<int>(maxwell_report_.t_over_tau.size());
+  a_->RecoverFEMSolution(X_, rhs_, *u_);
   return ok;
 }
 

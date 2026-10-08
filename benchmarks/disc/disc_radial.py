@@ -28,13 +28,17 @@ one common angular factor that divides out.
 
 Degrees: l = 0 (V absent) and l >= 2 in this version; l = 1 (the
 translation null pair) is pending. Methods: welded, slip and dahlen
-(see solve_degree).
+(see solve_degree), plus the Maxwell relaxation route
+(solve_degree_maxwell): the core as an artificial Maxwell solid,
+time-stepped under the Heaviside load until the solid stops moving —
+the secular limit computed with welded solid-elastic solves only.
 
 Validation (run as a script): the G -> 0 limit against the rung-0
 closed forms (disc_reference), and gravity smoke tests.
 """
 from __future__ import annotations
 
+import dataclasses
 import math
 import sys
 from dataclasses import dataclass
@@ -124,7 +128,8 @@ def solve_degree(model: DiscGravityModel, l: int, *, p: int = 8,
                  nel: tuple[int, int, int] = (10, 10, 6),
                  R: float = 1.5, t: float = 1.0,
                  eps_reg: float = 1e-10,
-                 method: str = "welded") -> RadialSolution:
+                 method: str = "welded",
+                 _return_system: bool = False) -> RadialSolution:
     """Degree-l solve under the dead surface traction
     -t cos(l theta) rhat (shear-free). `method`:
 
@@ -514,6 +519,13 @@ def solve_degree(model: DiscGravityModel, l: int, *, p: int = 8,
         if not dahlen:
             fixed += [iU(0)]
         fixed += [iZ(npnt - 1)]  # l = 0 exterior constant gauge
+    if _return_system:
+        # private: the assembled (K, F) and dof maps, for reuse by
+        # solve_degree_maxwell (operator-level Maxwell iteration)
+        return {"K": K, "F": F, "fixed": fixed, "ndof": ndof,
+                "nU": nU, "nV": nV, "n_extra": n_extra,
+                "nb": nb, "ic": ic, "npnt": npnt, "rb": rb, "rp": rp,
+                "iU": iU, "iV": iV, "iZ": iZ}
     keep = np.setdiff1d(np.arange(ndof), fixed)
     Kr = K[np.ix_(keep, keep)]
     Fr = F[keep]
@@ -534,6 +546,169 @@ def solve_degree(model: DiscGravityModel, l: int, *, p: int = 8,
     if slip and has_V:
         out.ut_c_fluid = float(x[iVfc])
         out.slip_amplitude = float(x[iVfc] - x[iV(ic)])
+    return out
+
+
+def solve_degree_maxwell(model: DiscGravityModel, l: int, *, p: int = 8,
+                         nel: tuple[int, int, int] = (10, 10, 6),
+                         R: float = 1.5, t: float = 1.0,
+                         mu_core: float | None = None,
+                         dt_over_tau: float = 3.0,
+                         tol: float = 1e-10,
+                         stag_ratio: float = 0.9,
+                         min_steps: int = 4,
+                         max_steps: int = 400,
+                         escalate: float = 10.0,
+                         beta_max: float = 1e12,
+                         mode: str = "converge") -> RadialSolution:
+    """Degree-l static response by Maxwell relaxation of the core.
+
+    The core is made an artificial Maxwell solid (shear modulus
+    mu_core, Maxwell time tau), the dead load is applied as a step,
+    and the quasi-static system is relaxed by backward Euler until the
+    SOLID region stops moving — the secular route to the static
+    response (doc/static_fluid_core.tex), computed with nothing but
+    welded solid-elastic solves: no fluid region, no slip machinery,
+    no kernel handling beyond the usual, any geometry.
+
+    The problem is linear, so the Maxwell internal variable is the
+    deviatoric core strain of a memory displacement w and one step is
+
+        (K0 + gamma B) u_{n+1} = F + gamma B w_n,
+        w_{n+1} = (w_n + beta u_{n+1}) / (1 + beta),
+
+    with beta = dt/tau, gamma = mu_core / (1 + beta), K0 the welded
+    operator at core mu = 0 (no eps_reg pin — the Maxwell term is the
+    regulariser) and B the unit-shear deviatoric core stiffness
+    (exact, since K is linear in the core mu). The fixed point is the
+    K0 solution, independent of mu_core, beta and the schedule.
+
+    MEASURED trajectory structure (fc/aw/stable twins, l = 2): the
+    elastic phase contracts at 1/(1 + beta) per step and is done in
+    ~10 steps; what follows is a CONFIGURATIONAL cascade of viscous
+    gravitational relaxation modes with rates ~ theta/mu_core,
+    theta = lambda/b down to ~1e-4 — physical times 1e4+ tau, so a
+    "smallish multiple of tau" only ever completes the elastic phase.
+    At N^2 < 0 the cascade additionally contains genuine
+    Rayleigh-Taylor GROWTH (on fc the growing rates are ~300x the
+    slowest stable ones: no plateau window, the static question's
+    ambiguity band shown in time). Backward Euler is L-stable, so
+    escalating beta past ~2 mu b/|lambda| stabilises every growing
+    mode: the default schedule steps physically at beta = dt_over_tau
+    until the solid increment stagnates, then multiplies beta by
+    `escalate` per step (continuation gamma -> 0, i.e. toward the
+    static welded solve with a vanishing deviatoric pin) until the
+    increment is below tol. Cost: ~25-35 solves over ~5 distinct
+    operators. mode="plateau" instead stops at stagnation and returns
+    the physical plateau (the honest finite-time answer; on fc it
+    differs from the fixed point by the band, percent-level).
+
+    Stopping monitors the relative per-step SOLID displacement
+    increment only — the fields the secular limit defines; the fluid
+    displacement does not converge and must not be monitored.
+
+    mu_core defaults to the mantle shear at the CMB. Diagnostics in
+    .maxwell: the converged value's step count and operator count,
+    the stagnation step and plateau value (their gap is a band
+    estimate at N^2 != 0), and the full step history."""
+    assert l == 0 or l >= 2, "l = 1 not implemented yet"
+    assert mode in ("converge", "plateau")
+    if mu_core is None:
+        mu_core = float(np.asarray(model.mu[1](np.array([model.c])),
+                                   dtype=float).ravel()[0])
+
+    def const_mu(v):
+        return lambda r: np.full_like(np.asarray(r, dtype=float), v)
+
+    kw = dict(p=p, nel=nel, R=R, t=t, eps_reg=0.0, _return_system=True)
+    s0 = solve_degree(dataclasses.replace(
+        model, mu=(const_mu(0.0), model.mu[1])), l, **kw)
+    s1 = solve_degree(dataclasses.replace(
+        model, mu=(const_mu(1.0), model.mu[1])), l, **kw)
+    K0, F = s0["K"], s0["F"]
+    B = s1["K"] - K0                 # exact: K is linear in core mu
+
+    ndof, nb, ic = s0["ndof"], s0["nb"], s0["ic"]
+    nU, nV, n_extra = s0["nU"], s0["nV"], s0["n_extra"]
+    iU, iV = s0["iU"], s0["iV"]
+    keep = np.setdiff1d(np.arange(ndof), s0["fixed"])
+    K0r = K0[np.ix_(keep, keep)]
+    Br = B[np.ix_(keep, keep)]
+    Fr = F[keep]
+
+    # the stopping metric's dofs: mantle U, V (U(c) shared, solid-owned)
+    solid = [iU(k) for k in range(ic, nb)]
+    if nV:
+        solid += [iV(k) for k in range(ic, nb)]
+    solid = np.array(solid)
+
+    rb = s0["rb"]
+    beta = float(dt_over_tau)
+    last_beta = None
+    Ks = dscale = None
+    w = np.zeros(len(keep))
+    x = np.zeros(len(keep))
+    u = np.zeros(ndof)
+    hist = []
+    ref = None
+    prev_solid = None
+    prev_delta = None
+    t_phys = 0.0
+    stag_step = None
+    plateau = None
+    stop = "max_steps"
+    n_ops = 0
+    for n in range(1, max_steps + 1):
+        if beta != last_beta:
+            gamma = mu_core / (1.0 + beta)
+            Kr = K0r + gamma * Br
+            dscale = 1.0 / np.sqrt(np.maximum(np.abs(np.diag(Kr)),
+                                              1e-300))
+            Ks = dscale[:, None] * Kr * dscale[None, :]
+            last_beta = beta
+            n_ops += 1
+        x = dscale * np.linalg.solve(Ks, dscale
+                                     * (Fr + gamma * (Br @ w)))
+        w = (w + beta * x) / (1.0 + beta)
+        t_phys += beta
+        u = np.zeros(ndof)
+        u[keep] = x
+        us = x[np.searchsorted(keep, solid)]
+        if ref is None:
+            ref = float(np.max(np.abs(us))) or 1.0
+            delta = math.inf
+        else:
+            delta = float(np.max(np.abs(us - prev_solid))) / ref
+        hist.append({"t_over_tau": t_phys, "beta": beta,
+                     "ur_a": float(np.interp(model.a, rb, u[:nU])),
+                     "delta_solid": delta})
+        prev_solid = us.copy()
+        if delta <= tol:
+            stop = "converged"
+            break
+        if (stag_step is None and n > min_steps
+                and prev_delta is not None
+                and delta > stag_ratio * prev_delta):
+            stag_step = n
+            plateau = hist[-1]["ur_a"]
+            if mode == "plateau":
+                stop = "stagnation"
+                break
+        if stag_step is not None:
+            beta = min(beta * escalate, beta_max)
+        if np.isfinite(delta):
+            prev_delta = delta
+
+    U = u[:nU]
+    Vsol = u[nU:nU + nV] if nV else None
+    Z = u[nU + nV + n_extra:]
+    out = RadialSolution(l, rb, U, Vsol, s0["rp"], Z, model)
+    out.maxwell = {"mu_core": mu_core, "dt_over_tau": float(dt_over_tau),
+                   "mode": mode, "steps": len(hist), "operators": n_ops,
+                   "stop": stop, "stag_step": stag_step,
+                   "plateau_ur_a": plateau,
+                   "delta_floor": hist[-1]["delta_solid"],
+                   "history": hist}
     return out
 
 
@@ -620,6 +795,63 @@ def validate(verbose: bool = True) -> bool:
                      f" (FRL/weld-suppression split {abs(s_/w_-1):.3%}),"
                      f" dahlen {d_:.6f} (vs slip — the genuine"
                      f" fluid-treatment gap — {abs(d_/s_-1):.3%})")
+
+    # ---- Maxwell relaxation route (the secular time-stepping) ----
+    # G -> 0: the relaxed core is the rung-0 fluid exactly
+    for l in (0, 2):
+        sm = solve_degree_maxwell(tiny, l)
+        ex = solve0(m0, l).responses["ur_a"]
+        record(f"maxwell G->0 l={l} ur_a vs rung 0 "
+               f"({sm.maxwell['steps']} steps, {sm.maxwell['stop']})",
+               abs(sm.responses()["ur_a"] - ex) / abs(ex), 1e-5)
+    # aw null: the plateau joins welded == slip == dahlen
+    for l in (2, 3):
+        wv = solve_degree(aw, l).responses()["ur_a"]
+        sm = solve_degree_maxwell(aw, l)
+        record(f"maxwell aw null l={l}: |maxwell/welded - 1| "
+               f"({sm.maxwell['steps']} steps, {sm.maxwell['stop']})",
+               abs(sm.responses()["ur_a"] / wv - 1.0), 1e-6)
+    # fc (N^2 < 0, RT growth in the cascade): the escalated iteration
+    # must land within the band of dahlen; the physical plateau and
+    # its gap to the limit are the band display
+    d_fc = solve_degree(fc, 2, method="dahlen").responses()["ur_a"]
+    w_fc = solve_degree(fc, 2).responses()["ur_a"]
+    mm = solve_degree_maxwell(fc, 2)
+    m_fc = mm.responses()["ur_a"]
+    record("maxwell fc l=2 converged vs dahlen (within band, < 1%)",
+           abs(m_fc / d_fc - 1.0), 1e-2)
+    record("maxwell fc l=2 converged vs welded eps->0 (same limit)",
+           abs(m_fc / w_fc - 1.0), 1e-3)
+    lines.append(f"  [info] fc l=2 maxwell {m_fc:.6f} "
+                 f"({mm.maxwell['steps']} steps, "
+                 f"{mm.maxwell['operators']} operators, "
+                 f"{mm.maxwell['stop']}); physical plateau "
+                 f"{mm.maxwell['plateau_ur_a']:.6f} at step "
+                 f"{mm.maxwell['stag_step']} — plateau-to-limit gap "
+                 f"{abs(mm.maxwell['plateau_ur_a']/m_fc-1):.2%} = the "
+                 f"RT-smeared band; dahlen {d_fc:.6f}, "
+                 f"welded {w_fc:.6f}")
+    # certificates: the limit is independent of the artificial clock
+    # (exactly — the fixed point is the K0 solution)
+    m_mu = solve_degree_maxwell(
+        fc, 2, mu_core=4.0 * disc_models.MU_MANTLE).responses()["ur_a"]
+    m_dt = solve_degree_maxwell(fc, 2,
+                                dt_over_tau=1.5).responses()["ur_a"]
+    record("maxwell fc l=2 limit shift under mu_core x 4 (strict)",
+           abs(m_mu / m_fc - 1.0), 1e-7)
+    record("maxwell fc l=2 limit shift under dt/tau 3 -> 1.5 (strict)",
+           abs(m_dt / m_fc - 1.0), 1e-7)
+    # stable twin (N^2 > 0: AW density, kappa x 2): no RT, converges;
+    # dahlen is kappa-blind (identical to aw) while maxwell sees the
+    # stratification — the band made visible by a method pair
+    stable = disc_models._attach_state(dataclasses.replace(
+        aw, kappa=(lambda r: 2.0 * aw.kappa[0](np.asarray(r)),
+                   aw.kappa[1])))
+    ms = solve_degree_maxwell(stable, 2)
+    d_st = solve_degree(stable, 2, method="dahlen").responses()["ur_a"]
+    record(f"maxwell stable (N^2>0) l=2 vs dahlen (within band, < 1%) "
+           f"({ms.maxwell['steps']} steps, {ms.maxwell['stop']})",
+           abs(ms.responses()["ur_a"] / d_st - 1.0), 1e-2)
 
     if verbose:
         print("disc_radial validation "

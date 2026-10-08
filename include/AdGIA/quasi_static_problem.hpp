@@ -52,6 +52,57 @@ namespace AdGIA {
 class Diffeomorphism;
 
 /**
+ * @brief Options of the Maxwell relaxation (secular static) solve; see
+ * LinearQuasiStaticProblemBase::SetMaxwellFluid.
+ *
+ * The per-step effective fluid shear is @f$\mu_c/(1+\beta)@f$ with
+ * @f$\beta = \Delta t/\tau@f$: @p dt_over_tau is the physical phase's
+ * @f$\beta@f$, and after stagnation @f$\beta@f$ is multiplied by
+ * @p escalate per step up to @p beta_max (the regulariser-continuation
+ * endgame; @f$\beta \to \infty@f$ recovers the unregularised static
+ * fluid operator, so the cap is a conditioning guard for iterative
+ * solvers).
+ */
+struct MaxwellRelaxationOptions {
+  mfem::real_t dt_over_tau = 3.0;  ///< @f$\beta@f$ of the physical phase
+  mfem::real_t tol = 1e-8;  ///< relative solid-increment convergence stop
+  mfem::real_t stag_ratio = 0.9;  ///< stagnation: delta > ratio * previous
+  int min_steps = 4;    ///< steps before stagnation may fire
+  int max_steps = 200;  ///< hard cap on relaxation steps
+  mfem::real_t escalate = 10.0;  ///< beta multiplier per post-stagnation step
+  mfem::real_t beta_max = 1e8;   ///< beta cap (per-step shear floor)
+  /** @brief Escalation economy: once stagnated, a step whose linear
+   * solve costs more than iter_budget times the first step's
+   * iterations stops the escalation there (the best state is
+   * returned); 0 disables. */
+  mfem::real_t iter_budget = 20.0;
+  bool plateau_mode = false;     ///< stop at the physical plateau instead
+};
+
+/**
+ * @brief Diagnostics of the last Maxwell relaxation solve.
+ *
+ * @c stop: "converged" (solid increment below tolerance), "stagnation"
+ * (plateau_mode stop at the physical plateau), "solver_floor" (the
+ * escalation hit the iterative solver's conditioning floor),
+ * "beta_max" (the escalation stalled at its beta cap) or "max_steps".
+ * On the last three the returned state is the BEST one seen — the
+ * lowest solid increment, restored by one warm re-solve when the
+ * escalation had overshot it — and @c delta_returned is its increment;
+ * on "solver_floor"/"beta_max" that is typically the physical plateau,
+ * the honest answer when the continuation cannot be completed.
+ */
+struct MaxwellRelaxationReport {
+  int steps = 0;      ///< relaxation steps taken
+  int operators = 0;  ///< distinct per-step operators (beta changes)
+  int stag_step = -1;  ///< step where stagnation fired (-1: never)
+  const char* stop = "none";
+  mfem::real_t delta_returned = -1.0;  ///< increment of the state returned
+  std::vector<mfem::real_t> t_over_tau;   ///< physical time per step
+  std::vector<mfem::real_t> delta_solid;  ///< relative solid increment
+};
+
+/**
  * @brief Abstract interface for linear quasi-static problems.
  *
  * Per evaluation time @f$t@f$ the protocol is
@@ -264,6 +315,81 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   /** @brief Remove the gauge penalty and the refinement loop. */
   void ClearGaugedFluid();
 
+  // --- Maxwell (secular) fluid regions --------------------------------------
+
+  /**
+   * @brief Treat the marked element attributes as an artificial Maxwell
+   * solid and make Solve() the SECULAR relaxation: the load is applied as
+   * a Heaviside step and the quasi-static Maxwell system is stepped by
+   * backward Euler until the SOLID region stops moving — the secular
+   * static response of a body with inviscid-fluid regions, computed with
+   * nothing but welded elastic solves (doc/static_fluid_core.tex; the
+   * route works in any geometry, where the spherical Dahlen elimination
+   * does not exist). The rheology supplies the fluid's physical stiffness
+   * (bulk modulus, zero shear) exactly as for SetGaugedFluid().
+   *
+   * The problem is linear, so the Maxwell internal variable is the
+   * deviatoric fluid strain of a memory displacement @f$w@f$, and one
+   * backward Euler step is
+   * @f[
+   *   (A + \gamma\hat Q)\,u_{n+1} = f + \gamma\hat Q\,w_n, \qquad
+   *   w_{n+1} = (w_n + \beta u_{n+1})/(1+\beta),
+   * @f]
+   * with @f$\beta = \Delta t/\tau@f$, @f$\gamma = \mu_c/(1+\beta)@f$ and
+   * @f$\hat Q@f$ the unit-shear deviatoric fluid stiffness. The fixed
+   * point is the @f$A@f$-solution — independent of @f$\mu_c@f$,
+   * @f$\tau@f$ and the schedule — and the machinery is the gauge
+   * penalty's: the per-step operator is SetGaugedFluid()'s
+   * @f$A + \epsilon\mu_c Q@f$ at @f$\epsilon = 1/(1+\beta)@f$, and the
+   * @f$\beta \to \infty@f$ limit of the iteration is exactly the
+   * Tikhonov gauge refinement. What the Maxwell reading adds is the
+   * schedule and the stopping rule.
+   *
+   * MEASURED trajectory structure (doc/static_fluid_core.tex, "Numerical
+   * evidence"): an elastic phase (~10 steps), then a configurational
+   * cascade of viscous gravitational relaxation modes (physical times
+   * @f$10^4\tau@f$ and beyond), and at @f$N^2 < 0@f$ genuine
+   * Rayleigh–Taylor growth. The stepper therefore runs the physical
+   * @f$\beta@f$ until the solid increment stagnates, then escalates
+   * @f$\beta@f$ geometrically (backward Euler is L-stable: large steps
+   * damp the growing modes) — regulariser continuation toward the static
+   * welded solve — until the increment is below tolerance. The stopping
+   * metric is the SOLID displacement increment only: the fluid
+   * displacement does not converge at @f$N^2 \neq 0@f$ and must not be
+   * monitored. With @c plateau_mode the solve stops at the stagnation
+   * point instead — the physical finite-time plateau, whose gap to the
+   * converged limit displays the @f$N^2@f$ ambiguity band.
+   *
+   * Replaces any SetGaugedFluid() configuration (the Maxwell term IS the
+   * regulariser; no Tikhonov refinements run). Incompatible with
+   * SetGaugePreconditionerOnly(). Essential boundary conditions must not
+   * touch the marked attributes. Solve() returns false if any step's
+   * linear solve failed; diagnostics in MaxwellReport().
+   *
+   * @param fluid_marker Element attributes of the fluid regions (sized to
+   * attributes.Max(); copied).
+   * @param mu_core Artificial fluid shear scale @f$\mu_c@f$ (a natural
+   * choice is the neighbouring solid's shear modulus; the limit is
+   * exactly independent of it); not owned, must outlive the problem.
+   * @param opts Schedule and stopping options.
+   * @param map Optional mapping for the covariant deviatoric form, as for
+   * SetGaugedFluid(); not owned.
+   */
+  void SetMaxwellFluid(const mfem::Array<int>& fluid_marker,
+                       mfem::Coefficient& mu_core,
+                       const MaxwellRelaxationOptions& opts = {},
+                       Diffeomorphism* map = nullptr);
+
+  /** @brief Remove the Maxwell mode (and its gauge-penalty machinery). */
+  void ClearMaxwellFluid();
+
+  bool HasMaxwellFluid() const { return maxwell_; }
+
+  /** @brief Diagnostics of the last Maxwell relaxation Solve(). */
+  const MaxwellRelaxationReport& MaxwellReport() const {
+    return maxwell_report_;
+  }
+
   bool HasGaugedFluid() const { return gauge_integrators_ != nullptr; }
 
   /** @brief Change @f$\epsilon@f$ (marks the operator stale). */
@@ -427,6 +553,21 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
    */
   virtual bool GaugeRefine(mfem::Vector& X);
 
+  /** @brief The Maxwell relaxation loop of Solve() (SetMaxwellFluid):
+   * owns the whole solve, including the per-step operator updates and
+   * the final RecoverFEMSolution. Runs through the virtual
+   * SolveLinearSystem(), so problems carrying further unknowns (a
+   * potential block) inherit it unchanged. */
+  bool MaxwellSolve();
+
+  /** @brief True dofs supported on NON-fluid elements (interface dofs
+   * included) — the stopping metric's dofs — into
+   * maxwell_solid_tdofs_. */
+  void BuildMaxwellSolidDofs();
+
+  /** @brief Global max of @f$|x_i|@f$ over maxwell_solid_tdofs_. */
+  mfem::real_t MaxOverSolidDofs(const mfem::Vector& x) const;
+
   /** @brief Assemble the operator if it is out of date. */
   void EnsureOperator();
 
@@ -488,6 +629,13 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   std::unique_ptr<mfem::BilinearForm> q_form_, a_solve_form_;
   mfem::OperatorHandle Q_, A_solve_;
   std::vector<mfem::real_t> gauge_residuals_;
+
+  // Maxwell (secular) fluid mode: rides the gauge-penalty machinery with
+  // epsilon = 1/(1 + beta); see SetMaxwellFluid.
+  bool maxwell_ = false;
+  MaxwellRelaxationOptions maxwell_opts_;
+  MaxwellRelaxationReport maxwell_report_;
+  mfem::Array<int> maxwell_solid_tdofs_;
 
   /** @brief The epsilon-window tripwire shared by every GaugeRefine
    * implementation: the refinement corrections contract at

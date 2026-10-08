@@ -93,11 +93,29 @@ FE side yet:
   Eulerian mixed-class system with F1-F3, fluid displacement
   eliminated; at l = 0 it uses the welded full-fluid solve). Degrees
   l = 0 and l >= 2; l = 1 is pending.
+- `solve_degree_maxwell(model, l, ...)` — the secular time-stepping
+  route: the core as an artificial Maxwell solid under a Heaviside
+  load, backward Euler on the memory displacement, stopping on the
+  SOLID displacement increment only (the fluid displacement does not
+  converge and is not monitored). The trajectory is: elastic phase
+  (~10 steps), configurational cascade of viscous gravitational
+  relaxation modes (physical times 1e4+ tau — far beyond any
+  "smallish multiple of tau"), and, at N^2 < 0, genuine
+  Rayleigh-Taylor growth with no plateau window on `fluid_core_2d`.
+  On stagnation the stepper escalates beta (L-stable backward Euler
+  stabilises the growing modes; this is continuation in the per-step
+  core shear gamma = mu_core/(1+beta) toward the static welded
+  solve), converging in ~25-35 solves to the K0 fixed point — the
+  welded eps -> 0 solution, independent of mu_core and the schedule
+  exactly. `mode="plateau"` stops at the physical plateau instead;
+  its gap to the limit (~3.5 % on fc l = 2) is a time-domain display
+  of the N^2 ambiguity band.
 
-The gate is the aw null test: on `aw_core_2d` the three methods must
+The gate is the aw null test: on `aw_core_2d` the FOUR methods must
 agree to solver precision (welded exact through the N^2 = 0
 relabelling class, Dahlen exact because the reduction is the full
-static fluid there); they agree to ~1e-10 at every degree, and every
+static fluid there, Maxwell because relaxation has nothing to select
+at N^2 = 0); they agree to ~1e-10 at every degree, and every
 interface-form sign is pinned by it. The validation also checks the
 G -> 0 limit against rung 0 (`disc_reference.py`), strict p-ladder
 convergence on `aw_core_2d`, and records the `fluid_core_2d` p-ladder

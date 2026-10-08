@@ -432,8 +432,9 @@ forbids it and loses existence. \emph{(Exact references to be added.)}
 \section{What dissipation selects, and routes to regularisation}
 \label{sec:regular}
 
-\emph{Status: argued; the viscoelastic route is implementable in this
-library and is proposed as the decisive numerical experiment.}
+\emph{Status: argued, and the Maxwell route now measured in two
+dimensions (\S\ref{sec:evidence}); the three-dimensional runs are
+pending.}
 Statics is the degenerate limit of some evolution, and the
 non-existence of \S\ref{sec:nonexist} is the statement that the
 limit depends on physics that statics has discarded. Restoring any of
@@ -456,19 +457,46 @@ it gives a well-posed problem:
   adiabatic equations at all --- it is selected by the dissipative
   processes, however weak they are.
 \item \textbf{A Maxwell viscoelastic core.} Give the core's shear
-  response a Maxwell element with a short relaxation time. At every
-  Laplace frequency $s > 0$ the moduli are shifted and the problem is
-  uniformly well posed; the $t\to\infty$ (equivalently $s\to 0^+$)
-  limit of the observables is again the secular answer. This
-  regularisation is \emph{already implementable} with the library's
-  viscoelastic time layer and is the cleanest numerical experiment on
-  offer: step a \code{fluid\_core}-type model with a Maxwell core to
-  late time and watch the observables leave the elastic-static band
-  and converge onto the Dahlen values. Proposed; not yet run. Its
-  real significance is aspherical (\S\ref{sec:dahlen}): where the
-  Dahlen elimination does not survive the geometry, time-stepping a
-  weakly dissipative core is the only practical route to the secular
-  response, and it works on any mesh this library can build.
+  response a Maxwell element (artificial shear modulus $\mu$,
+  relaxation time $\tau$), apply the load as a step, and relax. At
+  every Laplace frequency $s > 0$ the moduli are shifted and the
+  problem is uniformly well posed. \emph{Run, in two dimensions}
+  (\S\ref{sec:evidence}); the measured trajectory refines the naive
+  picture in one important way. Three timescales appear, not two:
+  (i) the elastic/deviatoric relaxation, at a small multiple of
+  $\tau$; (ii) a \emph{configurational} cascade --- the viscous
+  gravitational relaxation modes of the artificial fluid, with rates
+  $\lambda/\eta$ set by the weak residual stiffness $\lambda$ of
+  near-equipotential core motions, measured down to $10^{-4}\mu/\eta$,
+  so physical times of $10^{4}\,\tau$ and beyond; and (iii), for
+  $N^2 < 0$ only, genuine Rayleigh--Taylor \emph{growth}, whose rates
+  are of the same viscous-flow type. The ratio of (iii) to (ii) is
+  $\mu$-independent, of order $|N^2| L / g$: for an unstably
+  stratified core the dissipative completion is itself unstable, the
+  secular endpoint is a saddle response, and the finite-time plateau
+  is smeared by exactly the ambiguity band --- on the violently
+  non-neutral \code{fluid\_core\_2d} ($|N^2|$ of order the scale,
+  rates (iii) $\approx 300\times$ the slowest of (ii)) there is no
+  plateau window at all, and the stagnation-detected plateau sits
+  $3.5\,\%$ from the secular values. None of this obstructs the
+  computation: backward Euler is L-stable, so escalating the step
+  $\Delta t/\tau$ once the solid increment stagnates (continuation of
+  the per-step core shear $\mu/(1+\Delta t/\tau) \to 0$, i.e.\ toward
+  the static welded solve with a vanishing deviatoric pin) stabilises
+  every growing mode and converges in $25$--$35$ elastic solves to
+  the discrete relaxed solution, which lands inside the band
+  ($1.2\times10^{-3}$ from Dahlen at the test resolution) and is
+  exactly independent of $\mu$, $\tau$ and the schedule. At
+  $N^2 = 0$ the route joins the welded/slip/Dahlen null at
+  $10^{-10}$, and on a stably stratified core ($N^2 > 0$) it
+  converges with no growth phase. The stopping metric is the
+  \emph{solid} displacement increment only --- precisely the fields
+  the secular limit defines; the fluid displacement does not converge
+  and must not be monitored. Its real significance is aspherical
+  (\S\ref{sec:dahlen}): where the Dahlen elimination does not survive
+  the geometry, time-stepping a weakly dissipative core is the only
+  practical route to the secular response, and it works on any mesh
+  this library can build.
 \item \textbf{What does not work.} A static Tikhonov pin (the small
   deviatoric regulariser $\eps_{\mathrm{reg}}$ of the numerical
   tools) makes each solve unique but selects nothing physical: the
@@ -498,7 +526,7 @@ closure choice explicitly.
 \section{Numerical evidence}
 \label{sec:evidence}
 
-All measurements 7 October 2026, with the per-degree radial reference
+All measurements 7--8 October 2026, with the per-degree radial reference
 of the two-dimensional disc family
 (\code{benchmarks/disc/disc\_radial.py}; the $\theta$-reduction of
 this library's weak forms, solved by one-dimensional $hp$ finite
@@ -532,9 +560,35 @@ band about Dahlen vs $N^2\times\frac{1}{30}$ & --- & shrinks
   $\sim 14\times$ (noisy) & band $\to 0$ with $N^2$ \\
 FE six-architecture null & all within $1.2\times10^{-3}$ &
   genuine spreads & the FE replica \\
+Maxwell route, escalated limit & joins the null ($10^{-10}$) &
+  $1.2\times10^{-3}$ from Dahlen & \S\ref{sec:regular} \\
+Maxwell route, physical plateau & $=$ limit (no band) &
+  $3.5\,\%$ from the limit & the band, in time \\
 \bottomrule
 \end{tabular}
 \end{center}
+
+\medskip\noindent
+\textbf{The Maxwell-core run (8 October).} The proposed experiment of
+\S\ref{sec:regular}, in the radial tool
+(\code{solve\_degree\_maxwell}): backward Euler on the memory
+displacement, stopping on the solid increment, step escalation on
+stagnation. Measured, degree 2: on \code{aw\_core\_2d} the relaxed
+state joins the three-way null at $10^{-10}$ in $28$ steps with no
+stagnation; on \code{fluid\_core\_2d} the trajectory has no plateau
+window (Rayleigh--Taylor rates $\approx 300\times$ the slowest
+configurational ones), the physical plateau sits $3.5\,\%$ off, and
+the escalated limit lands on the welded $\eps_{\mathrm{reg}} \to 0$
+solution ($5\times10^{-5}$), $1.2\times10^{-3}$ from Dahlen ---
+inside the band --- in $25$ solves, exactly independently of $\mu$,
+$\tau$ and the step schedule ($10^{-13}$). A third model decides the
+$\kappa$-blindness point by pairing: a stably stratified twin
+(Adams--Williamson density, $\kappa \times 2$, so $N^2 > 0$)
+converges with no growth phase, and on it Dahlen returns the
+\emph{identical} value as on \code{aw\_core\_2d} (the M4 elimination
+cannot see $\kappa$) while the Maxwell limit moves by
+$5\times10^{-4}$: the stratification physics that the secular closure
+discards, displayed as a method pair.
 
 \noindent
 Fixed-resolution differences \emph{between} the full-elastic methods
@@ -620,9 +674,20 @@ for the dynamic conjecture as well.
 (i) The functional-analytic theorem behind
 Claim~\ref{claim:nonexist} and Proposition~\ref{prop:quotient} ---
 now best approached jointly with the dynamic argument above.
-(ii) The Maxwell-core regularisation experiment of
-\S\ref{sec:regular} --- implementable now, and the direct numerical
-demonstration that dissipation selects Dahlen.
+(ii) The Maxwell-core route as a production method: now implemented
+generically in the problem layer (\code{SetMaxwellFluid} on
+\code{LinearQuasiStaticProblemBase} — the per-step operator is the
+gauge machinery's $A + \epsilon\mu_c Q$ at $\epsilon = 1/(1+\beta)$,
+so every problem class inherits it, serial and parallel), and
+verified against the exact gravity-free Lam\'e solutions and as a
+seventh architecture of \code{examples/self\_gravitating\_solvers}:
+on the aw twin it joins the null (2-D and 3-D meshes, serial and
+parallel; on fc it stops honestly at the band-level plateau when the
+iterative solver cannot complete the continuation). Remaining: the
+benchmark-grade Love-number runs on \code{fluid\_core}/%
+\code{aw\_core}, per-step tolerance economy, and the aspherical
+demonstration --- a static fluid-core response on a geometry where
+no other method exists.
 (iii) A clean measurement of the band's $N^2$-scaling (the
 one-dimensional tool does each point in seconds; the current
 two-resolution estimator is noisy).

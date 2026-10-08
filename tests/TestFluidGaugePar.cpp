@@ -162,6 +162,68 @@ void RunCase(int dim, double tol, const std::string& label) {
   Check(std::abs(err2 - err), 0.5 * tol, label + " eps independence");
 }
 
+// The Maxwell (secular) relaxation mode: the relaxed solve must
+// reproduce the exact Lame solution on the SOLID (the fluid
+// displacement is relaxation history; see TestFluidGauge.cpp), with the
+// cross-rank solid-dof marking and the global stopping metric
+// exercised.
+void RunMaxwellCase(int dim, double tol, const std::string& label) {
+  Mesh smesh(BodyMeshFile(dim).c_str(), 1, 1);
+  ParMesh pmesh(MPI_COMM_WORLD, smesh);
+  const int n_layers = pmesh.attributes.Max() - 1;
+  Array<int> attrs(n_layers);
+  for (int i = 0; i < n_layers; i++) {
+    attrs[i] = i + 1;
+  }
+  ParSubMesh body(ParSubMesh::CreateFromDomain(pmesh, attrs));
+  H1_FECollection fec(2, dim);
+  ParFiniteElementSpace fes(&body, &fec, dim);
+
+  Vector kappa_vals(n_layers), mu_vals(n_layers);
+  Array<int> fluid(n_layers);
+  kappa_vals = kKappaF;
+  mu_vals = 0.0;
+  fluid = 1;
+  kappa_vals(n_layers - 1) = kKappaS;
+  mu_vals(n_layers - 1) = kMuS;
+  fluid[n_layers - 1] = 0;
+  PWConstCoefficient kappa(kappa_vals), mu(mu_vals);
+  IsotropicElasticRheology rheology(dim, kappa, mu);
+
+  Array<int> surface(body.bdr_attributes.Max());
+  surface = 0;
+  surface[body.bdr_attributes.Max() - 1] = 1;
+
+  VectorFunctionCoefficient traction(dim, UniformPressureTraction);
+  LinearQuasiStaticTractionProblem prob(&fes, rheology, traction, surface);
+  ConstantCoefficient mu_core(kMuS);
+  MaxwellRelaxationOptions opts;
+  opts.beta_max = 1.0e3;  // test economy, as in the serial suite
+  opts.tol = 1.0e-6;
+  prob.SetMaxwellFluid(fluid, mu_core, opts);
+  prob.SetMassWeightedGauge();
+  prob.AssembleForce(0.0);
+  Check(prob.Solve() ? 0.0 : 1.0, 0.0, label + " solve");
+  Check(prob.MaxwellReport().delta_returned, 1.0e-4,
+        label + " solid increment");
+
+  LameSolution lame(dim, kRCmb, 1.0);
+  VectorFunctionCoefficient exact(
+      dim, [&lame](const Vector& x, Vector& u) { lame.Eval(x, u); });
+  Vector zero(dim);
+  zero = 0.0;
+  VectorConstantCoefficient z(zero);
+  // Solid-only relative L2 error (per-element marker).
+  Array<int> solid_elems(body.GetNE());
+  for (int i = 0; i < body.GetNE(); i++) {
+    solid_elems[i] = fluid[body.GetAttribute(i) - 1] ? 0 : 1;
+  }
+  GridFunction& u = const_cast<GridFunction&>(prob.Displacement());
+  const double err = u.ComputeL2Error(exact, nullptr, &solid_elems) /
+                     u.ComputeL2Error(z, nullptr, &solid_elems);
+  Check(err, tol, label + " Lame error (solid)");
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -170,6 +232,8 @@ int main(int argc, char* argv[]) {
 
   RunCase(2, 1.0e-4, "2d");
   RunCase(3, 1.0e-3, "3d");
+  RunMaxwellCase(2, 1.0e-4, "2d maxwell");
+  RunMaxwellCase(3, 1.0e-3, "3d maxwell");
 
   if (Mpi::Root()) {
     if (num_fails == 0) {

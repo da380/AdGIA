@@ -327,6 +327,109 @@ TEST(FluidGauge, ObservablesIndependentOfEpsilon2D) {
   EXPECT_LT(d_true.Norml2() / u_true.Norml2(), 1.0e-4);
 }
 
+// The Maxwell (secular) relaxation mode: on a gravity-free body the
+// relaxed Maxwell core IS the static fluid (no stratification, so no
+// band), and the converged solve must reproduce the exact Lame
+// solutions through time-stepping alone. The comparison is restricted
+// to the SOLID: the fluid displacement is relaxation history (the
+// class's stopping metric makes the same restriction), where the
+// gauged formulation's refined fluid field happens to be comparable.
+TEST(FluidGauge, MaxwellRelaxationMatchesLame2D) {
+  Case c(2);
+  VectorFunctionCoefficient traction(2, UniformPressureTraction);
+  LinearQuasiStaticTractionProblem prob(c.fes.get(), *c.rheology, traction,
+                                        c.surface);
+  ConstantCoefficient mu_core(kMuS);
+  prob.SetMaxwellFluid(c.fluid, mu_core);
+  prob.SetMassWeightedGauge();
+  prob.AssembleForce(0.0);
+  EXPECT_TRUE(prob.Solve());
+  const auto& rep = prob.MaxwellReport();
+  EXPECT_LT(rep.delta_returned, 1.0e-6);
+  EXPECT_LE(rep.steps, 100);
+
+  LameSolution lame(2, c.r_cmb, 1.0);
+  VectorFunctionCoefficient exact(
+      2, [&lame](const Vector& x, Vector& u) { lame.Eval(x, u); });
+  FiniteElementSpace fes_parent(c.parent.get(), c.fec.get(), 2);
+  Array<int> solid_attr({c.body->attributes.Max()});
+  auto solid = std::make_unique<SubMesh>(
+      SubMesh::CreateFromDomain(*c.parent, solid_attr));
+  FiniteElementSpace fes_s(solid.get(), c.fec.get(), 2);
+  GridFunction u_s(&fes_s);
+  RestrictToSolid(prob.Displacement(), *c.parent, fes_parent, u_s);
+  EXPECT_LT(RelL2Error(u_s, exact), 1.0e-4);
+}
+
+TEST(FluidGauge, MaxwellRelaxationMatchesLame3D) {
+  Case c(3);
+  VectorFunctionCoefficient traction(3, UniformPressureTraction);
+  LinearQuasiStaticTractionProblem prob(c.fes.get(), *c.rheology, traction,
+                                        c.surface);
+  ConstantCoefficient mu_core(kMuS);
+  MaxwellRelaxationOptions opts;
+  opts.beta_max = 1.0e3;  // shorten the escalation probe (test economy)
+  opts.tol = 1.0e-6;      // the assertion level below (test economy)
+  prob.SetMaxwellFluid(c.fluid, mu_core, opts);
+  prob.SetMassWeightedGauge();
+  prob.AssembleForce(0.0);
+  EXPECT_TRUE(prob.Solve());
+  EXPECT_LT(prob.MaxwellReport().delta_returned, 1.0e-5);
+
+  LameSolution lame(3, c.r_cmb, 1.0);
+  VectorFunctionCoefficient exact(
+      3, [&lame](const Vector& x, Vector& u) { lame.Eval(x, u); });
+  FiniteElementSpace fes_parent(c.parent.get(), c.fec.get(), 3);
+  Array<int> solid_attr({c.body->attributes.Max()});
+  auto solid = std::make_unique<SubMesh>(
+      SubMesh::CreateFromDomain(*c.parent, solid_attr));
+  FiniteElementSpace fes_s(solid.get(), c.fec.get(), 3);
+  GridFunction u_s(&fes_s);
+  RestrictToSolid(prob.Displacement(), *c.parent, fes_parent, u_s);
+  EXPECT_LT(RelL2Error(u_s, exact), 1.0e-3);
+}
+
+// Under a non-conformal load the Maxwell limit and the gauged solve must
+// agree on the SOLID (both compute the same physical response; the fluid
+// displacement is gauge in one and relaxation history in the other).
+TEST(FluidGauge, MaxwellMatchesGaugedOnSolid2D) {
+  Case c(2);
+  VectorFunctionCoefficient traction(2, PressureTraction);
+  FiniteElementSpace fes_parent(c.parent.get(), c.fec.get(), 2);
+  Array<int> solid_attr({c.body->attributes.Max()});
+  auto solid = std::make_unique<SubMesh>(
+      SubMesh::CreateFromDomain(*c.parent, solid_attr));
+  FiniteElementSpace fes_s(solid.get(), c.fec.get(), 2);
+
+  LinearQuasiStaticTractionProblem gauged(c.fes.get(), *c.rheology, traction,
+                                          c.surface);
+  gauged.SetGaugedFluid(c.fluid, c.mu_gauge, kEps, kRefine);
+  gauged.AssembleForce(0.0);
+  EXPECT_TRUE(gauged.Solve());
+  GridFunction u_g(&fes_s);
+  RestrictToSolid(gauged.Displacement(), *c.parent, fes_parent, u_g);
+
+  LinearQuasiStaticTractionProblem maxwell(c.fes.get(), *c.rheology,
+                                           traction, c.surface);
+  ConstantCoefficient mu_core(kMuS);
+  maxwell.SetMaxwellFluid(c.fluid, mu_core);
+  maxwell.AssembleForce(0.0);
+  EXPECT_TRUE(maxwell.Solve());
+  GridFunction u_m(&fes_s);
+  RestrictToSolid(maxwell.Displacement(), *c.parent, fes_parent, u_m);
+
+  // Modulo the two solves' rigid gauges.
+  GridFunction diff(u_g);
+  diff -= u_m;
+  Vector d_true, u_true;
+  diff.GetTrueDofs(d_true);
+  u_m.GetTrueDofs(u_true);
+  auto projector = MakeRigidModeProjector(fes_s);
+  projector->Project(d_true);
+  // The two formulations agree to the gauged solve's O(eps^k) bias.
+  EXPECT_LT(d_true.Norml2() / u_true.Norml2(), 3.0e-4);
+}
+
 TEST(FluidGauge, RegularizedMatrixIsSymmetric2D) {
   Case c(2);
   VectorFunctionCoefficient traction(2, PressureTraction);

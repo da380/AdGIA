@@ -32,14 +32,24 @@
 //                               modes are projected out of the Krylov
 //                               space rather than pinned — plus the gauge
 //                               refinements;
-//   5. slip                     the slipping fluid-solid interface
+//   5. maxwell                  the referential problem of 4 with the
+//                               core an artificial MAXWELL solid,
+//                               relaxed to the secular static state
+//                               under the Heaviside load
+//                               (SetMaxwellFluid; doc/
+//                               static_fluid_core.tex): backward Euler
+//                               on the memory displacement, stopping on
+//                               the SOLID increment, beta escalation on
+//                               stagnation — no gauge refinements, no
+//                               slip machinery, works on any geometry;
+//   6. slip                     the slipping fluid-solid interface
 //                               (doc/slip_interface.tex): broken
 //                               displacement pair, single-valued zeta,
 //                               the normal-jump constraint by penalty +
 //                               augmented Lagrangian — every AL iteration
 //                               is a full projected-MINRES solve of the
 //                               three-block system;
-//   6. slip broken-zeta         the same with the potential broken too
+//   7. slip broken-zeta         the same with the potential broken too
 //                               (per-region zeta, the scalar-jump
 //                               constraint joining the AL loop): the
 //                               four-block system, no fluid extension.
@@ -52,7 +62,7 @@
 // (EnableGaugeKKT), which is not competitive (doc/slip_interface.tex,
 // "Why the fluid gauge stays a penalty").
 //
-// All six must agree on the observables (the mantle displacement, modulo
+// All seven must agree on the observables (the mantle displacement, modulo
 // rigid modes) at the level of the discretisations; the table prints the
 // unknowns, the outer iterations, the wall times and that agreement, so
 // the cost of each architecture can be read against what it buys:
@@ -562,7 +572,41 @@ int main(int argc, char* argv[]) {
            referential.Displacement());
   }
 
-  // --- 5 & 6: the slipping interface, single-valued and broken zeta.
+  // --- 5: the Maxwell (secular) relaxation of the referential problem.
+  {
+    auto t0 = Clock::now();
+    LinearQuasiStaticReferentialSelfGravitatingProblem maxwell(
+        &fes_body, &fes_zeta, bg.Rheology(), bg.Density(), kG, kDtNDegree);
+    auto Evac = NewRadialVacuumExtension(fes_body, fes_b, 1.0, r_out);
+    maxwell.SetPrescribedVacuumExtension(fes_b, *Evac);
+    Array<int> fluid_marker(body.attributes.Max());
+    fluid_marker = 0;
+    fluid_marker[0] = 1;
+    // The artificial core shear: the mantle's value (the relaxed state
+    // is exactly independent of it; it only sets the clock).
+    ConstantCoefficient mu_core_art(model.mu(1.0));
+    maxwell.SetMaxwellFluid(fluid_marker, mu_core_art);
+    maxwell.SetSurfaceLoad(sigma, surface_body);
+    maxwell.SetRelTol(rel_tol);
+    maxwell.AssembleForce(0.0);
+    const double setup = Seconds(t0);
+    t0 = Clock::now();
+    maxwell.Solve();
+    const auto& rep = maxwell.MaxwellReport();
+    if (Root()) {
+      std::cout << "  maxwell relaxation: " << rep.steps << " steps, "
+                << rep.operators << " operators, stop = " << rep.stop
+                << ", solid increment " << std::scientific
+                << std::setprecision(1) << rep.delta_returned
+                << std::defaultfloat << "\n";
+    }
+    record("maxwell relaxed / projected MINRES",
+           TrueSize(fes_body) + TrueSize(fes_zeta),
+           static_cast<int>(maxwell.TotalIterations()), setup, Seconds(t0),
+           maxwell.Displacement());
+  }
+
+  // --- 6 & 7: the slipping interface, single-valued and broken zeta.
   if (with_slip) {
     for (const bool broken : {false, true}) {
       auto t0 = Clock::now();
@@ -627,7 +671,9 @@ int main(int argc, char* argv[]) {
     } else if (std::string(model_name) == "fc") {
       std::cout << "Model fc (N^2 < 0): the spreads are physics — the "
                    "welded architectures suppress a non-removable slip, "
-                   "Dahlen commits to the secular interface closure, and "
+                   "Dahlen commits to the secular interface closure, the "
+                   "Maxwell relaxation reaches the welded limit (or its "
+                   "band-level plateau) through time alone, and "
                    "the full-elastic answers carry the non-neutral "
                    "resolution floor (rerun at another order and watch "
                    "them move while the physics stays inside the band; "
