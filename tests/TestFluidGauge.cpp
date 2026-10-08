@@ -340,7 +340,7 @@ TEST(FluidGauge, MaxwellRelaxationMatchesLame2D) {
   LinearQuasiStaticTractionProblem prob(c.fes.get(), *c.rheology, traction,
                                         c.surface);
   ConstantCoefficient mu_core(kMuS);
-  prob.SetMaxwellFluid(c.fluid, mu_core);
+  prob.SetFluid(c.fluid, mu_core);  // the default (Maxwell) treatment
   prob.SetMassWeightedGauge();
   prob.AssembleForce(0.0);
   EXPECT_TRUE(prob.Solve());

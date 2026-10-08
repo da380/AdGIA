@@ -64,8 +64,17 @@ class Diffeomorphism;
  * solvers).
  */
 struct MaxwellRelaxationOptions {
-  mfem::real_t dt_over_tau = 3.0;  ///< @f$\beta@f$ of the physical phase
-  mfem::real_t tol = 1e-8;  ///< relative solid-increment convergence stop
+  /** @brief @f$\beta@f$ of the physical phase. The default 3 resolves
+   * the plateau — the safe choice at @f$N^2 < 0@f$, where larger
+   * values coarsen the plateau and degrade the returned band-level
+   * answer (measured on the fc model: quality falls monotonically
+   * from beta 3 to 100). On @f$N^2 \ge 0@f$ models 10–30 is
+   * typically ~3x cheaper and converges with no escalation at all;
+   * ~100 overshoots (the per-step shear starts too small for the
+   * preconditioner). */
+  mfem::real_t dt_over_tau = 3.0;
+  mfem::real_t tol = 1e-6;  ///< relative solid-increment convergence stop
+                            ///< (well below mesh error; tighten per need)
   mfem::real_t stag_ratio = 0.9;  ///< stagnation: delta > ratio * previous
   int min_steps = 4;    ///< steps before stagnation may fire
   int max_steps = 200;  ///< hard cap on relaxation steps
@@ -76,6 +85,16 @@ struct MaxwellRelaxationOptions {
    * iterations stops the escalation there (the best state is
    * returned); 0 disables. */
   mfem::real_t iter_budget = 20.0;
+  /** @brief Inexact stepping: each step's linear solve runs at
+   * relative tolerance inexact * (the previous solid increment),
+   * clamped to [the problem's RelTol(), inexact_max] — a fixed-point
+   * iteration is self-correcting, so solver digits beyond the next
+   * increment are wasted. The returned state is always polished by
+   * one full-tolerance solve, so the endpoint accuracy is the
+   * problem's RelTol() either way. 0 runs every step at full
+   * tolerance (the reproducible-path mode). */
+  mfem::real_t inexact = 0.1;
+  mfem::real_t inexact_max = 1e-3;  ///< loosest per-step tolerance
   bool plateau_mode = false;     ///< stop at the physical plateau instead
 };
 
@@ -98,8 +117,10 @@ struct MaxwellRelaxationReport {
   int stag_step = -1;  ///< step where stagnation fired (-1: never)
   const char* stop = "none";
   mfem::real_t delta_returned = -1.0;  ///< increment of the state returned
+                                       ///< (before the final polish solve)
   std::vector<mfem::real_t> t_over_tau;   ///< physical time per step
   std::vector<mfem::real_t> delta_solid;  ///< relative solid increment
+  std::vector<long> iterations;  ///< linear-solver iterations per step
 };
 
 /**
@@ -254,12 +275,55 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
     td_vcoefs_.push_back(&c);
   }
 
-  // --- gauged fluid regions -------------------------------------------------
+  // --- fluid regions --------------------------------------------------------
+  //
+  // One engine, two treatments. Both treatments of an inviscid fluid
+  // region run on the same deviatoric fluid operator eps mu Q (the
+  // rheology supplies the fluid's bulk modulus; the shear term below
+  // is artificial), read two ways:
+  //   - MAXWELL RELAXATION (SetFluid with MaxwellRelaxationOptions,
+  //     the DEFAULT and the general method): eps mu Q is the per-step
+  //     effective shear of an artificial Maxwell solid, and Solve()
+  //     relaxes the Heaviside-loaded system to the secular static
+  //     response (doc/static_fluid_core.tex, "The Maxwell relaxation
+  //     method"). Honest at any stratification, any geometry, any
+  //     number of fluid regions.
+  //   - GAUGE PENALTY (SetFluid with GaugePenaltyOptions): eps mu Q is
+  //     a relabelling-gauge fixing term, removed by iterated Tikhonov
+  //     refinement (doc/gauged_fluid.md). The cheaper specialist for
+  //     neutral or near-neutral models with a validated epsilon
+  //     window; also the Maxwell treatment's own per-step engine (the
+  //     refinement iteration is exactly the beta -> infinity limit of
+  //     the Maxwell step).
 
   /** @brief The gauge penalty's form: Deviatoric (a fluid: dev-dev shear)
    * or Harmonic (a vacuum-extension field: full-gradient
    * @f$\epsilon\mu_g\nabla u:\nabla v@f$). */
   enum class GaugePenalty { Deviatoric, Harmonic };
+
+  /** @brief Options of the gauge-penalty fluid treatment (see the
+   * block comment above and SetGaugedFluid for the full story). */
+  struct GaugePenaltyOptions {
+    mfem::real_t epsilon = 1e-2;  ///< penalty factor
+    int refinements = 2;          ///< Tikhonov refinements per Solve()
+    GaugePenalty form = GaugePenalty::Deviatoric;
+  };
+
+  /** @brief Declare the marked element attributes an inviscid fluid
+   * region, treated by MAXWELL RELAXATION — the default general
+   * method. Equivalent to SetMaxwellFluid(); see there for the
+   * parameters and the algorithm. */
+  void SetFluid(const mfem::Array<int>& fluid_marker,
+                mfem::Coefficient& mu_scale,
+                const MaxwellRelaxationOptions& opts = {},
+                Diffeomorphism* map = nullptr);
+
+  /** @brief As above, but treated by the GAUGE PENALTY with Tikhonov
+   * refinements. Equivalent to SetGaugedFluid(); see there. */
+  void SetFluid(const mfem::Array<int>& fluid_marker,
+                mfem::Coefficient& mu_scale,
+                const GaugePenaltyOptions& opts,
+                Diffeomorphism* map = nullptr);
 
   /**
    * @brief Treat the marked element attributes as an inviscid fluid in the
@@ -568,8 +632,17 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   /** @brief Global max of @f$|x_i|@f$ over maxwell_solid_tdofs_. */
   mfem::real_t MaxOverSolidDofs(const mfem::Vector& x) const;
 
-  /** @brief Assemble the operator if it is out of date. */
+  /** @brief Assemble the operator if it is out of date. When only the
+   * gauge epsilon has changed since the last full assembly, the update
+   * is the cheap RescaleGaugeOperator() path. */
   void EnsureOperator();
+
+  /** @brief Fast operator update when only the gauge epsilon changed:
+   * the physical @f$A@f$ is untouched, and @f$\epsilon Q@f$ and
+   * @f$A + \epsilon Q@f$ are rebuilt from the cached unit-penalty
+   * matrix by scaled sparse addition — no FEM reassembly. Ends with
+   * SetupSolver() on the new operator. */
+  void RescaleGaugeOperator();
 
   mfem::FiniteElementSpace* fes_;
 #ifdef MFEM_USE_MPI
@@ -629,6 +702,11 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   std::unique_ptr<mfem::BilinearForm> q_form_, a_solve_form_;
   mfem::OperatorHandle Q_, A_solve_;
   std::vector<mfem::real_t> gauge_residuals_;
+  // The unit-epsilon penalty matrix, cached at each full assembly so
+  // that an epsilon-only change avoids FEM reassembly
+  // (RescaleGaugeOperator).
+  mfem::OperatorHandle gauge_Q_unit_;
+  bool eps_only_dirty_ = false;
 
   // Maxwell (secular) fluid mode: rides the gauge-penalty machinery with
   // epsilon = 1/(1 + beta); see SetMaxwellFluid.

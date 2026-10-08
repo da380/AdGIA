@@ -599,6 +599,10 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
   mfem::OperatorHandle A_aug_;
   mfem::OperatorHandle A_aug_clean_;  // clean-A augmentation of the
                                       // SetGaugePreconditionerOnly mode
+  // Keep-alive: the fold matrix the REUSED preconditioner was built on
+  // (SetupSolver rebuilds A_aug_ on every call; without the capture a
+  // reused AMG would reference the freed previous one).
+  mfem::OperatorHandle prec_A_aug_;
 
   // loads
   std::unique_ptr<mfem::LinearForm> b_zeta_;

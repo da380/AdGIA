@@ -102,11 +102,14 @@ void LinearQuasiStaticProblemBase::ClearRelaxationWeights() {
 }
 
 void LinearQuasiStaticProblemBase::AssembleOperator() {
-  if (a_ && prec_ && !prec_stale_ && prec_reuse_ > 1.0 && !prec_form_) {
+  if (a_ && prec_ && !prec_stale_ && prec_reuse_ > 1.0 && !prec_form_ &&
+      !prec_A_.Ptr()) {
     // The preconditioner was built on the current solver matrix and stays on
     // it: keep that form and matrix alive while the preconditioner is
     // reused. (Later reassemblies leave prec_form_ alone; their matrices
     // go.) With a gauged fluid the solver matrix is the regularised one.
+    // A matrix already captured by the RescaleGaugeOperator fast path
+    // (prec_A_ set with no form behind it) is likewise left alone.
     if (a_solve_form_) {
       prec_form_ = std::move(a_solve_form_);
       prec_A_ = A_solve_;
@@ -124,6 +127,7 @@ void LinearQuasiStaticProblemBase::AssembleOperator() {
   a_->FormSystemMatrix(ess_tdof_list_, A_);
   a_solve_form_.reset();
   q_form_.reset();
+  gauge_Q_unit_.Clear();
   if (HasGaugedFluid()) {
 #ifdef MFEM_USE_MPI
     if (pfes_) {
@@ -143,10 +147,58 @@ void LinearQuasiStaticProblemBase::AssembleOperator() {
     a_solve_form_->AddDomainIntegrator(gauge_integ_, gauge_marker_);
     a_solve_form_->Assemble();
     a_solve_form_->FormSystemMatrix(ess_tdof_list_, A_solve_);
+    // Cache the unit-epsilon penalty so that an epsilon-only change
+    // (SetGaugeEpsilon; the Maxwell escalation) skips FEM reassembly.
+    const real_t eps_now = gauge_eps_coef_->constant;
+#ifdef MFEM_USE_MPI
+    if (pfes_) {
+      auto* Qh = Q_.As<HypreParMatrix>();
+      gauge_Q_unit_.Reset(mfem::Add(1.0 / eps_now, *Qh, 0.0, *Qh), true);
+    } else
+#endif
+    {
+      auto* Qu = new SparseMatrix(*Q_.As<SparseMatrix>());
+      *Qu *= 1.0 / eps_now;
+      gauge_Q_unit_.Reset(Qu, true);
+    }
   }
   SetupSolver(HasGaugedFluid() ? A_solve_ : A_);
   operator_dirty_ = false;
+  eps_only_dirty_ = false;
   assemblies_++;
+}
+
+void LinearQuasiStaticProblemBase::RescaleGaugeOperator() {
+  MFEM_ASSERT(HasGaugedFluid() && gauge_Q_unit_.Ptr(),
+              "RescaleGaugeOperator: no cached unit penalty.");
+  // Keep the matrix the (reused) preconditioner was built on alive, as
+  // in AssembleOperator; here there is no form to move, the matrix
+  // handle alone is captured.
+  if (a_ && prec_ && !prec_stale_ && prec_reuse_ > 1.0 && !prec_form_ &&
+      !prec_A_.Ptr()) {
+    prec_A_ = A_solve_;
+    prec_A_.SetOperatorOwner(A_solve_.OwnsOperator());
+    A_solve_.SetOperatorOwner(false);
+  }
+  const real_t eps = gauge_eps_coef_->constant;
+#ifdef MFEM_USE_MPI
+  if (pfes_) {
+    auto* Qu = gauge_Q_unit_.As<HypreParMatrix>();
+    Q_.Reset(mfem::Add(eps, *Qu, 0.0, *Qu), true);
+    A_solve_.Reset(mfem::Add(1.0, *A_.As<HypreParMatrix>(), eps, *Qu),
+                   true);
+  } else
+#endif
+  {
+    auto* Qu = gauge_Q_unit_.As<SparseMatrix>();
+    auto* q = new SparseMatrix(*Qu);
+    *q *= eps;
+    Q_.Reset(q, true);
+    A_solve_.Reset(mfem::Add(1.0, *A_.As<SparseMatrix>(), eps, *Qu),
+                   true);
+  }
+  SetupSolver(A_solve_);
+  eps_only_dirty_ = false;
 }
 
 void LinearQuasiStaticProblemBase::WarnGaugeContraction() const {
@@ -184,6 +236,8 @@ void LinearQuasiStaticProblemBase::NoteIterations(int its) {
 void LinearQuasiStaticProblemBase::EnsureOperator() {
   if (operator_dirty_) {
     AssembleOperator();
+  } else if (eps_only_dirty_) {
+    RescaleGaugeOperator();
   }
 }
 
@@ -212,12 +266,30 @@ bool LinearQuasiStaticProblemBase::Solve() {
   return ok;
 }
 
+void LinearQuasiStaticProblemBase::SetFluid(
+    const Array<int>& fluid_marker, Coefficient& mu_scale,
+    const MaxwellRelaxationOptions& opts, Diffeomorphism* map) {
+  SetMaxwellFluid(fluid_marker, mu_scale, opts, map);
+}
+
+void LinearQuasiStaticProblemBase::SetFluid(
+    const Array<int>& fluid_marker, Coefficient& mu_scale,
+    const GaugePenaltyOptions& opts, Diffeomorphism* map) {
+  // Dispatches through the virtual SetGaugedFluid, so a derived
+  // class's covariant assembly (or refusal) applies.
+  SetGaugedFluid(fluid_marker, mu_scale, opts.epsilon, opts.refinements,
+                 opts.form, map);
+}
+
 void LinearQuasiStaticProblemBase::SetGaugedFluid(
     const Array<int>& fluid_marker, Coefficient& mu_gauge, real_t epsilon,
     int refinements, GaugePenalty penalty, Diffeomorphism* map) {
   MFEM_VERIFY(fluid_marker.Size() == fes_->GetMesh()->attributes.Max(),
               "SetGaugedFluid: the fluid marker must be sized to "
               "attributes.Max().");
+  // Configuring the gauge treatment directly switches the Maxwell
+  // mode off (SetMaxwellFluid re-raises the flag after this call).
+  maxwell_ = false;
   MFEM_VERIFY(epsilon > 0.0, "SetGaugedFluid: epsilon must be positive.");
   // A supplied map — the identity included — switches the Deviatoric
   // branch to ElasticTensorIntegrator(C, map), so that the two sides of a
@@ -277,6 +349,8 @@ void LinearQuasiStaticProblemBase::ClearGaugedFluid() {
   a_solve_form_.reset();
   Q_.Clear();
   A_solve_.Clear();
+  gauge_Q_unit_.Clear();
+  eps_only_dirty_ = false;
   gauge_residuals_.clear();
   operator_dirty_ = true;
 }
@@ -284,8 +358,16 @@ void LinearQuasiStaticProblemBase::ClearGaugedFluid() {
 void LinearQuasiStaticProblemBase::SetGaugeEpsilon(real_t epsilon) {
   MFEM_VERIFY(gauge_eps_coef_, "SetGaugeEpsilon: no gauged fluid is set.");
   MFEM_VERIFY(epsilon > 0.0, "SetGaugeEpsilon: epsilon must be positive.");
+  if (gauge_eps_coef_->constant == epsilon) {
+    return;
+  }
   gauge_eps_coef_->constant = epsilon;
-  operator_dirty_ = true;
+  if (gauge_Q_unit_.Ptr()) {
+    // Only the penalty scale changed: the cheap rescale path serves.
+    eps_only_dirty_ = true;
+  } else {
+    operator_dirty_ = true;
+  }
 }
 
 real_t LinearQuasiStaticProblemBase::GaugeEpsilon() const {
@@ -474,6 +556,18 @@ bool LinearQuasiStaticProblemBase::MaxwellSolve() {
   real_t ref = 0.0, prev_delta = -1.0, t_phys = 0.0;
   bool stagnated = false, ok = true, first = true;
 
+  // Inexact stepping: the fixed-point iteration is self-correcting, so
+  // each step is solved only to a fraction of the increment it
+  // produces. The solver objects stay configured at the base
+  // tolerance (set_operator restores it around every setup); the
+  // loosening acts purely through the per-solve absolute tolerance of
+  // SetWarmStartTolerance, and each step VALIDATES its tolerance
+  // against the increment it measured, tightening and redoing (a
+  // warm-started continuation of the same solve) when the increment
+  // was not resolved — without this, a warm start under a loose
+  // tolerance can return unmoved and fake convergence.
+  const real_t rel_tol_base = rel_tol_;
+
   // The best state seen (lowest solid increment at a successful step).
   // The iterate is a function of (w, eps) plus a warm start, so the
   // checkpoint is the memory vector alone and a restore is one warm
@@ -482,14 +576,18 @@ bool LinearQuasiStaticProblemBase::MaxwellSolve() {
   Vector w_best;
   real_t eps_best = -1.0, delta_best = infinity(), beta_best = 0.0;
 
-  // Switch the per-step operator to eps (reassembling), and rebuild the
-  // reduced system around the current u_ so warm starts survive.
+  // Switch the per-step operator to eps (rescale or reassembly), and
+  // rebuild the reduced system around the current u_ so warm starts
+  // survive.
   auto set_operator = [&](real_t eps) {
     if (!first) {
       a_->RecoverFEMSolution(X_, rhs_, *u_);
     }
+    const real_t rt = rel_tol_;
+    rel_tol_ = rel_tol_base;  // solvers are configured at base tolerance
     SetGaugeEpsilon(eps);
     EnsureOperator();
+    rel_tol_ = rt;
     rhs_ = *b_;
     rhs_ += increment_;
     a_->FormLinearSystem(ess_tdof_list_, *u_, rhs_, A_, X_, B_, 1);
@@ -524,8 +622,41 @@ bool LinearQuasiStaticProblemBase::MaxwellSolve() {
         first = false;
       }
     }
+    // The step, with its tolerance validated against the increment it
+    // measures (the stopping metric: the relative per-step SOLID
+    // displacement increment — the fluid displacement does not
+    // converge at N^2 != 0 and is not monitored).
     const long its_before = total_its_;
-    if (!step_solve()) {
+    real_t tol_n = o.inexact > 0.0
+                       ? std::min(std::max(o.inexact * delta, rel_tol_base),
+                                  o.inexact_max)
+                       : rel_tol_base;
+    bool step_ok;
+    for (;;) {
+      rel_tol_ = tol_n;
+      step_ok = step_solve();
+      if (!step_ok) {
+        break;
+      }
+      if (n == 1) {
+        ref = MaxOverSolidDofs(X_);
+        if (ref <= 0.0) {
+          ref = 1.0;
+        }
+        delta = infinity();
+      } else {
+        r = X_;
+        r -= prev;
+        delta = MaxOverSolidDofs(r) / ref;
+      }
+      if (tol_n <= rel_tol_base ||
+          tol_n <= std::max(o.inexact * delta, rel_tol_base)) {
+        break;  // the increment is resolved at this tolerance
+      }
+      tol_n = std::max(rel_tol_base,
+                       std::min(tol_n / 10.0, o.inexact * delta));
+    }
+    if (!step_ok) {
       // The iterative solver's conditioning floor (the per-step fluid
       // shear got too small for the preconditioner). The best state is
       // restored below; the failed increment is discarded.
@@ -540,24 +671,10 @@ bool LinearQuasiStaticProblemBase::MaxwellSolve() {
     w.Add(beta, X_);
     w *= 1.0 / (1.0 + beta);
     t_phys += beta;
-
-    // The stopping metric: the relative per-step SOLID displacement
-    // increment (the fluid displacement does not converge at N^2 != 0
-    // and is not monitored).
-    if (n == 1) {
-      ref = MaxOverSolidDofs(X_);
-      if (ref <= 0.0) {
-        ref = 1.0;
-      }
-      delta = infinity();
-    } else {
-      r = X_;
-      r -= prev;
-      delta = MaxOverSolidDofs(r) / ref;
-    }
     prev = X_;
     maxwell_report_.t_over_tau.push_back(t_phys);
     maxwell_report_.delta_solid.push_back(delta);
+    maxwell_report_.iterations.push_back(its_step);
 
     if (delta < delta_best) {
       delta_best = delta;
@@ -613,6 +730,8 @@ bool LinearQuasiStaticProblemBase::MaxwellSolve() {
 
   maxwell_report_.stop = stop;
   maxwell_report_.delta_returned = delta;
+  rel_tol_ = rel_tol_base;  // the endgame runs at full tolerance
+  bool polished = false;
   if (stop != std::string("converged") && stop != std::string("stagnation")) {
     if (eps_best < 0.0) {
       ok = false;  // no successful step to return
@@ -620,14 +739,22 @@ bool LinearQuasiStaticProblemBase::MaxwellSolve() {
       // The escalation overshot (noise injection past the solver's
       // floor, or drift at the cap): restore the best state with one
       // warm re-solve — one more backward Euler step from (w_best,
-      // eps_best), which only improves on it.
+      // eps_best), which only improves on it, at full tolerance.
       w = w_best;
       set_operator(eps_best);
       ok = step_solve() && ok;
       w.Add(beta_best, X_);
       w *= 1.0 / (1.0 + beta_best);
       maxwell_report_.delta_returned = delta_best;
+      polished = true;
     }
+  }
+  if (!polished && o.inexact > 0.0 && eps_best >= 0.0) {
+    // Inexact steps built the state: polish it with one full-tolerance
+    // backward Euler step, so the endpoint accuracy is RelTol()'s.
+    ok = step_solve() && ok;
+    w.Add(beta, X_);
+    w *= 1.0 / (1.0 + beta);
   }
   maxwell_report_.steps =
       static_cast<int>(maxwell_report_.t_over_tau.size());

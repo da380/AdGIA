@@ -26,7 +26,7 @@
        well-posedness, the Dahlen closure, and what dissipation\\
        selects}
 \author{AdGIA method notes}
-\date{7 October 2026}
+\date{7--8 October 2026}
 
 \begin{document}
 \maketitle
@@ -78,6 +78,24 @@ The short version:
   next to, say, three-dimensional viscosity variations. The interest
   of the result is conceptual, and for bodies or observables where
   core stratification itself is the target (\S\ref{sec:persp}).
+\item The dissipative selection is not only the theory but now the
+  \emph{method}: making the fluid regions an artificial Maxwell
+  solid, applying the load as a step, and relaxing until the
+  \emph{solid} stops moving computes the secular response with
+  nothing but welded elastic solves --- no fluid machinery, no slip
+  interface, no kernel handling beyond rigid modes, on any geometry.
+  Implemented generically in the problem layer and, after
+  optimisation, \emph{cheaper} in three dimensions than the welded
+  static solve it replaces (\S\ref{sec:maxwell}).
+\item This inverts the ranking of the formulations. Free slip is the
+  $\eta \to 0$ asymptotics of a viscous boundary layer --- correct
+  about the interface once the layer has collapsed, silent about the
+  interior physics that collapses it --- and the measurements show
+  the slip classes wandering in the same $N^2$ band as welded: both
+  are finite idealisations of the dissipative completion. The
+  relaxation is the formulation-faithful computation; Dahlen is its
+  converged spherical closure; welded and slip are its
+  approximants, retained as instruments (\S\ref{sec:persp}).
 \end{enumerate}
 
 \noindent
@@ -432,9 +450,8 @@ forbids it and loses existence. \emph{(Exact references to be added.)}
 \section{What dissipation selects, and routes to regularisation}
 \label{sec:regular}
 
-\emph{Status: argued, and the Maxwell route now measured in two
-dimensions (\S\ref{sec:evidence}); the three-dimensional runs are
-pending.}
+\emph{Status: argued; the Maxwell route is implemented and measured
+(\S\ref{sec:maxwell}).}
 Statics is the degenerate limit of some evolution, and the
 non-existence of \S\ref{sec:nonexist} is the statement that the
 limit depends on physics that statics has discarded. Restoring any of
@@ -457,46 +474,20 @@ it gives a well-posed problem:
   adiabatic equations at all --- it is selected by the dissipative
   processes, however weak they are.
 \item \textbf{A Maxwell viscoelastic core.} Give the core's shear
-  response a Maxwell element (artificial shear modulus $\mu$,
+  response a Maxwell element (artificial shear modulus $\mu_c$,
   relaxation time $\tau$), apply the load as a step, and relax. At
   every Laplace frequency $s > 0$ the moduli are shifted and the
-  problem is uniformly well posed. \emph{Run, in two dimensions}
-  (\S\ref{sec:evidence}); the measured trajectory refines the naive
-  picture in one important way. Three timescales appear, not two:
-  (i) the elastic/deviatoric relaxation, at a small multiple of
-  $\tau$; (ii) a \emph{configurational} cascade --- the viscous
-  gravitational relaxation modes of the artificial fluid, with rates
-  $\lambda/\eta$ set by the weak residual stiffness $\lambda$ of
-  near-equipotential core motions, measured down to $10^{-4}\mu/\eta$,
-  so physical times of $10^{4}\,\tau$ and beyond; and (iii), for
-  $N^2 < 0$ only, genuine Rayleigh--Taylor \emph{growth}, whose rates
-  are of the same viscous-flow type. The ratio of (iii) to (ii) is
-  $\mu$-independent, of order $|N^2| L / g$: for an unstably
-  stratified core the dissipative completion is itself unstable, the
-  secular endpoint is a saddle response, and the finite-time plateau
-  is smeared by exactly the ambiguity band --- on the violently
-  non-neutral \code{fluid\_core\_2d} ($|N^2|$ of order the scale,
-  rates (iii) $\approx 300\times$ the slowest of (ii)) there is no
-  plateau window at all, and the stagnation-detected plateau sits
-  $3.5\,\%$ from the secular values. None of this obstructs the
-  computation: backward Euler is L-stable, so escalating the step
-  $\Delta t/\tau$ once the solid increment stagnates (continuation of
-  the per-step core shear $\mu/(1+\Delta t/\tau) \to 0$, i.e.\ toward
-  the static welded solve with a vanishing deviatoric pin) stabilises
-  every growing mode and converges in $25$--$35$ elastic solves to
-  the discrete relaxed solution, which lands inside the band
-  ($1.2\times10^{-3}$ from Dahlen at the test resolution) and is
-  exactly independent of $\mu$, $\tau$ and the schedule. At
-  $N^2 = 0$ the route joins the welded/slip/Dahlen null at
-  $10^{-10}$, and on a stably stratified core ($N^2 > 0$) it
-  converges with no growth phase. The stopping metric is the
-  \emph{solid} displacement increment only --- precisely the fields
-  the secular limit defines; the fluid displacement does not converge
-  and must not be monitored. Its real significance is aspherical
-  (\S\ref{sec:dahlen}): where the Dahlen elimination does not survive
-  the geometry, time-stepping a weakly dissipative core is the only
-  practical route to the secular response, and it works on any mesh
-  this library can build.
+  problem is uniformly well posed, and the $t \to \infty$ limit is
+  the secular state. This is no longer a thought experiment: it is
+  the library's production static method, with its own section
+  (\S\ref{sec:maxwell}) covering the algorithm, the measured
+  trajectory structure (which refines the naive ``relax for a few
+  $\tau$'' picture in important ways), the implementation and the
+  costs. Its significance is sharpest asphericaly
+  (\S\ref{sec:dahlen}): where the Dahlen elimination does not
+  survive the geometry, the dissipative route is the only practical
+  computation of the secular response, and it works on any mesh this
+  library can build.
 \item \textbf{What does not work.} A static Tikhonov pin (the small
   deviatoric regulariser $\eps_{\mathrm{reg}}$ of the numerical
   tools) makes each solve unique but selects nothing physical: the
@@ -521,6 +512,149 @@ the gap between any regularised transient and the secular endpoint is
 controlled by the stratification, vanishes identically at
 $N^2 = 0$, and is invisible in formulations that never resolve the
 closure choice explicitly.
+
+%=====================================================================
+\section{The Maxwell relaxation method}
+\label{sec:maxwell}
+
+\emph{Status: implemented (serial and parallel, every problem class),
+measured in one, two and three dimensions; the algorithmic facts
+below are measured unless marked otherwise.} The idea
+(8 October): since every dissipative completion selects the secular
+answer, run one. Make the fluid regions an artificial Maxwell solid,
+apply the load as a Heaviside step, and time-step the quasi-static
+system by backward Euler until the \emph{solid} region stops moving.
+There is then no fluid region in the formulation at all: every step
+is a welded solid-elastic solve, the null space is the rigid modes,
+and the construction is indifferent to geometry, to the number of
+fluid regions, and to their connectivity.
+
+\paragraph{The iteration.} The problem is linear, so the Maxwell
+internal variable is the deviatoric fluid strain of a \emph{memory
+displacement} $\bw$, and one backward Euler step is
+\begin{equation}
+  (A + \gamma \hat Q)\,\bu_{n+1} = f + \gamma \hat Q\,\bw_n,
+  \qquad
+  \bw_{n+1} = \frac{\bw_n + \beta\,\bu_{n+1}}{1+\beta},
+  \qquad
+  \beta = \frac{\Delta t}{\tau},\quad
+  \gamma = \frac{\mu_c}{1+\beta},
+  \label{eq:maxwell-step}
+\end{equation}
+with $A$ the static operator at zero fluid shear and $\hat Q$ the
+unit-shear deviatoric fluid stiffness. Three structural facts do all
+the work. (i) The fixed point is $\bw = \bu$ with $A\bu = f$: the
+relaxed ($\eps \to 0$ welded) solution, \emph{exactly} independent of
+$\mu_c$, $\tau$ and the step schedule --- backward Euler's first-order
+inaccuracy lives entirely in the transient, which is discarded
+(measured: the limit moves by $10^{-13}$ under $\mu_c \times 4$ and
+$\Delta t$ halving). (ii) The per-step operator \emph{is} the
+gauge-penalty machinery's $A + \eps\mu_c Q$ at
+$\eps = 1/(1+\beta)$, and the $\beta \to \infty$ limit of
+\eqref{eq:maxwell-step} is precisely the iterated Tikhonov gauge
+refinement of \code{doc/gauged\_fluid.md} --- so the long-observed
+semi-convergence of those refinements on non-neutral cores was the
+Rayleigh--Taylor growth below, seen without knowing it. (iii)
+Backward Euler is L-stable, so \emph{escalating} $\beta$ damps every
+growing mode: large steps turn the integrator into a continuation
+solver ($\gamma \to 0$, toward the static welded solve with a
+vanishing deviatoric pin). An A-stable, more accurate scheme
+(Crank--Nicolson) would ring instead of damping and has no such
+endgame.
+
+\paragraph{The measured trajectory.} Three timescales, not two:
+an \emph{elastic} phase contracting at $(1+\beta)^{-1}$ per step
+($\sim$10 steps); a \emph{configurational} cascade --- viscous
+gravitational relaxation of the artificial fluid, rates
+$\lambda/\eta$ with $\lambda$ the weak residual stiffness of
+near-equipotential motions, measured down to $10^{-4}\mu_c/\eta$, so
+physical times $10^4\,\tau$ and beyond (``a few Maxwell times''
+completes only the elastic phase); and, at $N^2 < 0$ only, genuine
+Rayleigh--Taylor \emph{growth} of the same viscous-flow type. The
+ratio of growth to cascade rates is $\mu_c$-independent, of order
+$|N^2|L/g$: on the violently non-neutral \code{fluid\_core}
+($\approx 300\times$) there is no plateau window at all and the
+finite-time plateau is smeared by exactly the ambiguity band
+($3.5\,\%$ at the two-dimensional test resolution), while at
+$N^2 \ge 0$ there is no growth phase and the relaxation is clean.
+The plateau width is a time-domain display of the band; its
+degeneracy is the physics, not the method.
+
+\paragraph{The schedule.} The stopping metric is the relative
+per-step \emph{solid} displacement increment only --- precisely the
+fields the secular limit defines; the fluid displacement does not
+converge at $N^2 \ne 0$ and must not be monitored. The stepper runs
+a physical phase at $\beta_0$ (default $3$, which resolves the
+plateau --- at $N^2 < 0$ larger $\beta_0$ degrades the returned
+band-level answer monotonically, measured to the point of
+uselessness at $\beta_0 = 100$; at $N^2 \ge 0$, $\beta_0 = 10$--$30$
+is $\sim 3\times$ cheaper and converges with no escalation at all),
+detects stagnation of the increment, and then escalates $\beta$
+geometrically. Three safeguards, each forced by a measured failure:
+\begin{itemize}
+\item \textbf{Best-state checkpointing.} The iterate is a function
+  of $(\bw, \eps)$ plus a warm start, so the lowest-increment state
+  seen is checkpointed by its memory vector alone and restored by
+  one warm re-solve. On any terminal event --- iterative-solver
+  conditioning floor, escalation cap, step cap --- the best state is
+  returned: when the solver cannot complete the continuation, the
+  method degrades \emph{to the physical plateau}, the honest
+  band-level answer. (Blind escalation instead injected near-kernel
+  noise through the conditioning wall and made the answer worse.)
+\item \textbf{Increment-validated inexact stepping.} A fixed-point
+  iteration is self-correcting, so each step is solved only to a
+  fraction (default $0.1$) of the increment it produces, and the
+  returned state is polished by one full-tolerance step. The
+  validation is essential, not cosmetic: under a loose tolerance a
+  warm-started solve can return \emph{unmoved}, faking a zero
+  increment and false convergence; each step therefore checks its
+  tolerance against the increment it measured and tightens and
+  redoes (a warm continuation of the same solve) until the increment
+  is resolved.
+\item \textbf{An iteration budget} ($20\times$ the first step's
+  count) stops escalated solves from burning thousands of iterations
+  probing past the conditioning floor.
+\end{itemize}
+
+\paragraph{Implementation.} \code{SetMaxwellFluid} on
+\code{LinearQuasiStaticProblemBase}: because the per-step operator is
+the gauge machinery's, every problem class inherits the mode through
+its existing virtual solve --- the referential self-gravitating
+class carries its potential block through unchanged --- in one
+serial-and-parallel code path. The escalation updates the operator
+by scaled sparse addition of a cached unit-penalty matrix (no finite
+element reassembly per level). Validated against the exact
+gravity-free Lam\'e solutions with a fluid core
+(\code{tests/TestFluidGauge*}), and as the seventh architecture of
+\code{examples/self\_gravitating\_solvers}.
+
+\paragraph{Cost (measured, degree-2 load).} On the two-dimensional
+two-layer disc (order 2, $6474$ unknowns, serial, aw model): the
+welded referential solve takes $1738$ MINRES iterations; the
+relaxation $9910$ at $\beta_0 = 3$ and $3338$ at $\beta_0 = 30$
+(converged, one operator); the slipping architectures $3700$--$4300$
+(single-valued) and $17\,000$--$20\,000$ (broken-$\zeta$). On the
+three-dimensional two-layer ball (order 1, $7874$ unknowns, 8 MPI
+ranks): welded referential $425$ iterations; the relaxation $539$ at
+$\beta_0 = 3$ and $\mathbf{314}$ at $\beta_0 = 30$ --- \emph{cheaper
+than the welded static solve it replaces}, while handling the fluid
+core with no slip machinery, no gauge refinements, and no fluid null
+space. On \code{fluid\_core} the solver stops honestly at the
+plateau (increment floor $7\times10^{-4}$), landing between the
+welded and slip answers --- inside the band, as it must.
+
+\paragraph{The one caveat.} The discrete limit is the \emph{welded}
+limit: the fluid-relabelling suppression of the welded space is
+inherited, not released (the welded--slip gap at $N^2 \ne 0$ is
+gravitational, not elastic, so zero shear does not remove it). At
+$\ell \ge 2$ this is inside the band and immaterial; at degree 1 on
+non-neutral cores the three-dimensional evidence suggests a
+$\sim 2\,\%$ effect riding the soft core--shell translation. The
+referee for that question is not the slip formulation (itself a
+band-wanderer) but the converged spherical secular answer --- Dahlen
+--- and the measurement (relaxation versus Dahlen at degree 1 on
+\code{fluid\_core}, with \code{aw\_core} as the null control) is the
+one open item between this method and unqualified production status.
 
 %=====================================================================
 \section{Numerical evidence}
@@ -608,6 +742,30 @@ translation; see \code{doc/planning/open\_issues.md}).
 \section{Perspective, implications, and open items}
 \label{sec:persp}
 
+\paragraph{The status of the formulations.} Where this leaves the
+method stack deserves stating plainly, because it inverts the
+ranking this project carried into October. Free slip is not physics
+as such: it is the $\eta \to 0$ asymptotics of a viscous boundary
+layer --- correct about what the \emph{interface} looks like once
+the layer has collapsed, and silent about the \emph{interior}
+relaxation that collapses it. The measurements agree: at
+$N^2 \ne 0$ the slip classes wander in the same resolution band as
+welded (freeing the interface kinematics does nothing for the
+interior slaving), while Dahlen converges because its closure
+contains \emph{both} halves of the dissipative limit, interface and
+interior. The hierarchy is therefore: the \textbf{dissipative
+completion} (the Maxwell relaxation, \S\ref{sec:maxwell}) is the
+formulation-faithful computation, on any geometry; \textbf{Dahlen}
+is its converged closed form, available spherically;
+\textbf{welded} and \textbf{slip} are finite idealisations of it
+--- one representing the layer within a continuous space, the other
+replacing it by its zero-width limit --- retained as instruments:
+the slip machinery measures the relabelling decomposition (the
+welded-suppression question of \S\ref{sec:maxwell}), and the
+welded gauged classes are the relaxation's own per-step engine.
+At $N^2 = 0$ all of this collapses to a single answer, which is the
+standing null test.
+
 \paragraph{Timescales.} The secular regime is entered when the
 loading timescale exceeds the buoyancy timescale. Even a core
 stratification as feeble as $N^2 \sim 10^{-15}\,\mathrm{s}^{-2}$ ---
@@ -674,20 +832,12 @@ for the dynamic conjecture as well.
 (i) The functional-analytic theorem behind
 Claim~\ref{claim:nonexist} and Proposition~\ref{prop:quotient} ---
 now best approached jointly with the dynamic argument above.
-(ii) The Maxwell-core route as a production method: now implemented
-generically in the problem layer (\code{SetMaxwellFluid} on
-\code{LinearQuasiStaticProblemBase} — the per-step operator is the
-gauge machinery's $A + \epsilon\mu_c Q$ at $\epsilon = 1/(1+\beta)$,
-so every problem class inherits it, serial and parallel), and
-verified against the exact gravity-free Lam\'e solutions and as a
-seventh architecture of \code{examples/self\_gravitating\_solvers}:
-on the aw twin it joins the null (2-D and 3-D meshes, serial and
-parallel; on fc it stops honestly at the band-level plateau when the
-iterative solver cannot complete the continuation). Remaining: the
-benchmark-grade Love-number runs on \code{fluid\_core}/%
-\code{aw\_core}, per-step tolerance economy, and the aspherical
-demonstration --- a static fluid-core response on a geometry where
-no other method exists.
+(ii) The Maxwell relaxation (\S\ref{sec:maxwell}): the degree-1
+adjudication (relaxation versus Dahlen on \code{fluid\_core},
+\code{aw\_core} as control --- the one open question between the
+method and unqualified production status), the benchmark-grade
+Love-number runs, and the aspherical demonstration --- a static
+fluid-core response on a geometry where no other method exists.
 (iii) A clean measurement of the band's $N^2$-scaling (the
 one-dimensional tool does each point in seconds; the current
 two-resolution estimator is noisy).

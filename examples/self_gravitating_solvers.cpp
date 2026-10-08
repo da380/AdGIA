@@ -309,6 +309,7 @@ int main(int argc, char* argv[]) {
   double rel_tol = 1e-10;
   double G_opt = -1.0;
   double kappa_scale = 1.0;
+  double mx_beta0 = -1.0;
   bool visualization = true;
 
   OptionsParser args(argc, argv);
@@ -334,6 +335,9 @@ int main(int argc, char* argv[]) {
                  "Slip normal-jump penalty.");
   args.AddOption(&kALIterations, "-nal", "--al-iterations",
                  "Augmented-Lagrangian iterations (slip).");
+  args.AddOption(&mx_beta0, "-mxbeta", "--maxwell-beta0",
+                 "Maxwell physical-phase dt/tau (< 0: the library "
+                 "default).");
   args.AddOption(&with_slip, "-slip", "--slip", "-no-slip", "--no-slip",
                  "Run the slipping-interface architectures as well.");
   args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
@@ -585,7 +589,11 @@ int main(int argc, char* argv[]) {
     // The artificial core shear: the mantle's value (the relaxed state
     // is exactly independent of it; it only sets the clock).
     ConstantCoefficient mu_core_art(model.mu(1.0));
-    maxwell.SetMaxwellFluid(fluid_marker, mu_core_art);
+    MaxwellRelaxationOptions mx_opts;
+    if (mx_beta0 > 0.0) {
+      mx_opts.dt_over_tau = mx_beta0;
+    }
+    maxwell.SetFluid(fluid_marker, mu_core_art, mx_opts);
     maxwell.SetSurfaceLoad(sigma, surface_body);
     maxwell.SetRelTol(rel_tol);
     maxwell.AssembleForce(0.0);

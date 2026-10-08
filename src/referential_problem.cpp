@@ -1763,6 +1763,22 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetupSolver(OperatorHan
   // same extension fold where one is set.
   const bool prec_only = GaugePreconditionerOnly();
   Operator* A_uu = A.Ptr();
+  // A_aug_ is rebuilt below; if the preconditioner is being REUSED it
+  // still references the current one, which must stay alive until the
+  // next preconditioner rebuild (cf. the base class's capture of the
+  // unfolded matrix in AssembleOperator).
+  const int setups_before = prec_setups_;
+  if ((ext_EtGE_
+#ifdef MFEM_USE_MPI
+       || pext_EtGE_
+#endif
+       ) &&
+      prec_ && !prec_stale_ && prec_reuse_ > 1.0 && !prec_A_aug_.Ptr() &&
+      A_aug_.Ptr()) {
+    prec_A_aug_ = A_aug_;
+    prec_A_aug_.SetOperatorOwner(A_aug_.OwnsOperator());
+    A_aug_.SetOperatorOwner(false);
+  }
   if (ext_EtGE_) {
     A_aug_.Clear();
     A_aug_.Reset(Add(*A.As<SparseMatrix>(), *ext_EtGE_), true);
@@ -1791,6 +1807,11 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetupSolver(OperatorHan
     if (prec_only) {
       A_uu = A_.Ptr();
     }
+  }
+  if (prec_setups_ != setups_before) {
+    // A fresh preconditioner sits on the current A_aug_: the captured
+    // predecessor can go.
+    prec_A_aug_.Clear();
   }
 
   block_op_ = std::make_unique<BlockOperator>(offsets_);
