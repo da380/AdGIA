@@ -521,9 +521,17 @@ makes the cases and runs the sweeps; \code{plot.py} and
 \bottomrule
 \end{tabular}
 \end{center}
-\noindent Restrictions recorded in the code: the referential family
-(\code{referential}, \code{maxwell}) and the slipping methods solve
-load problems only, so no tidal numbers and no radial profiles. The slipping methods support one fluid core inside one solid
+\noindent Restrictions recorded in the code: the welded referential
+family (\code{referential}, \code{maxwell}) now solves the tidal
+problems as well as the loads — its tide is the displacement-row load
+$-\int_B\tilde\rho\,(\nabla\psi\circ\varphi_e)\cdot v\,dV$, the
+physical tidal gradient composed with the equilibrium mapping, by the
+chain rule the same thing as the $F_e^{-T}$-transformed gradient of
+the referential tidal potential. The slipping methods still solve load
+problems only (they carry no tidal force on the fluid displacement
+row, and \code{SetTidalLoad} refuses rather than under-drive a fluid
+core by tens of percent); the referential family and the slipping
+methods write no radial profiles. The slipping methods support one fluid core inside one solid
 shell, so no inner core. The Eulerian pair have two linear solvers, block
 MINRES (\code{-s 1}) and Schur-complement CG (\code{-s 0}); the referential
 family uses its own projected MINRES. In shift runs
@@ -949,16 +957,17 @@ AND 3 (regenerated 8 October on one fresh mesh, all columns sharing
 it): the Dahlen path with \code{-cmb full}, \code{nomass},
 \code{uniform}, \code{winkler}, the gauged method, and the Maxwell
 relaxation (\code{-method maxwell} — its first inner-core model, a
-configuration the slipping classes never supported; load columns only,
-the referential family having no tidal forcing yet). The relative
+configuration the slipping classes never supported; its tidal columns
+use the referential tidal load of \S\ref{sec:formulations}). The relative
 change against \code{full} on the same mesh and order is the
 approximation error alone, the mesh bias cancelled; pyslfp is the
 external reference.
 
-\paragraph{Loading.} Load $h'$; the three approximation columns give
-$|\Delta h'|/|h'_{\text{full}}|$ except at $l=0$, where absolute values are
-given because the comparison with \code{full} is not meaningful there.
-Order 2:
+\paragraph{Loading.} Load $h'$; every column gives the method's own
+value (the approximation error of a Dahlen variant is its deviation
+from \code{full} on the same mesh, which cancels the mesh bias; the
+prose below quotes those deviations). Bold marks the two $l=0$ entries
+that agree with pyslfp. Order 2:
 \begin{center}
 \small
 \begin{tabular}{@{}crrrrrrr@{}}
@@ -966,11 +975,11 @@ Order 2:
 $l$ & \code{pyslfp} $h'$ & \code{full} & \code{nomass} & \code{uniform} & \code{winkler} & gauged & maxwell \\
 \midrule
 0 & $-0.1318$ & $-1.0080$ & $+0.3640$ & $+0.3556$ & $-0.2071$ & $\mathbf{-0.1317}$ & $\mathbf{-0.1305}$ \\
-1 & $-1.2849$ & $-1.2933$ & 0.08\,\% & 1.4\,\% & 15\,\% & $-1.2838$ & $-1.2806$ \\
-2 & $-0.9906$ & $-0.9954$ & 0.08\,\% & 0.08\,\% & 7.9\,\% & $-0.9976$ & $-0.9734$ \\
-3 & $-1.0493$ & $-1.0480$ & 0.01\,\% & 0.01\,\% & 2.6\,\% & $-1.0478$ & $-1.0323$ \\
-4 & $-1.0511$ & $-1.0470$ & 0.00\,\% & 0.00\,\% & 0.75\,\% & $-1.0468$ & $-1.0337$ \\
-5 & $-1.0834$ & $-1.0793$ & 0.00\,\% & 0.00\,\% & 0.21\,\% & $-1.0791$ & $-1.0658$ \\
+1 & $-1.2849$ & $-1.2933$ & $-1.2922$ & $-1.2747$ & $-1.1034$ & $-1.2838$ & $-1.2804$ \\
+2 & $-0.9906$ & $-0.9954$ & $-0.9962$ & $-0.9962$ & $-1.0745$ & $-0.9976$ & $-0.9734$ \\
+3 & $-1.0493$ & $-1.0480$ & $-1.0481$ & $-1.0481$ & $-1.0751$ & $-1.0478$ & $-1.0323$ \\
+4 & $-1.0511$ & $-1.0470$ & $-1.0470$ & $-1.0470$ & $-1.0549$ & $-1.0468$ & $-1.0337$ \\
+5 & $-1.0834$ & $-1.0793$ & $-1.0793$ & $-1.0793$ & $-1.0815$ & $-1.0791$ & $-1.0658$ \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -982,11 +991,11 @@ Order 3:
 $l$ & \code{pyslfp} $h'$ & \code{full} & \code{nomass} & \code{uniform} & \code{winkler} & gauged & maxwell \\
 \midrule
 0 & $-0.1318$ & $-1.0110$ & $+0.3621$ & $+0.3538$ & $-0.2065$ & $\mathbf{-0.1316}$ & $\mathbf{-0.1316}$ \\
-1 & $-1.2849$ & $-1.2845$ & 0.84\,\% & 1.0\,\% & 12\,\% & $-1.2841$ & $-1.2837$ \\
-2 & $-0.9906$ & $-0.9904$ & 0.08\,\% & 0.08\,\% & 8.0\,\% & $-0.9901$ & $-0.9896$ \\
-3 & $-1.0493$ & $-1.0486$ & 0.01\,\% & 0.01\,\% & 2.6\,\% & $-1.0484$ & $-1.0476$ \\
-4 & $-1.0511$ & $-1.0499$ & 0.00\,\% & 0.00\,\% & 0.77\,\% & $-1.0499$ & $-1.0489$ \\
-5 & $-1.0834$ & $-1.0819$ & 0.00\,\% & 0.00\,\% & 0.22\,\% & $-1.0819$ & $-1.0808$ \\
+1 & $-1.2849$ & $-1.2845$ & $-1.2737$ & $-1.2715$ & $-1.1297$ & $-1.2841$ & $-1.2837$ \\
+2 & $-0.9906$ & $-0.9904$ & $-0.9912$ & $-0.9912$ & $-1.0698$ & $-0.9901$ & $-0.9896$ \\
+3 & $-1.0493$ & $-1.0486$ & $-1.0487$ & $-1.0487$ & $-1.0760$ & $-1.0484$ & $-1.0476$ \\
+4 & $-1.0511$ & $-1.0499$ & $-1.0499$ & $-1.0499$ & $-1.0580$ & $-1.0499$ & $-1.0489$ \\
+5 & $-1.0834$ & $-1.0819$ & $-1.0819$ & $-1.0819$ & $-1.0842$ & $-1.0819$ & $-1.0808$ \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -1020,7 +1029,7 @@ $l$ & \code{pyslfp} $h'$ & \code{full} & \code{nomass} & \code{uniform} & \code{
   in the log), and the deeper-converged degrees still sit on the welded
   path's order-2 discretisation of this geometry — all of it gone at
   order 3.
-\item The approximation percentages are nearly identical between the
+\item The approximation deviations are nearly identical between the
   orders (and to the previous mesh): computed against \code{full} on
   the same mesh, they are physics, not discretisation. The one
   exception is degree 1, where the \code{full} value itself moves
@@ -1028,33 +1037,33 @@ $l$ & \code{pyslfp} $h'$ & \code{full} & \code{nomass} & \code{uniform} & \code{
   it.
 \end{itemize}
 
-\paragraph{Tides.} The same runs, tidal numbers; relative change against
-\code{full} (Eulerian methods only: the referential family — maxwell
-included — has no tidal forcing yet; \S\ref{sec:formulations}). Order 2,
-then order 3:
+\paragraph{Tides.} The same runs, tidal numbers; every column the
+method's own value, as above (the maxwell tide is the referential
+displacement-row load; the slipping methods carry no tidal force on
+the fluid row and are absent). Order 2, then order 3:
 \begin{center}
 \small
-\begin{tabular}{@{}cc rrrrrr@{}}
+\begin{tabular}{@{}cc rrrrrrr@{}}
 \toprule
-$l$ & & \code{pyslfp} & \code{full} & \code{nomass} & \code{uniform} & \code{winkler} & gauged \\
+$l$ & & \code{pyslfp} & \code{full} & \code{nomass} & \code{uniform} & \code{winkler} & gauged & maxwell \\
 \midrule
-2 & $h$ & 0.60412 & 0.60555 & 1.09\,\% & 1.09\,\% & 28\,\% & 0.60814 \\
-2 & $k$ & 0.29844 & 0.29902 & 2.51\,\% & 2.51\,\% & 42\,\% & 0.30042 \\
-3 & $h$ & 0.28829 & 0.28693 & 0.21\,\% & 0.21\,\% & 12\,\% & 0.28690 \\
-3 & $k$ & 0.09215 & 0.09162 & 0.78\,\% & 0.78\,\% & 21\,\% & 0.09162 \\
-4 & $h$ & 0.17508 & 0.17358 & 0.05\,\% & 0.05\,\% & 5.0\,\% & 0.17351 \\
-4 & $k$ & 0.04146 & 0.04102 & 0.26\,\% & 0.26\,\% & 8.7\,\% & 0.04100 \\
-5 & $h$ & 0.12893 & 0.12767 & 0.01\,\% & 0.01\,\% & 1.8\,\% & 0.12764 \\
-5 & $k$ & 0.02435 & 0.02401 & 0.08\,\% & 0.08\,\% & 3.1\,\% & 0.02400 \\
+2 & $h$ & 0.60412 & 0.60555 & 0.59895 & 0.59895 & 0.43592 & 0.60814 & 0.59571 \\
+2 & $k$ & 0.29844 & 0.29902 & 0.29151 & 0.29151 & 0.17283 & 0.30042 & 0.29581 \\
+3 & $h$ & 0.28829 & 0.28693 & 0.28634 & 0.28634 & 0.25140 & 0.28690 & 0.28446 \\
+3 & $k$ & 0.09215 & 0.09162 & 0.09090 & 0.09090 & 0.07241 & 0.09162 & 0.09163 \\
+4 & $h$ & 0.17508 & 0.17358 & 0.17349 & 0.17349 & 0.16489 & 0.17351 & 0.17269 \\
+4 & $k$ & 0.04146 & 0.04102 & 0.04091 & 0.04091 & 0.03744 & 0.04100 & 0.04141 \\
+5 & $h$ & 0.12893 & 0.12767 & 0.12766 & 0.12765 & 0.12538 & 0.12764 & 0.12728 \\
+5 & $k$ & 0.02435 & 0.02401 & 0.02399 & 0.02399 & 0.02326 & 0.02400 & 0.02451 \\
 \midrule
-2 & $h$ & 0.60412 & 0.60378 & 1.09\,\% & 1.09\,\% & 28\,\% & 0.60343 \\
-2 & $k$ & 0.29844 & 0.29830 & 2.52\,\% & 2.52\,\% & 42\,\% & 0.29814 \\
-3 & $h$ & 0.28829 & 0.28812 & 0.21\,\% & 0.21\,\% & 12\,\% & 0.28806 \\
-3 & $k$ & 0.09215 & 0.09210 & 0.78\,\% & 0.78\,\% & 21\,\% & 0.09208 \\
-4 & $h$ & 0.17508 & 0.17498 & 0.05\,\% & 0.05\,\% & 5.1\,\% & 0.17496 \\
-4 & $k$ & 0.04146 & 0.04144 & 0.26\,\% & 0.26\,\% & 8.9\,\% & 0.04144 \\
-5 & $h$ & 0.12893 & 0.12888 & 0.01\,\% & 0.01\,\% & 1.9\,\% & 0.12888 \\
-5 & $k$ & 0.02435 & 0.02434 & 0.08\,\% & 0.08\,\% & 3.2\,\% & 0.02434 \\
+2 & $h$ & 0.60412 & 0.60378 & 0.59719 & 0.59719 & 0.43492 & 0.60343 & 0.60399 \\
+2 & $k$ & 0.29844 & 0.29830 & 0.29079 & 0.29079 & 0.17257 & 0.29814 & 0.29838 \\
+3 & $h$ & 0.28829 & 0.28812 & 0.28752 & 0.28752 & 0.25236 & 0.28806 & 0.28817 \\
+3 & $k$ & 0.09215 & 0.09210 & 0.09138 & 0.09138 & 0.07274 & 0.09208 & 0.09211 \\
+4 & $h$ & 0.17508 & 0.17498 & 0.17490 & 0.17490 & 0.16610 & 0.17496 & 0.17498 \\
+4 & $k$ & 0.04146 & 0.04144 & 0.04133 & 0.04133 & 0.03777 & 0.04144 & 0.04145 \\
+5 & $h$ & 0.12893 & 0.12888 & 0.12887 & 0.12887 & 0.12649 & 0.12888 & 0.12887 \\
+5 & $k$ & 0.02435 & 0.02434 & 0.02432 & 0.02432 & 0.02355 & 0.02434 & 0.02435 \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -1071,7 +1080,11 @@ six digits on tides: for $l\ge2$ the term they differ by integrates to
 nearly nothing. A CMB condition taken from a loading context, where it is
 safe, imports a percent-level systematic into tidal computations (for
 example combined GIA and body-tide inversions) that the full or gauged
-treatments remove.
+treatments remove. The maxwell column behaves exactly as on loading: at
+order 3 it sits on the full/gauged cluster ($h_2$ within $4\times10^{-4}$
+of \code{full}, $k_5$ equal to pyslfp to the digits shown), while at
+order 2 it carries its honest-stop offset ($\sim1.6\,\%$ in $h_2$),
+gone at order 3.
 
 \paragraph{Degree 2 at a glance} (deviation from \code{full}, all six
 numbers; order-independent to the digits shown — orders 2 and 3

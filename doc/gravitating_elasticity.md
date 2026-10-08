@@ -323,6 +323,26 @@ the exact energy.
 
 Structural remarks:
 
+- **Loads.** A surface mass load `σ` (per referential area) loads the
+  potential row alone, `ℓ_ζ(χ) = −∫_∂B σ χ dS`; the Eulerian
+  `−∫σ∇Φ₀·v` is absorbed by the change of variables. An applied
+  (tidal) potential `ψ` loads the *displacement* row alone,
+  `ℓ_u(v) = −∫_B ρ̃ (∇ψ∘φ_e)·v dV` (`SetTidalLoad`): by the chain rule
+  `F_e⁻ᵀ∇_X(ψ∘φ_e) = (∇ψ)∘φ_e`, so composing the physical tidal
+  gradient with the equilibrium mapping
+  (`HarmonicExpansionGradientCoefficient` takes the mapping directly)
+  is the same as differentiating the referential tidal potential —
+  the "factor of `F⁻ᵀ`" is already folded in. Nothing loads the
+  potential row: the mixed class's tidal `−M_F Ψ` term belongs to its
+  fluid-density unknown, which this formulation does not carry. The
+  centrifugal potential's force fits the same door (its degree-0 `r²`
+  part is not an interior harmonic — pass its gradient as plain
+  analytic data; `TidalCrossCheck2D` checks exactly this piece), and
+  the `u`-dependent rotational feedback `ψ′ = −(Ω×x)·(ω×x)` (Maitra &
+  Al-Attar 2024) will enter as an operator term on the same substrate.
+  The slipping subclasses refuse the tidal load for now: their fluid
+  displacement row carries no tidal force, and a solid-row-only load
+  under-drives a fluid core by tens of percent (measured).
 - **At `φ_e = id`, hydrostatic**: `H = Du`, `a_e = 1`, `w = g₀ = ∇Φ₀`,
   and the coupling reduces to
   `⟨[(div u)1 − Du − Duᵀ]∇Φ₀, ∇χ⟩/4πG`. The system is related to the
