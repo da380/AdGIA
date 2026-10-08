@@ -339,8 +339,8 @@ int main(int argc, char* argv[]) {
         for (const int a : fluid_attributes) {
           gauge_marker[a - 1] = 1;
         }
-        side->problem->SetGaugedFluid(gauge_marker, *side->kappa_c, kEps,
-                                      kRefinements);
+        side->problem->SetFluid(gauge_marker, *side->kappa_c,
+                                GaugePenaltyOptions{kEps, kRefinements});
       }
     } else {
       side->fes_f = std::make_unique<ParFiniteElementSpace>(

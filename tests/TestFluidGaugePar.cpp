@@ -126,7 +126,7 @@ void RunCase(int dim, double tol, const std::string& label) {
 
   VectorFunctionCoefficient traction(dim, UniformPressureTraction);
   LinearQuasiStaticTractionProblem prob(&fes, rheology, traction, surface);
-  prob.SetGaugedFluid(fluid, mu_gauge, 1.0e-2, 3);
+  prob.SetFluid(fluid, mu_gauge, GaugePenaltyOptions{1.0e-2, 3});
   prob.SetMassWeightedGauge();
   prob.AssembleForce(0.0);
   Check(prob.Solve() ? 0.0 : 1.0, 0.0, label + " solve");
@@ -200,7 +200,7 @@ void RunMaxwellCase(int dim, double tol, const std::string& label) {
   MaxwellRelaxationOptions opts;
   opts.beta_max = 1.0e3;  // test economy, as in the serial suite
   opts.tol = 1.0e-6;
-  prob.SetMaxwellFluid(fluid, mu_core, opts);
+  prob.SetFluid(fluid, mu_core, opts);
   prob.SetMassWeightedGauge();
   prob.AssembleForce(0.0);
   Check(prob.Solve() ? 0.0 : 1.0, 0.0, label + " solve");

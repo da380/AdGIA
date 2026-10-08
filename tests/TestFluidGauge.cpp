@@ -181,7 +181,7 @@ TEST(FluidGauge, UniformPressureMatchesLame2D) {
   VectorFunctionCoefficient traction(2, UniformPressureTraction);
   LinearQuasiStaticTractionProblem prob(c.fes.get(), *c.rheology, traction,
                                         c.surface);
-  prob.SetGaugedFluid(c.fluid, c.mu_gauge, kEps, kRefine);
+  prob.SetFluid(c.fluid, c.mu_gauge, GaugePenaltyOptions{kEps, kRefine});
   // The exact radial solution has zero net momentum; the Euclidean
   // true-dof gauge differs from it by a mesh-asymmetry rigid translation.
   prob.SetMassWeightedGauge();
@@ -200,7 +200,7 @@ TEST(FluidGauge, UniformPressureMatchesLame3D) {
   VectorFunctionCoefficient traction(3, UniformPressureTraction);
   LinearQuasiStaticTractionProblem prob(c.fes.get(), *c.rheology, traction,
                                         c.surface);
-  prob.SetGaugedFluid(c.fluid, c.mu_gauge, kEps, kRefine);
+  prob.SetFluid(c.fluid, c.mu_gauge, GaugePenaltyOptions{kEps, kRefine});
   prob.SetMassWeightedGauge();
   prob.AssembleForce(0.0);
   EXPECT_TRUE(prob.Solve());
@@ -229,7 +229,7 @@ TEST(FluidGauge, MatchesCondensedCavity2D) {
   // Gauged problem on the body.
   LinearQuasiStaticTractionProblem gauged(c.fes.get(), *c.rheology, traction,
                                           c.surface);
-  gauged.SetGaugedFluid(c.fluid, c.mu_gauge, kEps, kRefine);
+  gauged.SetFluid(c.fluid, c.mu_gauge, GaugePenaltyOptions{kEps, kRefine});
   gauged.AssembleForce(0.0);
   EXPECT_TRUE(gauged.Solve());
 
@@ -300,7 +300,7 @@ TEST(FluidGauge, ObservablesIndependentOfEpsilon2D) {
       SubMesh::CreateFromDomain(*c.parent, solid_attr));
   FiniteElementSpace fes_s(solid.get(), c.fec.get(), 2);
 
-  prob.SetGaugedFluid(c.fluid, c.mu_gauge, 1.0e-2, 5);
+  prob.SetFluid(c.fluid, c.mu_gauge, GaugePenaltyOptions{1.0e-2, 5});
   prob.AssembleForce(0.0);
   EXPECT_TRUE(prob.Solve());
   GridFunction u1(&fes_s);
@@ -370,7 +370,7 @@ TEST(FluidGauge, MaxwellRelaxationMatchesLame3D) {
   MaxwellRelaxationOptions opts;
   opts.beta_max = 1.0e3;  // shorten the escalation probe (test economy)
   opts.tol = 1.0e-6;      // the assertion level below (test economy)
-  prob.SetMaxwellFluid(c.fluid, mu_core, opts);
+  prob.SetFluid(c.fluid, mu_core, opts);
   prob.SetMassWeightedGauge();
   prob.AssembleForce(0.0);
   EXPECT_TRUE(prob.Solve());
@@ -403,7 +403,7 @@ TEST(FluidGauge, MaxwellMatchesGaugedOnSolid2D) {
 
   LinearQuasiStaticTractionProblem gauged(c.fes.get(), *c.rheology, traction,
                                           c.surface);
-  gauged.SetGaugedFluid(c.fluid, c.mu_gauge, kEps, kRefine);
+  gauged.SetFluid(c.fluid, c.mu_gauge, GaugePenaltyOptions{kEps, kRefine});
   gauged.AssembleForce(0.0);
   EXPECT_TRUE(gauged.Solve());
   GridFunction u_g(&fes_s);
@@ -412,7 +412,7 @@ TEST(FluidGauge, MaxwellMatchesGaugedOnSolid2D) {
   LinearQuasiStaticTractionProblem maxwell(c.fes.get(), *c.rheology,
                                            traction, c.surface);
   ConstantCoefficient mu_core(kMuS);
-  maxwell.SetMaxwellFluid(c.fluid, mu_core);
+  maxwell.SetFluid(c.fluid, mu_core);
   maxwell.AssembleForce(0.0);
   EXPECT_TRUE(maxwell.Solve());
   GridFunction u_m(&fes_s);
@@ -435,7 +435,7 @@ TEST(FluidGauge, RegularizedMatrixIsSymmetric2D) {
   VectorFunctionCoefficient traction(2, PressureTraction);
   LinearQuasiStaticTractionProblem prob(c.fes.get(), *c.rheology, traction,
                                         c.surface);
-  prob.SetGaugedFluid(c.fluid, c.mu_gauge, kEps, kRefine);
+  prob.SetFluid(c.fluid, c.mu_gauge, GaugePenaltyOptions{kEps, kRefine});
   const auto& A = prob.RegularizedMatrix();
   const auto* As = A.As<SparseMatrix>();
   std::unique_ptr<SparseMatrix> At(Transpose(*As));

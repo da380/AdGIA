@@ -1107,8 +1107,8 @@ int main(int argc, char* argv[]) {
       Array<int> fluid_marker(model.body->attributes.Max());
       fluid_marker = 0;
       fluid_marker[0] = 1;
-      welded.SetGaugedFluid(fluid_marker, mu_gauge, gauge_eps,
-                            gauge_refinements);
+      welded.SetFluid(fluid_marker, mu_gauge,
+                      GaugePenaltyOptions{gauge_eps, gauge_refinements});
       welded.SetSurfaceLoad(sigma, Marker(*model.body, kSurface));
       welded.SetRelTol(rel_tol);
       t0 = Clock::now();

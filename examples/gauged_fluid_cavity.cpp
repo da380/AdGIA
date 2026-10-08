@@ -4,7 +4,8 @@
 // The gauged treatment of an inviscid fluid region on the simplest problem
 // that has one: a purely elastic body with a fluid core under an external
 // surface pressure, with no gravity. A demonstration of the gauged-fluid
-// option of LinearQuasiStaticProblemBase (SetGaugedFluid; the method is in
+// option of LinearQuasiStaticProblemBase (SetFluid with GaugePenaltyOptions;
+// the method is in
 // doc/gauged_fluid.md, "Gauge fixing: penalty plus iterated refinement").
 //
 // The fluid carries a displacement like the solid, with its physical bulk
@@ -233,7 +234,7 @@ int main(int argc, char* argv[]) {
   // The gauged fluid: mu_g of the order of the fluid's own modulus, and the
   // mass-weighted rigid gauge (the exact solution has zero net momentum).
   ConstantCoefficient mu_gauge(kKappaFluid);
-  problem.SetGaugedFluid(fluid, mu_gauge, eps, nref);
+  problem.SetFluid(fluid, mu_gauge, GaugePenaltyOptions{eps, nref});
   problem.SetMassWeightedGauge();
 
   problem.AssembleForce(0.0);

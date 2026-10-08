@@ -194,7 +194,7 @@ struct FluidRegion {
  * **Gauged fluid regions** (the alternative to Dahlen's treatment above;
  * see doc/gauged_fluid.md). Instead of FluidRegions, the fluid attributes
  * join the displacement SubMesh: the rheology gives them their bulk modulus
- * with zero shear, @p density covers them, and SetGaugedFluid() adds the
+ * with zero shear, @p density covers them, and SetFluid() adds the
  * gauge shear penalty and the Tikhonov refinement of
  * LinearQuasiStaticProblemBase. Every operator of this class then extends
  * over the fluid on its own: the coupling and the gravity terms integrate
@@ -203,7 +203,7 @@ struct FluidRegion {
  * inconsistency never arise, because the class sees no FluidRegions. The
  * refinement solves the regularised coupled system against the physical
  * residual @f$[\epsilon Q\,\delta_u; 0]@f$ with zero potential load and no
- * tidal term (GaugeRefine() override). The two treatments agree exactly
+ * tidal term through the shared refinement driver. The two treatments agree exactly
  * when the fluid is materially barotropic, i.e. its bulk modulus satisfies
  * the Adams-Williamson condition @f$\kappa = \rho^2 g / |d\rho/dr|@f$
  * (@f$N^2 = 0@f$); for a two-parameter fluid the static
@@ -232,7 +232,7 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
    * semi-convergence — and the gauge is fixed as the minimum-Q-energy
    * representative. The auxiliary field @f$v@f$ is determined up to
    * @f$\ker A@f$, which MINRES on the consistent system tolerates.
-   * Internally reuses SetGaugedFluid() at @f$\epsilon = 1@f$ (zero
+   * Internally configures the fluid engine at @f$\epsilon = 1@f$ (zero
    * refinements), whose @f$A+Q@f$ assembly doubles as the
    * preconditioner of both displacement slots (of the primal slot only
    * when @p mgw_prec is set). The KKT solve is always MINRES; the call is
@@ -242,7 +242,7 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
    * doc/quasi_static_models.tex, "The exact-gauge KKT alternative").
    *
    * @param fluid_marker Element attributes of the fluid (as for
-   * SetGaugedFluid()).
+   * SetFluid()).
    * @param mu_gauge Gauge shear scale @f$\mu_g@f$; not owned, must outlive
    * the problem.
    * @param mgw_prec Precondition the multiplier displacement slot by the
@@ -439,25 +439,17 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
    * "background_potential" (the latter two on the body). */
   void RegisterFields(mfem::DataCollection& dc) override;
 
-  /** @brief Gauged-fluid mode: requires an empty FluidRegion list (the
-   * fluid lives inside the displacement SubMesh; see the class notes).
-   * Arguments as LinearQuasiStaticProblemBase::SetGaugedFluid(). */
-  void SetGaugedFluid(
-      const mfem::Array<int>& fluid_marker, mfem::Coefficient& mu_gauge,
-      mfem::real_t epsilon, int refinements = 2,
-      GaugePenalty penalty = GaugePenalty::Deviatoric,
-      Diffeomorphism* map = nullptr) override;
+  /** @brief Gauged-fluid mode requires an empty FluidRegion list (the
+   * fluid lives inside the displacement SubMesh; see the class notes):
+   * verified here, on the engine's configuration hook. */
+  void ConfigureFluidOperator(const mfem::Array<int>& marker,
+                              mfem::Coefficient& mu, mfem::real_t epsilon,
+                              GaugePenalty form,
+                              Diffeomorphism* map) override;
 
  protected:
   void SetupSolver(mfem::OperatorHandle& A) override;
   bool SolveLinearSystem(const mfem::Vector& B, mfem::Vector& X) override;
-
-  /** @brief Tikhonov refinement on the coupled system: each step solves the
-   * regularised block system for @f$[\epsilon Q\,\delta_u; 0]@f$ (zero
-   * potential load, no tidal term), cold-started, and accumulates the
-   * potential alongside the displacement; the accumulated pair is left as
-   * the next Solve()'s warm start. */
-  bool GaugeRefine(mfem::Vector& X) override;
 
  private:
   /** @brief @f$S x = A_{uu} x - C A_{\phi\phi}^{-1} C^T x@f$. */

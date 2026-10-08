@@ -60,7 +60,8 @@ INK, MUTED, GRID, SURFACE = "#0b0b0b", "#52514e", "#e4e3df", "#fcfcfb"
 #: figure of every family (talk_figures.py uses the same map), so that a
 #: series keeps its colour whatever else is drawn beside it.
 VARIANT_COLOURS = {"dahlen": "#2a78d6", "gauged": "#eb6834",
-                   "referential": "#eda100", "slip": "#008300",
+                   "referential": "#eda100", "maxwell": "#7a2ea8",
+                   "slip": "#008300",
                    "slip_broken": "#4a3aa7", "nomass": "#1baf7a",
                    "uniform": "#e87ba4", "winkler": "#e34948"}
 #: The marker of each finite-element order.

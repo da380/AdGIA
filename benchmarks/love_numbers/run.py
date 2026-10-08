@@ -78,13 +78,15 @@ def main() -> None:
     p.add_argument("--dtn-degree", type=int, default=16)
     p.add_argument("--rel-tol", type=float, default=1e-10)
     p.add_argument("--method", nargs="+",
-                   choices=("dahlen", "gauged", "referential", "slip",
-                            "slip_broken"),
+                   choices=("dahlen", "gauged", "referential", "maxwell",
+                            "slip", "slip_broken"),
                    default=["dahlen"],
                    help="the formulations to run, one results file each: "
                         "dahlen (Eulerian, fluid eliminated), gauged "
                         "(Eulerian, gauged fluid), referential (welded "
-                        "gauged referential), slip and slip_broken (the "
+                        "gauged referential), maxwell (the referential "
+                        "problem with the Maxwell-relaxed fluid — the "
+                        "secular route), slip and slip_broken (the "
                         "slipping interface, single-valued or broken "
                         "zeta); non-dahlen results carry the method as a "
                         "suffix")

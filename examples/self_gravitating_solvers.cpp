@@ -36,7 +36,7 @@
 //                               core an artificial MAXWELL solid,
 //                               relaxed to the secular static state
 //                               under the Heaviside load
-//                               (SetMaxwellFluid; doc/
+//                               (SetFluid; doc/
 //                               static_fluid_core.tex): backward Euler
 //                               on the memory displacement, stopping on
 //                               the SOLID increment, beta escalation on
@@ -310,6 +310,7 @@ int main(int argc, char* argv[]) {
   double G_opt = -1.0;
   double kappa_scale = 1.0;
   double mx_beta0 = -1.0;
+  int mx_anderson = -1;
   bool visualization = true;
 
   OptionsParser args(argc, argv);
@@ -337,6 +338,10 @@ int main(int argc, char* argv[]) {
                  "Augmented-Lagrangian iterations (slip).");
   args.AddOption(&mx_beta0, "-mxbeta", "--maxwell-beta0",
                  "Maxwell physical-phase dt/tau (< 0: the library "
+                 "default).");
+  args.AddOption(&mx_anderson, "-mxaa", "--maxwell-anderson",
+                 "Anderson-mixing depth on the Maxwell memory map "
+                 "(0: plain backward Euler; < 0: the library "
                  "default).");
   args.AddOption(&with_slip, "-slip", "--slip", "-no-slip", "--no-slip",
                  "Run the slipping-interface architectures as well.");
@@ -538,8 +543,8 @@ int main(int argc, char* argv[]) {
     Array<int> gauge_marker(body.attributes.Max());
     gauge_marker = 0;
     gauge_marker[0] = 1;
-    gauged.SetGaugedFluid(gauge_marker, mu_gauge, kEps,
-                          kGaugeRefinements);
+    gauged.SetFluid(gauge_marker, mu_gauge,
+                    GaugePenaltyOptions{kEps, kGaugeRefinements});
     gauged.SetSurfaceLoad(sigma, surface_body);
     gauged.SetRelTol(rel_tol);
     gauged.AssembleForce(0.0);
@@ -562,8 +567,8 @@ int main(int argc, char* argv[]) {
     Array<int> fluid_marker(body.attributes.Max());
     fluid_marker = 0;
     fluid_marker[0] = 1;
-    referential.SetGaugedFluid(fluid_marker, mu_gauge, kEps,
-                               kGaugeRefinements);
+    referential.SetFluid(fluid_marker, mu_gauge,
+                         GaugePenaltyOptions{kEps, kGaugeRefinements});
     referential.SetSurfaceLoad(sigma, surface_body);
     referential.SetRelTol(rel_tol);
     referential.AssembleForce(0.0);
@@ -592,6 +597,9 @@ int main(int argc, char* argv[]) {
     MaxwellRelaxationOptions mx_opts;
     if (mx_beta0 > 0.0) {
       mx_opts.dt_over_tau = mx_beta0;
+    }
+    if (mx_anderson >= 0) {
+      mx_opts.anderson = mx_anderson;
     }
     maxwell.SetFluid(fluid_marker, mu_core_art, mx_opts);
     maxwell.SetSurfaceLoad(sigma, surface_body);

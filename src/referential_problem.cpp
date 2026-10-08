@@ -1677,14 +1677,14 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetPrescribedVacuumExte
 }
 #endif
 
-void LinearQuasiStaticReferentialSelfGravitatingProblem::SetGaugedFluid(
-    const Array<int>& fluid_marker, Coefficient& mu_gauge, real_t epsilon,
-    int refinements, GaugePenalty penalty, Diffeomorphism* map) {
-  if (map == nullptr && penalty == GaugePenalty::Deviatoric) {
+void LinearQuasiStaticReferentialSelfGravitatingProblem::ConfigureFluidOperator(
+    const Array<int>& marker, Coefficient& mu, real_t epsilon,
+    GaugePenalty form, Diffeomorphism* map) {
+  if (map == nullptr && form == GaugePenalty::Deviatoric) {
     map = ref_rheology_->EquilibriumMapping();
   }
-  LinearQuasiStaticProblemBase::SetGaugedFluid(
-      fluid_marker, mu_gauge, epsilon, refinements, penalty, map);
+  LinearQuasiStaticProblemBase::ConfigureFluidOperator(marker, mu, epsilon,
+                                                       form, map);
 }
 
 void LinearQuasiStaticReferentialSelfGravitatingProblem::SetVacuumExtension(
@@ -1692,44 +1692,13 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetVacuumExtension(
     int refinements) {
   MFEM_VERIFY(ball_wide_,
               "SetVacuumExtension: only for a ball-wide displacement.");
-  SetGaugedFluid(buffer_marker, mu_gauge, epsilon, refinements,
-                 GaugePenalty::Harmonic);
+  GaugePenaltyOptions o;
+  o.epsilon = epsilon;
+  o.refinements = refinements;
+  o.form = GaugePenalty::Harmonic;
+  SetFluid(buffer_marker, mu_gauge, o);
 }
 
-bool LinearQuasiStaticReferentialSelfGravitatingProblem::GaugeRefine(Vector& X) {
-  // As for the gauged fluid's coupled refinement: the physical residual
-  // after an exact regularised solve is [eps Q delta_u; 0].
-  gauge_residuals_.clear();
-  Vector B_zeta_saved(B_zeta_);
-  B_zeta_ = 0.0;
-  Vector Zeta_acc(Zeta_true_);
-  Vector r(X.Size()), d(X.Size()), prev;
-  bool ok = true;
-  int outer = outer_its_;
-  for (int k = 0; k < gauge_refinements_; ++k) {
-    Q_.Ptr()->Mult(k == 0 ? X : prev, r);
-    gauge_residuals_.push_back(std::sqrt(Dot(r, r)));
-    d = 0.0;
-    if (X_block_) {
-      *X_block_ = 0.0;
-    }
-    ok = SolveLinearSystem(r, d) && ok;
-    outer += outer_its_;
-    X += d;
-    Zeta_acc += Zeta_true_;
-    prev = d;
-  }
-  B_zeta_ = B_zeta_saved;
-  Zeta_true_ = Zeta_acc;
-  outer_its_ = outer;
-  if (X_block_) {
-    X_block_->GetBlock(0) = X;
-    X_block_->GetBlock(1) = Zeta_true_;
-  }
-  DistributePotential(Zeta_true_);
-  WarnGaugeContraction();
-  return ok;
-}
 
 void LinearQuasiStaticReferentialSelfGravitatingProblem::AssembleForce(real_t t) {
   LinearQuasiStaticProblemBase::AssembleForce(t);
@@ -2247,8 +2216,8 @@ void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::SetConstraint(
   operator_dirty_ = true;
 }
 
-void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::SetGaugedFluid(
-    const Array<int>&, Coefficient&, real_t, int, GaugePenalty,
+void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::ConfigureFluidOperator(
+    const Array<int>&, Coefficient&, real_t, GaugePenalty,
     Diffeomorphism*) {
   MFEM_ABORT(
       "LinearQuasiStaticReferentialSelfGravitatingSlipProblem: the fluid has its own "

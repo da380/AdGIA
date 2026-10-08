@@ -700,7 +700,7 @@ TEST(ReferentialProblem, FluidRelabellingNullPair) {
 
 // The gauged fluid in the general class: the same two-layer physical
 // problem through the general referential class (base-class
-// SetGaugedFluid, prescribed vacuum extension) and through the mixed
+// SetFluid gauge treatment, prescribed vacuum extension) and through the mixed
 // self-gravitating class (Eulerian potential) in gauged mode. Solid displacement agrees
 // directly; the potential through the change of variables
 // zeta1 = phi1 + u.grad Phi0 (modulo the 2-D constant).
@@ -744,7 +744,7 @@ TEST(ReferentialProblem, GaugedFluidCrossCheck2D) {
   IsotropicElasticRheology e_rheology(dim, kappa_c, mu_c);
   LinearQuasiStaticMixedSelfGravitatingProblem eulerian(
       &fes_u, &fes_phi, e_rheology, rho, kG, kDtNDegree);
-  eulerian.SetGaugedFluid(fluid_marker, mu_gauge, eps, nref);
+  eulerian.SetFluid(fluid_marker, mu_gauge, GaugePenaltyOptions{eps, nref});
   eulerian.SetSurfaceLoad(sigma, surface);
   eulerian.SetRelTol(1e-11);
   eulerian.AssembleForce(0.0);
@@ -759,7 +759,7 @@ TEST(ReferentialProblem, GaugedFluidCrossCheck2D) {
       &fes_u2, &fes_zeta, bg.Rheology(), bg.Density(), kG, kDtNDegree);
   auto E = NewRadialVacuumExtension(fes_u2, fes_buffer, 1.0, r_out);
   referential.SetPrescribedVacuumExtension(fes_buffer, *E);
-  referential.SetGaugedFluid(fluid_marker, mu_gauge, eps, nref);
+  referential.SetFluid(fluid_marker, mu_gauge, GaugePenaltyOptions{eps, nref});
   referential.SetSurfaceLoad(sigma, surface);
   referential.SetRelTol(1e-11);
   referential.AssembleForce(0.0);

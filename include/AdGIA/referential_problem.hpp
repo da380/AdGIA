@@ -387,8 +387,8 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
   /**
    * @brief Ball-wide mode: regularise the pure-gauge vacuum-extension
    * field with the harmonic penalty @f$\epsilon\mu_g\int \nabla u :
-   * \nabla v@f$ on the marked (buffer) attributes, through the gauge
-   * machinery of SetGaugedFluid() with @p refinements Tikhonov
+   * \nabla v@f$ on the marked (buffer) attributes, through the fluid
+   * engine's Harmonic form with @p refinements Tikhonov
    * refinements. Unlike the gauged fluid, the refinement is not reliable
    * here: the buffer carries no physical stiffness, the generalised
    * spectrum of the (operator, penalty) pair degenerates like @f$h^2@f$,
@@ -403,15 +403,14 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
                           mfem::Coefficient& mu_gauge, mfem::real_t epsilon,
                           int refinements = 3);
 
-  /** @brief As the base, but the Deviatoric penalty is assembled
+  /** @brief As the base, but the Deviatoric form is assembled
    * covariantly through the rheology's equilibrium mapping when the
    * caller passes no map of its own, so that a relabelled problem's
    * penalty is the exact pull-back of the unmapped one. */
-  void SetGaugedFluid(const mfem::Array<int>& fluid_marker,
-                      mfem::Coefficient& mu_gauge, mfem::real_t epsilon,
-                      int refinements = 2,
-                      GaugePenalty penalty = GaugePenalty::Deviatoric,
-                      Diffeomorphism* map = nullptr) override;
+  void ConfigureFluidOperator(const mfem::Array<int>& marker,
+                              mfem::Coefficient& mu, mfem::real_t epsilon,
+                              GaugePenalty form,
+                              Diffeomorphism* map) override;
 
   /**
    * @brief SubMesh mode: supply the buffer's gravity terms through a
@@ -520,11 +519,6 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
  protected:
   void SetupSolver(mfem::OperatorHandle& A) override;
   bool SolveLinearSystem(const mfem::Vector& B, mfem::Vector& X) override;
-
-  /** @brief Tikhonov refinement on the coupled system, as for the gauged
-   * fluid: refinement solves are cold-started and carry zero potential
-   * load, and the potential accumulates alongside the displacement. */
-  bool GaugeRefine(mfem::Vector& X) override;
 
  protected:
   // Protected (not private) so that the slip-interface subclass can reuse
@@ -935,11 +929,11 @@ class LinearQuasiStaticReferentialSelfGravitatingSlipProblem
   void ApplyBrokenKernel(const std::string& kernel, const mfem::Vector& x,
                          mfem::Vector& y);
 
-  /** @brief The base-class gauged fluid is not meaningful here (the fluid
-   * has its own space); use SetFluidGauge(). */
-  void SetGaugedFluid(const mfem::Array<int>&, mfem::Coefficient&,
-                      mfem::real_t, int, GaugePenalty,
-                      Diffeomorphism*) override;
+  /** @brief The base-class fluid treatments are not meaningful here
+   * (the fluid has its own space); use SetFluidGauge(). */
+  void ConfigureFluidOperator(const mfem::Array<int>&, mfem::Coefficient&,
+                              mfem::real_t, GaugePenalty,
+                              Diffeomorphism*) override;
 
   void RegisterFields(mfem::DataCollection& dc) override;
 

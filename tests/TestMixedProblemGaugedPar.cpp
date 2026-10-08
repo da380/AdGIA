@@ -65,7 +65,7 @@ struct Setup {
     problem = std::make_unique<LinearQuasiStaticMixedSelfGravitatingProblem>(
         &fes_u, &fes_phi, *rheology, rho, kG, kDtNDegree);
     kappa.g = &problem->BackgroundGravity();
-    problem->SetGaugedFluid(fluid, mu_gauge, kEps, kRefine);
+    problem->SetFluid(fluid, mu_gauge, GaugePenaltyOptions{kEps, kRefine});
     problem->SetSurfaceLoad(sigma, surface);
     problem->SetRelTol(1e-11);
   }

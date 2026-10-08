@@ -229,7 +229,10 @@ def main() -> None:
         for model in prof["models"]:
             methods = ["dahlen", "gauged"]
             if model in REFERENTIAL_MODELS:
-                methods.append("referential")
+                # maxwell = the referential problem with the
+                # Maxwell-relaxed fluid (the secular route); it also
+                # takes the inner-core models the slip pair cannot.
+                methods += ["referential", "maxwell"]
             if model in SLIP_MODELS:
                 methods += ["slip", "slip_broken"]
             stage(f"methods:{model}", run_py(

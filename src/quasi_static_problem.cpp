@@ -17,6 +17,130 @@ namespace AdGIA {
 
 using namespace mfem;
 
+// ---------------------------------------------------------------------------
+// FluidRegionOperator
+
+void FluidRegionOperator::Configure(FiniteElementSpace& fes,
+                                    const Array<int>& marker,
+                                    Coefficient& mu, real_t epsilon,
+                                    GaugePenalty form, Diffeomorphism* map) {
+  MFEM_VERIFY(marker.Size() == fes.GetMesh()->attributes.Max(),
+              "FluidRegionOperator: the marker must be sized to "
+              "attributes.Max().");
+  MFEM_VERIFY(epsilon > 0.0,
+              "FluidRegionOperator: epsilon must be positive.");
+  // A supplied map — the identity included — switches the Deviatoric
+  // branch to ElasticTensorIntegrator(C, map), so that the two sides of
+  // a change-of-variables identity assemble with the SAME integrator
+  // class and quadrature rule. Only a non-identity map is refused for
+  // Harmonic.
+  const bool mapped = map != nullptr;
+  MFEM_VERIFY(!(mapped && !map->IsIdentity()) ||
+                  form == GaugePenalty::Deviatoric,
+              "FluidRegionOperator: the Harmonic penalty is gauge data, "
+              "shared rather than mapped.");
+  Clear();
+  marker_ = marker;
+  eps_ = std::make_unique<ConstantCoefficient>(epsilon);
+  mu_eps_ = std::make_unique<ProductCoefficient>(*eps_, mu);
+  const int dim = fes.GetMesh()->Dimension();
+  integrators_ = detail::MakeBilinearForm(&fes);
+  BilinearFormIntegrator* integ;
+  if (mapped && form == GaugePenalty::Deviatoric) {
+    // The covariant form of the Deviatoric branch: the isotropic tensor
+    // of lambda = -2 eps mu_g / d, mu = eps mu_g, pulled back through
+    // the map by ElasticTensorIntegrator, so the penalty of a
+    // relabelled problem is the exact pull-back of the unmapped one.
+    lambda_eps_ = std::make_unique<ProductCoefficient>(-2.0 / dim, *mu_eps_);
+    Cdev_ = std::make_unique<IsotropicElasticTensorCoefficient>(
+        dim, *lambda_eps_, *mu_eps_);
+    integ = new ElasticTensorIntegrator(*Cdev_, *map);
+  } else if (form == GaugePenalty::Deviatoric) {
+    integ = new ElasticityIntegrator(*mu_eps_, -2.0 / dim, 1.0);
+  } else {
+    integ = new VectorDiffusionIntegrator(*mu_eps_);
+  }
+  integrators_->AddDomainIntegrator(integ, marker_);
+  integ_ = integ;
+#ifdef MFEM_USE_MPI
+  parallel_ = dynamic_cast<ParFiniteElementSpace*>(&fes) != nullptr;
+#endif
+}
+
+void FluidRegionOperator::Clear() {
+  integrators_.reset();
+  integ_ = nullptr;
+  q_form_.reset();
+  mu_eps_.reset();
+  lambda_eps_.reset();
+  Cdev_.reset();
+  eps_.reset();
+  Q_.Clear();
+  unit_.Clear();
+}
+
+void FluidRegionOperator::SetEpsilon(real_t epsilon) {
+  MFEM_VERIFY(eps_, "FluidRegionOperator: not configured.");
+  MFEM_VERIFY(epsilon > 0.0,
+              "FluidRegionOperator: epsilon must be positive.");
+  eps_->constant = epsilon;
+}
+
+real_t FluidRegionOperator::Epsilon() const {
+  return eps_ ? eps_->constant : 0.0;
+}
+
+void FluidRegionOperator::Assemble(FiniteElementSpace& fes) {
+  MFEM_VERIFY(Active(), "FluidRegionOperator: not configured.");
+#ifdef MFEM_USE_MPI
+  if (parallel_) {
+    Q_.SetType(Operator::Hypre_ParCSR);
+  }
+#endif
+  // eps mu Q on true dofs, unconstrained: the drivers zero the
+  // essential rows of their residuals instead.
+  q_form_ = detail::MakeBilinearForm(&fes, integrators_.get());
+  q_form_->Assemble();
+  Array<int> empty;
+  q_form_->FormSystemMatrix(empty, Q_);
+  // The unit-epsilon cache, so an epsilon-only change is Rescale().
+  const real_t e = eps_->constant;
+  unit_.Clear();
+#ifdef MFEM_USE_MPI
+  if (parallel_) {
+    auto* Qh = Q_.As<HypreParMatrix>();
+    unit_.Reset(mfem::Add(1.0 / e, *Qh, 0.0, *Qh), true);
+  } else
+#endif
+  {
+    auto* Qu = new SparseMatrix(*Q_.As<SparseMatrix>());
+    *Qu *= 1.0 / e;
+    unit_.Reset(Qu, true);
+  }
+}
+
+void FluidRegionOperator::Rescale() {
+  MFEM_VERIFY(HasUnitCache(), "FluidRegionOperator: no unit cache.");
+  const real_t e = eps_->constant;
+#ifdef MFEM_USE_MPI
+  if (parallel_) {
+    auto* Qu = unit_.As<HypreParMatrix>();
+    Q_.Reset(mfem::Add(e, *Qu, 0.0, *Qu), true);
+  } else
+#endif
+  {
+    auto* q = new SparseMatrix(*unit_.As<SparseMatrix>());
+    *q *= e;
+    Q_.Reset(q, true);
+  }
+}
+
+void FluidRegionOperator::ApplyQ(const Vector& x, Vector& r) const {
+  Q_.Ptr()->Mult(x, r);
+}
+
+// ---------------------------------------------------------------------------
+
 LinearQuasiStaticProblemBase::LinearQuasiStaticProblemBase(
     FiniteElementSpace* fes, const AdGIA::Rheology& rheology)
     : fes_(fes),
@@ -126,41 +250,21 @@ void LinearQuasiStaticProblemBase::AssembleOperator() {
   a_->Assemble();
   a_->FormSystemMatrix(ess_tdof_list_, A_);
   a_solve_form_.reset();
-  q_form_.reset();
-  gauge_Q_unit_.Clear();
   if (HasGaugedFluid()) {
 #ifdef MFEM_USE_MPI
     if (pfes_) {
-      Q_.SetType(Operator::Hypre_ParCSR);
       A_solve_.SetType(Operator::Hypre_ParCSR);
     }
 #endif
-    // eps Q on true dofs, unconstrained: GaugeRefine() zeroes the essential
-    // rows of its residuals instead.
-    q_form_ = detail::MakeBilinearForm(fes_, gauge_integrators_.get());
-    q_form_->Assemble();
-    Array<int> empty;
-    q_form_->FormSystemMatrix(empty, Q_);
-    // A + eps Q in one assembly: borrow the physical integrators and append
-    // the penalty (the borrowing form owns none of them).
+    fluid_op_.Assemble(*fes_);
+    // A + eps mu Q in one assembly: borrow the physical integrators and
+    // append the engine's penalty integrator (the borrowing form owns
+    // none of them).
     a_solve_form_ = detail::MakeBilinearForm(fes_, integrators_.get());
-    a_solve_form_->AddDomainIntegrator(gauge_integ_, gauge_marker_);
+    a_solve_form_->AddDomainIntegrator(fluid_op_.Integrator(),
+                                       fluid_op_.Marker());
     a_solve_form_->Assemble();
     a_solve_form_->FormSystemMatrix(ess_tdof_list_, A_solve_);
-    // Cache the unit-epsilon penalty so that an epsilon-only change
-    // (SetGaugeEpsilon; the Maxwell escalation) skips FEM reassembly.
-    const real_t eps_now = gauge_eps_coef_->constant;
-#ifdef MFEM_USE_MPI
-    if (pfes_) {
-      auto* Qh = Q_.As<HypreParMatrix>();
-      gauge_Q_unit_.Reset(mfem::Add(1.0 / eps_now, *Qh, 0.0, *Qh), true);
-    } else
-#endif
-    {
-      auto* Qu = new SparseMatrix(*Q_.As<SparseMatrix>());
-      *Qu *= 1.0 / eps_now;
-      gauge_Q_unit_.Reset(Qu, true);
-    }
   }
   SetupSolver(HasGaugedFluid() ? A_solve_ : A_);
   operator_dirty_ = false;
@@ -169,7 +273,7 @@ void LinearQuasiStaticProblemBase::AssembleOperator() {
 }
 
 void LinearQuasiStaticProblemBase::RescaleGaugeOperator() {
-  MFEM_ASSERT(HasGaugedFluid() && gauge_Q_unit_.Ptr(),
+  MFEM_ASSERT(HasGaugedFluid() && fluid_op_.HasUnitCache(),
               "RescaleGaugeOperator: no cached unit penalty.");
   // Keep the matrix the (reused) preconditioner was built on alive, as
   // in AssembleOperator; here there is no form to move, the matrix
@@ -180,21 +284,17 @@ void LinearQuasiStaticProblemBase::RescaleGaugeOperator() {
     prec_A_.SetOperatorOwner(A_solve_.OwnsOperator());
     A_solve_.SetOperatorOwner(false);
   }
-  const real_t eps = gauge_eps_coef_->constant;
+  fluid_op_.Rescale();
 #ifdef MFEM_USE_MPI
   if (pfes_) {
-    auto* Qu = gauge_Q_unit_.As<HypreParMatrix>();
-    Q_.Reset(mfem::Add(eps, *Qu, 0.0, *Qu), true);
-    A_solve_.Reset(mfem::Add(1.0, *A_.As<HypreParMatrix>(), eps, *Qu),
+    A_solve_.Reset(mfem::Add(1.0, *A_.As<HypreParMatrix>(), 1.0,
+                             *fluid_op_.Q().As<HypreParMatrix>()),
                    true);
   } else
 #endif
   {
-    auto* Qu = gauge_Q_unit_.As<SparseMatrix>();
-    auto* q = new SparseMatrix(*Qu);
-    *q *= eps;
-    Q_.Reset(q, true);
-    A_solve_.Reset(mfem::Add(1.0, *A_.As<SparseMatrix>(), eps, *Qu),
+    A_solve_.Reset(mfem::Add(1.0, *A_.As<SparseMatrix>(), 1.0,
+                             *fluid_op_.Q().As<SparseMatrix>()),
                    true);
   }
   SetupSolver(A_solve_);
@@ -248,7 +348,7 @@ const OperatorHandle& LinearQuasiStaticProblemBase::SystemMatrix() {
 
 bool LinearQuasiStaticProblemBase::Solve() {
   solves_++;
-  if (maxwell_) {
+  if (fluid_treatment_ == FluidTreatment::Maxwell) {
     return MaxwellSolve();
   }
   EnsureOperator();
@@ -266,65 +366,48 @@ bool LinearQuasiStaticProblemBase::Solve() {
   return ok;
 }
 
+void LinearQuasiStaticProblemBase::ConfigureFluidOperator(
+    const Array<int>& marker, Coefficient& mu, real_t epsilon,
+    GaugePenalty form, Diffeomorphism* map) {
+  fluid_op_.Configure(*fes_, marker, mu, epsilon, form, map);
+}
+
 void LinearQuasiStaticProblemBase::SetFluid(
     const Array<int>& fluid_marker, Coefficient& mu_scale,
     const MaxwellRelaxationOptions& opts, Diffeomorphism* map) {
-  SetMaxwellFluid(fluid_marker, mu_scale, opts, map);
+  MFEM_VERIFY(!gauge_prec_only_,
+              "SetFluid: the Maxwell treatment is incompatible with "
+              "SetGaugePreconditionerOnly.");
+  MFEM_VERIFY(opts.dt_over_tau > 0.0 && opts.escalate >= 1.0 &&
+                  opts.beta_max >= opts.dt_over_tau && opts.max_steps > 0,
+              "SetFluid: invalid Maxwell schedule options.");
+  maxwell_opts_ = opts;
+  if (opts.plateau_mode) {
+    // The physical plateau needs the plain trajectory: Anderson mixing
+    // is ignored in plateau mode.
+    maxwell_opts_.anderson = 0;
+  }
+  // The per-step operator is the engine at eps = 1/(1 + beta), with no
+  // Tikhonov refinements (the Maxwell term is the regulariser, and
+  // MaxwellSolve owns the iteration). The configuration dispatches
+  // through the virtual hook, so a derived class's covariant default
+  // (or refusal) applies.
+  ConfigureFluidOperator(fluid_marker, mu_scale,
+                         1.0 / (1.0 + opts.dt_over_tau),
+                         GaugePenalty::Deviatoric, map);
+  fluid_treatment_ = FluidTreatment::Maxwell;
+  gauge_refinements_ = 0;
+  maxwell_solid_tdofs_.SetSize(0);
+  operator_dirty_ = true;
 }
 
 void LinearQuasiStaticProblemBase::SetFluid(
     const Array<int>& fluid_marker, Coefficient& mu_scale,
     const GaugePenaltyOptions& opts, Diffeomorphism* map) {
-  // Dispatches through the virtual SetGaugedFluid, so a derived
-  // class's covariant assembly (or refusal) applies.
-  SetGaugedFluid(fluid_marker, mu_scale, opts.epsilon, opts.refinements,
-                 opts.form, map);
-}
-
-void LinearQuasiStaticProblemBase::SetGaugedFluid(
-    const Array<int>& fluid_marker, Coefficient& mu_gauge, real_t epsilon,
-    int refinements, GaugePenalty penalty, Diffeomorphism* map) {
-  MFEM_VERIFY(fluid_marker.Size() == fes_->GetMesh()->attributes.Max(),
-              "SetGaugedFluid: the fluid marker must be sized to "
-              "attributes.Max().");
-  // Configuring the gauge treatment directly switches the Maxwell
-  // mode off (SetMaxwellFluid re-raises the flag after this call).
-  maxwell_ = false;
-  MFEM_VERIFY(epsilon > 0.0, "SetGaugedFluid: epsilon must be positive.");
-  // A supplied map — the identity included — switches the Deviatoric
-  // branch to ElasticTensorIntegrator(C, map), so that the two sides of a
-  // change-of-variables identity assemble with the SAME integrator class
-  // and quadrature rule. Only a non-identity map is refused for Harmonic.
-  const bool mapped = map != nullptr;
-  MFEM_VERIFY(!(mapped && !map->IsIdentity()) ||
-                  penalty == GaugePenalty::Deviatoric,
-              "SetGaugedFluid: the Harmonic penalty is gauge data, "
-              "shared rather than mapped.");
-  gauge_marker_ = fluid_marker;
-  gauge_eps_coef_ = std::make_unique<ConstantCoefficient>(epsilon);
-  gauge_mu_eps_ =
-      std::make_unique<ProductCoefficient>(*gauge_eps_coef_, mu_gauge);
-  const int dim = fes_->GetMesh()->Dimension();
-  gauge_integrators_ = detail::MakeBilinearForm(fes_);
-  BilinearFormIntegrator* integ;
-  if (mapped && penalty == GaugePenalty::Deviatoric) {
-    // The covariant form of the Deviatoric branch: the isotropic tensor
-    // of lambda = -2 eps mu_g / d, mu = eps mu_g, pulled back through the
-    // map by ElasticTensorIntegrator, so the penalty of a relabelled
-    // problem is the exact pull-back of the unmapped one.
-    gauge_lambda_eps_ =
-        std::make_unique<ProductCoefficient>(-2.0 / dim, *gauge_mu_eps_);
-    gauge_Cdev_ = std::make_unique<IsotropicElasticTensorCoefficient>(
-        dim, *gauge_lambda_eps_, *gauge_mu_eps_);
-    integ = new ElasticTensorIntegrator(*gauge_Cdev_, *map);
-  } else if (penalty == GaugePenalty::Deviatoric) {
-    integ = new ElasticityIntegrator(*gauge_mu_eps_, -2.0 / dim, 1.0);
-  } else {
-    integ = new VectorDiffusionIntegrator(*gauge_mu_eps_);
-  }
-  gauge_integrators_->AddDomainIntegrator(integ, gauge_marker_);
-  gauge_integ_ = integ;
-  gauge_refinements_ = refinements;
+  ConfigureFluidOperator(fluid_marker, mu_scale, opts.epsilon, opts.form,
+                         map);
+  fluid_treatment_ = FluidTreatment::Penalty;
+  gauge_refinements_ = opts.refinements;
   operator_dirty_ = true;
 }
 
@@ -336,33 +419,29 @@ void LinearQuasiStaticProblemBase::ApplyGaugePenalty(const Vector& u_true,
     return;
   }
   EnsureOperator();
-  Q_.Ptr()->Mult(u_true, r);
+  fluid_op_.ApplyQ(u_true, r);
 }
 
-void LinearQuasiStaticProblemBase::ClearGaugedFluid() {
-  maxwell_ = false;  // the Maxwell mode rides this machinery
-  gauge_integrators_.reset();
-  gauge_integ_ = nullptr;
-  gauge_mu_eps_.reset();
-  gauge_eps_coef_.reset();
-  q_form_.reset();
+void LinearQuasiStaticProblemBase::ClearFluid() {
+  fluid_treatment_ = FluidTreatment::None;  // both drivers ride the engine
+  fluid_op_.Clear();
   a_solve_form_.reset();
-  Q_.Clear();
   A_solve_.Clear();
-  gauge_Q_unit_.Clear();
   eps_only_dirty_ = false;
   gauge_residuals_.clear();
+  maxwell_solid_tdofs_.SetSize(0);
+  maxwell_report_ = MaxwellRelaxationReport();
   operator_dirty_ = true;
 }
 
 void LinearQuasiStaticProblemBase::SetGaugeEpsilon(real_t epsilon) {
-  MFEM_VERIFY(gauge_eps_coef_, "SetGaugeEpsilon: no gauged fluid is set.");
-  MFEM_VERIFY(epsilon > 0.0, "SetGaugeEpsilon: epsilon must be positive.");
-  if (gauge_eps_coef_->constant == epsilon) {
+  MFEM_VERIFY(fluid_op_.Active(),
+              "SetGaugeEpsilon: no gauged fluid is set.");
+  if (fluid_op_.Epsilon() == epsilon) {
     return;
   }
-  gauge_eps_coef_->constant = epsilon;
-  if (gauge_Q_unit_.Ptr()) {
+  fluid_op_.SetEpsilon(epsilon);
+  if (fluid_op_.HasUnitCache()) {
     // Only the penalty scale changed: the cheap rescale path serves.
     eps_only_dirty_ = true;
   } else {
@@ -371,22 +450,20 @@ void LinearQuasiStaticProblemBase::SetGaugeEpsilon(real_t epsilon) {
 }
 
 real_t LinearQuasiStaticProblemBase::GaugeEpsilon() const {
-  return gauge_eps_coef_ ? gauge_eps_coef_->constant : 0.0;
+  return fluid_op_.Epsilon();
 }
 
 void LinearQuasiStaticProblemBase::SetGaugePreconditionerOnly(
     real_t eps_prec) {
-  MFEM_VERIFY(gauge_eps_coef_,
+  MFEM_VERIFY(fluid_op_.Active(),
               "SetGaugePreconditionerOnly: no gauged fluid is set.");
-  MFEM_VERIFY(!maxwell_,
+  MFEM_VERIFY(fluid_treatment_ != FluidTreatment::Maxwell,
               "SetGaugePreconditionerOnly: incompatible with "
-              "SetMaxwellFluid.");
-  MFEM_VERIFY(eps_prec > 0.0,
-              "SetGaugePreconditionerOnly: eps_prec must be positive.");
+              "the Maxwell fluid treatment.");
   // The penalty scale now serves the PRECONDITIONER matrix A + eps_prec Q
   // only; the solver operator is the clean A, and without an O(eps) bias
   // in the operator the Tikhonov refinements have nothing to remove.
-  gauge_eps_coef_->constant = eps_prec;
+  fluid_op_.SetEpsilon(eps_prec);  // verifies positivity
   gauge_refinements_ = 0;
   gauge_prec_only_ = true;
   operator_dirty_ = true;
@@ -441,54 +518,38 @@ const OperatorHandle& LinearQuasiStaticProblemBase::RegularizedMatrix() {
 }
 
 bool LinearQuasiStaticProblemBase::GaugeRefine(Vector& X) {
+  // The beta = infinity, fixed-epsilon, no-escalation case of the
+  // Maxwell step: each refinement is the FULL solve
+  // (A + eps Q) u_{k+1} = f + eps Q u_k through the virtual
+  // SolveLinearSystem, so companion blocks (a potential) ride along
+  // with their loads reapplied — equivalent, by linearity, to the
+  // historical zero-companion-load increment accumulation, with the
+  // same residuals ||eps Q delta_k|| recorded.
   gauge_residuals_.clear();
-  Vector r(X.Size()), d(X.Size()), prev;
+  Vector r(X.Size()), Bn, Xprev, delta(X);
   bool ok = true;
   for (int k = 0; k < gauge_refinements_; ++k) {
     // After an exact regularised solve the physical residual is
-    // f - A U = eps Q delta, with delta the last increment (the first
-    // "increment" being the solution itself). Each increment is solved
-    // cold from zero.
-    Q_.Ptr()->Mult(k == 0 ? X : prev, r);
+    // f - A U = eps Q delta, with delta the last step (the first
+    // "step" being the solution itself).
+    fluid_op_.ApplyQ(delta, r);
     if (ess_tdof_list_.Size() > 0) {
       r.SetSubVector(ess_tdof_list_, 0.0);
     }
     gauge_residuals_.push_back(std::sqrt(Dot(r, r)));
-    d = 0.0;
-    ok = SolveLinearSystem(r, d) && ok;
-    X += d;
-    prev = d;
+    fluid_op_.ApplyQ(X, r);
+    if (ess_tdof_list_.Size() > 0) {
+      r.SetSubVector(ess_tdof_list_, 0.0);
+    }
+    Bn = B_;
+    Bn += r;
+    Xprev = X;
+    ok = SolveLinearSystem(Bn, X) && ok;
+    delta = X;
+    delta -= Xprev;
   }
   WarnGaugeContraction();
   return ok;
-}
-
-void LinearQuasiStaticProblemBase::SetMaxwellFluid(
-    const Array<int>& fluid_marker, Coefficient& mu_core,
-    const MaxwellRelaxationOptions& opts, Diffeomorphism* map) {
-  MFEM_VERIFY(!gauge_prec_only_,
-              "SetMaxwellFluid: incompatible with "
-              "SetGaugePreconditionerOnly.");
-  MFEM_VERIFY(opts.dt_over_tau > 0.0 && opts.escalate >= 1.0 &&
-                  opts.beta_max >= opts.dt_over_tau && opts.max_steps > 0,
-              "SetMaxwellFluid: invalid schedule options.");
-  maxwell_opts_ = opts;
-  // The per-step operator is the gauge machinery's A + eps mu_c Q at
-  // eps = 1/(1 + beta), with no Tikhonov refinements (the Maxwell term
-  // is the regulariser, and MaxwellSolve owns the iteration). The call
-  // is virtual, so a derived class's covariant assembly applies.
-  SetGaugedFluid(fluid_marker, mu_core,
-                 1.0 / (1.0 + opts.dt_over_tau), /*refinements=*/0,
-                 GaugePenalty::Deviatoric, map);
-  maxwell_ = true;
-  maxwell_solid_tdofs_.SetSize(0);
-}
-
-void LinearQuasiStaticProblemBase::ClearMaxwellFluid() {
-  maxwell_ = false;
-  maxwell_solid_tdofs_.SetSize(0);
-  maxwell_report_ = MaxwellRelaxationReport();
-  ClearGaugedFluid();
 }
 
 void LinearQuasiStaticProblemBase::BuildMaxwellSolidDofs() {
@@ -499,7 +560,8 @@ void LinearQuasiStaticProblemBase::BuildMaxwellSolidDofs() {
   Array<int> vdofs;
   for (int e = 0; e < fes_->GetNE(); ++e) {
     const int attr = fes_->GetMesh()->GetAttribute(e);
-    if (attr <= gauge_marker_.Size() && gauge_marker_[attr - 1]) {
+    const Array<int>& marker = fluid_op_.Marker();
+    if (attr <= marker.Size() && marker[attr - 1]) {
       continue;
     }
     fes_->GetElementVDofs(e, vdofs);
@@ -598,13 +660,62 @@ bool LinearQuasiStaticProblemBase::MaxwellSolve() {
   // (A + gamma Qhat) u = f + gamma Qhat w, with Q_ = eps mu_c Qhat =
   // gamma Qhat at eps = 1/(1 + beta).
   auto step_solve = [&]() {
-    Q_.Ptr()->Mult(w, r);
+    fluid_op_.ApplyQ(w, r);
     if (ess_tdof_list_.Size() > 0) {
       r.SetSubVector(ess_tdof_list_, 0.0);
     }
     Bn = B_;
     Bn += r;
     return SolveLinearSystem(Bn, X_);
+  };
+
+  // Anderson mixing on the memory fixed-point map w -> G(w) (depth
+  // o.anderson): histories of iterates g_i = G(w_i) and residuals
+  // r_i = g_i - w_i, the mixed update w <- g_k - dG gamma with gamma
+  // from the least squares min ||r_k - dR gamma|| (normal equations;
+  // the window restarts at every operator change).
+  std::vector<Vector> aa_g, aa_r;
+  auto aa_mix = [&](const Vector& g) {
+    aa_r.emplace_back(g);
+    aa_r.back() -= w;
+    aa_g.emplace_back(g);
+    const int keep = o.anderson + 1;
+    while (static_cast<int>(aa_g.size()) > keep) {
+      aa_g.erase(aa_g.begin());
+      aa_r.erase(aa_r.begin());
+    }
+    const int m = static_cast<int>(aa_g.size()) - 1;
+    if (m < 1) {
+      w = g;
+      return;
+    }
+    // dR_j = r_k - r_j, dG_j = g_k - g_j over the window.
+    DenseMatrix N(m);
+    Vector rhs(m), gamma(m);
+    const Vector& rk = aa_r.back();
+    for (int i = 0; i < m; ++i) {
+      Vector dri(rk);
+      dri -= aa_r[i];
+      for (int j = i; j < m; ++j) {
+        Vector drj(rk);
+        drj -= aa_r[j];
+        const real_t v = Dot(dri, drj);
+        N(i, j) = v;
+        N(j, i) = v;
+      }
+      rhs[i] = Dot(dri, rk);
+    }
+    for (int i = 0; i < m; ++i) {
+      N(i, i) += 1e-12 * (N(i, i) + 1.0);  // near-collinearity guard
+    }
+    DenseMatrixInverse Ninv(N);
+    Ninv.Mult(rhs, gamma);
+    // w = g_k - sum_j gamma_j (g_k - g_j)
+    w = aa_g.back();
+    for (int j = 0; j < m; ++j) {
+      w.Add(-gamma[j], aa_g.back());
+      w.Add(gamma[j], aa_g[j]);
+    }
   };
 
   const char* stop = "max_steps";
@@ -614,6 +725,8 @@ bool LinearQuasiStaticProblemBase::MaxwellSolve() {
   for (int n = 1; n <= o.max_steps; ++n) {
     if (1.0 / (1.0 + beta) != eps_cur) {
       set_operator(1.0 / (1.0 + beta));
+      aa_g.clear();
+      aa_r.clear();
       if (first) {
         w.SetSize(X_.Size());
         w = 0.0;
@@ -668,8 +781,15 @@ bool LinearQuasiStaticProblemBase::MaxwellSolve() {
     if (its_first < 0) {
       its_first = std::max(its_step, 1L);
     }
-    w.Add(beta, X_);
-    w *= 1.0 / (1.0 + beta);
+    if (o.anderson > 0) {
+      Vector g(w);
+      g.Add(beta, X_);
+      g *= 1.0 / (1.0 + beta);
+      aa_mix(g);
+    } else {
+      w.Add(beta, X_);
+      w *= 1.0 / (1.0 + beta);
+    }
     t_phys += beta;
     prev = X_;
     maxwell_report_.t_over_tau.push_back(t_phys);
