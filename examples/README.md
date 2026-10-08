@@ -94,6 +94,19 @@ on the undeformed reference mesh with `TransformedDiffusionIntegrator`
 on the reference mesh, the pulled-back one, and that one pushed forward
 (always sent to GLVis; there is no `-vis` option).
 
+**`relabelled_elasticity`**: the particle-relabelling symmetry for
+elasticity: one aspherical two-layer body (a quadrupole bump moving the
+core-mantle boundary AND the surface) solved as itself — a curved
+deformed mesh with the plain layer-wise coefficients — and as the
+relabelled description on the pristine circular reference, with the
+pulled-back elastic tensor, the Jacobian-weighted density
+`rho~ = J rho` and the composed body force carried by the equilibrium
+mapping. The physical nodes are the mapped reference nodes, so the two
+solutions agree dof by dof (printed, with the invariant strain
+energies). Shows (`-vis`): the two densities, the two displacements,
+and the relabelled solution pushed forward onto the deformed body.
+`./relabelled_elasticity -a 0.15 -o 3`
+
 **`submesh_injection`**: a tour of `SubMeshDofInjection`: moving fields
 between a mesh and a submesh and assembling coupling blocks, serially by
 re-indexing and in parallel by hypre products. Shows (`-vis`): the two
