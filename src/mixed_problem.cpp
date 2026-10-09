@@ -634,6 +634,46 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetTidalPotential(
   *psi_gf_ = 0.0;
 }
 
+real_t LinearQuasiStaticMixedSelfGravitatingProblem::TidalCoupling(
+    Coefficient& psi) {
+  EnsureOperator();
+  auto psig = detail::MakeGridFunction(fes_phi_);
+  psig->ProjectCoefficient(psi);
+  Vector Psi(fes_phi_->GetTrueVSize());
+  psig->GetTrueDofs(Psi);
+  Vector cu(fes_->GetTrueVSize());
+  C_op_->Mult(Psi, cu);
+  Vector U(fes_->GetTrueVSize());
+  Displacement().GetTrueDofs(U);
+  real_t v = Dot(cu, U);
+  if (!fluids_.empty()) {
+    Vector mp(Psi.Size());
+    M_fluid_.Ptr()->Mult(Psi, mp);
+    Vector Phi(fes_phi_->GetTrueVSize());
+    Potential().GetTrueDofs(Phi);
+    v += Dot(mp, Phi);
+  }
+  return v;
+}
+
+real_t LinearQuasiStaticMixedSelfGravitatingProblem::TidalTidalCoupling(
+    Coefficient& a, Coefficient& b) {
+  if (fluids_.empty()) {
+    return 0.0;
+  }
+  EnsureOperator();
+  auto ga = detail::MakeGridFunction(fes_phi_);
+  auto gb = detail::MakeGridFunction(fes_phi_);
+  ga->ProjectCoefficient(a);
+  gb->ProjectCoefficient(b);
+  Vector Pa(fes_phi_->GetTrueVSize()), Pb(fes_phi_->GetTrueVSize());
+  ga->GetTrueDofs(Pa);
+  gb->GetTrueDofs(Pb);
+  Vector mp(Pb.Size());
+  M_fluid_.Ptr()->Mult(Pb, mp);
+  return Dot(Pa, mp);
+}
+
 void LinearQuasiStaticMixedSelfGravitatingProblem::AssembleTidalLoad() {
   // Psi = interpolant of psi; loads -C Psi (displacement) and -M_F Psi
   // (potential), the latter absent without fluid regions.

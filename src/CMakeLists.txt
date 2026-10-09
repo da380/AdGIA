@@ -18,6 +18,7 @@ target_sources(${PROJECT_NAME} PRIVATE null_space.cpp
     mixed_problem.cpp
                                        viscoelastic.cpp
                                        elastic_tensor.cpp
+                                       rotation.cpp
                                        sea_level.cpp
                                        submesh.cpp
                                        )

@@ -83,6 +83,9 @@ if(BUILD_BENCHMARKS)
     add_subdirectory(benchmarks)
 endif()
 
+# Post-processing launchers (Python; scripts stay in source, run in build).
+add_subdirectory(postprocess)
+
 # Optionally build tests
 option(BUILD_TESTS "Build the test programs" OFF)
 if(BUILD_TESTS)

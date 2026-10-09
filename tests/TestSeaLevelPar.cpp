@@ -14,6 +14,8 @@
 #include <mpi.h>
 
 #include <cmath>
+#include <cstdio>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <numbers>
@@ -132,6 +134,30 @@ void RunCase(int dim, int order, bool rank0_partition,
     Check(GlobalMax(ex.Normlinf()), 1e-3, label + ": manufactured sea level");
     Check(std::abs(info.uniform - (kA + kC)), 2e-3,
           label + ": uniform shift");
+  }
+
+  // The CSV export gathers one row per GLOBAL node on the root.
+  {
+    ParGridFunction field(
+        static_cast<ParFiniteElementSpace*>(&sea.SurfaceSpace()));
+    field.ProjectCoefficient(f);
+    const std::string path = "sea_level_export_par.csv";
+    sea.WriteSurfaceField(field, path);
+    double rows = 0.0;
+    if (Mpi::Root()) {
+      std::ifstream in(path);
+      std::string line;
+      std::getline(in, line);  // header
+      while (std::getline(in, line)) {
+        rows += 1.0;
+      }
+      std::remove(path.c_str());
+    }
+    MPI_Bcast(&rows, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    const double expected =
+        static_cast<ParFiniteElementSpace&>(sea.SurfaceSpace())
+            .GlobalTrueVSize();
+    Check(std::abs(rows - expected), 0.0, label + ": export row count");
   }
 
   // Half-flooded ocean.

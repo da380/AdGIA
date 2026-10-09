@@ -301,6 +301,25 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
    */
   void SetTidalPotential(mfem::Coefficient& psi);
 
+  /**
+   * @brief The symmetric tidal pairing of @p psi with the problem's
+   * current solution: @f$T(\psi, (u,\phi)) = c(\psi, u) +
+   * \int_{M_F}\rho'_F\,\psi\,\phi@f$ — the coupling and fluid-mass
+   * operators applied to the interpolant of @f$\psi@f$ and paired with
+   * the state. This is the @f$\omega@f$-row functional of the
+   * rotational-feedback border (Yu et al. 2025, eqs. A5–A6): by the
+   * symmetry of the combined weak form it is exactly minus the tidal
+   * load of @f$\psi@f$ dotted with the solution, so its sign and its
+   * fluid/interface bookkeeping are inherited from the verified tidal
+   * machinery. Global in parallel.
+   */
+  mfem::real_t TidalCoupling(mfem::Coefficient& psi);
+
+  /** @brief The fluid block of the same pairing between two potentials:
+   * @f$\int_{M_F}\rho'_F\,\psi_a\,\psi_b@f$ (zero without fluid
+   * regions) — the @f$\psi\psi'@f$ term of eq. A6. */
+  mfem::real_t TidalTidalCoupling(mfem::Coefficient& a, mfem::Coefficient& b);
+
   // --- solver controls ------------------------------------------------------
 
   void SetSolverType(SolverType type);

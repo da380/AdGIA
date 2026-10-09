@@ -6,6 +6,9 @@
 #include "AdGIA/sea_level.hpp"
 
 #include <cmath>
+#include <cstddef>
+#include <fstream>
+#include <vector>
 
 #include "AdGIA/detail/fem_factory.hpp"
 
@@ -261,6 +264,90 @@ SeaLevelOperator::SeaLevelChangeInfo SeaLevelOperator::SeaLevelChange(
   info.uniform = (water_mass_change / rho_water_ - raw) / info.ocean_area;
   *sl1_ += info.uniform;
   return info;
+}
+
+void SeaLevelOperator::WriteSurfaceField(const GridFunction& f,
+                                         const std::string& path) const {
+  MFEM_VERIFY(f.FESpace() == sfes_.get(),
+              "SeaLevelOperator::WriteSurfaceField: a surface field "
+              "expected.");
+  const int sdim = surf_mesh_->SpaceDimension();
+  // Nodal coordinates of the scalar space: the identity projected on a
+  // matching vector space (byNODES: component c of node i at i + c nd).
+  FiniteElementCollection& fec = *fec_;
+  std::unique_ptr<mfem::FiniteElementSpace> vfes;
+  std::unique_ptr<GridFunction> coords;
+#ifdef MFEM_USE_MPI
+  if (parallel_) {
+    vfes = std::make_unique<ParFiniteElementSpace>(
+        static_cast<ParMesh*>(surf_mesh_.get()), &fec, sdim,
+        Ordering::byNODES);
+  } else
+#endif
+  {
+    vfes = std::make_unique<mfem::FiniteElementSpace>(
+        surf_mesh_.get(), &fec, sdim, Ordering::byNODES);
+  }
+  coords = detail::MakeGridFunction(vfes.get());
+  VectorFunctionCoefficient identity(
+      sdim, [](const Vector& x, Vector& v) { v = x; });
+  coords->ProjectCoefficient(identity);
+
+  const int nd = sfes_->GetVSize();
+  // Pack the rows this rank owns (true dofs, so shared nodes are
+  // written once), then gather to the root.
+  std::vector<real_t> rows;
+  rows.reserve(static_cast<std::size_t>(nd) * (sdim + 1));
+  for (int i = 0; i < nd; i++) {
+#ifdef MFEM_USE_MPI
+    if (parallel_ &&
+        static_cast<ParFiniteElementSpace*>(sfes_.get())
+                ->GetLocalTDofNumber(i) < 0) {
+      continue;
+    }
+#endif
+    for (int c = 0; c < sdim; c++) {
+      rows.push_back((*coords)[i + c * nd]);
+    }
+    rows.push_back(f[i]);
+  }
+
+  std::vector<real_t> all = rows;
+#ifdef MFEM_USE_MPI
+  if (parallel_) {
+    int rank = 0, size = 1;
+    MPI_Comm_rank(comm_, &rank);
+    MPI_Comm_size(comm_, &size);
+    const int nloc = static_cast<int>(rows.size());
+    std::vector<int> counts(size), displs(size);
+    MPI_Gather(&nloc, 1, MPI_INT, counts.data(), 1, MPI_INT, 0, comm_);
+    int total = 0;
+    if (rank == 0) {
+      for (int r = 0; r < size; r++) {
+        displs[r] = total;
+        total += counts[r];
+      }
+      all.resize(total);
+    }
+    MPI_Gatherv(rows.data(), nloc, MPITypeMap<real_t>::mpi_type, all.data(),
+                counts.data(), displs.data(), MPITypeMap<real_t>::mpi_type,
+                0, comm_);
+    if (rank != 0) {
+      return;
+    }
+  }
+#endif
+  std::ofstream out(path);
+  MFEM_VERIFY(out, "SeaLevelOperator::WriteSurfaceField: cannot open "
+                       << path);
+  out.precision(16);
+  out << (sdim == 2 ? "x,y,value\n" : "x,y,z,value\n");
+  const std::size_t stride = sdim + 1;
+  for (std::size_t r = 0; r + stride <= all.size(); r += stride) {
+    for (std::size_t c = 0; c < stride; c++) {
+      out << all[r + c] << (c + 1 < stride ? ',' : '\n');
+    }
+  }
 }
 
 real_t SeaLevelOperator::SurfaceIntegral(Coefficient& f) const {

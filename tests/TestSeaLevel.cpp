@@ -1,3 +1,5 @@
+#include <cstdio>
+#include <fstream>
 #include <numbers>
 
 #include "MixedProblemTestCommon.hpp"
@@ -215,6 +217,38 @@ TEST_P(SeaLevelTest, MixedProblemSmoke) {
   GridFunctionCoefficient slc(&sea.SeaLevelChangeField());
   EXPECT_LT(std::abs(sea.OceanIntegral(slc)),
             1e-8 * from_parent.Normlinf() * info.ocean_area + 1e-12);
+}
+
+TEST(SeaLevelExport, NodalCsvRoundTrips) {
+  Case s(3, 2);
+  SeaLevelOperator sea(*s.fes_u, s.surface);
+  FunctionCoefficient f(Smooth);
+  GridFunction field(&sea.SurfaceSpace());
+  field.ProjectCoefficient(f);
+  const std::string path = "sea_level_export_test.csv";
+  sea.WriteSurfaceField(field, path);
+
+  std::ifstream in(path);
+  ASSERT_TRUE(in.good());
+  std::string header;
+  std::getline(in, header);
+  EXPECT_EQ(header, "x,y,z,value");
+  int rows = 0;
+  double worst = 0.0;
+  std::string line;
+  while (std::getline(in, line)) {
+    double x[3], v;
+    ASSERT_EQ(std::sscanf(line.c_str(), "%lf,%lf,%lf,%lf", &x[0], &x[1],
+                          &x[2], &v),
+              4);
+    Vector p(x, 3);
+    worst = std::max(worst, std::abs(v - Smooth(p)));
+    rows++;
+  }
+  // One row per node, values exact at the nodes.
+  EXPECT_EQ(rows, sea.SurfaceSpace().GetVSize());
+  EXPECT_LT(worst, 1e-12);
+  std::remove(path.c_str());
 }
 
 INSTANTIATE_TEST_SUITE_P(SeaLevel, SeaLevelTest,

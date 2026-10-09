@@ -9,6 +9,7 @@
 #pragma once
 
 #include <memory>
+#include <string>
 
 #include "mfem.hpp"
 
@@ -147,6 +148,17 @@ class SeaLevelOperator {
   mfem::GridFunction& SeaLevelChangeField();
 
   // --- integrals ------------------------------------------------------------
+
+  /**
+   * @brief Write a surface field's nodal values with their coordinates
+   * to @p path as CSV (header `x,y[,z],value`; one row per global node,
+   * written by rank 0 in parallel) — the exchange format of
+   * `postprocess/surface_to_netcdf.py`, which grids the nodes onto a regular
+   * lon–lat array for NetCDF / pyshtools / cartopy. Exact nodal data,
+   * no resampling on the C++ side.
+   */
+  void WriteSurfaceField(const mfem::GridFunction& f,
+                         const std::string& path) const;
 
   /** @brief @f$\int_{\partial M} f\,dS@f$ over the surface (global in
    * parallel). */
