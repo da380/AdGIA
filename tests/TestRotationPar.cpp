@@ -59,9 +59,13 @@ DenseMatrix InertiaMatrix(const Vector& moments) {
 
 double SurfacePair(ParFiniteElementSpace& fes_u, Coefficient& sigma,
                    Coefficient& psi_k, const Array<int>& marker) {
+  // psi through its interpolant (the tidal-column convention).
   H1_FECollection fec(fes_u.GetMaxElementOrder(), 2);
   ParFiniteElementSpace s(fes_u.GetParMesh(), &fec);
-  ProductCoefficient sp(sigma, psi_k);
+  ParGridFunction psig(&s);
+  psig.ProjectCoefficient(psi_k);
+  GridFunctionCoefficient psii(&psig);
+  ProductCoefficient sp(sigma, psii);
   ParLinearForm lf(&s);
   lf.AddBoundaryIntegrator(new BoundaryLFIntegrator(sp),
                            const_cast<Array<int>&>(marker));

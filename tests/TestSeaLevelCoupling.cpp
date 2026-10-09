@@ -351,6 +351,81 @@ TEST(SeaLevelCouplingLand, MonolithicMatchesFixedPoint) {
   EXPECT_GT(std::abs(phi_g), 1e-4);
 }
 
+// The water load over a Dahlen fluid core: the same monolithic ==
+// fixed-point gate on the three-layer model (solid inner core, fluid
+// outer core, mantle). The instrument pairs with the class's own
+// background gravity, as the operator does; the water boundary blocks,
+// the border and the S-M solves must all compose with the fluid-region
+// machinery (paper Appendix A: fluid regions leave the form unchanged).
+TEST(SeaLevelCouplingFluid, MonolithicMatchesFixedPoint) {
+  const int dim = 2, order = 2;
+  Mesh parent(ThreeLayerMeshFile(dim).c_str(), 1, 1);
+  Array<int> attrs({1, 3});
+  SubMesh solid(SubMesh::CreateFromDomain(parent, attrs));
+  H1_FECollection fec(order, dim);
+  FiniteElementSpace fes_u(&solid, &fec, dim), fes_phi(&parent, &fec);
+  ConstantCoefficient kappa(kKappa), mu(kMu);
+  FunctionCoefficient rho_s(SolidDensity), rho_f(FluidDensity);
+  IsotropicElasticRheology rheology(dim, kappa, mu);
+  std::vector<FluidRegion> fluids;
+  fluids.push_back(OuterCore(solid, rho_f));
+  const Array<int> surface = SurfaceMarker(solid);
+  FunctionCoefficient sigma_data(Degree2);
+  ConstantCoefficient w(0.05);
+  Array<int> inner_core({1});
+
+  auto make = [&] {
+    auto p = std::make_unique<LinearQuasiStaticMixedSelfGravitatingProblem>(
+        &fes_u, &fes_phi, rheology, rho_s, kG, kDtNDegree, nullptr, fluids);
+    p->AddRegionRotations(inner_core);
+    p->SetRelTol(1e-12);
+    return p;
+  };
+  auto surface_int = [&](Coefficient& f) {
+    H1_FECollection sfec(order, dim);
+    FiniteElementSpace sfes(&solid, &sfec);
+    LinearForm lf(&sfes);
+    lf.AddBoundaryIntegrator(new BoundaryLFIntegrator(f),
+                             const_cast<Array<int>&>(surface));
+    lf.Assemble();
+    return lf.Sum();
+  };
+
+  auto p = make();
+  p->SetWaterLoad(w, sigma_data, surface);
+  p->AssembleForce(0.0);
+  ASSERT_TRUE(p->Solve());
+  const double phi_g = p->UniformPotentialTerm();
+
+  auto q = make();
+  IteredWaterLoad water(w, q->BackgroundGravity());
+  q->SetSurfaceLoad(sigma_data, surface);
+  q->SetSurfaceLoad(water, surface);
+  ConstantCoefficient one(1.0);
+  ProductCoefficient wone(w, one);
+  const double m = surface_int(wone);
+  const double Sd = surface_int(sigma_data);
+  double uniform = 0.0;
+  for (int it = 0; it < 20; it++) {
+    q->AssembleForce(0.0);
+    ASSERT_TRUE(q->Solve());
+    VectorGridFunctionCoefficient uc(&q->Displacement());
+    InnerProductCoefficient ug(uc, q->BackgroundGravity());
+    GridFunctionCoefficient pc(
+        const_cast<GridFunction*>(&q->PotentialOnBody()));
+    SumCoefficient tau(ug, pc);
+    ProductCoefficient wtau(w, tau);
+    uniform = (surface_int(wtau) - Sd) / m;
+    water.Update(q->Displacement(), q->PotentialOnBody(), uniform);
+  }
+  // Route-grade agreement (the operator's normal-projected q_g against
+  // the instrument's full gradient), as in the solid gates.
+  EXPECT_NEAR(uniform, phi_g, 1e-5 * std::max(1.0, std::abs(phi_g)));
+  GridFunction du(p->Displacement());
+  du -= q->Displacement();
+  EXPECT_LT(L2Norm(du), 1e-5 * (L2Norm(p->Displacement()) + 1e-30));
+}
+
 INSTANTIATE_TEST_SUITE_P(SeaLevelCoupling, SeaLevelCouplingTest,
                          testing::Values(Param{2, 1}, Param{2, 2},
                                          Param{3, 1}));

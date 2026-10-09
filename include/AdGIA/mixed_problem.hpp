@@ -354,6 +354,34 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   /** @brief @f$\Phi_g@f$ of the last Solve() (0 before). */
   mfem::real_t UniformPotentialTerm() const { return phi_g_; }
 
+  /**
+   * @brief Rotational feedback inside the solve (the WP4 composition of
+   * doc/planning/sea_level_plan.md): the angular-velocity border of the
+   * traditional theory, solved jointly with the water load's
+   * @f$\Phi_g@f$ border by a small block elimination.
+   *
+   * The border columns are the centrifugal coupling @f$T(\psi_k,
+   * \cdot)@f$ (the tidal operators applied to the unit potentials) and,
+   * with SetWaterLoad(), the water's @f$-\int w\,\tau'\psi_k\,dS@f$
+   * columns; the dense block is @f$D + P@f$ (inertia + the fluid
+   * @f$\psi\psi'@f$ term) minus the surface @f$\int w\psi_k\psi_j@f$
+   * block, bordered by @f$\int w\psi_k@f$ against @f$\Phi_g@f$; the
+   * @f$\omega@f$-row data @f$\int\sigma\psi_k\,dS@f$ is read off the
+   * assembled surface-load form, so every registered surface load
+   * enters. Works with or without SetWaterLoad(); without it this
+   * reproduces RotationalFeedback exactly (the agreement is a test).
+   * The principal moments are data, not model-derived (paper §2.4).
+   * Call after construction, before the first Solve(); incompatible
+   * with the gauge-KKT saddle and with SetTidalPotential() (the
+   * centrifugal potential owns that slot's physics here).
+   */
+  void SetRotation(mfem::real_t Omega,
+                   const mfem::Vector& principal_moments);
+
+  /** @brief @f$\omega@f$ of the last Solve() (zero before; empty
+   * without SetRotation()). */
+  const mfem::Vector& AngularVelocity() const { return omega_; }
+
   // --- solver controls ------------------------------------------------------
 
   void SetSolverType(SolverType type);
@@ -646,6 +674,29 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   mfem::Vector sea_cu_, sea_cphi_, sea_cphi_compat_;
   mfem::real_t sea_m_ = 0.0, sea_Sd_ = 0.0, phi_g_ = 0.0;
   mfem::Vector sea_yu_, sea_yphi_;
+
+  // The rotational border (SetRotation): the unit centrifugal
+  // potentials, the inertia matrix, the water cross-column vectors and
+  // surface couplings (built when both features are on), the omega-row
+  // data of the current assembly, and the last solve's omega.
+  bool rot_enabled_ = false;
+  mfem::real_t rot_Omega_ = 0.0;
+  mfem::DenseMatrix rot_D_;
+  std::vector<std::unique_ptr<mfem::Coefficient>> rot_psi_;
+  std::vector<mfem::Vector> rot_cpsi_u_, rot_cpsi_phi_;
+  mfem::DenseMatrix rot_Pw_;   ///< int w psi_k psi_j dS
+  mfem::Vector rot_mpsi_;     ///< int w psi_k dS
+  mfem::Vector rot_r_;        ///< -int sigma psi_k dS per assembly
+  mfem::Vector omega_;
+
+  /** @brief Rebuild the water-rotation cross data (both features on). */
+  void BuildBorderCrossData();
+  /** @brief The surface-mass column of density @p s: the tau'-pairing
+   * vectors on the two rows. */
+  void BuildSurfaceMassColumn(mfem::Coefficient& s, mfem::Vector& cu,
+                              mfem::Vector& cphi);
+  /** @brief @f$\int_{\partial M} f\,dS@f$ over the water marker. */
+  mfem::real_t SurfaceIntegralOnMarker(mfem::Coefficient& f);
 
   // 2-D compatibility
   mfem::Vector ones_, L_outer_;

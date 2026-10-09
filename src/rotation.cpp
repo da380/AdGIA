@@ -66,7 +66,14 @@ real_t RotationalFeedback::GlobalSum(real_t v) const {
 
 real_t RotationalFeedback::SurfacePairing(Coefficient& sigma,
                                           const Array<int>& marker, int k) {
-  ProductCoefficient sp(sigma, *psi_unit_[k]);
+  // psi enters through its interpolant on the scalar space, the same
+  // convention as the tidal machinery's columns (AssembleTidalLoad
+  // projects psi); mixing interpolant columns with exact-psi rows
+  // breaks the border's symmetry at interpolation grade.
+  auto psig = detail::MakeGridFunction(sfes_.get());
+  psig->ProjectCoefficient(*psi_unit_[k]);
+  GridFunctionCoefficient psii(psig.get());
+  ProductCoefficient sp(sigma, psii);
   auto lf = detail::MakeLinearForm(sfes_.get());
   lf->AddBoundaryIntegrator(new BoundaryLFIntegrator(sp),
                             const_cast<Array<int>&>(marker));

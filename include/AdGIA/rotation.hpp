@@ -11,48 +11,10 @@
 #include <vector>
 
 #include "mfem.hpp"
+#include "AdGIA/centrifugal.hpp"
 #include "AdGIA/mixed_problem.hpp"
 
 namespace AdGIA {
-
-/**
- * @brief The centrifugal potential perturbation of the traditional
- * rotational theory, @f$\psi = -(\Omega\times x)\cdot(\omega\times x)@f$
- * with the equilibrium rotation @f$\Omega@f$ about @f$e_3@f$
- * (out-of-plane in 2-D) and amplitudes @f$\omega@f$:
- * in 3-D @f$\psi = \Omega(\omega_1 x_3x_1 + \omega_2 x_3x_2
- * - \omega_3(x_1^2+x_2^2))@f$, in 2-D @f$\psi = -\Omega\,\omega_1|x|^2@f$.
- */
-class CentrifugalPotential : public mfem::Coefficient {
- public:
-  CentrifugalPotential(int dim, mfem::real_t Omega)
-      : dim_(dim), Omega_(Omega), w_(dim == 2 ? 1 : 3) {
-    w_ = 0.0;
-  }
-  void SetAmplitudes(const mfem::Vector& w) { w_ = w; }
-  void SetUnit(int k) {
-    w_ = 0.0;
-    w_[k] = 1.0;
-  }
-  void SetZero() { w_ = 0.0; }
-  int NumComponents() const { return w_.Size(); }
-
-  mfem::real_t Eval(mfem::ElementTransformation& T,
-                    const mfem::IntegrationPoint& ip) override {
-    mfem::Vector x;
-    T.Transform(ip, x);
-    if (dim_ == 2) {
-      return -Omega_ * w_[0] * (x * x);
-    }
-    return Omega_ * (w_[0] * x[2] * x[0] + w_[1] * x[2] * x[1] -
-                     w_[2] * (x[0] * x[0] + x[1] * x[1]));
-  }
-
- private:
-  int dim_;
-  mfem::real_t Omega_;
-  mfem::Vector w_;
-};
 
 /**
  * @brief Rotational feedback for a loaded mixed self-gravitating

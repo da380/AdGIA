@@ -5,6 +5,8 @@
 
 #include "AdGIA/mixed_problem.hpp"
 
+#include "AdGIA/centrifugal.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <numbers>
@@ -642,6 +644,9 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetSurfaceLoad(
 
 void LinearQuasiStaticMixedSelfGravitatingProblem::SetTidalPotential(
     Coefficient& psi) {
+  MFEM_VERIFY(!rot_enabled_,
+              "SetTidalPotential: incompatible with SetRotation (the "
+              "centrifugal potential is handled by the border).");
   psi_ = &psi;
   RegisterTimeDependent(psi);
   psi_gf_ = detail::MakeGridFunction(fes_phi_);
@@ -750,50 +755,122 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetWaterLoad(
     SetupPotentialSolver();
   }
 
-  // The Phi_g border c = int w tau' dS: the u row +int w (m.grad Phi0)
-  // (m.v) dS and the phi row +int w chi dS (assembled like the loads:
-  // on the shadow space, injected, compatibilised for the inner solve).
-  {
-    auto q_g =
-        std::make_unique<BoundaryNormalDotCoefficient>(*grad_phi0_shadow_);
-    auto wq = std::make_unique<ProductCoefficient>(*sea_w_, *q_g);
-    auto lu = detail::MakeLinearForm(fes_);
-    lu->AddBoundaryIntegrator(new VectorBoundaryFluxLFIntegrator(*wq),
-                              sea_marker_);
-    lu->Assemble();
-    ToTrueDofs(*fes_, *lu, sea_cu_);
-    sea_coefs_.push_back(std::move(q_g));
-    sea_coefs_.push_back(std::move(wq));
-
-    auto lphi = detail::MakeLinearForm(shadow_phi_.get());
-    lphi->AddBoundaryIntegrator(new BoundaryLFIntegrator(*sea_w_),
-                                sea_marker_);
-    lphi->Assemble();
-    Vector bL(fes_phi_->GetVSize());
-    injection_->Mult(*lphi, bL);
-    ToTrueDofs(*fes_phi_, bL, sea_cphi_);
-    sea_cphi_compat_ = sea_cphi_;
-    MakeCompatible(sea_cphi_compat_);
-
-    // m = int w dS: the phi-row border against the partition of unity.
-    real_t m = lphi->Sum();
-#ifdef MFEM_USE_MPI
-    if (pfes_phi_) {
-      real_t g = 0.0;
-      MPI_Allreduce(&m, &g, 1, MPITypeMap<real_t>::mpi_type, MPI_SUM,
-                    pfes_phi_->GetComm());
-      m = g;
-    }
-#endif
-    sea_m_ = m;
-    MFEM_VERIFY(sea_m_ > 0.0, "SetWaterLoad: the ocean has zero area.");
-  }
+  // The Phi_g border c = int w tau' dS: the surface-mass column of
+  // density w, and m = int w dS.
+  BuildSurfaceMassColumn(*sea_w_, sea_cu_, sea_cphi_);
+  sea_cphi_compat_ = sea_cphi_;
+  MakeCompatible(sea_cphi_compat_);
+  ConstantCoefficient one_c(1.0);
+  ProductCoefficient w_one(*sea_w_, one_c);
+  sea_m_ = SurfaceIntegralOnMarker(w_one);
+  MFEM_VERIFY(sea_m_ > 0.0, "SetWaterLoad: the ocean has zero area.");
 
   // The data load goes through the ordinary surface-load slot; its
   // surface integral (the mass-row data) is refreshed per
   // AssembleForce.
   SetSurfaceLoad(sigma_data, surface_marker);
+  BuildBorderCrossData();
   operator_dirty_ = true;
+}
+
+void LinearQuasiStaticMixedSelfGravitatingProblem::BuildSurfaceMassColumn(
+    Coefficient& sdens, Vector& cu, Vector& cphi) {
+  // The tau'-pairing of a surface mass density s: the u row
+  // +int s (m.grad Phi0)(m.v) dS — the normal-projected form, matching
+  // the water Q-blocks' route — and the phi row +int s chi dS
+  // (assembled like the loads: on the shadow space, injected).
+  auto q_g = std::make_unique<BoundaryNormalDotCoefficient>(
+      *grad_phi0_shadow_);
+  ProductCoefficient sq(sdens, *q_g);
+  auto lu = detail::MakeLinearForm(fes_);
+  lu->AddBoundaryIntegrator(new VectorBoundaryFluxLFIntegrator(sq),
+                            sea_marker_);
+  lu->Assemble();
+  ToTrueDofs(*fes_, *lu, cu);
+  auto lphi = detail::MakeLinearForm(shadow_phi_.get());
+  lphi->AddBoundaryIntegrator(new BoundaryLFIntegrator(sdens),
+                              sea_marker_);
+  lphi->Assemble();
+  Vector bL(fes_phi_->GetVSize());
+  injection_->Mult(*lphi, bL);
+  ToTrueDofs(*fes_phi_, bL, cphi);
+}
+
+real_t LinearQuasiStaticMixedSelfGravitatingProblem::SurfaceIntegralOnMarker(
+    Coefficient& f) {
+  auto lphi = detail::MakeLinearForm(shadow_phi_.get());
+  lphi->AddBoundaryIntegrator(new BoundaryLFIntegrator(f), sea_marker_);
+  lphi->Assemble();
+  real_t v = lphi->Sum();
+#ifdef MFEM_USE_MPI
+  if (pfes_phi_) {
+    real_t g = 0.0;
+    MPI_Allreduce(&v, &g, 1, MPITypeMap<real_t>::mpi_type, MPI_SUM,
+                  pfes_phi_->GetComm());
+    v = g;
+  }
+#endif
+  return v;
+}
+
+void LinearQuasiStaticMixedSelfGravitatingProblem::SetRotation(
+    real_t Omega, const Vector& principal_moments) {
+  MFEM_VERIFY(!rot_enabled_, "SetRotation: already set.");
+  MFEM_VERIFY(!gauge_kkt_,
+              "SetRotation: incompatible with the gauge-KKT saddle.");
+  MFEM_VERIFY(!psi_,
+              "SetRotation: incompatible with SetTidalPotential (the "
+              "centrifugal potential is handled by the border).");
+  rot_enabled_ = true;
+  rot_Omega_ = Omega;
+  const int nw = dim_ == 2 ? 1 : 3;
+  MFEM_VERIFY(principal_moments.Size() == nw,
+              "SetRotation: " << nw << " principal moment(s) expected.");
+  rot_D_ = InertiaMatrix(principal_moments);
+  for (int k = 0; k < nw; k++) {
+    auto psi = std::make_unique<CentrifugalPotential>(dim_, Omega);
+    psi->SetUnit(k);
+    rot_psi_.push_back(std::move(psi));
+  }
+  omega_.SetSize(nw);
+  omega_ = 0.0;
+  rot_r_.SetSize(nw);
+  rot_r_ = 0.0;
+  BuildBorderCrossData();
+  operator_dirty_ = true;
+}
+
+void LinearQuasiStaticMixedSelfGravitatingProblem::BuildBorderCrossData() {
+  // The water-rotation cross data, when both features are on: the
+  // columns c^psi_k = int w tau' psi_k dS, the couplings
+  // m^psi_k = int w psi_k dS and Pw_kj = int w psi_k psi_j dS.
+  if (!sea_enabled_ || !rot_enabled_) {
+    return;
+  }
+  const int nw = static_cast<int>(rot_psi_.size());
+  rot_cpsi_u_.resize(nw);
+  rot_cpsi_phi_.resize(nw);
+  rot_mpsi_.SetSize(nw);
+  rot_Pw_.SetSize(nw);
+  // psi through its interpolant (on the shadow space, whose surface
+  // nodes are the potential space's): the convention of the tidal
+  // columns, kept everywhere so the border stays symmetric.
+  std::vector<std::unique_ptr<GridFunction>> psig(nw);
+  std::vector<std::unique_ptr<GridFunctionCoefficient>> psii(nw);
+  for (int k = 0; k < nw; k++) {
+    psig[k] = detail::MakeGridFunction(shadow_phi_.get());
+    psig[k]->ProjectCoefficient(*rot_psi_[k]);
+    psii[k] = std::make_unique<GridFunctionCoefficient>(psig[k].get());
+  }
+  for (int k = 0; k < nw; k++) {
+    ProductCoefficient wpsi(*sea_w_, *psii[k]);
+    BuildSurfaceMassColumn(wpsi, rot_cpsi_u_[k], rot_cpsi_phi_[k]);
+    rot_mpsi_[k] = SurfaceIntegralOnMarker(wpsi);
+    for (int j = 0; j <= k; j++) {
+      ProductCoefficient wpp(wpsi, *psii[j]);
+      rot_Pw_(k, j) = rot_Pw_(j, k) = SurfaceIntegralOnMarker(wpp);
+    }
+  }
 }
 
 void LinearQuasiStaticMixedSelfGravitatingProblem::AssembleTidalLoad() {
@@ -820,6 +897,19 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::AssembleForce(real_t t) {
   Vector bL(fes_phi_->GetVSize());
   injection_->Mult(*b_phi_, bL);
   ToTrueDofs(*fes_phi_, bL, B_phi_);
+  if (rot_enabled_) {
+    // The omega-row data -int sigma psi_k dS, read off the raw
+    // surface-load form (B_phi_ holds -int sigma chi for every
+    // registered surface load), before the tidal and compatibility
+    // modifications below.
+    auto psig = detail::MakeGridFunction(fes_phi_);
+    Vector Psi(fes_phi_->GetTrueVSize());
+    for (int k = 0; k < static_cast<int>(rot_psi_.size()); k++) {
+      psig->ProjectCoefficient(*rot_psi_[k]);
+      psig->GetTrueDofs(Psi);
+      rot_r_[k] = Dot(B_phi_, Psi);
+    }
+  }
   AssembleTidalLoad();
   MakeCompatible(B_phi_);
   if (sea_enabled_) {
@@ -1355,35 +1445,119 @@ LinearQuasiStaticMixedSelfGravitatingProblem::KKTResiduals() const {
 
 bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveLinearSystem(
     const Vector& B_in, Vector& X) {
-  if (!sea_enabled_) {
+  if (!sea_enabled_ && !rot_enabled_) {
     return SolveUnbordered(B_in, X);
   }
-  // The water-load Phi_g border by Sherman-Morrison (the WP3 derivation
-  // in doc/planning/sea_level_plan.md): solve K x0 = b, K y = c with
-  // the same operator, then Phi_g = (c.x0 - Sd) / (m + c.y) and
-  // x = x0 - Phi_g y. The y-solve must not see the tidal load or the
-  // data rhs, so psi_ is masked and B_phi_ swapped for the
-  // (compatibilised) phi-row border.
+  // The bordered solve (WP3/WP4 of doc/planning/sea_level_plan.md):
+  // with y = (Phi_g[, omega]) the system is
+  //   [K  B; B^T  Db] [x; y] = [b; r],
+  // K the (water-modified) operator, the border columns
+  //   B = [c_Phi, (L_k - c^psi_k)...]
+  // (c_Phi the Phi_g column, L_k the centrifugal coupling = the tidal
+  // operators applied to the unit potential psi_k, c^psi_k the water's
+  // psi column), and the dense block
+  //   Db = [[-m, m^psi], [m^psi, D + P - Pw]].
+  // Block elimination: K Y_j = B_j (psi_ masked, B_phi_ swapped per
+  // column), then (Db - B^T Y) y = r - B^T x0 and x = x0 - Y y.
+  const int ns = sea_enabled_ ? 1 : 0;
+  const int nw = rot_enabled_ ? static_cast<int>(rot_psi_.size()) : 0;
+  const int nb = ns + nw;
+
+  // The border columns.
+  std::vector<Vector> Bu(nb), Bphi(nb);
+  if (sea_enabled_) {
+    Bu[0] = sea_cu_;
+    Bphi[0] = sea_cphi_;
+  }
+  if (rot_enabled_) {
+    EnsureOperator();
+    auto psig = detail::MakeGridFunction(fes_phi_);
+    Vector Psi(fes_phi_->GetTrueVSize());
+    for (int k = 0; k < nw; k++) {
+      psig->ProjectCoefficient(*rot_psi_[k]);
+      psig->GetTrueDofs(Psi);
+      Bu[ns + k].SetSize(fes_->GetTrueVSize());
+      C_op_->Mult(Psi, Bu[ns + k]);
+      Bphi[ns + k].SetSize(fes_phi_->GetTrueVSize());
+      Bphi[ns + k] = 0.0;
+      if (!fluids_.empty()) {
+        M_fluid_.Ptr()->Mult(Psi, Bphi[ns + k]);
+      }
+      if (sea_enabled_) {
+        Bu[ns + k] -= rot_cpsi_u_[k];
+        Bphi[ns + k] -= rot_cpsi_phi_[k];
+      }
+    }
+  }
+
+  // The dense block and the border rhs.
+  DenseMatrix Db(nb);
+  Db = 0.0;
+  Vector r(nb);
+  r = 0.0;
+  if (sea_enabled_) {
+    Db(0, 0) = -sea_m_;
+    r[0] = sea_Sd_;
+  }
+  if (rot_enabled_) {
+    for (int k = 0; k < nw; k++) {
+      r[ns + k] = rot_r_[k];
+      for (int j = 0; j < nw; j++) {
+        Db(ns + k, ns + j) =
+            rot_D_(k, j) + TidalTidalCoupling(*rot_psi_[k], *rot_psi_[j]);
+        if (sea_enabled_) {
+          Db(ns + k, ns + j) -= rot_Pw_(k, j);
+        }
+      }
+      if (sea_enabled_) {
+        Db(0, ns + k) = Db(ns + k, 0) = rot_mpsi_[k];
+      }
+    }
+  }
+
+  // Base solve, then one solve per border column.
   bool ok = SolveUnbordered(B_in, X);
   Vector phi0(Phi_true_);
   Vector Bphi_save(B_phi_);
   Coefficient* psi_save = psi_;
   psi_ = nullptr;
-  B_phi_ = sea_cphi_compat_;
-  Vector yu(X.Size());
-  yu = 0.0;
-  ok = SolveUnbordered(sea_cu_, yu) && ok;
-  Vector yphi(Phi_true_);
+  std::vector<Vector> Yu(nb), Yphi(nb);
+  for (int j = 0; j < nb; j++) {
+    Vector col(Bphi[j]);
+    MakeCompatible(col);
+    B_phi_ = col;
+    Yu[j].SetSize(X.Size());
+    Yu[j] = 0.0;
+    ok = SolveUnbordered(Bu[j], Yu[j]) && ok;
+    Yphi[j] = Phi_true_;
+  }
   B_phi_ = Bphi_save;
   psi_ = psi_save;
-  const real_t cx0 = Dot(sea_cu_, X) + Dot(sea_cphi_, phi0);
-  const real_t cy = Dot(sea_cu_, yu) + Dot(sea_cphi_, yphi);
-  phi_g_ = (cx0 - sea_Sd_) / (sea_m_ + cy);
-  X.Add(-phi_g_, yu);
+
+  // (Db - B^T Y) y = r - B^T x0.
+  DenseMatrix S(nb);
+  Vector rhs(nb), y(nb);
+  for (int i = 0; i < nb; i++) {
+    rhs[i] = r[i] - (Dot(Bu[i], X) + Dot(Bphi[i], phi0));
+    for (int j = 0; j < nb; j++) {
+      S(i, j) = Db(i, j) - (Dot(Bu[i], Yu[j]) + Dot(Bphi[i], Yphi[j]));
+    }
+  }
+  DenseMatrixInverse Sinv(S);
+  Sinv.Mult(rhs, y);
+  // (With the sea border alone this is the WP3 Sherman-Morrison,
+  // Phi_g = (c.x0 - Sd)/(m + c.y), entry for entry.)
+  phi_g_ = sea_enabled_ ? y[0] : 0.0;
+  for (int k = 0; k < nw; k++) {
+    omega_[k] = y[ns + k];
+  }
+  for (int j = 0; j < nb; j++) {
+    X.Add(-y[j], Yu[j]);
+    phi0.Add(-y[j], Yphi[j]);
+  }
   Phi_true_ = phi0;
-  Phi_true_.Add(-phi_g_, yphi);
-  // The y-solve distributed its own potential; redistribute the
-  // combined one.
+  // The column solves distributed their own potentials; redistribute
+  // the combined one (the WP3 lesson).
   DistributePotential(Phi_true_);
   return ok;
 }
