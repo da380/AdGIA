@@ -21,6 +21,7 @@
 #include "AdGIA/mixed_problem.hpp"
 #include "AdGIA/null_space.hpp"
 #include "AdGIA/riesz.hpp"
+#include "AdGIA/sea_level.hpp"
 #include "AdGIA/spherical_harmonics.hpp"
 #include "AdGIA/submesh.hpp"
 #include "AdGIA/viscoelastic.hpp"
