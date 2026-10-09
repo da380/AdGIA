@@ -46,6 +46,10 @@
 //            profile rather than a map).
 //   -o       finite element order [2].
 //   -r       uniform mesh refinements [0].
+//   -Omega   equilibrium rotation rate about e3 [0: rotational feedback
+//            off]; with it the angular-velocity border joins the solve
+//            and psi(omega) enters the fingerprint.
+//   -C1 -C2 -C3   principal moments [1.2, 1.3, 2.0]; 2-D uses -C3 only.
 //   -rhow    water density [0.05] (non-dimensional, like the model).
 //   -rhoi    ice density [0.045].
 //   -ocean-depth   initial ocean depth [1.0].
@@ -68,6 +72,7 @@
 //    ./sea_level_fingerprint
 //    ./sea_level_fingerprint -melt 1.0 -melt-width 0.4
 //    ./sea_level_fingerprint -r 1 -o 2
+//    ./sea_level_fingerprint -Omega 0.1
 //    ./sea_level_fingerprint -m ../data/elastogravity_2d.msh
 // ============================================================================
 
@@ -165,6 +170,8 @@ int main(int argc, char* argv[]) {
   const char* mesh_file = "../data/coupled_poisson.msh";
   int order = 2;
   int ref_levels = 0;
+  double Omega = 0.0;
+  double C1 = 1.2, C2 = 1.3, C3 = 2.0;
   bool visualization = true;
 
   OptionsParser args(argc, argv);
@@ -173,6 +180,12 @@ int main(int argc, char* argv[]) {
   args.AddOption(&order, "-o", "--order", "Finite element order.");
   args.AddOption(&ref_levels, "-r", "--refine",
                  "Uniform mesh refinements before partitioning.");
+  args.AddOption(&Omega, "-Omega", "--rotation-rate",
+                 "Equilibrium rotation rate about e3 (0: no rotational "
+                 "feedback).");
+  args.AddOption(&C1, "-C1", "--moment-1", "Principal moment C1 (3-D).");
+  args.AddOption(&C2, "-C2", "--moment-2", "Principal moment C2 (3-D).");
+  args.AddOption(&C3, "-C3", "--moment-3", "Principal moment C3.");
   args.AddOption(&g_rho_w, "-rhow", "--water-density", "Water density.");
   args.AddOption(&g_rho_i, "-rhoi", "--ice-density", "Ice density.");
   args.AddOption(&g_ocean_depth, "-ocean-depth", "--ocean-depth",
@@ -246,6 +259,19 @@ int main(int argc, char* argv[]) {
                                                     rheology, rho, kG,
                                                     kDtNDegree);
   prob.SetWaterLoad(w, sigma_data, surface);
+  if (Omega != 0.0) {
+    // Rotational feedback inside the same bordered solve; the moments
+    // are data (a spherical model's own would be degenerate).
+    Vector moments(dim == 2 ? 1 : 3);
+    if (dim == 2) {
+      moments[0] = C3;
+    } else {
+      moments[0] = C1;
+      moments[1] = C2;
+      moments[2] = C3;
+    }
+    prob.SetRotation(Omega, moments);
+  }
   prob.SetRelTol(1e-11);
   prob.AssembleForce(0.0);
   if (!prob.Solve()) {
@@ -260,8 +286,13 @@ int main(int argc, char* argv[]) {
   sea.SetDensities(g_rho_w, g_rho_i);
   FunctionCoefficient sl0(InitialSeaLevel), ice(IceThickness);
   sea.SetInitialState(sl0, ice);
+  CentrifugalPotential psi(dim, Omega);
+  if (Omega != 0.0) {
+    psi.SetAmplitudes(prob.AngularVelocity());
+  }
   sea.SeaLevelChangeFrom(prob.Displacement(), grad_phi0, prob.Potential(),
-                         prob.UniformPotentialTerm());
+                         prob.UniformPotentialTerm(),
+                         Omega != 0.0 ? &psi : nullptr);
 
   // Diagnostics over the same analytic ocean function the solve used
   // (the field-projected indicator differs near the shoreline at
@@ -286,6 +317,13 @@ int main(int argc, char* argv[]) {
               << "   (= eustatic when mass is conserved)\n";
     std::cout << "  uniform term Phi_g         "
               << prob.UniformPotentialTerm() << "\n";
+    if (Omega != 0.0) {
+      std::cout << "  angular-velocity change   ";
+      for (int k = 0; k < prob.AngularVelocity().Size(); k++) {
+        std::cout << " " << prob.AngularVelocity()[k];
+      }
+      std::cout << (dim == 2 ? "   (spin)\n" : "   (wander_1 wander_2 spin)\n");
+    }
   }
 
   // The fingerprint as data: nodal CSV for the postprocess tool.

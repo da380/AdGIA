@@ -257,7 +257,9 @@ boundary modification plus a rank-one border carrying the uniform term
 and mass conservation), no outer iteration. The problem is the sea-level
 benchmark family's (smooth polar continent, ice cap, a melt unloading
 the +x hemisphere of the cap smoothly), with every piece of the
-geometry and load an option; frozen shorelines (first-order exact). Prints the eustatic equivalent against the ocean-mean sea-level
+geometry and load an option, and `-Omega` adding the rotational
+feedback to the same bordered solve; frozen shorelines (first-order
+exact). Prints the eustatic equivalent against the ocean-mean sea-level
 change (equal when mass is conserved) and the uniform term; exports the
 fingerprint's nodal values with `WriteSurfaceField`, which in 3-D maps
 to NetCDF/cartopy through `<build>/postprocess/surface_to_netcdf`.
