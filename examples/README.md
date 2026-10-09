@@ -234,6 +234,38 @@ and pausing (`-no-anim` turns the saving off).
 `./postseismic_deformation`, `./postseismic_deformation -nl 0 -tau-e 4 -tf 20`,
 `./postseismic_deformation -tgamma 0.9 -tbx 1 -tbz 2`
 
+### Sea level and rotation
+
+**`rotational_feedback`**: a degree-2 surface mass load without and with
+rotational feedback (`RotationalFeedback`): loading perturbs the inertia
+tensor, angular-momentum conservation perturbs the rotation, and the
+centrifugal potential of the perturbation feeds back on the deformation —
+a small symmetric border on the mixed problem (spin in 2-D, spin plus
+polar wander in 3-D), solved exactly by block elimination over the tidal
+machinery. Prints the angular-velocity perturbation, the feedback's
+relative effect on the displacement, and the re-evaluated
+angular-momentum-row residual; the equilibrium moments are data
+(`-C1 -C2 -C3`), not derived from the model. Shows: the displacement
+without and with feedback, and their difference.
+`./rotational_feedback`, `./rotational_feedback -Omega 0.3`,
+`./rotational_feedback -m ../data/coupled_poisson.msh -o 1`
+
+**`sea_level_fingerprint`**: the gravitationally self-consistent ocean
+response to melting an ice cap, solved monolithically — the sea-level
+equation folded into the elastic operator (`SetWaterLoad`: a symmetric
+boundary modification plus a rank-one border carrying the uniform term
+and mass conservation), no outer iteration. The problem is the sea-level
+benchmark family's (smooth polar continent, ice cap, a melt unloading
+the +x hemisphere of the cap smoothly), with every piece of the
+geometry and load an option; frozen shorelines (first-order exact). Prints the eustatic equivalent against the ocean-mean sea-level
+change (equal when mass is conserved) and the uniform term; exports the
+fingerprint's nodal values with `WriteSurfaceField`, which in 3-D maps
+to NetCDF/cartopy through `<build>/postprocess/surface_to_netcdf`.
+Shows (3-D by default): the displacement, and the fingerprint, the
+ocean function and the melt load on the surface shell.
+`./sea_level_fingerprint`, `./sea_level_fingerprint -melt 1.0`,
+`./sea_level_fingerprint -m ../data/elastogravity_2d.msh`
+
 ### Fluids and interfaces
 
 **`gauged_fluid_cavity`**: an elastic body with a fluid core under a

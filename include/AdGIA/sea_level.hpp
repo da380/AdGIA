@@ -147,6 +147,19 @@ class SeaLevelOperator {
                                     mfem::real_t water_mass_change = 0.0);
   mfem::GridFunction& SeaLevelChangeField();
 
+  /**
+   * @brief The sea-level change of a coupled water-load solve:
+   * @f$SL_1 = -(u\cdot\nabla\Phi_0 + \phi + \psi)/g + \Phi_g/g@f$ with
+   * the uniform term the solve determined
+   * (LinearQuasiStaticMixedSelfGravitatingProblem::UniformPotentialTerm),
+   * into SeaLevelChangeField(). No mass bookkeeping here — the solve's
+   * mass row already fixed it.
+   */
+  void SeaLevelChangeFrom(const mfem::GridFunction& u,
+                          mfem::VectorCoefficient& grad_phi0,
+                          const mfem::GridFunction& phi, mfem::real_t phi_g,
+                          mfem::Coefficient* psi = nullptr);
+
   // --- integrals ------------------------------------------------------------
 
   /**

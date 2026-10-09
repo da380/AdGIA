@@ -320,6 +320,40 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
    * regions) — the @f$\psi\psi'@f$ term of eq. A6. */
   mfem::real_t TidalTidalCoupling(mfem::Coefficient& a, mfem::Coefficient& b);
 
+  /**
+   * @brief Gravitationally self-consistent water load with a frozen
+   * shoreline — the condensed sea-level equation
+   * (doc/planning/sea_level_plan.md, "The WP3 derivation").
+   *
+   * With the ocean weight @f$w = \rho_w C_0/g@f$ and the surface trace
+   * @f$\tau = u\cdot\nabla\Phi_0 + \phi@f$, the load
+   * @f$\sigma = -w\,\tau + w\,\Phi_g + \sigma_{data}@f$ is folded into
+   * the operator: the symmetric boundary blocks
+   * @f$-\int w\,\tau'\tau\,dS@f$ (added to the stiffness, the coupling
+   * and the potential blocks, with @f$\nabla\Phi_0@f$ in its
+   * normal-projected form @f$(m\cdot\nabla\Phi_0)\,m@f$ — exact on an
+   * equipotential surface), and the rank-one @f$\Phi_g@f$ border with
+   * the mass-conservation row @f$\int\sigma\,dS = 0@f$, eliminated by
+   * Sherman–Morrison inside the solve (one extra inner solve per
+   * Solve()). @p sigma_data (e.g. @f$\rho_i(1-C_0)I_1@f$, may be
+   * time-dependent) is registered as an ordinary surface load, and its
+   * surface integral feeds the mass row.
+   *
+   * Call once, after construction and before the first Solve();
+   * incompatible with the gauge-KKT saddle. The uniform term of the
+   * last solve is UniformPotentialTerm(); the sea-level change is the
+   * postprocessing @f$SL_1 = -\tau/g + \Phi_g/g@f$
+   * (SeaLevelOperator). Shoreline migration is strictly second order
+   * (Crawford), so the frozen @f$C_0@f$ here is the first-order-exact
+   * production path.
+   */
+  void SetWaterLoad(mfem::Coefficient& ocean_weight,
+                    mfem::Coefficient& sigma_data,
+                    const mfem::Array<int>& surface_marker);
+
+  /** @brief @f$\Phi_g@f$ of the last Solve() (0 before). */
+  mfem::real_t UniformPotentialTerm() const { return phi_g_; }
+
   // --- solver controls ------------------------------------------------------
 
   void SetSolverType(SolverType type);
@@ -470,6 +504,10 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   void SetupSolver(mfem::OperatorHandle& A) override;
   bool SolveLinearSystem(const mfem::Vector& B, mfem::Vector& X) override;
 
+  /** @brief The system solve without the water-load border (the body of
+   * SolveLinearSystem() before SetWaterLoad()). */
+  bool SolveUnbordered(const mfem::Vector& B, mfem::Vector& X);
+
  private:
   /** @brief @f$S x = A_{uu} x - C A_{\phi\phi}^{-1} C^T x@f$. */
   class SchurOperator : public mfem::Operator {
@@ -590,6 +628,24 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   mfem::Coefficient* psi_ = nullptr;
   std::unique_ptr<mfem::GridFunction> psi_gf_;
   mfem::Vector Psi_true_, tidal_u_, B_eff_;
+
+  // The water-load feedback (SetWaterLoad): the ocean weight, its
+  // derived coefficients (kept alive), the sea phi-phi boundary matrix
+  // summed onto the potential block, the Phi_g border vectors
+  // (c = int w tau' dS on each row; the compatibilised phi copy is the
+  // inner-solve rhs in 2-D), the mass-row scalars and the last solve's
+  // uniform term.
+  bool sea_enabled_ = false;
+  mfem::Coefficient* sea_w_ = nullptr;
+  mfem::Coefficient* sea_sigma_data_ = nullptr;
+  mfem::Array<int> sea_marker_;
+  std::vector<std::unique_ptr<mfem::Coefficient>> sea_coefs_;
+  std::unique_ptr<mfem::BilinearForm> sea_phiphi_form_;
+  mfem::OperatorHandle S_sea_;
+  std::unique_ptr<mfem::SumOperator> A_sea_sum_;
+  mfem::Vector sea_cu_, sea_cphi_, sea_cphi_compat_;
+  mfem::real_t sea_m_ = 0.0, sea_Sd_ = 0.0, phi_g_ = 0.0;
+  mfem::Vector sea_yu_, sea_yphi_;
 
   // 2-D compatibility
   mfem::Vector ones_, L_outer_;

@@ -123,6 +123,50 @@ it is not the production path, but monolithic == fixed-point at
 convergence is a strong independent gate, and it mirrors the reference
 implementation one-to-one.
 
+## The WP3 derivation (the discrete terms, term by term)
+
+Frozen shoreline (`C = C₀`, first-order exact) and no rotation
+(`ψ = 0`). Write `τ(x) := u·∇Φ₀ + φ` for the surface trace combination
+(the pairing the class's `SetSurfaceLoad` assembles) and
+`w := ρ_w C₀ / g ≥ 0` for the ocean weight. The load (eq. 32) with
+eqs. (34)–(35) becomes
+
+    σ = ρ_w C₀ SL₁ + ρ_i (1−C₀) I₁ ,   SL₁ = −τ/g + Φ_g/g ,
+
+with `I₁ = I − I₀` the ice-thickness change (data). Substituting into
+the loaded weak form `A(x|x′) + ∫ τ′ σ dS = 0` and adjoining the mass
+row `∫ σ dS = 0` (times −1, to make the border symmetric):
+
+    A(x|x′) − ∫ w τ′ τ dS + Φ_g ∫ w τ′ dS = −∫ τ′ σ_data dS ,
+    ∫ w τ dS − Φ_g ∫ w dS = ∫ σ_data dS ,
+
+with `σ_data = ρ_i(1−C₀) I₁`. In block form, with `Q(x,x′) = ∫ w τ′ τ`
+(symmetric PSD boundary form — the four uu/uφ/φu/φφ trace blocks),
+`c(x′) = ∫ w τ′ dS` and `m = ∫ w dS`:
+
+    [ A − Q    c  ] [ x  ]   [ −L(σ_data) ]
+    [ c^T     −m  ] [ Φ_g ] = [ −F_I      ] ,   F_I = −∫ σ_data dS .
+
+(Sign check: the −Q is the destabilising water feedback — water fills
+depressions; smallness `ρ_w/ρ̄` keeps the system solvable.) The border
+is rank one and is eliminated by Sherman–Morrison: `Φ_g = (cᵀx + F_I)/m`
+and the x-system becomes `A − Q + (1/m) c cᵀ` — one extra solve
+`(A−Q)⁻¹c` per operator assembly (load-independent, cached), then a
+rank-one combination per load. `SL₁ = −τ/g + Φ_g/g` is postprocessing
+as before, and mass conservation `∫σ dS = 0` holds identically — the
+discrete certificate.
+
+Per degree `l ≥ 1` on an all-ocean spherical model the system closes:
+with `T_l` the τ/g-amplitude response to a unit surface-mass load of
+degree l (measured by a plain `SetSurfaceLoad` solve of the same
+class — no external reference), the monolithic answer must satisfy
+
+    SL₁_l = − T_l σ̂_l / (1 − ρ_w T_l) ,
+
+the classic SLE spectral solution — the rung-0 self-consistency gate.
+The Φ_g row is inert for `l ≥ 1` patterns and activates with land or
+degree-0 content.
+
 ## Class design (sketch for review)
 
 `SeaLevelProblem` wrapping/extending
@@ -152,16 +196,18 @@ Maxwell fluid treatment, tides, gauge machinery all inherited).
 - **Background data**: surface gravity g and ∇Φ from the class's
   hydrostatic background (kept as Coefficients — aspherical surfaces
   make g non-constant on ∂M).
-- **Shoreline migration is strictly second order** (Crawford; David,
-  9 Oct — structurally: the load integrand `ρ_w SL − ρ_i I` *vanishes
-  at the shoreline*, so moving it contributes a product of two small
-  quantities, cf. the δC line distribution of paper eq. 51). Hence
-  **frozen C = C₀ is first-order exact and is the production
-  linearised path — no Picard at all**. The Picard loop is a
-  finite-amplitude option, and its best test is the theorem itself:
-  `|SL(Picard) − SL(C₀)|` must scale quadratically with load
-  amplitude. At first order the δC shoreline terms also drop from the
-  eventual adjoints.
+- **Shoreline migration is strictly second order in the instantaneous
+  perturbation** (Crawford — structurally: the load integrand
+  `ρ_w SL − ρ_i I` *vanishes at the shoreline*, cf. the δC line
+  distribution of paper eq. 51), so frozen C = C₀ is first-order exact
+  and is the natural validation configuration and off-switch. **But it
+  is required machinery for ice-age work (David, 9 Oct):** over a
+  glacial cycle the shoreline excursions are finite, so production
+  runs migrate shorelines by default, with the frozen-C option kept
+  for linearised studies and as the control. The theorem supplies the
+  implementation's certificate — `|SL(migrating) − SL(C₀)|` must
+  scale quadratically with load amplitude — and at first order the δC
+  shoreline terms drop from the adjoints.
 - **Inexact Picard** (when the loop does run; David, 9 Oct: never
   re-solve full linear problems per C-update): warm-started Krylov
   across iterates (the C-update is a small boundary-only operator
@@ -236,10 +282,10 @@ Three separately-testable couplings, built in order of complexity
   and rung 1 (analytical continents vs pyslfp linear fingerprints).
 - **WP4** — **sea level with rotation**: compose the two borders;
   rung 2 vs pyslfp rotating fingerprints.
-- **WP5** — shoreline Picard + rung 3 — *demoted to a finite-amplitude
-  option (second-order effect; frozen C₀ is the first-order production
-  path)*; includes the quadratic-scaling certificate and the inexact-
-  iteration machinery above.
+- **WP5** — shoreline migration (Picard on C) + rung 3 — *required
+  for ice-age production (switchable; frozen C₀ = the off-switch and
+  first-order control)*; includes the quadratic-scaling certificate
+  and the inexact-iteration machinery above.
 - **WP6** — viscoelastic composition + ice-history demo.
 - **WP7** — the **referential leg**: port the boundary terms (the ζζ
   collapse), gate against the mixed results; the M&A generalised

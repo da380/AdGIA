@@ -213,6 +213,44 @@ void SeaLevelOperator::Restrict(const GridFunction& scalar,
   TransferPair(hop, out);
 }
 
+void SeaLevelOperator::SeaLevelChangeFrom(const GridFunction& u,
+                                          VectorCoefficient& grad_phi0,
+                                          const GridFunction& phi,
+                                          real_t phi_g, Coefficient* psi) {
+  MFEM_VERIFY(u.FESpace()->GetMesh() == body_mesh_,
+              "SeaLevelOperator::SeaLevelChangeFrom: u must live on the "
+              "body mesh.");
+  auto ugf = detail::MakeGridFunction(sfes_.get());
+  {
+    VectorGridFunctionCoefficient uc(&u);
+    InnerProductCoefficient ug(uc, grad_phi0);
+    BodyScratch().ProjectCoefficient(ug);
+    Restrict(BodyScratch(), *ugf);
+  }
+  auto phis = detail::MakeGridFunction(sfes_.get());
+  Restrict(phi, *phis);
+  auto g = detail::MakeGridFunction(sfes_.get());
+  {
+    InnerProductCoefficient gg(grad_phi0, grad_phi0);
+    PowerCoefficient gmag(gg, 0.5);
+    BodyScratch().ProjectCoefficient(gmag);
+    Restrict(BodyScratch(), *g);
+  }
+  std::unique_ptr<GridFunction> psis;
+  if (psi) {
+    psis = detail::MakeGridFunction(sfes_.get());
+    psis->ProjectCoefficient(*psi);
+  }
+  for (int i = 0; i < sl1_->Size(); i++) {
+    const real_t gi = (*g)[i];
+    MFEM_VERIFY(gi > 0.0,
+                "SeaLevelOperator::SeaLevelChangeFrom: |grad Phi0| "
+                "vanishes on the surface.");
+    (*sl1_)[i] =
+        (-((*ugf)[i] + (*phis)[i] + (psis ? (*psis)[i] : 0.0)) + phi_g) / gi;
+  }
+}
+
 SeaLevelOperator::SeaLevelChangeInfo SeaLevelOperator::SeaLevelChange(
     const GridFunction& u, VectorCoefficient& grad_phi0,
     const GridFunction& phi, Coefficient* psi, real_t water_mass_change) {

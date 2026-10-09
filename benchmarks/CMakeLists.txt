@@ -93,6 +93,10 @@ benchmark_launcher(common love_numbers make_case)
 
 # --- Disc (the 2-D family; rung 0 is gravity-free) --------------------------
 
+benchmark_driver(sea_level sea_level_benchmark)
+benchmark_launcher(sea_level sea_level run ${BENCHMARK_LAUNCHER_ARGUMENTS})
+benchmark_launcher(common sea_level make_case)
+
 benchmark_driver(disc disc_benchmark)
 benchmark_launcher(disc disc check ${BENCHMARK_LAUNCHER_ARGUMENTS})
 benchmark_launcher(disc disc explore)

@@ -451,6 +451,20 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetupCoupling() {
           new BoundaryNormalScalarIntegrator(*minus_rho), f.interface_marker);
       fluid_coefs_.push_back(std::move(minus_rho));
     }
+    if (sea_enabled_) {
+      // The u-phi water block: -int w (m.grad Phi0) phi (m.v) dS; its
+      // transpose (the phi-row) comes with C^T below.
+      auto q_g =
+          std::make_unique<BoundaryNormalDotCoefficient>(*grad_phi0_shadow_);
+      auto minus_wqg =
+          std::make_unique<ProductCoefficient>(*sea_w_, *q_g);
+      auto m_wqg = std::make_unique<ProductCoefficient>(-1.0, *minus_wqg);
+      form.AddBoundaryIntegrator(new BoundaryNormalScalarIntegrator(*m_wqg),
+                                 sea_marker_);
+      sea_coefs_.push_back(std::move(q_g));
+      sea_coefs_.push_back(std::move(minus_wqg));
+      sea_coefs_.push_back(std::move(m_wqg));
+    }
   };
 #ifdef MFEM_USE_MPI
   if (pfes_phi_) {
@@ -674,6 +688,114 @@ real_t LinearQuasiStaticMixedSelfGravitatingProblem::TidalTidalCoupling(
   return Dot(Pa, mp);
 }
 
+void LinearQuasiStaticMixedSelfGravitatingProblem::SetWaterLoad(
+    Coefficient& ocean_weight, Coefficient& sigma_data,
+    const Array<int>& surface_marker) {
+  MFEM_VERIFY(!sea_enabled_, "SetWaterLoad: already set.");
+  MFEM_VERIFY(!gauge_kkt_,
+              "SetWaterLoad: incompatible with the gauge-KKT saddle.");
+  sea_enabled_ = true;
+  sea_w_ = &ocean_weight;
+  sea_sigma_data_ = &sigma_data;
+  sea_marker_ = surface_marker;
+  RegisterTimeDependent(sigma_data);
+
+  // The uu water block: -int w (m.grad Phi0)^2 (m.u)(m.v) dS on the
+  // stiffness form (the normal-projected tau-tau trace block; exact on
+  // an equipotential surface).
+  {
+    auto q_g =
+        std::make_unique<BoundaryNormalDotCoefficient>(*grad_phi0_shadow_);
+    auto wq = std::make_unique<ProductCoefficient>(*sea_w_, *q_g);
+    auto wqq = std::make_unique<ProductCoefficient>(*wq, *q_g);
+    auto m_wqq = std::make_unique<ProductCoefficient>(-1.0, *wqq);
+    StiffnessIntegrators().AddBoundaryIntegrator(
+        new BoundaryNormalNormalIntegrator(*m_wqq), sea_marker_);
+    sea_coefs_.push_back(std::move(q_g));
+    sea_coefs_.push_back(std::move(wq));
+    sea_coefs_.push_back(std::move(wqq));
+    sea_coefs_.push_back(std::move(m_wqq));
+  }
+
+  // The u-phi block: rebuild the coupling with the water term (see
+  // SetupCoupling); C^T follows by transposition.
+  SetupCoupling();
+
+  // The phi-phi block: -int w phi chi dS on the parent mesh's surface
+  // boundary elements (their attributes are inherited, so the caller's
+  // marker lists the right attributes; the parent's marker is just the
+  // same list at the parent's size).
+  {
+    Array<int> parent_marker(fes_phi_->GetMesh()->bdr_attributes.Max());
+    parent_marker = 0;
+    for (int a = 1; a <= sea_marker_.Size(); a++) {
+      if (sea_marker_[a - 1]) {
+        MFEM_VERIFY(a <= parent_marker.Size(),
+                    "SetWaterLoad: surface attribute missing on the "
+                    "parent mesh.");
+        parent_marker[a - 1] = 1;
+      }
+    }
+    auto minus_w = std::make_unique<ProductCoefficient>(-1.0, *sea_w_);
+    sea_phiphi_form_ = detail::MakeBilinearForm(fes_phi_);
+    sea_phiphi_form_->AddBoundaryIntegrator(new MassIntegrator(*minus_w),
+                                            parent_marker);
+    sea_phiphi_form_->Assemble();
+    Array<int> empty;
+    sea_phiphi_form_->FormSystemMatrix(empty, S_sea_);
+    sea_coefs_.push_back(std::move(minus_w));
+    A_sea_sum_ = std::make_unique<SumOperator>(A_phiphi_, 1.0, S_sea_.Ptr(),
+                                               1.0, false, false);
+    A_phiphi_ = A_sea_sum_.get();
+    SetupPotentialSolver();
+  }
+
+  // The Phi_g border c = int w tau' dS: the u row +int w (m.grad Phi0)
+  // (m.v) dS and the phi row +int w chi dS (assembled like the loads:
+  // on the shadow space, injected, compatibilised for the inner solve).
+  {
+    auto q_g =
+        std::make_unique<BoundaryNormalDotCoefficient>(*grad_phi0_shadow_);
+    auto wq = std::make_unique<ProductCoefficient>(*sea_w_, *q_g);
+    auto lu = detail::MakeLinearForm(fes_);
+    lu->AddBoundaryIntegrator(new VectorBoundaryFluxLFIntegrator(*wq),
+                              sea_marker_);
+    lu->Assemble();
+    ToTrueDofs(*fes_, *lu, sea_cu_);
+    sea_coefs_.push_back(std::move(q_g));
+    sea_coefs_.push_back(std::move(wq));
+
+    auto lphi = detail::MakeLinearForm(shadow_phi_.get());
+    lphi->AddBoundaryIntegrator(new BoundaryLFIntegrator(*sea_w_),
+                                sea_marker_);
+    lphi->Assemble();
+    Vector bL(fes_phi_->GetVSize());
+    injection_->Mult(*lphi, bL);
+    ToTrueDofs(*fes_phi_, bL, sea_cphi_);
+    sea_cphi_compat_ = sea_cphi_;
+    MakeCompatible(sea_cphi_compat_);
+
+    // m = int w dS: the phi-row border against the partition of unity.
+    real_t m = lphi->Sum();
+#ifdef MFEM_USE_MPI
+    if (pfes_phi_) {
+      real_t g = 0.0;
+      MPI_Allreduce(&m, &g, 1, MPITypeMap<real_t>::mpi_type, MPI_SUM,
+                    pfes_phi_->GetComm());
+      m = g;
+    }
+#endif
+    sea_m_ = m;
+    MFEM_VERIFY(sea_m_ > 0.0, "SetWaterLoad: the ocean has zero area.");
+  }
+
+  // The data load goes through the ordinary surface-load slot; its
+  // surface integral (the mass-row data) is refreshed per
+  // AssembleForce.
+  SetSurfaceLoad(sigma_data, surface_marker);
+  operator_dirty_ = true;
+}
+
 void LinearQuasiStaticMixedSelfGravitatingProblem::AssembleTidalLoad() {
   // Psi = interpolant of psi; loads -C Psi (displacement) and -M_F Psi
   // (potential), the latter absent without fluid regions.
@@ -700,6 +822,23 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::AssembleForce(real_t t) {
   ToTrueDofs(*fes_phi_, bL, B_phi_);
   AssembleTidalLoad();
   MakeCompatible(B_phi_);
+  if (sea_enabled_) {
+    // The mass-row data int sigma_data dS at this time.
+    auto lf = detail::MakeLinearForm(shadow_phi_.get());
+    lf->AddBoundaryIntegrator(new BoundaryLFIntegrator(*sea_sigma_data_),
+                              sea_marker_);
+    lf->Assemble();
+    real_t sd = lf->Sum();
+#ifdef MFEM_USE_MPI
+    if (pfes_phi_) {
+      real_t g = 0.0;
+      MPI_Allreduce(&sd, &g, 1, MPITypeMap<real_t>::mpi_type, MPI_SUM,
+                    pfes_phi_->GetComm());
+      sd = g;
+    }
+#endif
+    sea_Sd_ = sd;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1215,6 +1354,41 @@ LinearQuasiStaticMixedSelfGravitatingProblem::KKTResiduals() const {
 
 
 bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveLinearSystem(
+    const Vector& B_in, Vector& X) {
+  if (!sea_enabled_) {
+    return SolveUnbordered(B_in, X);
+  }
+  // The water-load Phi_g border by Sherman-Morrison (the WP3 derivation
+  // in doc/planning/sea_level_plan.md): solve K x0 = b, K y = c with
+  // the same operator, then Phi_g = (c.x0 - Sd) / (m + c.y) and
+  // x = x0 - Phi_g y. The y-solve must not see the tidal load or the
+  // data rhs, so psi_ is masked and B_phi_ swapped for the
+  // (compatibilised) phi-row border.
+  bool ok = SolveUnbordered(B_in, X);
+  Vector phi0(Phi_true_);
+  Vector Bphi_save(B_phi_);
+  Coefficient* psi_save = psi_;
+  psi_ = nullptr;
+  B_phi_ = sea_cphi_compat_;
+  Vector yu(X.Size());
+  yu = 0.0;
+  ok = SolveUnbordered(sea_cu_, yu) && ok;
+  Vector yphi(Phi_true_);
+  B_phi_ = Bphi_save;
+  psi_ = psi_save;
+  const real_t cx0 = Dot(sea_cu_, X) + Dot(sea_cphi_, phi0);
+  const real_t cy = Dot(sea_cu_, yu) + Dot(sea_cphi_, yphi);
+  phi_g_ = (cx0 - sea_Sd_) / (sea_m_ + cy);
+  X.Add(-phi_g_, yu);
+  Phi_true_ = phi0;
+  Phi_true_.Add(-phi_g_, yphi);
+  // The y-solve distributed its own potential; redistribute the
+  // combined one.
+  DistributePotential(Phi_true_);
+  return ok;
+}
+
+bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveUnbordered(
     const Vector& B_in, Vector& X) {
   inner_its_ = 0;
   outer_its_ = 0;
