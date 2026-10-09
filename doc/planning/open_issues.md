@@ -477,16 +477,17 @@ behaviour"; `src/quasi_static_problem.cpp` (`WarnGaugeContraction`).
 
 ### GaugeRefine contraction tripwire: false positive at the tolerance floor
 
-**Status:** open (small; library), 7 Oct 2026.
+**Status:** fixed, 9 Oct 2026.
 
 Once the Tikhonov corrections reach the linear-solver tolerance floor,
 successive corrections stop shrinking and `WarnGaugeContraction` reports
 a contraction near 1 — semi-convergence — although the refinement has
 converged. Seen on the gauge-converged interface-shift runs
 (`fluid_core`, `h = 0.3`, penalty 0.1, 7 refinements), whose final
-refinements sit at the floor. Fix: ignore corrections below the solver
-tolerance (relative to the solution) when estimating the contraction,
-so the warning fires only on genuine semi-convergence.
+refinements sit at the floor. Fixed as proposed: the warning is
+suppressed when the last recorded residual is below 10 rel_tol times
+the first (the solver-noise scale of the corrections), so it fires only
+on genuine semi-convergence.
 
 **See:** `src/quasi_static_problem.cpp` (`WarnGaugeContraction`);
 `doc/benchmarks.tex`, "The perturbation family" ("Assumptions and

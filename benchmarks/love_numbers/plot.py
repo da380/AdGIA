@@ -38,8 +38,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from dataclasses import dataclass
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
+from outputs import outside_source  # noqa: E402
 
 import matplotlib
 
@@ -886,6 +890,9 @@ def main() -> None:
                    help="the tree of one model, <runs>/<model>, or the tree "
                         "of all of them, <runs>")
     args = p.parse_args()
+    # Figures and summary.md land in the results tree itself, so that
+    # tree must be outside the source (the build tree, in practice).
+    args.directory = outside_source(args.directory)
 
     style()
     if any(args.directory.glob("h*/reference.json")):

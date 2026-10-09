@@ -35,8 +35,10 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
 import disc_models  # noqa: E402
 import disc_radial  # noqa: E402
+from outputs import outside_source  # noqa: E402
 
 
 def build_model(args):
@@ -87,6 +89,8 @@ def main() -> int:
     p.add_argument("--out", default=None,
                    help="save the figure here instead of showing it")
     args = p.parse_args()
+    if args.out:
+        args.out = str(outside_source(Path(args.out)))
 
     model = build_model(args)
     sols = {}

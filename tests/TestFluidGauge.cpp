@@ -442,4 +442,39 @@ TEST(FluidGauge, RegularizedMatrixIsSymmetric2D) {
   EXPECT_LT(MaxDiff(*As, *At), 1.0e-14 * As->MaxNorm());
 }
 
+// The contraction tripwire: quiet on a clean contraction and at the
+// solver tolerance floor (where the corrections are solver noise and
+// the ratio sits near 1 although the refinement has converged), the
+// note on a mild contraction, the warning on genuine semi-convergence.
+TEST(FluidGauge, ContractionWarningRespectsToleranceFloor) {
+  Case c(2);
+  VectorFunctionCoefficient traction(2, UniformPressureTraction);
+  struct Probe : LinearQuasiStaticTractionProblem {
+    using LinearQuasiStaticTractionProblem::LinearQuasiStaticTractionProblem;
+    void Check(std::vector<real_t> r) {
+      gauge_residuals_ = std::move(r);
+      WarnGaugeContraction();
+    }
+  } prob(c.fes.get(), *c.rheology, traction, c.surface);
+  prob.SetRelTol(1e-12);
+
+  auto warn_output = [&](std::vector<real_t> r) {
+    std::ostringstream s;
+    mfem::out.SetStream(s);
+    prob.Check(std::move(r));
+    mfem::out.SetStream(std::cout);
+    return s.str();
+  };
+
+  // Clean contraction: silent.
+  EXPECT_EQ(warn_output({1.0, 0.1, 0.005}), "");
+  // Mild contraction above the floor: the bias note.
+  EXPECT_NE(warn_output({1.0, 0.4, 0.16}).find("note"), std::string::npos);
+  // Near-unit ratio above the floor: the semi-convergence warning.
+  EXPECT_NE(warn_output({1.0, 0.95, 0.94}).find("WARNING"),
+            std::string::npos);
+  // The same ratio below 10 rel_tol r_0: solver noise, silent.
+  EXPECT_EQ(warn_output({1.0, 1.1e-13, 1.0e-13}), "");
+}
+
 }  // namespace

@@ -182,6 +182,35 @@ void RunCase(int dim, int elementType, int order, const std::string& label) {
     Check(RelMaxDiffInRegion(v_plain, Full(v_comp, m_comp, 0),
                              v_plain.Branch(m_plain, 0), 2),
           1e-12, label + ": masked branch state");
+
+    // The composite's rate comes through the union-restricted strain path
+    // (rank-local: a rank entirely inside one region may keep the full
+    // path or hold no branch nodes at all); rebuild it from the
+    // whole-mesh ComputeStrain() and compare.
+    {
+      Vector m(v_comp.Height()), k(v_comp.Height());
+      for (int i = 0; i < m.Size(); i++) {
+        m[i] = std::sin(1.0 + i + 1000.0 * Mpi::WorldRank());
+      }
+      v_comp.Mult(m, k);
+      Check(v_comp.SolveElastic(m, v_comp.GetTime()) ? 0.0 : 1.0, 0.0,
+            label + ": restricted-strain elastic solve");
+      Vector d_full;
+      v_comp.ComputeStrain(comp.Displacement(), d_full);
+      const Array<int>& nodes = v_comp.BranchNodes(0);
+      const int nd = v_comp.InternalScalarSpace().GetVSize();
+      const int nb = v_comp.NumBranchNodes(0), nc = v_comp.NumComponents();
+      const Vector mb = v_comp.Branch(m, 0), kb = v_comp.Branch(k, 0);
+      double err = 0.0;
+      for (int c = 0; c < nc; c++) {
+        for (int q = 0; q < nb; q++) {
+          // Rate (d - m) / tau with tau = 1.
+          const double rate = d_full[c * nd + nodes[q]] - mb[c * nb + q];
+          err = std::max(err, std::abs(kb[c * nb + q] - rate));
+        }
+      }
+      Check(GlobalMax(err), 1e-13, label + ": restricted strain rate");
+    }
   }
 
   // Stiffness of two elastic regions against piecewise moduli.

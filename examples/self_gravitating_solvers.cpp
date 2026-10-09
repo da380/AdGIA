@@ -284,7 +284,7 @@ double SurfaceLoad(const Vector& x) {
     pm1 = pl;
     pl = pk;
   }
-  return 0.02 * (LoadDegree == 0 ? 1.0 : pl);
+  return 0.02 * pl;  // LoadDegree >= 1 is enforced at startup
 }
 
 // Marker for the boundary attributes whose centre lies at radius in

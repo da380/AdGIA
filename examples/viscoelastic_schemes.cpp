@@ -260,7 +260,7 @@ int main(int argc, char* argv[]) {
   args.AddOption(&targets_arg, "-targets", "--target-errors",
                  "Comma-separated target relative errors of the "
                  "displacement history (u-error) for the "
-                 "cost-to-tolerance table (empty: none).");
+                 "cost-to-target table (empty: none).");
   args.AddOption(&max_steps_per_tau, "-kmax", "--max-steps-per-tau",
                  "Give up on a target beyond this many steps per tau.");
   args.AddOption(&load_period, "-tp", "--load-period",

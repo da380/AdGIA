@@ -237,8 +237,7 @@ class DensityCoefficient : public Coefficient {
  public:
   enum class Mode { Kappa, Mu, Eta };
 
-  DensityCoefficient(Mode mode, Coefficient& tau)
-      : mode_(mode), tau_(&tau) {}
+  DensityCoefficient(Mode mode, Coefficient& tau) : mode_(mode), tau_(&tau) {}
 
   void SetPair(const GridFunction& u, const GridFunction& d,
                const GridFunction& m, const GridFunction& udag,
@@ -291,8 +290,8 @@ class DensityCoefficient : public Coefficient {
     // m : dev eps(udag): reconstruct m from its trace-free components
     // (E0 = diag(1,-1), E1 = offdiag) against the pointwise strain.
     m_->GetVectorValue(T, ip, mv_);
-    const real_t m_pair = mv_[0] * (Dv_(0, 0) - Dv_(1, 1)) +
-                          mv_[1] * (Dv_(0, 1) + Dv_(1, 0));
+    const real_t m_pair =
+        mv_[0] * (Dv_(0, 0) - Dv_(1, 1)) + mv_[1] * (Dv_(0, 1) + Dv_(1, 0));
     return -2.0 * (dev_pair - m_pair - val);
   }
 
@@ -395,8 +394,7 @@ int main(int argc, char* argv[]) {
       return std::exp(-d * d / (kSigma * kSigma)) /
              (kSigma * kRBody * std::sqrt(M_PI));
     };
-    const real_t w =
-        window(kPhi0 + 0.5 * kDPhi) - window(kPhi0 - 0.5 * kDPhi);
+    const real_t w = window(kPhi0 + 0.5 * kDPhi) - window(kPhi0 - 0.5 * kDPhi);
     v.SetSize(2);
     v[0] = -w * std::sin(kPhi0);
     v[1] = w * std::cos(kPhi0);
@@ -413,18 +411,18 @@ int main(int argc, char* argv[]) {
   // displacement, the strain d and the internal variable m as
   // component GridFunctions on the internal-variable spaces.
   struct Trajectory {
-    std::vector<FieldType> u;   // displacement (its space persists)
-    std::vector<Vector> d, m;   // internal-node component vectors: the
-                                // per-run internal space does not
-                                // outlive the run, so the fields are
-                                // rebuilt on the adjoint's space.
+    std::vector<FieldType> u;  // displacement (its space persists)
+    std::vector<Vector> d, m;  // internal-node component vectors: the
+                               // per-run internal space does not
+                               // outlive the run, so the fields are
+                               // rebuilt on the adjoint's space.
   };
-  auto run_forward = [&](Coefficient& kappa, Coefficient& mu,
-                         Coefficient& eta, Trajectory* keep) {
+  auto run_forward = [&](Coefficient& kappa, Coefficient& mu, Coefficient& eta,
+                         Trajectory* keep) {
     auto tau = RatioCoefficient(eta, mu);
     auto rheology = IsotropicMaxwellRheology::Maxwell(dim, kappa, mu, tau);
-    auto prob = LinearQuasiStaticTractionProblem(&fes, rheology, traction,
-                                                 surface);
+    auto prob =
+        LinearQuasiStaticTractionProblem(&fes, rheology, traction, surface);
     auto visco = ViscoelasticOperator(prob);
     ExponentialTrapezoidSolver ode;
     ode.Init(visco);
@@ -481,8 +479,7 @@ int main(int argc, char* argv[]) {
         const real_t dx = x[0] - cx, dy = x[1] - cy;
         const real_t blob =
             std::exp(-(dx * dx + dy * dy) / (blob_size * blob_size));
-        return kMu0 * kTau0 *
-               (1.0 + var_depth * (1.0 - q2) + blob_amp * blob);
+        return kMu0 * kTau0 * (1.0 + var_depth * (1.0 - q2) + blob_amp * blob);
       });
   Trajectory fwd;
   const real_t J0 = run_forward(kappa0, mu0, eta0, &fwd);
@@ -497,8 +494,8 @@ int main(int argc, char* argv[]) {
   auto zero_vec = Vector(dim);
   zero_vec = 0.0;
   auto zero_traction = VectorConstantCoefficient(zero_vec);
-  auto prob_dag = LinearQuasiStaticTractionProblem(&fes, rheology0,
-                                                   zero_traction, surface);
+  auto prob_dag =
+      LinearQuasiStaticTractionProblem(&fes, rheology0, zero_traction, surface);
   auto visco_dag = ViscoelasticOperator(prob_dag);
   auto* dfes = static_cast<SpaceType*>(&visco_dag.InternalVariableSpace());
 
@@ -619,9 +616,9 @@ int main(int argc, char* argv[]) {
       auto weighted_m0 = ProductCoefficient(weighted, *m0_of[c.param]);
       c.dJ_kernel += w * integral(weighted_m0);
     }
-    for (auto [K, dens] : {std::pair{&K_kappa, &dens_k},
-                           std::pair{&K_mu, &dens_m},
-                           std::pair{&K_eta, &dens_e}}) {
+    for (auto [K, dens] :
+         {std::pair{&K_kappa, &dens_k}, std::pair{&K_mu, &dens_m},
+          std::pair{&K_eta, &dens_e}}) {
       Kk_step.ProjectCoefficient(*dens);
       K->Add(w, Kk_step);
     }
@@ -650,15 +647,15 @@ int main(int argc, char* argv[]) {
 
   // === The verification table ===
   if (Root()) {
-    std::cout << "\nJ at the base model (station baseline at t1 = "
-              << t_final << "): " << J0 << "\n\n"
+    std::cout << "\nJ at the base model (station baseline at t1 = " << t_final
+              << "): " << J0 << "\n\n"
               << "  perturbation        kernel dJ        central FD dJ"
               << "      rel. diff\n";
   }
   for (auto& c : cases) {
     auto bump = [&](Coefficient& base, bool on, real_t s) {
-      auto one_plus = std::make_unique<SumCoefficient>(1.0, *c.chi, 1.0,
-                                                       on ? s : 0.0);
+      auto one_plus =
+          std::make_unique<SumCoefficient>(1.0, *c.chi, 1.0, on ? s : 0.0);
       auto prod = std::make_unique<ProductCoefficient>(base, *one_plus);
       return std::pair(std::move(one_plus), std::move(prod));
     };
@@ -673,12 +670,11 @@ int main(int argc, char* argv[]) {
     }
     dJ_fd /= 2.0 * e;
     if (Root()) {
-      std::cout << "  " << std::left << std::setw(16) << c.name
-                << std::right << std::scientific << std::setprecision(6)
-                << std::setw(17) << c.dJ_kernel << std::setw(19) << dJ_fd
-                << std::setprecision(1) << std::setw(15)
-                << std::abs(c.dJ_kernel / dJ_fd - 1.0) << std::defaultfloat
-                << std::setprecision(6) << "\n";
+      std::cout << "  " << std::left << std::setw(16) << c.name << std::right
+                << std::scientific << std::setprecision(6) << std::setw(17)
+                << c.dJ_kernel << std::setw(19) << dJ_fd << std::setprecision(1)
+                << std::setw(15) << std::abs(c.dJ_kernel / dJ_fd - 1.0)
+                << std::defaultfloat << std::setprecision(6) << "\n";
     }
   }
   if (Root()) {
@@ -741,8 +737,8 @@ int main(int argc, char* argv[]) {
     return on_body;
   };
   if (Root()) {
-    std::cout << "Derivatives into gradients (smoothing length "
-              << smoothing << "):\n";
+    std::cout << "Derivatives into gradients (smoothing length " << smoothing
+              << "):\n";
   }
   auto gk_l2 = gradient_on_body(riesz_l2, j_kappa, "kappa, L2");
   auto gk_h1 = gradient_on_body(riesz_h1, j_kappa, "kappa, H1");

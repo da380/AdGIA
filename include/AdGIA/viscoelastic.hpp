@@ -55,7 +55,12 @@ void ExponentialTrapezoidWeights(mfem::real_t h, mfem::real_t& e,
  * projection is @f$(G^{-1} \otimes M^{-1}) B@f$ with @f$M@f$ the scalar L2
  * mass matrix and @f$G_{cc'} = E_c : E_{c'}@f$ the Frobenius metric of the
  * basis tensors @f$E_c@f$ (not orthonormal: the off-diagonal ones have
- * norm 2, and in the trace-free basis the diagonal ones overlap).
+ * norm 2, and in the trace-free basis the diagonal ones overlap). When
+ * every branch is confined to a region, the per-step strain is evaluated
+ * on the union of the branch nodes only — an exact row restriction, the
+ * L2 rows being element-local — so no strain work is done where no
+ * internal variable lives; ComputeStrain() itself always evaluates on the
+ * whole mesh.
  *
  * **State-dependent relaxation times.** A branch may carry a RelaxationLaw
  * (Rheology::Law(k)), @f$\tau_k = \tau_{k0} F_k(\varepsilon, \sigma, m_k)@f$
@@ -150,6 +155,10 @@ class ViscoelasticOperator : public mfem::TimeDependentOperator {
   /** @brief Output view of branch @p k; see SyncFields(). */
   const mfem::GridFunction& InternalVariable(int k) const { return *m_out_[k]; }
   StrainMap Map() const { return map_; }
+  /** @brief True when the per-step strain map is restricted to the union
+   * of the branch regions (every branch confined by its marker; decided
+   * per rank in parallel). ComputeStrain() is always the whole-mesh map. */
+  bool RestrictedStrainMap() const { return strain_restricted_; }
   LinearQuasiStaticProblem& Problem() { return problem_; }
 
   // --- ODE interface --------------------------------------------------------
@@ -260,8 +269,14 @@ class ViscoelasticOperator : public mfem::TimeDependentOperator {
    * Solve(). */
   bool ElasticUpdate(const mfem::Vector& m, mfem::real_t t) const;
 
-  /** @brief d_ = D u for the problem's current displacement. */
+  /** @brief d_ = D u for the problem's current displacement, through the
+   * union-restricted map when RestrictedStrainMap(). */
   void ComputeCurrentStrain() const;
+
+  /** @brief Row restriction of ComputeStrain() to the union of the branch
+   * nodes, into the full layout of @p d (rows off the union stay zero). */
+  void ComputeStrainRestricted(const mfem::GridFunction& u,
+                               mfem::Vector& d) const;
 
   /** @brief Set the relaxation weights for (dt, scheme), reassembling only
    * when they change. */
@@ -300,6 +315,16 @@ class ViscoelasticOperator : public mfem::TimeDependentOperator {
   std::vector<mfem::Array<int>> nodes_, slot_;
   std::vector<const mfem::SparseMatrix*> Bk_;
   std::vector<std::unique_ptr<mfem::SparseMatrix>> Bk_owned_;
+
+  // Per-step strain restriction when every branch is confined to a region:
+  // the union of the branch nodes (element-closed, so the row restriction
+  // is exact) and the strain-map rows for it. Decided per rank in parallel;
+  // a whole-mesh branch keeps the plain path.
+  bool strain_restricted_ = false;
+  mfem::Array<int> union_nodes_;
+  std::unique_ptr<mfem::SparseMatrix> B_union_;     ///< union rows of B
+  std::unique_ptr<mfem::SparseMatrix> Minv_union_;  ///< union block of M^{-1}
+  std::unique_ptr<mfem::SparseMatrix> D_union_;     ///< union rows of D_interp_
 
   // Material data sampled at the internal nodes.
   /// Isotropic: nodal 2 mu_k. Anisotropic: per node the n_s x n_s matrix

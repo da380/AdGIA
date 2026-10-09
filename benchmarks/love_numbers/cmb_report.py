@@ -35,6 +35,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
 
 from costs import load_cost  # noqa: E402
+from outputs import outside_source  # noqa: E402
 
 TREATMENTS = ("full", "nomass", "uniform", "winkler")
 QUANTITIES = (("h", 1), ("l", 1), ("k", 2))  # key, first degree
@@ -138,7 +139,7 @@ def main() -> None:
                          "CMB treatment (run.py --cmb ...)")
     text = "\n".join(lines) + "\n"
     print(text)
-    out = args.out or args.runs / "cmb_summary.md"
+    out = outside_source(args.out or args.runs / "cmb_summary.md")
     out.write_text(text)
     print(f"written to {out}")
 

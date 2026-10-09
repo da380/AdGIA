@@ -27,6 +27,12 @@ else()
     find_package(mfem CONFIG REQUIRED NAMES MFEM)
 endif()
 message(STATUS "Found mfem config in: ${mfem_DIR} (version ${MFEM_VERSION})")
+# v4.10 is the reference version (CI); v4.9 is the oldest known to pass the
+# full test suite (see README, Installation).
+if(MFEM_VERSION VERSION_LESS 4.9)
+    message(FATAL_ERROR "MFEM ${MFEM_VERSION} is too old: AdGIA needs MFEM "
+                        ">= 4.9 (v4.10 is the reference version).")
+endif()
 
 
 

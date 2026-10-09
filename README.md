@@ -120,7 +120,9 @@ documents in the source tree are of two kinds.
 ## Installation
 
 MFEM must be built first (a parallel MFEM, with hypre and METIS, for the MPI
-build). The project uses CMake; in-source builds are refused.
+build). MFEM v4.10 is the reference version — it is what CI builds against
+(`.github/workflows/ci.yml`) — and v4.9 is also known to work; the full test
+suite passes on both. The project uses CMake; in-source builds are refused.
 
 **Serial:**
 ```bash

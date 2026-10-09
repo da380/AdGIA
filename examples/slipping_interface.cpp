@@ -136,8 +136,8 @@
 //               mu_g = kappa) [1e-2].
 //   -gref       gauge refinements of the welded comparison (-compare);
 //               the slipping solver interleaves one per sweep [3].
-//   -lmax       highest degree of the surface analysis [-1:
-//               max(4, l + 2)].
+//   -lmax       highest degree of the surface analysis, raised to the
+//               load degree l when below it [-1: max(4, l + 2)].
 //   -eps        shape amplitude of an aspherical mesh; a flag that
 //               contradicts the mesh manifest is refused
 //               [manifest, else 0].
@@ -721,7 +721,8 @@ int main(int argc, char* argv[]) {
                  "the slipping solver interleaves one per sweep.");
   args.AddOption(&lmax, "-lmax", "--max-degree",
                  "Highest degree of the surface analysis (default "
-                 "max(4, l + 2)).");
+                 "max(4, l + 2); raised to the load degree l when "
+                 "below it).");
   args.AddOption(&eps, "-eps", "--epsilon",
                  "Shape amplitude of an aspherical mesh; read from the "
                  "mesh manifest (a contradicting value is refused), 0 "

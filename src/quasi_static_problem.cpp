@@ -305,6 +305,16 @@ void LinearQuasiStaticProblemBase::WarnGaugeContraction() const {
   if (gauge_residuals_.size() < 2) {
     return;
   }
+  // Corrections at the linear-solver tolerance floor are solver noise:
+  // the recorded residuals ||eps Q delta_k|| stop shrinking there and the
+  // ratio sits near 1 although the refinement has converged. The noise
+  // scale is rel_tol_ times the first residual ||eps Q X|| (delta noise
+  // ~ rel_tol_ ||X||), so below a safe multiple of it the contraction
+  // estimate is meaningless and no warning is due.
+  const real_t floor = 10.0 * rel_tol_ * gauge_residuals_.front();
+  if (gauge_residuals_.back() <= floor) {
+    return;
+  }
   const real_t r0 = gauge_residuals_[gauge_residuals_.size() - 2];
   const real_t rate = gauge_residuals_.back() / std::max(r0, real_t{1e-300});
   bool root = true;

@@ -131,7 +131,7 @@ int main(int argc, char* argv[]) {
   real_t kappa = 1.0, mu = 1.0, tau_bottom = 1.0, tau_top = 0.1;
   real_t p0 = 0.01;
   real_t t_final = 5.0;
-  int steps_per_tau = 16;
+  int steps_per_unit_time = 16;
   bool visualization = true;
   const char* csv_file = "viscoelastic_column.csv";
 
@@ -149,7 +149,7 @@ int main(int argc, char* argv[]) {
   args.AddOption(&tau_top, "-tt", "--tau-top", "Maxwell time of the top layer.");
   args.AddOption(&p0, "-p0", "--load", "Traction on the top.");
   args.AddOption(&t_final, "-tf", "--t-final", "Final time.");
-  args.AddOption(&steps_per_tau, "-n", "--steps-per-tau",
+  args.AddOption(&steps_per_unit_time, "-n", "--steps-per-unit-time",
                  "Time steps per unit time.");
   args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
                  "--no-visualization", "Show the final errors in GLVis.");
@@ -223,9 +223,9 @@ int main(int argc, char* argv[]) {
   };
   std::vector<Run> runs;
   std::vector<real_t> times;
-  const int n_steps = static_cast<int>(std::round(t_final * steps_per_tau));
+  const int n_steps = static_cast<int>(std::round(t_final * steps_per_unit_time));
   const real_t dt = t_final / n_steps;
-  const int out_every = std::max(1, steps_per_tau / 4);
+  const int out_every = std::max(1, steps_per_unit_time / 4);
 
   for (std::size_t r = 0; r < heights.size(); r++) {
     const real_t z_i = heights[r];
