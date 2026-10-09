@@ -7,6 +7,9 @@
 set(EXAMPLES
     poisson_dtn                 # Poisson on the whole space: Neumann / DtN / multipole
     transformed_diffusion       # pull-back Laplacian on a mapped domain
+    relabelled_elasticity       # one aspherical body, natural vs relabelled description
+    adjoint_elasticity          # first-order sensitivity kernels (kappa, mu) + FD check + Riesz gradients
+    viscoelastic_adjoint        # final-time observation kernels (kappa, mu, eta) via the time-reversed adjoint
     submesh_injection           # tour of SubMeshDofInjection
     coupled_poisson             # coupled Poisson pair across mesh / submesh
     elastogravity_layered       # LinearQuasiStaticMixedSelfGravitatingProblem: uniform, fluid core (+ inner core)
@@ -15,6 +18,7 @@ set(EXAMPLES
     sliding_fluid_ellipse       # sliding interface (displacement discontinuity) on an elliptical body
     slipping_interface          # self-gravitating slipping fluid core: every option, spherical or aspherical reference
     equilibrium_stress          # AW10 minimum-norm / minimum-deviatoric equilibrium stress generators
+    equilibrium_density         # density restoration: the feasibility functional driven to its floor
     prestress_loading           # does the deviatoric pre-stress matter for loading? (ellipse sweep)
     referential_elastogravity   # general referential problem vs the Eulerian one (self-benchmark)
     viscoelasticity             # ViscoelasticOperator driver
@@ -27,6 +31,8 @@ set(EXAMPLES
     love_numbers                # load and tidal Love numbers by degree, one solve each
     viscoelastic_love_numbers   # load Love-number histories of a Maxwell sphere vs the closed form
     anisotropic_elasticity      # ElasticTensorIntegrator, radial TI
+    coseismic_deformation       # moment-tensor (stress-glut) point/finite-fault sources
+    postseismic_deformation     # the same fault over an SLS: relaxation to the long-term limit
 )
 
 foreach(ex IN LISTS EXAMPLES)

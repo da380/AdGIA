@@ -115,15 +115,27 @@ class Runner:
         if self.dry:
             print("$ " + shlex.join(cmd))
             return rec
-        if not res.exists():
+        result = None
+        if res.exists():
+            try:
+                result = json.loads(res.read_text())
+            except json.JSONDecodeError:
+                # a run killed mid-write leaves a truncated file: remake
+                # it rather than crash the study on it
+                print(f"  {res}: unreadable (interrupted run?), remade",
+                      flush=True)
+                res.unlink()
+        if result is None:
             p = subprocess.run(cmd, capture_output=True, text=True)
             if p.returncode != 0 or not res.exists():
                 (cpath.parent / f"log_{tag}.txt").write_text(
                     p.stdout + p.stderr)
                 return rec
-        result = json.loads(res.read_text())
+            result = json.loads(res.read_text())
         ref = json.loads((cpath.parent / "reference.json").read_text())
         m = compare.metrics(result, ref)
+        if not ref.get("reliable", True):
+            rec["unreliable_reference"] = True
         c = result["cost"]
         solves = max(c["stepping_solves"] + c["observation_solves"], 1)
         # The cost is every solve the run made. Stepping and observation
@@ -308,6 +320,15 @@ def study_stehfest(R: Runner, quick: bool) -> list[dict]:
                                        / scale),
                        "sign_change": bool(np.any(np.diff(
                            np.sign(exact[q])) != 0))}
+                # slab_reference's certification of the modal curve
+                # (Talbot agreement < 1e-7) applies here too: without it
+                # a bad AAA fit would pass as the "exact" curve
+                rec["exact_certified"] = rec["talbot"] < 1e-7
+                if not rec["exact_certified"]:
+                    print(f"  WARNING: {model} n={mode} {q}: Talbot "
+                          f"disagrees with the modal curve at "
+                          f"{rec['talbot']:.1e}; the Stehfest errors are "
+                          "against an uncertified curve", flush=True)
                 for n in orders:
                     st = np.array([refmod.stehfest(F, tj, n) for tj in t])
                     rec[f"stehfest{n}"] = float(np.abs(st - exact[q]).max()

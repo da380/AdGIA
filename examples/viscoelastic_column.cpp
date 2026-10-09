@@ -47,6 +47,24 @@
 // One source serves the serial and the parallel build; the genuine
 // difference is the partitioning of the (periodic) mesh.
 //
+// Options (defaults in brackets):
+//   -d      space dimension, 2 or 3 [2].
+//   -o      finite element order [2]; higher order does not cure
+//           the kink in the cutting run.
+//   -nx     elements across the (periodic) width, >= 3 [3].
+//   -nz     elements up the column, even so that z = H/2 is a face
+//           [4]; finer, the cut run's error shrinks like 1/nz.
+//   -kappa  bulk modulus [1].
+//   -mu     shear modulus, both layers [1].
+//   -tb     Maxwell time of the bottom layer, the time unit [1].
+//   -tt     Maxwell time of the top layer [0.1].
+//   -p0     traction on the top [0.01].
+//   -tf     final time [5].
+//   -n      time steps per unit time [16].
+//   -vis / -no-vis   final errors in GLVis on or off [on].
+//   -csv    table of the histories for plot_csv.py
+//           [viscoelastic_column.csv]; "" writes none.
+//
 // Sample runs (with mpiexec -np N in front in a parallel build):
 //    ./viscoelastic_column
 //    ./viscoelastic_column -nz 16       (finer: the cut error shrinks ~1/nz)
@@ -113,7 +131,7 @@ int main(int argc, char* argv[]) {
   real_t kappa = 1.0, mu = 1.0, tau_bottom = 1.0, tau_top = 0.1;
   real_t p0 = 0.01;
   real_t t_final = 5.0;
-  int steps_per_tau = 16;
+  int steps_per_unit_time = 16;
   bool visualization = true;
   const char* csv_file = "viscoelastic_column.csv";
 
@@ -131,7 +149,7 @@ int main(int argc, char* argv[]) {
   args.AddOption(&tau_top, "-tt", "--tau-top", "Maxwell time of the top layer.");
   args.AddOption(&p0, "-p0", "--load", "Traction on the top.");
   args.AddOption(&t_final, "-tf", "--t-final", "Final time.");
-  args.AddOption(&steps_per_tau, "-n", "--steps-per-tau",
+  args.AddOption(&steps_per_unit_time, "-n", "--steps-per-unit-time",
                  "Time steps per unit time.");
   args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
                  "--no-visualization", "Show the final errors in GLVis.");
@@ -205,9 +223,9 @@ int main(int argc, char* argv[]) {
   };
   std::vector<Run> runs;
   std::vector<real_t> times;
-  const int n_steps = static_cast<int>(std::round(t_final * steps_per_tau));
+  const int n_steps = static_cast<int>(std::round(t_final * steps_per_unit_time));
   const real_t dt = t_final / n_steps;
-  const int out_every = std::max(1, steps_per_tau / 4);
+  const int out_every = std::max(1, steps_per_unit_time / 4);
 
   for (std::size_t r = 0; r < heights.size(); r++) {
     const real_t z_i = heights[r];

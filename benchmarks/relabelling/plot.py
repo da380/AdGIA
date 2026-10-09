@@ -19,7 +19,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
+from outputs import outside_source  # noqa: E402
 
 import matplotlib
 
@@ -86,7 +90,7 @@ def main() -> None:
     fig.suptitle("aspherical reference body: field errors through the "
                  "map", x=0.01, ha="left", fontsize=11, color=INK)
     fig.tight_layout(rect=(0, 0, 1, 0.94))
-    out = args.out or (files[0].parent / "aspherical.png")
+    out = outside_source(args.out or (files[0].parent / "aspherical.png"))
     fig.savefig(out, dpi=180)
     print(f"wrote {out}")
 

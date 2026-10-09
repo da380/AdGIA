@@ -62,13 +62,15 @@ inline double Seconds(Clock::time_point since) {
   return std::chrono::duration<double>(Clock::now() - since).count();
 }
 
-// A number as JSON: null when not finite.
+// A number as JSON: null when not finite. 17 significant digits make the
+// double round-trip exact, so differencing scripts see the solver's
+// numbers, not 1-ulp reading noise.
 inline std::string Num(real_t x) {
   if (!std::isfinite(x)) {
     return "null";
   }
   std::ostringstream os;
-  os << std::setprecision(16) << x;
+  os << std::setprecision(17) << x;
   return os.str();
 }
 
@@ -236,6 +238,9 @@ struct CaseOptions {
   bool gauged = false;
   real_t gauge_eps = 1e-2;
   int gauge_refinements = 3;
+  real_t gauge_prec_eps = 0.0;    // > 0: solid-everywhere prec experiment
+  real_t gauge_plateau = 0.0;     // > 0: stagnation stop ratio (with -gpe)
+  real_t mx_beta0 = -1.0;         // maxwell: physical-phase dt/tau
   const char* cmb = "full";
   const char* method = "dahlen";
   real_t slip_theta = 1e2;
@@ -257,11 +262,18 @@ struct CaseOptions {
                    "eliminated; -cmb picks its interface treatment), "
                    "'gauged' (Eulerian, gauged fluid in the displacement "
                    "space), 'referential' (welded gauged referential: bare "
-                   "moduli from p0, S_e = -p0 I), 'slip' (broken "
+                   "moduli from p0, S_e = -p0 I), 'maxwell' (the welded "
+                   "referential problem with the fluid treated by MAXWELL "
+                   "RELAXATION — the secular route, "
+                   "doc/static_fluid_core.tex), 'slip' (broken "
                    "displacement pair, single-valued zeta) or "
                    "'slip_broken' (broken zeta as well; "
                    "doc/slip_interface.tex). The referential methods need "
                    "a case with the p0 field.");
+    args.AddOption(&mx_beta0, "-mxbeta", "--maxwell-beta0",
+                   "Maxwell method: the physical-phase dt/tau (< 0: the "
+                   "library default, which resolves the N^2 < 0 plateau; "
+                   "10-30 is cheaper on neutral/stable models).");
     args.AddOption(&map_amplitude, "-map", "--map-amplitude",
                    "Amplitude of the interior relabelling of the "
                    "relabelled 3-D benchmark (relabelling.hpp): the same "
@@ -342,6 +354,19 @@ struct CaseOptions {
                    "Gauge penalty factor epsilon (gauged fluid).");
     args.AddOption(&gauge_refinements, "-gref", "--gauge-refinements",
                    "Tikhonov refinement steps per solve (gauged fluid).");
+    args.AddOption(&gauge_prec_eps, "-gpe", "--gauge-prec-epsilon",
+                   "Solid-everywhere preconditioner experiment (gauged "
+                   "fluid, block MINRES only): the Krylov operator is the "
+                   "CLEAN A, the preconditioner is built on A + eps_prec "
+                   "Q with this eps_prec, refinements off; run with a "
+                   "matched -rt (the residual plateaus at the load's "
+                   "near-kernel content). 0: off.");
+    args.AddOption(&gauge_plateau, "-gps", "--gauge-plateau-stop",
+                   "Stagnation stop for -gpe: chunked MINRES restarts, "
+                   "stopping when a chunk's residual exceeds this ratio "
+                   "of the previous one (the near-kernel plateau); run "
+                   "with a tight -rt and one tolerance serves every "
+                   "degree. 0: off.");
     args.AddOption(&manifest, "-c", "--case", "Manifest of the case.");
     args.AddOption(&order, "-o", "--order", "Finite element order.");
     args.AddOption(&dtn_degree, "-deg", "--dtn-degree",
@@ -436,12 +461,17 @@ class Case {
     // The method solved: the Eulerian pair share the
     // LinearQuasiStaticMixedSelfGravitatingProblem, the referential family
     // its own construction below.
+    MFEM_VERIFY(!options.gauged || std::string(options.method) == "dahlen" ||
+                    std::string(options.method) == "gauged",
+                "-gauged chooses the gauged Eulerian method: it cannot be "
+                "combined with -method "
+                    << options.method << ".");
     method = options.gauged ? "gauged" : options.method;
     MFEM_VERIFY(method == "dahlen" || method == "gauged" ||
-                    method == "referential" || method == "slip" ||
-                    method == "slip_broken",
-                "-method must be dahlen, gauged, referential, slip or "
-                "slip_broken.");
+                    method == "referential" || method == "maxwell" ||
+                    method == "slip" || method == "slip_broken",
+                "-method must be dahlen, gauged, referential, maxwell, "
+                "slip or slip_broken.");
     eulerian = method == "dahlen" || method == "gauged";
 
     // The displacement regions and the material on them: the solid
@@ -452,7 +482,8 @@ class Case {
     solid_attributes = manifest.SolidAttributes();
     fluid_attributes = manifest.FluidAttributes();
     Array<int> u_attributes(solid_attributes);
-    if (method == "gauged" || method == "referential") {
+    if (method == "gauged" || method == "referential" ||
+        method == "maxwell") {
       u_attributes.Append(fluid_attributes);
       u_attributes.Sort();
     }
@@ -565,9 +596,15 @@ class Case {
           problem->EnableGaugeKKT(gauge_marker_, *kappa_c_,
                                   options.gauge_kkt == 2);
         } else {
-          problem->SetGaugedFluid(gauge_marker_, *kappa_c_,
-                                  options.gauge_eps,
-                                  options.gauge_refinements);
+          problem->SetFluid(gauge_marker_, *kappa_c_,
+                            GaugePenaltyOptions{options.gauge_eps,
+                                                options.gauge_refinements});
+          if (options.gauge_prec_eps > 0.0) {
+            problem->SetGaugePreconditionerOnly(options.gauge_prec_eps);
+            if (options.gauge_plateau > 0.0) {
+              problem->SetGaugePlateauStop(options.gauge_plateau);
+            }
+          }
         }
         if (root) {
           if (options.gauge_kkt > 0) {
@@ -575,6 +612,10 @@ class Case {
                       << (options.gauge_kkt == 2 ? " (MGW preconditioner)"
                                                  : "")
                       << ".\n";
+          } else if (options.gauge_prec_eps > 0.0) {
+            std::cout << "Gauged fluid: solid-everywhere preconditioner, "
+                         "clean operator, eps_prec "
+                      << options.gauge_prec_eps << ", no refinements.\n";
           } else {
           std::cout << "Gauged fluid: eps " << options.gauge_eps << ", "
                     << options.gauge_refinements << " refinements.\n";
@@ -706,6 +747,15 @@ class Case {
     } else {
       ref_problem->SetSurfaceLoad(*sigma,
                                   analyses[surface].radial->Marker());
+      if (SupportsTide()) {
+        // The referential tidal load: the physical gradient of the same
+        // interior harmonic, composed with the equilibrium mapping
+        // (identity on a spherical reference; F^{-T} folded in, see
+        // SetTidalLoad).
+        psi_grad = analyses[surface].scalar->GradientExpansion(
+            zero, ref_rheology_->EquilibriumMapping());
+        ref_problem->SetTidalLoad(*psi_grad);
+      }
     }
 
     if (options.diagnostics && eulerian) {
@@ -758,10 +808,19 @@ class Case {
   // What the method supports: the referential family is driven by
   // surface loads only (Solve() refuses a tide), and its potential is
   // meaningful (an observable) on the displacement region, not by layer.
-  bool SupportsTide() const { return eulerian; }
+  bool SupportsTide() const {
+    // The slipping classes carry no tidal force on the fluid row yet.
+    return method != "slip" && method != "slip_broken";
+  }
   bool SupportsProfiles() const { return eulerian; }
 
   int OuterIterations() const {
+    if (method == "maxwell") {
+      // The relaxation runs many inner solves per Solve(): report the
+      // total Krylov iterations of the last one (snapshotted in
+      // Solve(); LastOuterIterations would be the final step's alone).
+    return last_ref_its_;
+    }
     return eulerian ? problem->LastOuterIterations()
                     : ref_problem->LastOuterIterations();
   }
@@ -802,13 +861,26 @@ class Case {
       problem->AssembleForce(0.0);
       return problem->Solve();
     }
-    MFEM_VERIFY(load,
-                "The referential methods solve the load problems only.");
+    if (psi_grad) {
+      psi_grad->SetCoefficients(load ? zero : coefficients);
+    } else {
+      MFEM_VERIFY(load, "tidal solve requested without tidal support");
+    }
     // Independent forcings: do not warm-start across degrees (the gauge
     // refinement would carry the previous gauge component forward).
     ref_problem->ResetSolution();
     ref_problem->AssembleForce(0.0);
-    return ref_problem->Solve();
+    const long its0 = ref_problem->TotalIterations();
+    const bool ok = ref_problem->Solve();
+    last_ref_its_ =
+        static_cast<int>(ref_problem->TotalIterations() - its0);
+    if (method == "maxwell" && Mpi::Root()) {
+      const auto& rep = ref_problem->MaxwellReport();
+      std::cout << "  maxwell: " << rep.steps << " steps, "
+                << rep.operators << " operators, stop = " << rep.stop
+                << ", solid increment " << rep.delta_returned << "\n";
+    }
+    return ok;
   }
 
   // Forget the previous solution, so that the next solve starts cold: the
@@ -966,7 +1038,14 @@ class Case {
        << (options_.solver == 0 ? "schur_cg" : "block_minres")
        << "\",\n  \"method\": \"" << method
        << "\",\n  \"fluid_treatment\": \""
-       << (method == "gauged" ? "gauged" : "dahlen") << "\""
+       // dahlen keeps Dahlen's fluid; the gauged Eulerian and the welded
+       // referential methods gauge it; maxwell relaxes it; the slip pair
+       // lets it slip
+       << (method == "dahlen"       ? "dahlen"
+           : method == "maxwell"    ? "maxwell"
+           : method == "slip" || method == "slip_broken" ? "slip"
+                                                         : "gauged")
+       << "\""
        << ",\n  \"cmb\": \"" << options_.cmb << "\""
        << (options_.map_amplitude != 0.0
                ? ",\n  \"map_amplitude\": " + Num(options_.map_amplitude) +
@@ -988,11 +1067,16 @@ class Case {
                      ",\n  \"kkt\": " +
                      std::string(options_.kkt ? "true" : "false")
                : std::string())
-       << (method != "dahlen"
-               ? ",\n  \"gauge_epsilon\": " + Num(options_.gauge_eps) +
-                     ",\n  \"gauge_refinements\": " +
-                     std::to_string(options_.gauge_refinements)
-               : std::string())
+       << (method == "maxwell"
+               ? ",\n  \"maxwell_beta0\": " +
+                     Num(options_.mx_beta0 > 0.0
+                             ? options_.mx_beta0
+                             : MaxwellRelaxationOptions().dt_over_tau)
+               : method != "dahlen"
+                   ? ",\n  \"gauge_epsilon\": " + Num(options_.gauge_eps) +
+                         ",\n  \"gauge_refinements\": " +
+                         std::to_string(options_.gauge_refinements)
+                   : std::string())
        << ",\n  \"elements\": " << elements
        << ",\n  \"displacement_unknowns\": " << displacement_unknowns
        << ",\n  \"potential_unknowns\": " << potential_unknowns
@@ -1273,14 +1357,52 @@ class Case {
         for (const int a : fluid_attributes) {
           gauge_marker_[a - 1] = 1;
         }
-        ref_problem->SetGaugedFluid(gauge_marker_, *kappa_c_,
-                                    options.gauge_eps,
-                                    options.gauge_refinements);
+        if (method == "maxwell") {
+          // The Maxwell relaxation treatment: the fluid's own kappa as
+          // the artificial shear scale (the limit is exactly
+          // independent of it; it only sets the clock).
+          MFEM_VERIFY(options.gauge_prec_eps == 0.0,
+                      "-gpe is a gauge-treatment knob; the maxwell "
+                      "method has no refinements or plateau mode here.");
+          MaxwellRelaxationOptions mx;
+          if (options.mx_beta0 > 0.0) {
+            mx.dt_over_tau = options.mx_beta0;
+          }
+          ref_problem->SetFluid(gauge_marker_, *kappa_c_, mx);
+        } else {
+          ref_problem->SetFluid(
+              gauge_marker_, *kappa_c_,
+              GaugePenaltyOptions{options.gauge_eps,
+                                  options.gauge_refinements});
+          if (options.gauge_prec_eps > 0.0) {
+            ref_problem->SetGaugePreconditionerOnly(options.gauge_prec_eps);
+            if (options.gauge_plateau > 0.0) {
+              ref_problem->SetGaugePlateauStop(options.gauge_plateau);
+            }
+          }
+        }
       }
       if (root) {
-        std::cout << "Referential (welded, gauged fluid): eps "
-                  << options.gauge_eps << ", "
-                  << options.gauge_refinements << " refinements.\n";
+        if (method == "maxwell") {
+          std::cout << "Referential (welded), Maxwell-relaxed fluid: "
+                       "beta0 "
+                    << (options.mx_beta0 > 0.0
+                            ? options.mx_beta0
+                            : MaxwellRelaxationOptions().dt_over_tau)
+                    << ".\n";
+        } else {
+        std::cout << "Referential (welded, gauged fluid): "
+                  << (options.gauge_prec_eps > 0.0
+                          ? "solid-everywhere preconditioner, clean "
+                            "operator, eps_prec " +
+                                std::to_string(options.gauge_prec_eps) +
+                                ", no refinements"
+                          : "eps " + std::to_string(options.gauge_eps) +
+                                ", " +
+                                std::to_string(options.gauge_refinements) +
+                                " refinements")
+                  << ".\n";
+        }
       }
     } else {
       // The interface pressure and the interface marker on the solid
@@ -1323,6 +1445,20 @@ class Case {
                                   options.gauge_eps);
       slip_problem->SetConstraint(options.slip_theta,
                                   options.al_iterations);
+      if (options.gauge_prec_eps > 0.0) {
+        slip_problem->SetGaugePreconditionerOnly(options.gauge_prec_eps);
+        if (options.gauge_plateau > 0.0) {
+          slip_problem->SetGaugePlateauStop(options.gauge_plateau);
+        }
+        if (root) {
+          std::cout << "Slip fluid gauge: solid-everywhere "
+                       "preconditioner, clean operator, eps_prec "
+                    << options.gauge_prec_eps
+                    << (options.gauge_plateau > 0.0 ? ", plateau stop"
+                                                    : "")
+                    << ".\n";
+        }
+      }
       if (options.gs_scale != 1.0) {
         slip_problem->ScaleBrokenGravityInterface(options.gs_scale);
         if (root) {
@@ -1425,6 +1561,7 @@ class Case {
   Array<int> solid_attributes, fluid_attributes;
   std::string method;
   bool eulerian = true;
+  int last_ref_its_ = 0;  // Krylov total of the last referential Solve()
   std::unique_ptr<ParMesh> parent;
   std::unique_ptr<ParSubMesh> solid;
   std::unique_ptr<ParGridFunction> rho, kappa, mu, p0;
@@ -1434,6 +1571,7 @@ class Case {
   std::vector<InterfaceAnalysis> analyses;
   int surface = -1;
   std::unique_ptr<HarmonicExpansionCoefficient> sigma, psi;
+  std::unique_ptr<HarmonicExpansionGradientCoefficient> psi_grad;
 
  private:
   std::vector<std::unique_ptr<ParFiniteElementSpace>> spaces_;

@@ -241,6 +241,85 @@ class MinimumNormEquilibriumStress : public mfem::MatrixCoefficient {
 };
 
 /**
+ * @brief The assembled minimum-deviatoric Stokes saddle, kept alive so
+ * that repeated solves pay assembly and preconditioner setup once. No
+ * operator here depends on the density — only the load does — so an
+ * optimisation loop (doc/equilibrium_figures.tex) holds one of these
+ * for its every value, gradient and Hessian-action solve.
+ *
+ * The system, null-space handling, optional viscosity field, mapped
+ * mode and essential-velocity option are exactly those of
+ * MinimumDeviatoricEquilibriumStress, which delegates to this class
+ * (and can borrow a shared instance). Serial and parallel.
+ */
+/** @brief The mode-th rigid-motion field of @p dim dimensions
+ * (translations first, then rotations about the origin), as a function
+ * for a VectorFunctionCoefficient — shared by the saddle's lifted
+ * border fields and the enclosed components' load integrals, so the
+ * two cannot drift apart. */
+std::function<void(const mfem::Vector&, mfem::Vector&)> RigidMode(int dim,
+                                                                  int mode);
+
+class StokesSaddleSolver {
+ public:
+  /** Parameters as in MinimumDeviatoricEquilibriumStress; the spaces,
+   * coefficients, map and marker are borrowed and must outlive the
+   * solver.
+   * @param rigid_bdr Optional rigid boundary groups
+   * (doc/equilibrium_figures.tex §2, the disconnected-solid
+   * correction): one boundary-attribute marker per solid component
+   * enclosed by the fluid (e.g. the ICB). The velocity space is then
+   * clamped there EXCEPT for that boundary's rigid motions — six
+   * extra unknowns per group in 3-D (three in 2-D, rotations about
+   * the origin) — which add the component's force and torque balance
+   * to the constraint set the saddle enforces. Implemented by
+   * bordering: the lifted rigid fields' base solves are precomputed at
+   * construction, so a bordered Solve costs one base solve plus dense
+   * algebra. */
+  StokesSaddleSolver(
+      mfem::FiniteElementSpace& fes_u, mfem::FiniteElementSpace& fes_p,
+      mfem::Coefficient* mu = nullptr, Diffeomorphism* map = nullptr,
+      const mfem::Array<int>* essential_bdr = nullptr,
+      const std::vector<mfem::Array<int>>* rigid_bdr = nullptr);
+  ~StokesSaddleSolver();
+
+  /** @brief The number of rigid border unknowns (groups times modes). */
+  int RigidModes() const;
+
+  /** @brief The k-th lifted rigid field (a GridFunction on the
+   * velocity space): its trace is the rigid motion on its group's
+   * boundary and zero on the others. */
+  const mfem::GridFunction& RigidField(int k) const;
+
+  /** @brief The energy @f$\tfrac12 u^T A u@f$ of a velocity field in
+   * the UNELIMINATED form — with rigid groups, the value function of
+   * the bordered saddle, convention-free (only available when groups
+   * are present, which is when the uneliminated operator exists). */
+  mfem::real_t Energy(const mfem::GridFunction& u) const;
+
+  /**
+   * @brief Solves the saddle for the velocity-space load dual
+   * @f$F = (\mathbf{f}, \mathbf{v})@f$ (true dofs; the class applies
+   * the system's sign and the essential zeroing). Returns the solver's
+   * iteration count. With rigid groups, @p rigid_rhs (length
+   * RigidModes(), or empty for zero) is the ADDITIONAL border
+   * right-hand side — the enclosed component's own load paired with
+   * the rigid modes — beyond the fluid load's pairing, which the
+   * class applies itself; on return @p u contains the TOTAL velocity
+   * (the clamped part plus the rigid combination), and
+   * @p rigid_coefficients (when given) the modes' coefficients.
+   */
+  int Solve(const mfem::Vector& F, mfem::GridFunction& u,
+            mfem::GridFunction& p,
+            const mfem::Vector& rigid_rhs = mfem::Vector(),
+            mfem::Vector* rigid_coefficients = nullptr) const;
+
+ private:
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
+};
+
+/**
  * @brief The minimum *deviatoric* equilibrium stress field of Al-Attar
  * & Woodhouse (2010, §3.4): the equilibrium stress whose deviatoric
  * part has the smallest norm. By their eqs. (70)–(74) it is
@@ -292,12 +371,44 @@ class MinimumDeviatoricEquilibriumStress : public mfem::MatrixCoefficient {
    * @param mu Optional positive weight field; constant when null.
    * @param map Optional relabelling (see the class notes); not owned,
    * must outlive the object.
+   * @param essential_bdr Optional boundary-attribute marker on which the
+   * velocity is clamped, @f$\mathbf{u} = \mathbf{0}@f$, in place of the
+   * natural traction condition — the multiplier condition of the
+   * fluid-only feasibility functional (doc/equilibrium_figures.tex),
+   * whose constraint set leaves the interface traction free. The
+   * constraint @f$\mathrm{Div}\,\mathbf{T} + \mathbf{f} = \mathbf{0}@f$
+   * then holds on the mesh with no condition on @f$\mathbf{T}
+   * \hat{\mathbf{n}}@f$ over the marked part, so @p body_force need not
+   * be self-equilibrated there. Clamping removes the rigid kernel; when
+   * the marker covers *every* boundary attribute the pressure acquires
+   * the classical constant ambiguity instead, projected here.
+   * @param solver Optional shared StokesSaddleSolver (which must have
+   * been built with the same spaces and options); when null the object
+   * assembles its own. A loop evaluating many densities shares one.
+   * @param rigid_rhs With a solver carrying rigid boundary groups: the
+   * border right-hand side (the enclosed components' loads), passed
+   * through to StokesSaddleSolver::Solve; @p rigid_coefficients
+   * returns the modes' coefficients when given.
+   * @param interface_pressure Optional pressure load on the boundary
+   * marked by @p interface_bdr (all of it when null): the natural
+   * condition becomes @f$\mathbf{T}\hat{\mathbf{n}} =
+   * -p\,\hat{\mathbf{n}}@f$ with @f$\hat{\mathbf{n}}@f$ the mesh's
+   * outward normal — a solid component loaded by the pressure of the
+   * fluid outside that boundary. A constant added to @f$p@f$ on a
+   * CLOSED marked boundary has no net force or torque and shifts the
+   * stress isotropically, so the deviatoric field does not see the
+   * enclosed fluid's pressure gauge. Not available in mapped mode.
    */
-  MinimumDeviatoricEquilibriumStress(mfem::FiniteElementSpace& fes_u,
-                                     mfem::FiniteElementSpace& fes_p,
-                                     mfem::VectorCoefficient& body_force,
-                                     mfem::Coefficient* mu = nullptr,
-                                     Diffeomorphism* map = nullptr);
+  MinimumDeviatoricEquilibriumStress(
+      mfem::FiniteElementSpace& fes_u, mfem::FiniteElementSpace& fes_p,
+      mfem::VectorCoefficient& body_force, mfem::Coefficient* mu = nullptr,
+      Diffeomorphism* map = nullptr,
+      const mfem::Array<int>* essential_bdr = nullptr,
+      const StokesSaddleSolver* solver = nullptr,
+      const mfem::Vector& rigid_rhs = mfem::Vector(),
+      mfem::Vector* rigid_coefficients = nullptr,
+      mfem::Coefficient* interface_pressure = nullptr,
+      const mfem::Array<int>* interface_bdr = nullptr);
 
   void Eval(mfem::DenseMatrix& K, mfem::ElementTransformation& T,
             const mfem::IntegrationPoint& ip) override;
@@ -311,6 +422,7 @@ class MinimumDeviatoricEquilibriumStress : public mfem::MatrixCoefficient {
   mfem::Coefficient* mu_;
   Diffeomorphism* map_;
   mfem::ConstantCoefficient half_;
+  std::unique_ptr<StokesSaddleSolver> own_solver_;
   std::unique_ptr<mfem::GridFunction> u_, p_;
   mfem::DenseMatrix G_, F_, Fi_, A_, S_, tmp_;
   int iterations_ = 0;

@@ -300,6 +300,55 @@ TEST_P(CompositeRheologyTest, ElasticRegionMasksBranch) {
   }
 }
 
+// With every branch confined to a region the operator computes the
+// per-step strain on the union of the branch nodes only; the rate it
+// produces must match the one rebuilt from the whole-mesh ComputeStrain(),
+// for both strain maps.
+TEST_P(CompositeRheologyTest, RestrictedStrainMatchesFull) {
+  IsotropicElasticRheology elastic(dim, kappa, mu);
+  auto maxwell = IsotropicMaxwellRheology::Maxwell(dim, kappa, mu, tau);
+  CompositeRheology composite(dim, {{Region(1), &elastic, "elastic"},
+                                    {Region(2), &maxwell, "maxwell"}});
+
+  for (auto map : {ViscoelasticOperator::StrainMap::Galerkin,
+                   ViscoelasticOperator::StrainMap::Interpolation}) {
+    LinearQuasiStaticTractionProblem prob(fes.get(), composite, *traction,
+                                          marker);
+    ViscoelasticOperator visco(prob, -1, map);
+    EXPECT_TRUE(visco.RestrictedStrainMap());
+
+    Vector m(visco.Height());
+    for (int i = 0; i < m.Size(); i++) {
+      m[i] = std::sin(1.0 + i);
+    }
+    Vector k(visco.Height());
+    visco.Mult(m, k);  // internally: the restricted strain path
+    ASSERT_TRUE(visco.SolveElastic(m, 0.0));
+    Vector d_full;
+    visco.ComputeStrain(prob.Displacement(), d_full);
+
+    const Array<int>& nodes = visco.BranchNodes(0);
+    const int nd = visco.InternalScalarSpace().GetVSize();
+    const int nb = visco.NumBranchNodes(0), nc = visco.NumComponents();
+    const Vector mb = visco.Branch(m, 0), kb = visco.Branch(k, 0);
+    double err = 0.0;
+    for (int c = 0; c < nc; c++) {
+      for (int q = 0; q < nb; q++) {
+        // Rate (d - m) / tau with tau = 1.
+        const double rate = d_full[c * nd + nodes[q]] - mb[c * nb + q];
+        err = std::max(err, std::abs(kb[c * nb + q] - rate));
+      }
+    }
+    EXPECT_LT(err, 1e-13) << "map " << static_cast<int>(map);
+  }
+
+  // A whole-mesh rheology keeps the unrestricted path.
+  auto whole = IsotropicMaxwellRheology::Maxwell(dim, kappa, mu, tau);
+  LinearQuasiStaticTractionProblem plain(fes.get(), whole, *traction, marker);
+  ViscoelasticOperator v_plain(plain);
+  EXPECT_FALSE(v_plain.RestrictedStrainMap());
+}
+
 TEST_P(CompositeRheologyTest, BranchCountsPerRegion) {
   auto one = IsotropicMaxwellRheology::Maxwell(dim, kappa, mu, tau);
   ConstantCoefficient zero(0.0);

@@ -60,6 +60,22 @@ inline std::unique_ptr<mfem::LinearForm> MakeLinearForm(
   return std::make_unique<mfem::LinearForm>(fes);
 }
 
+/// A GS (serial) or AMG (parallel) preconditioner for an assembled
+/// operator handle.
+inline std::unique_ptr<mfem::Solver> MakePreconditioner(
+    const mfem::OperatorHandle& A) {
+#ifdef MFEM_USE_MPI
+  if (A.Type() == mfem::Operator::Hypre_ParCSR) {
+    auto amg = std::make_unique<mfem::HypreBoomerAMG>(
+        *const_cast<mfem::OperatorHandle&>(A).As<mfem::HypreParMatrix>());
+    amg->SetPrintLevel(0);
+    return amg;
+  }
+#endif
+  return std::make_unique<mfem::GSSmoother>(
+      *const_cast<mfem::OperatorHandle&>(A).As<mfem::SparseMatrix>());
+}
+
 /// A bilinear form on @p fes, borrowing the integrators of @p borrow_from
 /// when given (the returned form does not own them). When @p fes is parallel,
 /// @p borrow_from must be a ParBilinearForm (it is static_cast).

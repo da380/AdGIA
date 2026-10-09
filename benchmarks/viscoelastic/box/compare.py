@@ -58,6 +58,13 @@ def observables(run: dict) -> dict[str, np.ndarray]:
 
 
 def metrics(result: dict, reference: dict) -> dict[str, dict[str, float]]:
+    if not reference.get("reliable", True):
+        # reference.py could not certify this reference (an AAA fit it
+        # could not check, see its docstring): the errors below measure
+        # distance to an uncertified curve, not to the solution.
+        print(f"WARNING: the reference of {result.get('case', '?')} is "
+              "flagged unreliable; the errors are against an uncertified "
+              "curve", file=sys.stderr, flush=True)
     fe, ref = observables(result), observables(reference)
     tf = np.asarray([0.0] + [h["time"] for h in result["histories"]])
     tr = np.asarray([0.0] + [h["time"] for h in reference["histories"]])
@@ -66,6 +73,13 @@ def metrics(result: dict, reference: dict) -> dict[str, dict[str, float]]:
     out = {}
     for name, r in ref.items():
         if name not in fe:
+            if np.abs(r).max() > 0.0:
+                # the run lost an observable the reference has (e.g. an
+                # identically zero U from an empty boundary form): that
+                # is a failed comparison, not one to skip
+                raise SystemExit(
+                    f"the reference has {name} but the results do not "
+                    "(identically zero in the run?)")
             continue
         f = fe[name]
         scale = np.abs(r).max()

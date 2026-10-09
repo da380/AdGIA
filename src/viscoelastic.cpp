@@ -263,10 +263,12 @@ ViscoelasticOperator::ViscoelasticOperator(LinearQuasiStaticProblem& problem,
   offsets_[0] = 0;
   const SparseMatrix& Bmat = B_->SpMat();
   int max_block = nd_ * nc_;
+  bool all_marked = K > 0;
   for (int k = 0; k < K; k++) {
     const Array<int>* marker = rh.BranchMarker(k);
     Array<int>& nodes = nodes_[k];
     if (!marker) {
+      all_marked = false;
       nodes.SetSize(nd_);
       for (int p = 0; p < nd_; p++) {
         nodes[p] = p;
@@ -358,12 +360,88 @@ ViscoelasticOperator::ViscoelasticOperator(LinearQuasiStaticProblem& problem,
     }
   }
 
+  // When every branch is confined to a region, the per-step strain is
+  // needed only at the union of the branch nodes. The union is
+  // element-closed (branch nodes are gathered element-wise), so the row
+  // restriction of the strain map reproduces the full map's values there
+  // exactly: an L2 node's B and M rows involve its own element only, and
+  // G^{-1} acts node-locally. Decided per rank in parallel — a rank whose
+  // elements all carry branches keeps the whole-mesh path; no collectives
+  // are involved either way.
+  if (all_marked) {
+    Array<int> uni;
+    for (int k = 0; k < K; k++) {
+      uni.Append(nodes_[k]);
+    }
+    uni.Sort();
+    uni.Unique();
+    if (uni.Size() < nd_) {
+      strain_restricted_ = true;
+      union_nodes_ = uni;
+      const int nu = union_nodes_.Size();
+      if (nu > 0) {
+        // Row restriction (columns unchanged): rows c nd_ + p -> c nu + q.
+        auto restrict_rows = [&](const SparseMatrix& A) {
+          auto R = std::make_unique<SparseMatrix>(nu * nc_, A.Width());
+          Array<int> cols;
+          Vector vals;
+          for (int c = 0; c < nc_; c++) {
+            for (int q = 0; q < nu; q++) {
+              A.GetRow(c * nd_ + union_nodes_[q], cols, vals);
+              if (cols.Size() > 0) {
+                R->AddRow(c * nu + q, cols, vals);
+              }
+            }
+          }
+          R->Finalize();
+          return R;
+        };
+        if (map_ == StrainMap::Interpolation) {
+          D_union_ = restrict_rows(D_interp_->SpMat());
+        } else {
+          B_union_ = restrict_rows(Bmat);
+          // M^{-1} with rows and columns in union numbering; the columns
+          // of a union row all lie in the union (element closure). GetRow
+          // of a finalized matrix aliases its internal arrays, so the
+          // columns are remapped in a copy.
+          Array<int> uslot(nd_);
+          uslot = -1;
+          for (int q = 0; q < nu; q++) {
+            uslot[union_nodes_[q]] = q;
+          }
+          auto Mu = std::make_unique<SparseMatrix>(nu, nu);
+          Array<int> cols, mapped;
+          Vector vals;
+          for (int q = 0; q < nu; q++) {
+            Minv_->GetRow(union_nodes_[q], cols, vals);
+            mapped.SetSize(cols.Size());
+            for (int i = 0; i < cols.Size(); i++) {
+              mapped[i] = uslot[cols[i]];
+              MFEM_VERIFY(mapped[i] >= 0,
+                          "ViscoelasticOperator: branch-node union is not "
+                          "element-closed.");
+            }
+            if (mapped.Size() > 0) {
+              Mu->AddRow(q, mapped, vals);
+            }
+          }
+          Mu->Finalize();
+          Minv_union_ = std::move(Mu);
+        }
+      }
+    }
+  }
+
   if (!linear_) {
     CU_ = NodalUnrelaxedTensors(*sfes_, rh);
   }
 
   d_.SetSize(nd_ * nc_);
   d_prev_.SetSize(nd_ * nc_);
+  // The restricted strain path writes union rows only; the others must
+  // read as zero.
+  d_ = 0.0;
+  d_prev_ = 0.0;
   dual_.SetSize(max_block);
   zeta_.SetSize(max_block);
   force_.SetSize(ufes_->GetVSize());
@@ -420,8 +498,49 @@ void ViscoelasticOperator::ComputeStrain(const GridFunction& u,
   }
 }
 
+void ViscoelasticOperator::ComputeStrainRestricted(const GridFunction& u,
+                                                   Vector& d) const {
+  MFEM_ASSERT(d.Size() == nd_ * nc_, "ComputeStrainRestricted: layout");
+  const int nu = union_nodes_.Size();
+  if (nu == 0) {
+    return;  // no branch nodes on this rank; d stays zero
+  }
+  dual_.SetSize(nu * nc_);
+  if (map_ == StrainMap::Interpolation) {
+    D_union_->Mult(u, dual_);
+    for (int c = 0; c < nc_; c++) {
+      for (int q = 0; q < nu; q++) {
+        d[c * nd_ + union_nodes_[q]] = dual_[c * nu + q];
+      }
+    }
+    return;
+  }
+  // The union rows of d = (G^{-1} (x) M^{-1}) B u, as in ComputeStrain().
+  zeta_.SetSize(nu * nc_);
+  B_union_->Mult(u, dual_);
+  Vector tc, duc;
+  for (int c = 0; c < nc_; c++) {
+    tc.MakeRef(zeta_, c * nu, nu);
+    duc.MakeRef(dual_, c * nu, nu);
+    Minv_union_->Mult(duc, tc);
+  }
+  for (int c = 0; c < nc_; c++) {
+    for (int q = 0; q < nu; q++) {
+      real_t v = 0.0;
+      for (int cp = 0; cp < nc_; cp++) {
+        v += Ginv_(c, cp) * zeta_[cp * nu + q];
+      }
+      d[c * nd_ + union_nodes_[q]] = v;
+    }
+  }
+}
+
 void ViscoelasticOperator::ComputeCurrentStrain() const {
-  ComputeStrain(problem_.Displacement(), d_);
+  if (strain_restricted_) {
+    ComputeStrainRestricted(problem_.Displacement(), d_);
+  } else {
+    ComputeStrain(problem_.Displacement(), d_);
+  }
 }
 
 void ViscoelasticOperator::ApplyBranchModulus(int k, const Vector& x,

@@ -299,7 +299,7 @@ TEST(SlipProblem, TwoLayerBarotropicCrossCheck) {
   Array<int> fluid_marker(s.body->attributes.Max());
   fluid_marker = 0;
   fluid_marker[0] = 1;
-  welded.SetGaugedFluid(fluid_marker, mu_gauge, kEps, 3);
+  welded.SetFluid(fluid_marker, mu_gauge, GaugePenaltyOptions{kEps, 3});
   auto surface_b = RadialBdrMarker(*s.body, 0.9, 1.1);
   welded.SetSurfaceLoad(sigma, surface_b);
   welded.SetRelTol(1e-10);

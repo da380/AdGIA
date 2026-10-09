@@ -50,6 +50,16 @@
 // refines the partitioned mesh, and the program runs under mpiexec on any
 // number of ranks.
 //
+// Options (defaults in brackets):
+//   -o    finite element polynomial order [2].
+//   -r    uniform mesh refinements, before partitioning in the
+//         parallel build [0].
+//   -pr   refinements of the partitioned mesh [0]; the option exists
+//         in the parallel build only.
+//   -th   rotation angle of the interior twist in degrees [10].
+//   -d    problem dimension, 2 or 3 [2]: picks ../data/disk.msh or
+//         ../data/ball.msh (there is no mesh option).
+//
 // Sample runs:  ./transformed_diffusion
 //               ./transformed_diffusion -d 3 -o 1 -th 30
 //               mpiexec -np 4 ./transformed_diffusion -r 1   (parallel build)
@@ -157,8 +167,7 @@ int main(int argc, char *argv[]) {
   // Initialize MFEM's options parser
   OptionsParser args(argc, argv);
   args.AddOption(&order, "-o", "--order",
-                 "Finite element order (polynomial degree) or -1 for"
-                 " isoparametric space.");
+                 "Finite element order (polynomial degree).");
   args.AddOption(&refinement, "-r", "--refinement",
                  "number of mesh refinements (before the mesh is partitioned)");
 #ifdef MFEM_USE_MPI

@@ -1822,7 +1822,17 @@ as the body (\S\ref{sec:vacuum}).
 \item Loads: a surface mass load $\sigma$ (per referential area) loads the
   potential row alone, $\ell_\zeta(\chi) = -\int_{\partial M}\sigma\chi\dS$;
   the Eulerian $-\int\sigma\grad\Phi_0\cdot\vv$ is absorbed by
-  \eqref{eq:zetaphi}.
+  \eqref{eq:zetaphi}. An applied (tidal) potential $\psi$ loads the
+  \emph{displacement} row alone,
+  $\ell_u(\vv) = -\int_M \tilde\rho\,(\grad\psi\circ\varphi_e)\cdot\vv\dV$
+  (\code{SetTidalLoad}): by the chain rule
+  $F_e^{-T}\grad_X(\psi\circ\varphi_e) = (\grad\psi)\circ\varphi_e$,
+  the composed physical gradient and the $F_e^{-T}$-transformed
+  referential gradient are the same object, and the mixed class's
+  potential-row term $-M_F\Psi$ has no counterpart here (it belongs to
+  that class's fluid-density unknown). The analytic gradient of an
+  interior harmonic, optionally composed with the mapping, is
+  \code{HarmonicExpansionGradientCoefficient}.
 \item The background $\zeta^0$ solves the referential Poisson equation with
   the fixed referential density (at construction, unless supplied).
 \end{itemize}
@@ -2423,7 +2433,7 @@ relaxes the early sweeps to $10^{-3}$ (\code{-sweep-tol}) except on
 interface-shift runs (\S\ref{sec:shiftmaps}). For the KKT multiplier one
 order below the displacement (the mortar-style choice
 \cite{Wohlmuth2001}) is recommended in 3-D, but is not robust in every
-configuration (doc/slip_interface.tex, ``The multiplier space''); the
+configuration (\code{doc/slip\_interface.tex}, ``The multiplier space''); the
 benchmark's default \code{-kkt-order 0} means equal order. The two paths agree within
 discretisation error. The AL path is the general choice (both
 organisations, cheapest with few sweeps); the KKT path is used when the

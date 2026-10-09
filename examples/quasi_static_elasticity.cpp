@@ -16,6 +16,21 @@
 // final displacement in refined.mesh / sol.gf and, with -vis (on by
 // default), in GLVis.
 //
+// Options (defaults in brackets):
+//   -m    mesh file [../data/star.mesh]: any mesh for problem 0;
+//         problem 1 needs two boundary attributes (e.g.
+//         ../data/beam-quad.mesh).
+//   -o    finite element order [1].
+//   -r    uniform mesh refinements [0].
+//   -p    problem type [0]: 0 = pure traction (any mesh), 1 = clamped
+//         (boundary attribute 1 clamped, traction on attribute 2).
+//   -tf   final time [1].
+//   -n    number of time steps [10].
+//   -inc / -no-inc   superpose an extra body force through AddForce()
+//         to demonstrate the increment protocol [off].
+//   -pv / -no-pv   save time slices to a ParaView collection [on].
+//   -vis / -no-vis   GLVis window for the final solution [on].
+//
 // Sample runs (with mpiexec -np N in front in a parallel build):
 //    ./quasi_static_elasticity -m ../data/star.mesh -o 2 -r 2
 //    ./quasi_static_elasticity -m ../data/star.mesh -o 2 -r 2 -inc

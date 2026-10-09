@@ -4,7 +4,8 @@
 // The gauged treatment of an inviscid fluid region on the simplest problem
 // that has one: a purely elastic body with a fluid core under an external
 // surface pressure, with no gravity. A demonstration of the gauged-fluid
-// option of LinearQuasiStaticProblemBase (SetGaugedFluid; the method is in
+// option of LinearQuasiStaticProblemBase (SetFluid with GaugePenaltyOptions;
+// the method is in
 // doc/gauged_fluid.md, "Gauge fixing: penalty plus iterated refinement").
 //
 // The fluid carries a displacement like the solid, with its physical bulk
@@ -38,6 +39,23 @@
 // With -vis (the default, needs a running GLVis server) the displacement
 // and the fluid pressure are shown: the pressure window is the instructive
 // one — flat in the fluid, however the (gauge) displacement there looks.
+//
+// Options (defaults in brackets):
+//   -m     mesh file [../data/elastogravity_two_layer_2d.msh]: a
+//          layered mesh from meshes/layered_earth.py (attribute 1,
+//          and 2 as well with three layers, is the fluid).
+//   -o     finite element order [2].
+//   -eps   gauge penalty factor epsilon [1e-2]: sets the O(eps) bias
+//          of the penalised solve and the refinement contraction
+//          O(eps mu_g / mu_solid); with 3 refinements this is the
+//          recommended operating point.
+//   -nref  Tikhonov refinement steps per solve [3]: each step removes
+//          a factor of the O(eps) gauge-penalty bias.
+//   -P0    uniform external pressure amplitude [0.01].
+//   -P2    degree-2 pressure pattern amplitude [0]; 0 keeps the exact
+//          Lame comparison.
+//   -vis / -no-vis   GLVis windows of the displacement and the fluid
+//          pressure [on].
 //
 // Sample runs (with mpiexec -np N in front in a parallel build):
 //    ./gauged_fluid_cavity          (eps = 1e-2, 3 refinements: the
@@ -233,7 +251,7 @@ int main(int argc, char* argv[]) {
   // The gauged fluid: mu_g of the order of the fluid's own modulus, and the
   // mass-weighted rigid gauge (the exact solution has zero net momentum).
   ConstantCoefficient mu_gauge(kKappaFluid);
-  problem.SetGaugedFluid(fluid, mu_gauge, eps, nref);
+  problem.SetFluid(fluid, mu_gauge, GaugePenaltyOptions{eps, nref});
   problem.SetMassWeightedGauge();
 
   problem.AssembleForce(0.0);

@@ -53,6 +53,23 @@
 // u_full - u_hydro (what dropping it costs), drawn on the PHYSICAL
 // ellipse: a copy of the reference body moved by the ellipse map.
 //
+// Options (defaults in brackets):
+//   -m    mesh file [../data/elastogravity_2d_wide.msh]: 2-D, body
+//         (attribute 1) plus buffer (attribute 2) out to the DtN
+//         sphere.
+//   -o    finite element order [2]; the stress generator uses
+//         Taylor-Hood spaces of orders o+1 / o.
+//   -G    gravitational constant [0.1]: sets the pre-stress level
+//         p/mu ~ pi G rho^2 / mu, with which the difference rows
+//         scale.
+//   -s    surface mass load amplitude [0.02].
+//   -e    run a single ellipticity instead of the sweep [-1, meaning
+//         the sweep 0.005 ... 0.3].
+//   -vis / -no-vis   GLVis windows of |dev S_e| and u_full - u_hydro
+//         on the physical ellipse [on].
+//   -csv  CSV file of the sweep for plot_csv.py
+//         [prestress_loading.csv]; "" writes none.
+//
 // Sample runs (with mpiexec -np N in front in a parallel build):
 //    ./prestress_loading
 //    ./prestress_loading -G 0.2 -o 3

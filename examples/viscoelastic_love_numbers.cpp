@@ -55,6 +55,32 @@
 // One source serves the serial and the parallel build; the genuine
 // differences are the mesh partitioning and the reductions of the mass.
 //
+// Options (defaults in brackets):
+//   -m      mesh file [../data/coupled_poisson.msh]: a 3-D ball
+//           (attribute 1) inside a buffer shell.
+//   -o      finite element order [3]; order 2 leaves the relaxed
+//           state badly resolved on the default mesh (see above).
+//   -deg    DtN expansion degree [12].
+//   -lmin   lowest load degree, >= 2 [2].
+//   -lmax   highest load degree [4]; 4 is the coarse mesh's limit.
+//   -G      gravitational constant [1].
+//   -rho    density [1].
+//   -kappa  bulk modulus [1000]; the closed form is incompressible,
+//           so lowering kappa / mu makes compressibility show.
+//   -mu     unrelaxed shear modulus [0.5].
+//   -tau    Maxwell time eta / mu [1].
+//   -tf     final time, in Maxwell times [6]; keep it to a few tau_l
+//           (the relaxed uniform sphere grows buoyancy modes).
+//   -s      time integrator [exptrap]: exptrap (exponential
+//           trapezoid, one solve per step) or sdirk23 (two).
+//   -n      steps per Maxwell time [4].
+//   -no     output times per Maxwell time [4]; must divide -n.
+//   -rt     relative solver tolerance [1e-6], looser than the
+//           library's 1e-12: the comparison needs no more.
+//   -vis / -no-vis   GLVis animations on or off [on].
+//   -csv    table of the histories for plot_csv.py
+//           [viscoelastic_love_numbers.csv]; "" writes none.
+//
 // Sample runs (with mpiexec -np N in front in a parallel build):
 //    ./viscoelastic_love_numbers
 //    ./viscoelastic_love_numbers -kappa 100        (compressibility shows)

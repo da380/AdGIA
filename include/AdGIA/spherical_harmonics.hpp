@@ -26,6 +26,8 @@
 
 namespace AdGIA {
 
+class Diffeomorphism;  // mappings.hpp
+
 /**
  * @brief Real orthonormal harmonics up to degree @f$L@f$ on the unit circle
  * (2-D) or sphere (3-D), @f$\int Y_i Y_j\,d\Omega = \delta_{ij}@f$.
@@ -122,6 +124,42 @@ class HarmonicExpansionCoefficient : public mfem::Coefficient {
 };
 
 /**
+ * @brief The gradient @f$\nabla\psi@f$ of the interior-harmonic expansion
+ * @f$\psi(x) = \sum_i c_i (r/R)^{l_i} Y_i(\hat x)@f$, from the closed form
+ * @f$\nabla(r^l Y) = r^{l-1}(l\,Y\,\hat x + \nabla_1 Y)@f$
+ * (SurfaceHarmonics::EvalWithGradient). With a @p map, the gradient is
+ * evaluated at the IMAGE @f$\varphi(X)@f$ of the integration point: the
+ * physical tidal force composed with an equilibrium mapping, which is the
+ * form the referential tidal load wants (@f$F^{-T}\nabla_X(\psi\circ
+ * \varphi) = (\nabla\psi)\circ\varphi@f$; referential_problem.hpp,
+ * SetTidalLoad). Degree zero contributes nothing (a constant potential
+ * exerts no force). Holds a copy of the coefficients; SetCoefficients()
+ * replaces them.
+ */
+class HarmonicExpansionGradientCoefficient : public mfem::VectorCoefficient {
+ public:
+  HarmonicExpansionGradientCoefficient(const SurfaceHarmonics& basis,
+                                       const mfem::Vector& coefficients,
+                                       const mfem::Vector& centre,
+                                       mfem::real_t radius,
+                                       Diffeomorphism* map = nullptr);
+
+  void SetCoefficients(const mfem::Vector& c);
+  const mfem::Vector& Coefficients() const { return c_; }
+
+  void Eval(mfem::Vector& V, mfem::ElementTransformation& T,
+            const mfem::IntegrationPoint& ip) override;
+
+ private:
+  const SurfaceHarmonics* basis_;
+  Diffeomorphism* map_;
+  mfem::Vector c_, x0_;
+  mfem::real_t R_;
+  mfem::Vector x_, Y_;
+  mfem::DenseMatrix gradY_;
+};
+
+/**
  * @brief Harmonic coefficients of a finite-element field on a spherical
  * boundary of its mesh: @f$c_i = R^{1-d}\int_S f\,Y_i\,dS@f$ for a scalar
  * field, or of the radial component @f$f = u\cdot\hat x@f$ of a vector
@@ -197,6 +235,12 @@ class BoundaryHarmonicCoefficients {
    * coefficients (surface field or interior harmonic). */
   std::unique_ptr<HarmonicExpansionCoefficient> Expansion(
       const mfem::Vector& c, bool interior_harmonic = false) const;
+
+  /** @brief The gradient of the interior-harmonic expansion with the
+   * given coefficients, optionally composed with an equilibrium
+   * @p map (see HarmonicExpansionGradientCoefficient). */
+  std::unique_ptr<HarmonicExpansionGradientCoefficient> GradientExpansion(
+      const mfem::Vector& c, Diffeomorphism* map = nullptr) const;
 
   const mfem::SparseMatrix& Matrix() const { return M_; }
 

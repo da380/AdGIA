@@ -56,6 +56,11 @@ jobs:
           echo "MPICC=$(command -v mpicc.mpich)" >> "$GITHUB_ENV"
           echo "MPICXX=$(command -v mpicxx.mpich)" >> "$GITHUB_ENV"
           echo "MPIEXEC=$(command -v mpiexec.mpich)" >> "$GITHUB_ENV"
+          # Ubuntu's MPICH goes through UCX, which by default probes the
+          # InfiniBand verbs transports; on runners without a verbs device
+          # that aborts MPI_Init (ibv_create_srq: Operation not supported).
+          # Restrict UCX to the transports the VM actually has.
+          echo "UCX_TLS=sm,tcp,self" >> "$GITHUB_ENV"
 
       # Restore and save are separate steps so that MFEM is cached as soon as
       # it is built, even if a later step fails or the run is cancelled.

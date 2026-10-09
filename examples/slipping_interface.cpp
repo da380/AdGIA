@@ -99,6 +99,62 @@
 //
 // One source serves the serial and the parallel build.
 //
+// Options (defaults in brackets):
+//   -m          two-layer mesh with a buffer (domains 1 core, 2
+//               mantle, 3 buffer; boundaries 1 core boundary, 2
+//               surface, 3 outer), spherical or aspherical
+//               (meshes/aspherical_body.py --fluid-core); an
+//               aspherical mesh is the reference body of the spherical
+//               physical model
+//               [../data/aspherical_fluid_core_buffer_2d.mesh].
+//   -o          finite element order [2].
+//   -l          degree of the surface load (2 or more): Y_l0 in 3-D,
+//               cos(l theta) in 2-D [2].
+//   -deg        truncation degree of the Dirichlet-to-Neumann map
+//               [12].
+//   -rt         relative tolerance of the linear solves [1e-10].
+//   -zeta       potential organisation: 'single' (one zeta on the
+//               ball, fluid extension; identity map only, so refused
+//               on an aspherical mesh) or 'broken' (zeta on each side
+//               of Sigma, scalar-jump constraint; mapped) [broken].
+//   -enforce    constraint enforcement: 'al' (penalty + augmented
+//               Lagrangian) or 'kkt' (multiplier, saddle-point MINRES;
+//               -zeta single only) [al].
+//   -theta      constraint penalty theta (the normal jump and, with
+//               -zeta broken, the zeta jump) [1e2].
+//   -al         AL sweeps per solve (-enforce al), or gauge
+//               refinements (-enforce kkt) [-1: 8 for al, 3 for kkt].
+//   -sweep-tol  loose relative tolerance of the early AL sweeps,
+//               tightening to -rt (SetSweepTolerance); 0: every sweep
+//               at -rt, the reproducible endpoint [0].
+//   -kkt-order  order of the KKT multiplier space (0: the displacement
+//               order). Below the displacement order the multiplier
+//               misses part of the normal jump, and on these 2-D
+//               meshes the gauge refinements then amplify it from one
+//               to the next: watch the printed history [0].
+//   -geps       fluid gauge penalty epsilon (SetFluidGauge, with
+//               mu_g = kappa) [1e-2].
+//   -gref       gauge refinements of the welded comparison (-compare);
+//               the slipping solver interleaves one per sweep [3].
+//   -lmax       highest degree of the surface analysis, raised to the
+//               load degree l when below it [-1: max(4, l + 2)].
+//   -eps        shape amplitude of an aspherical mesh; a flag that
+//               contradicts the mesh manifest is refused
+//               [manifest, else 0].
+//   -beta       elliptical part of the shape [manifest, else 0.5].
+//   -buffer     buffer thickness of the shape's taper
+//               [manifest, else 0.2].
+//   -rc         physical core radius [manifest, else 3483/6371].
+//   -compare / -no-compare   also solve the welded gauged referential
+//               problem on the same mesh and Dahlen's mixed problem on
+//               the spherical counterpart mesh, and compare [off].
+//   -mref       spherical mesh for Dahlen's problem with -compare
+//               (default: the mesh's name with 'aspherical_' ->
+//               'spherical_', or the mesh itself if spherical) [""].
+//   -csv        CSV table of the constraint history ("": none)
+//               [slipping_interface.csv].
+//   -vis / -no-vis   show the fields in GLVis [on].
+//
 // Sample runs (with mpiexec -np N in front in a parallel build):
 //    ./slipping_interface                                  (aspherical, broken)
 //    ./slipping_interface -compare
@@ -665,7 +721,8 @@ int main(int argc, char* argv[]) {
                  "the slipping solver interleaves one per sweep.");
   args.AddOption(&lmax, "-lmax", "--max-degree",
                  "Highest degree of the surface analysis (default "
-                 "max(4, l + 2)).");
+                 "max(4, l + 2); raised to the load degree l when "
+                 "below it).");
   args.AddOption(&eps, "-eps", "--epsilon",
                  "Shape amplitude of an aspherical mesh; read from the "
                  "mesh manifest (a contradicting value is refused), 0 "
@@ -1107,8 +1164,8 @@ int main(int argc, char* argv[]) {
       Array<int> fluid_marker(model.body->attributes.Max());
       fluid_marker = 0;
       fluid_marker[0] = 1;
-      welded.SetGaugedFluid(fluid_marker, mu_gauge, gauge_eps,
-                            gauge_refinements);
+      welded.SetFluid(fluid_marker, mu_gauge,
+                      GaugePenaltyOptions{gauge_eps, gauge_refinements});
       welded.SetSurfaceLoad(sigma, Marker(*model.body, kSurface));
       welded.SetRelTol(rel_tol);
       t0 = Clock::now();

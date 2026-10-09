@@ -5,8 +5,11 @@
 //
 //   GLVisWindow  a field sent to a running GLVis server (start `glvis` in
 //                a terminal first), once or repeatedly (an animation). In
-//                parallel every rank sends its own piece, announced by the
-//                "parallel <size> <rank>" line, and GLVis assembles them.
+//                parallel every NONEMPTY rank sends its own piece,
+//                announced by the "parallel <pieces> <piece>" line, and
+//                GLVis assembles them; a rank without elements (easy on
+//                a SubMesh) sends nothing, since an empty piece wedges
+//                the server's session and aborts it on the next frame.
 //   CsvTable     a self-describing table of numbers for the curves an
 //                example produces (histories, Love numbers by degree,
 //                convergence). Written by the root rank only, into the
@@ -59,6 +62,33 @@ class GLVisWindow {
 
   // Send one frame: every rank calls this (collective in parallel).
   void Send(mfem::Mesh& mesh, const mfem::GridFunction& field) {
+    // Parallel: GLVis must be told how many pieces make up the frame,
+    // and a rank with NO elements must not send one — GLVis cannot
+    // parse an empty piece, the frame's session never completes, and
+    // the next frame's connection then aborts the server ("second
+    // connection attempt from processor rank"); a SubMesh (the fluid
+    // core, say) easily leaves a rank empty at higher rank counts. So
+    // the piece count is the number of nonempty ranks and this rank's
+    // index its position among them. The reductions run before any
+    // early return, on every rank and every call, so the collective
+    // pattern cannot diverge across ranks.
+#ifdef MFEM_USE_MPI
+    int pieces = 1, piece = 0;
+    bool empty = false;
+    if (auto* pmesh = dynamic_cast<mfem::ParMesh*>(&mesh)) {
+      const int mine = mesh.GetNE() > 0 ? 1 : 0;
+      pieces = 0;
+      MPI_Allreduce(&mine, &pieces, 1, MPI_INT, MPI_SUM, pmesh->GetComm());
+      MPI_Exscan(&mine, &piece, 1, MPI_INT, MPI_SUM, pmesh->GetComm());
+      empty = mine == 0;
+    } else {
+      pieces = mfem::Mpi::WorldSize();
+      piece = mfem::Mpi::WorldRank();
+    }
+    if (empty) {
+      return;
+    }
+#endif
     if (failed_) {
       return;
     }
@@ -76,9 +106,7 @@ class GLVisWindow {
       sock_.precision(8);
     }
 #ifdef MFEM_USE_MPI
-    // Parallel: GLVis must be told how many pieces make up the frame.
-    sock_ << "parallel " << mfem::Mpi::WorldSize() << " "
-          << mfem::Mpi::WorldRank() << "\n";
+    sock_ << "parallel " << pieces << " " << piece << "\n";
 #endif
     sock_ << "solution\n" << mesh << field;
     if (first_) {

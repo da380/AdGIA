@@ -39,6 +39,7 @@ from planetmodel.mesh3d import (CappedInterfaces, MeshSpec, Shell,
 from pyslfp.love_numbers import LoveNumbers, love_numbers, solve_degree
 
 import models
+from outputs import outside_source
 
 #: The fields the finite-element solver reads: the material, and the
 #: hydrostatic pressure p0 that the referential methods need (bare
@@ -244,6 +245,7 @@ def main() -> None:
                    help="let gmsh print as it works")
     args = p.parse_args()
 
+    args.out = outside_source(args.out)
     args.out.mkdir(parents=True, exist_ok=True)
     model = models.with_pressure(
         models.scaled(models.model(args.model), time_scale=args.time_scale))

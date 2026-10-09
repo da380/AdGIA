@@ -29,6 +29,32 @@
 //   elastogravity_two_layer_2d.msh, elastogravity_three_layer_2d.msh,
 //   elastogravity_three_layer_3d.msh                   (meshes/layered_earth.py)
 //
+// Options (defaults in brackets):
+//   -m      mesh file [../data/elastogravity_two_layer_2d.msh]; the
+//           layering of the model follows the mesh (see above).
+//   -o      finite element order [1].
+//   -s      solver: 0 Schur-complement CG, 1 block MINRES, 2 both [1];
+//           with 2 the difference of the two solutions is reported.
+//   -deg    truncation degree of the DtN expansion [16].
+//   -rt     relative solver tolerance [1e-10].
+//   -load   factor on the surface mass load [1]; 0 switches it off.
+//   -tidal  amplitude A of the degree-2 tidal potential A (r/a)^2 P_2,
+//           in m^2/s^2 [0]; with -load 0 it is the only forcing.
+//   -rho    density of the uniform model [5500 kg/m^3].
+//   -kappa  bulk modulus of the uniform model [300e9 Pa].
+//   -mu     shear modulus of the uniform model [150e9 Pa].
+//   -solid-core / -fluid-core   treat the outer core as a solid with
+//           constant moduli, for comparison with the fluid physics
+//           [fluid].
+//   -diag / -no-diag   print the rigid-mode residuals and, with a
+//           fluid, the extreme Ritz values of the potential block
+//           [off].
+//   -vis / -no-vis   GLVis windows on or off [off].
+//   -no-fluid-mass / -fluid-mass   drop the hydrostatic Poisson term
+//           rho'_F phi (the fluid becomes unstratified), for
+//           experiments [off: the term is kept].
+//   -pv / -no-pv   write a ParaView data collection [off].
+//
 // Sample runs (with mpiexec -np N in front in a parallel build):
 //    ./elastogravity_layered -o 2
 //    ./elastogravity_layered -m ../data/elastogravity_2d.msh -o 2 -s 2 -diag

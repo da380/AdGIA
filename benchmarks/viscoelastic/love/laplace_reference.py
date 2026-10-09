@@ -75,6 +75,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent.parent / "common"))
 
 import models  # noqa: E402
+from outputs import outside_source  # noqa: E402
 from planetmodel import LayeredIsotropicElastic  # noqa: E402
 
 #: The uniform-layer models this reference supports.
@@ -419,7 +420,8 @@ def main() -> None:
 
     tag = "_".join("f" if t is None else ("inf" if not math.isfinite(t)
                                           else f"{t:g}") for t in taus)
-    out = args.out or Path(f"laplace_{args.model}_tau{tag}.json")
+    out = outside_source(args.out
+                         or Path(f"laplace_{args.model}_tau{tag}.json"))
 
     def js(x):
         return None if x is None or not math.isfinite(x) else x

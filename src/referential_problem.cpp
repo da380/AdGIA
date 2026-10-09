@@ -1574,6 +1574,21 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetSurfaceLoad(
 }
 
 
+void LinearQuasiStaticReferentialSelfGravitatingProblem::SetTidalLoad(
+    VectorCoefficient& grad_psi) {
+  RegisterTimeDependent(grad_psi);
+  // -rho_tilde (grad psi o phi_e) . v on the displacement row; the
+  // composition with the mapping is the caller's (the coefficient's),
+  // see the header note.
+  auto minus_rho = std::make_unique<ProductCoefficient>(-1.0, *rho_);
+  auto load = std::make_unique<ScalarVectorProductCoefficient>(*minus_rho,
+                                                               grad_psi);
+  ExternalLoad().AddDomainIntegrator(new VectorDomainLFIntegrator(*load));
+  tidal_scalar_coefs_.push_back(std::move(minus_rho));
+  tidal_coefs_.push_back(std::move(load));
+}
+
+
 void LinearQuasiStaticReferentialSelfGravitatingProblem::SetPrescribedVacuumExtension(
     FiniteElementSpace& fes_buffer, const SparseMatrix& E) {
   MFEM_VERIFY(!ball_wide_,
@@ -1677,14 +1692,14 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetPrescribedVacuumExte
 }
 #endif
 
-void LinearQuasiStaticReferentialSelfGravitatingProblem::SetGaugedFluid(
-    const Array<int>& fluid_marker, Coefficient& mu_gauge, real_t epsilon,
-    int refinements, GaugePenalty penalty, Diffeomorphism* map) {
-  if (map == nullptr && penalty == GaugePenalty::Deviatoric) {
+void LinearQuasiStaticReferentialSelfGravitatingProblem::ConfigureFluidOperator(
+    const Array<int>& marker, Coefficient& mu, real_t epsilon,
+    GaugePenalty form, Diffeomorphism* map) {
+  if (map == nullptr && form == GaugePenalty::Deviatoric) {
     map = ref_rheology_->EquilibriumMapping();
   }
-  LinearQuasiStaticProblemBase::SetGaugedFluid(
-      fluid_marker, mu_gauge, epsilon, refinements, penalty, map);
+  LinearQuasiStaticProblemBase::ConfigureFluidOperator(marker, mu, epsilon,
+                                                       form, map);
 }
 
 void LinearQuasiStaticReferentialSelfGravitatingProblem::SetVacuumExtension(
@@ -1692,44 +1707,13 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetVacuumExtension(
     int refinements) {
   MFEM_VERIFY(ball_wide_,
               "SetVacuumExtension: only for a ball-wide displacement.");
-  SetGaugedFluid(buffer_marker, mu_gauge, epsilon, refinements,
-                 GaugePenalty::Harmonic);
+  GaugePenaltyOptions o;
+  o.epsilon = epsilon;
+  o.refinements = refinements;
+  o.form = GaugePenalty::Harmonic;
+  SetFluid(buffer_marker, mu_gauge, o);
 }
 
-bool LinearQuasiStaticReferentialSelfGravitatingProblem::GaugeRefine(Vector& X) {
-  // As for the gauged fluid's coupled refinement: the physical residual
-  // after an exact regularised solve is [eps Q delta_u; 0].
-  gauge_residuals_.clear();
-  Vector B_zeta_saved(B_zeta_);
-  B_zeta_ = 0.0;
-  Vector Zeta_acc(Zeta_true_);
-  Vector r(X.Size()), d(X.Size()), prev;
-  bool ok = true;
-  int outer = outer_its_;
-  for (int k = 0; k < gauge_refinements_; ++k) {
-    Q_.Ptr()->Mult(k == 0 ? X : prev, r);
-    gauge_residuals_.push_back(std::sqrt(Dot(r, r)));
-    d = 0.0;
-    if (X_block_) {
-      *X_block_ = 0.0;
-    }
-    ok = SolveLinearSystem(r, d) && ok;
-    outer += outer_its_;
-    X += d;
-    Zeta_acc += Zeta_true_;
-    prev = d;
-  }
-  B_zeta_ = B_zeta_saved;
-  Zeta_true_ = Zeta_acc;
-  outer_its_ = outer;
-  if (X_block_) {
-    X_block_->GetBlock(0) = X;
-    X_block_->GetBlock(1) = Zeta_true_;
-  }
-  DistributePotential(Zeta_true_);
-  WarnGaugeContraction();
-  return ok;
-}
 
 void LinearQuasiStaticReferentialSelfGravitatingProblem::AssembleForce(real_t t) {
   LinearQuasiStaticProblemBase::AssembleForce(t);
@@ -1756,21 +1740,62 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::RegisterFields(DataColl
 // Solver
 
 void LinearQuasiStaticReferentialSelfGravitatingProblem::SetupSolver(OperatorHandle& A) {
+  // The solid-everywhere preconditioner experiment
+  // (SetGaugePreconditionerOnly): the preconditioner is built on the
+  // handle passed in (A + eps_prec Q when gauged), while the Krylov
+  // operator keeps the CLEAN displacement block — augmented by the
+  // same extension fold where one is set.
+  const bool prec_only = GaugePreconditionerOnly();
   Operator* A_uu = A.Ptr();
+  // A_aug_ is rebuilt below; if the preconditioner is being REUSED it
+  // still references the current one, which must stay alive until the
+  // next preconditioner rebuild (cf. the base class's capture of the
+  // unfolded matrix in AssembleOperator).
+  const int setups_before = prec_setups_;
+  if ((ext_EtGE_
+#ifdef MFEM_USE_MPI
+       || pext_EtGE_
+#endif
+       ) &&
+      prec_ && !prec_stale_ && prec_reuse_ > 1.0 && !prec_A_aug_.Ptr() &&
+      A_aug_.Ptr()) {
+    prec_A_aug_ = A_aug_;
+    prec_A_aug_.SetOperatorOwner(A_aug_.OwnsOperator());
+    A_aug_.SetOperatorOwner(false);
+  }
   if (ext_EtGE_) {
     A_aug_.Clear();
     A_aug_.Reset(Add(*A.As<SparseMatrix>(), *ext_EtGE_), true);
     A_uu = A_aug_.Ptr();
     SetupDefaultPreconditioner(A_aug_);
+    if (prec_only) {
+      A_aug_clean_.Clear();
+      A_aug_clean_.Reset(Add(*A_.As<SparseMatrix>(), *ext_EtGE_), true);
+      A_uu = A_aug_clean_.Ptr();
+    }
 #ifdef MFEM_USE_MPI
   } else if (pext_EtGE_) {
     A_aug_.Clear();
     A_aug_.Reset(ParAdd(A.As<HypreParMatrix>(), pext_EtGE_.get()), true);
     A_uu = A_aug_.Ptr();
     SetupDefaultPreconditioner(A_aug_);
+    if (prec_only) {
+      A_aug_clean_.Clear();
+      A_aug_clean_.Reset(ParAdd(A_.As<HypreParMatrix>(), pext_EtGE_.get()),
+                         true);
+      A_uu = A_aug_clean_.Ptr();
+    }
 #endif
   } else {
     SetupDefaultPreconditioner(A);
+    if (prec_only) {
+      A_uu = A_.Ptr();
+    }
+  }
+  if (prec_setups_ != setups_before) {
+    // A fresh preconditioner sits on the current A_aug_: the captured
+    // predecessor can go.
+    prec_A_aug_.Clear();
   }
 
   block_op_ = std::make_unique<BlockOperator>(offsets_);
@@ -1824,9 +1849,17 @@ bool LinearQuasiStaticReferentialSelfGravitatingProblem::SolveLinearSystem(const
     Zeta_true_ = 0.0;
     *X_block_ = 0.0;
   } else {
-    projected_->Mult(*B_block_, *X_block_);
-    ok = minres_->GetConverged();
-    outer_its_ = minres_->GetNumIterations();
+    if (GaugePreconditionerOnly() && gauge_plateau_ratio_ > 0.0) {
+      // Chunked restarts with the stagnation stop (PlateauMult).
+      bool conv = false;
+      outer_its_ = PlateauMult(*projected_, *minres_, *B_block_, *X_block_,
+                               conv);
+      ok = conv;
+    } else {
+      projected_->Mult(*B_block_, *X_block_);
+      ok = minres_->GetConverged();
+      outer_its_ = minres_->GetNumIterations();
+    }
     NoteIterations(outer_its_);
     X = X_block_->GetBlock(0);
     projector_u_->Project(X);
@@ -2165,6 +2198,21 @@ void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::SetFluidExtension(
 }
 #endif
 
+void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::
+    SetGaugePreconditionerOnly(real_t eps_prec) {
+  MFEM_VERIFY(eps_prec > 0.0,
+              "SetGaugePreconditionerOnly: eps_prec must be positive.");
+  MFEM_VERIFY(!kkt_,
+              "SetGaugePreconditionerOnly: AL paths only; EnableKKT's "
+              "augmented blocks are not split.");
+  // The SetFluidGauge epsilon now scales the PRECONDITIONER matrix
+  // only; the operator's fluid block drops eps Q_f, and the AL loop
+  // drops the per-sweep Tikhonov term (no operator bias to remove).
+  fluid_gauge_eps_ = eps_prec;
+  gauge_prec_only_ = true;
+  operator_dirty_ = true;
+}
+
 void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::SetFluidGauge(
     Coefficient& mu_gauge, real_t epsilon) {
   MFEM_VERIFY(epsilon > 0.0, "SetFluidGauge: epsilon must be positive.");
@@ -2183,8 +2231,8 @@ void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::SetConstraint(
   operator_dirty_ = true;
 }
 
-void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::SetGaugedFluid(
-    const Array<int>&, Coefficient&, real_t, int, GaugePenalty,
+void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::ConfigureFluidOperator(
+    const Array<int>&, Coefficient&, real_t, GaugePenalty,
     Diffeomorphism*) {
   MFEM_ABORT(
       "LinearQuasiStaticReferentialSelfGravitatingSlipProblem: the fluid has its own "
@@ -2569,6 +2617,7 @@ void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::AssembleBrokenBlock
   {
     std::unique_ptr<SparseMatrix> s(Add(1.0, *A11, theta_, *JtBnJ));
     s.reset(Add(1.0, *s, theta_zeta_, *JtPbJ));
+    S11_noq_ = std::make_unique<SparseMatrix>(*s);
     s.reset(Add(1.0, *s, 1.0, *Qf_));
     set(1, 1, std::move(s));
   }
@@ -2824,6 +2873,7 @@ void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::AssembleBrokenBlock
   {
     std::unique_ptr<HypreParMatrix> s(mfem::Add(1.0, *A11, theta_, *JtBnJ));
     s.reset(mfem::Add(1.0, *s, theta_zeta_, *JtPbJ));
+    pS11_noq_ = std::make_unique<HypreParMatrix>(*s);
     s.reset(mfem::Add(1.0, *s, 1.0, *pQf_));
     set(1, 1, std::move(s));
   }
@@ -2866,7 +2916,8 @@ void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::AssembleBrokenBlock
     amg3->SetPrintLevel(0);
     prec33_ = std::move(amg3);
     auto amg1 = std::make_unique<HypreBoomerAMG>(*pbzS_[5]);
-    amg1->SetSystemsOptions(dim_);
+    // order_bynodes = true: the displacement spaces are Ordering::byNODES.
+    amg1->SetSystemsOptions(dim_, true);
     amg1->SetPrintLevel(0);
     prec11_ = std::move(amg1);
   }
@@ -2890,6 +2941,15 @@ void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::SetupSolverBroken(
       const Operator* op = nullptr;
       if (i == 2 && j == 2) {
         op = S22_op_.get();
+      } else if (i == 1 && j == 1 && gauge_prec_only_) {
+        // SetGaugePreconditionerOnly: clean fluid block in the
+        // operator; prec11_ stays on the +Q_f matrix bzS_[5].
+#ifdef MFEM_USE_MPI
+        op = pfes_ ? static_cast<const Operator*>(pS11_noq_.get())
+                   : static_cast<const Operator*>(S11_noq_.get());
+#else
+        op = S11_noq_.get();
+#endif
       } else {
 #ifdef MFEM_USE_MPI
         if (pfes_) {
@@ -3005,7 +3065,13 @@ bool LinearQuasiStaticReferentialSelfGravitatingSlipProblem::SolveLinearSystemBr
   Vector tmp_zf(shadow_zeta_fluid_->GetTrueVSize());
   for (int k = 0; k < al_iterations_; k++) {
     const bool last = k == al_iterations_ - 1;
-    if (k == 0) {
+    const bool plateau = gauge_prec_only_ && gauge_plateau_ratio_ > 0.0;
+    if (plateau) {
+      // The stagnation stop replaces the sweep tolerance schedule
+      // (see the single-valued loop).
+      minres4_->SetRelTol(rel_tol_);
+      minres4_->SetAbsTol(0.0);
+    } else if (k == 0) {
       minres4_->SetRelTol(last ? rel_tol_ : loose);
       minres4_->SetAbsTol(0.0);
     } else {
@@ -3016,10 +3082,20 @@ bool LinearQuasiStaticReferentialSelfGravitatingSlipProblem::SolveLinearSystemBr
     }
     rhs = *B4_;
     rhs -= *w_al4_;
-    op_Qf_->AddMult(X4_->GetBlock(1), rhs.GetBlock(1));
-    projected4_->Mult(rhs, *X4_);
-    ok = minres4_->GetConverged() && ok;
-    outer += minres4_->GetNumIterations();
+    if (!gauge_prec_only_) {
+      // The interleaved Tikhonov term of the regularised solve; the
+      // clean-operator mode has no eps bias to remove.
+      op_Qf_->AddMult(X4_->GetBlock(1), rhs.GetBlock(1));
+    }
+    if (plateau) {
+      bool conv = false;
+      outer += PlateauMult(*projected4_, *minres4_, rhs, *X4_, conv);
+      ok = conv && ok;
+    } else {
+      projected4_->Mult(rhs, *X4_);
+      ok = minres4_->GetConverged() && ok;
+      outer += minres4_->GetNumIterations();
+    }
     if (k == 0) {
       N0 = minres4_->GetInitialNorm();
     }
@@ -3254,6 +3330,7 @@ void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::AssembleSlipBlocks(
   S01_.reset(Transpose(*S10_));
   {
     std::unique_ptr<SparseMatrix> acc(Add(1.0, *A11_, theta_, *JtBnJ));
+    S11_noq_ = std::make_unique<SparseMatrix>(*acc);
     A11_solve_.reset(Add(1.0, *acc, 1.0, *Qf_));
   }
 
@@ -3268,7 +3345,9 @@ void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::AssembleSlipBlocks(
   op_S00_ = S00_.get();
   op_S01_ = S01_.get();
   op_S10_ = S10_.get();
-  op_S11_ = A11_solve_.get();
+  // SetGaugePreconditionerOnly: clean fluid block in the operator, the
+  // +Q_f matrix stays under the smoother.
+  op_S11_ = gauge_prec_only_ ? S11_noq_.get() : A11_solve_.get();
   op_Qf_ = Qf_.get();
   op_Bn_ = Bn_.get();
   prec11_ = std::make_unique<GSSmoother>(*A11_solve_);
@@ -3445,6 +3524,7 @@ void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::AssembleSlipBlocksP
   {
     std::unique_ptr<HypreParMatrix> acc(
         mfem::Add(1.0, *pA11_, theta_, *JtBnJ));
+    pS11_noq_ = std::make_unique<HypreParMatrix>(*acc);
     pA11_solve_.reset(mfem::Add(1.0, *acc, 1.0, *pQf_));
   }
 
@@ -3459,12 +3539,14 @@ void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::AssembleSlipBlocksP
   op_S00_ = pS00_.get();
   op_S01_ = pS01_.get();
   op_S10_ = pS10_.get();
-  op_S11_ = pA11_solve_.get();
+  // SetGaugePreconditionerOnly: clean fluid block in the operator.
+  op_S11_ = gauge_prec_only_ ? pS11_noq_.get() : pA11_solve_.get();
   op_Qf_ = pQf_.get();
   op_Bn_ = pBn_.get();
   {
     auto amg = std::make_unique<HypreBoomerAMG>(*pA11_solve_);
-    amg->SetSystemsOptions(dim_);
+    // order_bynodes = true: the displacement spaces are Ordering::byNODES.
+    amg->SetSystemsOptions(dim_, true);
     amg->SetPrintLevel(0);
     prec11_ = std::move(amg);
   }
@@ -3615,7 +3697,13 @@ bool LinearQuasiStaticReferentialSelfGravitatingSlipProblem::SolveLinearSystem(
   Vector tmp_f(fes_f_->GetTrueVSize());
   for (int k = 0; k < al_iterations_; k++) {
     const bool last = k == al_iterations_ - 1;
-    if (k == 0) {
+    const bool plateau = gauge_prec_only_ && gauge_plateau_ratio_ > 0.0;
+    if (plateau) {
+      // The stagnation stop replaces the sweep tolerance schedule: one
+      // tight cap, the plateau fires first where one exists.
+      minres3_->SetRelTol(rel_tol_);
+      minres3_->SetAbsTol(0.0);
+    } else if (k == 0) {
       minres3_->SetRelTol(last ? rel_tol_ : loose);
       minres3_->SetAbsTol(0.0);
     } else {
@@ -3626,10 +3714,20 @@ bool LinearQuasiStaticReferentialSelfGravitatingSlipProblem::SolveLinearSystem(
     }
     rhs = *B3_;
     rhs -= *w_al_;
-    op_Qf_->AddMult(X3_->GetBlock(1), rhs.GetBlock(1));
-    projected3_->Mult(rhs, *X3_);
-    ok = minres3_->GetConverged() && ok;
-    outer += minres3_->GetNumIterations();
+    if (!gauge_prec_only_) {
+      // The interleaved Tikhonov term of the regularised solve; the
+      // clean-operator mode has no eps bias to remove.
+      op_Qf_->AddMult(X3_->GetBlock(1), rhs.GetBlock(1));
+    }
+    if (plateau) {
+      bool conv = false;
+      outer += PlateauMult(*projected3_, *minres3_, rhs, *X3_, conv);
+      ok = conv && ok;
+    } else {
+      projected3_->Mult(rhs, *X3_);
+      ok = minres3_->GetConverged() && ok;
+      outer += minres3_->GetNumIterations();
+    }
     if (k == 0) {
       N0 = minres3_->GetInitialNorm();
     }
@@ -3740,6 +3838,9 @@ void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::EnableKKT(
   MFEM_VERIFY(!broken_zeta_,
               "EnableKKT: single-valued organisation only (mutually "
               "exclusive with EnableBrokenZeta).");
+  MFEM_VERIFY(!gauge_prec_only_,
+              "EnableKKT: incompatible with SetGaugePreconditionerOnly "
+              "(the KKT augmented blocks are not split).");
   MFEM_VERIFY(fes_scalar_solid, "EnableKKT: a scalar space is required.");
   kkt_ = true;
   fes_lam_ = fes_scalar_solid;
@@ -3839,7 +3940,8 @@ void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::SetupSolverKKT(
     op_SK10 = pSK10_.get();
     op_SK11 = pSK11_.get();
     auto amg = std::make_unique<HypreBoomerAMG>(*pSK11_);
-    amg->SetSystemsOptions(dim_);
+    // order_bynodes = true: the displacement spaces are Ordering::byNODES.
+    amg->SetSystemsOptions(dim_, true);
     amg->SetPrintLevel(0);
     prec11_kkt_ = std::move(amg);
   } else

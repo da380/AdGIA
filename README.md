@@ -64,12 +64,18 @@ includes them all), are
 - background states for the referential problems (`background.hpp`): the
   hydrostatic state of a radial model, its relabelled description, and
   minimum-norm and minimum-deviatoric equilibrium stress fields for
-  aspherical bodies;
+  aspherical bodies; the density feasibility functional of the
+  equilibrium-figures programme and its adjoint-free derivative
+  (`equilibrium_figures.hpp`);
 - the mapping (relabelling) layer (`mappings.hpp`): diffeomorphisms of the
   reference domain (identity, analytic, radial, tapered, grid-function),
   their interpolation, mapped meshes, and pull-back and Nanson coefficients;
 - rigid-body and general null-space projectors and projected Krylov solvers
-  for singular systems (`null_space.hpp`);
+  for singular systems (`null_space.hpp`); Riesz maps identifying
+  derivative duals with gradients in L2 and (iterated, vector-valued)
+  Sobolev metrics (`riesz.hpp`), and the descent toolkit over them — the
+  constrained metric and the projected nonlinear-CG and
+  Levenberg–Marquardt Gauss–Newton loops (`descent.hpp`);
 - the manifest that planetmodel writes beside a mesh, read into the
   attribute lists and markers the problems take, with the mesh and the
   fields of the model opened as it says (`mesh_manifest.hpp`).
@@ -93,6 +99,7 @@ documents in the source tree are of two kinds.
 | `doc/gauged_fluid.md` | the gauged treatment of fluid regions |
 | `doc/slip_interface.tex` (PDF) | the slipping fluid–solid interface: derivation, discretisation, constraint enforcement, implementation, verification |
 | `doc/gauge_penalty_iteration.tex` (PDF) | gauge penalties and their iterated (Tikhonov) refinement |
+| `doc/equilibrium_figures.tex` (PDF) | equilibrium states and hydrostatic figures by constrained optimisation: the feasibility functionals, their derivatives, Sobolev gradients, the advection route |
 | `doc/mappings.md` | the mapping (relabelling) layer: pulled-back forms, assembly recipe, change-of-variables identity |
 | `doc/submesh_coupling.md` | forms between a mesh and its SubMesh: the dof injection, its parallel construction, constraints |
 | `doc/viscoelasticity.md` | the quasi-static problem interface, rheologies, time stepping, strain maps, state-dependent relaxation, composite rheologies |
@@ -113,7 +120,9 @@ documents in the source tree are of two kinds.
 ## Installation
 
 MFEM must be built first (a parallel MFEM, with hypre and METIS, for the MPI
-build). The project uses CMake; in-source builds are refused.
+build). MFEM v4.10 is the reference version — it is what CI builds against
+(`.github/workflows/ci.yml`) — and v4.9 is also known to work; the full test
+suite passes on both. The project uses CMake; in-source builds are refused.
 
 **Serial:**
 ```bash

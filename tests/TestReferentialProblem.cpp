@@ -287,6 +287,111 @@ TEST(ReferentialProblem, HydrostaticCrossCheck2D) {
   EXPECT_LT(z_diff[1], 0.6 * z_diff[0]);
 }
 
+// Tidal cross-check at phi_e = id on the uniform disc: the referential
+// tidal load -int rho (grad psi o phi_e) . v dV (SetTidalLoad) against
+// the mixed class's SetTidalPotential, for (a) a degree-2 interior
+// harmonic psi = A (x^2 - y^2) and (b) the 2-D CENTRIFUGAL potential
+// psi = -A r^2 — the degree-zero, non-harmonic piece, grad psi
+// proportional to x, the special case the rotational feedbacks build
+// on (Maitra & Al-Attar 2024). The change of variables is as in the
+// hydrostatic cross-check: u agrees directly, zeta1 = phi1 +
+// u . grad(Phi0) on the body, both to the common discretisation
+// accuracy, improving with order.
+TEST(ReferentialProblem, TidalCrossCheck2D) {
+  const int dim = 2;
+  struct Tide {
+    const char* name;
+    double (*psi)(const Vector&);
+    void (*grad)(const Vector&, Vector&);
+  };
+  const Tide tides[] = {
+      {"degree-2 harmonic",
+       [](const Vector& x) { return 0.1 * (x[0] * x[0] - x[1] * x[1]); },
+       [](const Vector& x, Vector& g) {
+         g.SetSize(2);
+         g[0] = 0.2 * x[0];
+         g[1] = -0.2 * x[1];
+       }},
+      {"degree-0 centrifugal", [](const Vector& x) { return -0.1 * (x * x); },
+       [](const Vector& x, Vector& g) {
+         g.SetSize(2);
+         g = x;
+         g *= -0.2;
+       }}};
+  for (const auto& tide : tides) {
+    std::vector<double> u_diff, z_diff;
+    for (int order : {1, 2}) {
+      Setting s(dim, order);
+      ConstantCoefficient kappa(kKappa), mu(kMu), rho(kRho);
+      IsotropicElasticRheology e_rheology(dim, kappa, mu);
+      FunctionCoefficient psi(tide.psi);
+      LinearQuasiStaticMixedSelfGravitatingProblem eulerian(
+          s.fes_u.get(), s.fes_zeta.get(), e_rheology, rho, kG, kDtNDegree);
+      eulerian.SetTidalPotential(psi);
+      eulerian.SetRelTol(1e-11);
+      eulerian.AssembleForce(0.0);
+      ASSERT_TRUE(eulerian.Solve());
+
+      auto phi = IdentityMap(dim);
+      FunctionCoefficient p0(UniformDiscPressure);
+      auto C_eff =
+          IsotropicElasticTensorCoefficient::FromBulkModulus(dim, kappa, mu);
+      BareElasticTensorCoefficient C(dim, C_eff, p0);
+      MatrixFunctionCoefficient S(dim, [](const Vector& x, DenseMatrix& S) {
+        S.SetSize(x.Size());
+        S = 0.0;
+        const double p = UniformDiscPressure(x);
+        for (int i = 0; i < x.Size(); i++) {
+          S(i, i) = -p;
+        }
+      });
+      ReferentialElasticRheology r_rheology(dim, C, S, phi);
+      Setting s2(dim, order);
+      Array<int> buffer_attr({2});
+      SubMesh buffer(SubMesh::CreateFromDomain(*s2.parent, buffer_attr));
+      FiniteElementSpace fes_buffer(&buffer, s2.fec.get(), dim);
+      Vector bb_min, bb_max;
+      s2.parent->GetBoundingBox(bb_min, bb_max);
+      const double r_out = bb_max.Normlinf();
+
+      LinearQuasiStaticReferentialSelfGravitatingProblem referential(
+          s2.fes_u.get(), s2.fes_zeta.get(), r_rheology, rho, kG,
+          kDtNDegree);
+      auto E = NewRadialVacuumExtension(*s2.fes_u, fes_buffer, 1.0, r_out);
+      referential.SetPrescribedVacuumExtension(fes_buffer, *E);
+      VectorFunctionCoefficient grad_psi(dim, tide.grad);
+      referential.SetTidalLoad(grad_psi);
+      referential.SetRelTol(1e-11);
+      referential.AssembleForce(0.0);
+      ASSERT_TRUE(referential.Solve());
+
+      {
+        GridFunction d(referential.Displacement());
+        d -= eulerian.Displacement();
+        u_diff.push_back(L2Norm(d) / L2Norm(eulerian.Displacement()));
+      }
+      {
+        VectorGridFunctionCoefficient u_c(&eulerian.Displacement());
+        InnerProductCoefficient advect(u_c, eulerian.BackgroundGravity());
+        GridFunctionCoefficient phi1(&eulerian.PotentialOnBody());
+        SumCoefficient zeta_expected(phi1, advect);
+        GridFunction d(referential.PotentialOnBody());
+        GridFunction z(d);
+        z.ProjectCoefficient(zeta_expected);
+        d -= z;
+        d -= d.Sum() / d.Size();
+        z_diff.push_back(
+            L2Norm(d) /
+            std::max(1e-30, L2Norm(referential.PotentialOnBody())));
+      }
+    }
+    EXPECT_LT(u_diff[1], 5e-2) << tide.name;
+    EXPECT_LT(u_diff[1], 0.7 * u_diff[0]) << tide.name;
+    EXPECT_LT(z_diff[1], 5e-2) << tide.name;
+    EXPECT_LT(z_diff[1], 0.7 * z_diff[0]) << tide.name;
+  }
+}
+
 namespace {
 
 // A Mandel tensor restricted to attribute 1 (zero on the buffer).
@@ -700,7 +805,7 @@ TEST(ReferentialProblem, FluidRelabellingNullPair) {
 
 // The gauged fluid in the general class: the same two-layer physical
 // problem through the general referential class (base-class
-// SetGaugedFluid, prescribed vacuum extension) and through the mixed
+// SetFluid gauge treatment, prescribed vacuum extension) and through the mixed
 // self-gravitating class (Eulerian potential) in gauged mode. Solid displacement agrees
 // directly; the potential through the change of variables
 // zeta1 = phi1 + u.grad Phi0 (modulo the 2-D constant).
@@ -744,7 +849,7 @@ TEST(ReferentialProblem, GaugedFluidCrossCheck2D) {
   IsotropicElasticRheology e_rheology(dim, kappa_c, mu_c);
   LinearQuasiStaticMixedSelfGravitatingProblem eulerian(
       &fes_u, &fes_phi, e_rheology, rho, kG, kDtNDegree);
-  eulerian.SetGaugedFluid(fluid_marker, mu_gauge, eps, nref);
+  eulerian.SetFluid(fluid_marker, mu_gauge, GaugePenaltyOptions{eps, nref});
   eulerian.SetSurfaceLoad(sigma, surface);
   eulerian.SetRelTol(1e-11);
   eulerian.AssembleForce(0.0);
@@ -759,7 +864,7 @@ TEST(ReferentialProblem, GaugedFluidCrossCheck2D) {
       &fes_u2, &fes_zeta, bg.Rheology(), bg.Density(), kG, kDtNDegree);
   auto E = NewRadialVacuumExtension(fes_u2, fes_buffer, 1.0, r_out);
   referential.SetPrescribedVacuumExtension(fes_buffer, *E);
-  referential.SetGaugedFluid(fluid_marker, mu_gauge, eps, nref);
+  referential.SetFluid(fluid_marker, mu_gauge, GaugePenaltyOptions{eps, nref});
   referential.SetSurfaceLoad(sigma, surface);
   referential.SetRelTol(1e-11);
   referential.AssembleForce(0.0);
@@ -1046,6 +1151,118 @@ TEST(ReferentialProblem, RelabelledEquilibrium2D) {
   // interpolation error (the exact-F-versus-interpolated-F effect of
   // doc/mappings.md, "The discrete change-of-variables identity"): the
   // floor is the mesh's, not the fields'.
+  EXPECT_LT(u_err[0], 1.5e-2);
+  EXPECT_LT(u_err[1], 1.5e-2);
+  EXPECT_LT(z_err[0], 1.5e-2);
+  EXPECT_LT(z_err[1], 1.5e-2);
+}
+
+// The same physical TIDE described from an interior-relabelled
+// reference: the identity-map solution composed with the relabelling
+// must reappear, u~(x) = u(xi(x)) and zeta~ = zeta o xi. The
+// relabelled leg's load is the physical tidal gradient COMPOSED with
+// the mapping ((grad psi) o xi — the F^{-T} content of SetTidalLoad's
+// change of variables), here analytic since grad psi is linear. The
+// floor is the mesh-geometry one of RelabelledEquilibrium2D.
+TEST(ReferentialProblem, RelabelledTidal2D) {
+  const int dim = 2;
+  std::vector<double> u_err, z_err;
+  RadialHydrostaticBackground bg(
+      dim, [](double) { return kRho; }, [](double) { return kKappa; },
+      [](double) { return kMu; }, kG, 1.0);
+  for (int order : {1, 2}) {
+    Array<int> buffer_attr({2});
+
+    // Reference: phi_e = id, the plain tidal gradient.
+    Setting s(dim, order);
+    SubMesh buffer(SubMesh::CreateFromDomain(*s.parent, buffer_attr));
+    FiniteElementSpace fes_buffer(&buffer, s.fec.get(), dim);
+    Vector bb_min, bb_max;
+    s.parent->GetBoundingBox(bb_min, bb_max);
+    const double r_out = bb_max.Normlinf();
+    LinearQuasiStaticReferentialSelfGravitatingProblem ref(
+        s.fes_u.get(), s.fes_zeta.get(), bg.Rheology(), bg.Density(), kG,
+        kDtNDegree);
+    auto E = NewRadialVacuumExtension(*s.fes_u, fes_buffer, 1.0, r_out);
+    ref.SetPrescribedVacuumExtension(fes_buffer, *E);
+    VectorFunctionCoefficient grad_psi(dim, [](const Vector& x, Vector& g) {
+      g.SetSize(2);
+      g[0] = 0.2 * x[0];
+      g[1] = -0.2 * x[1];
+    });
+    ref.SetTidalLoad(grad_psi);
+    ref.SetRelTol(1e-11);
+    ref.AssembleForce(0.0);
+    ASSERT_TRUE(ref.Solve());
+
+    // Relabelled: phi_e = xi, the gradient composed with the mapping.
+    Setting s2(dim, order);
+    auto xi = InteriorMap(dim, 0.3);
+    RelabelledBackground rel_bg(bg, xi);
+    SubMesh buffer2(SubMesh::CreateFromDomain(*s2.parent, buffer_attr));
+    FiniteElementSpace fes_buffer2(&buffer2, s2.fec.get(), dim);
+    LinearQuasiStaticReferentialSelfGravitatingProblem rel(
+        s2.fes_u.get(), s2.fes_zeta.get(), rel_bg.Rheology(),
+        rel_bg.Density(), kG, kDtNDegree);
+    auto E2 = NewRadialVacuumExtension(*s2.fes_u, fes_buffer2, 1.0, r_out);
+    rel.SetPrescribedVacuumExtension(fes_buffer2, *E2);
+    VectorFunctionCoefficient grad_psi_rel(
+        dim, [](const Vector& x, Vector& g) {
+          const double r = x.Norml2();
+          const double q = r < 1.0 ? r * (1.0 - r) : 0.0;
+          const double f = 1.0 + 0.3 * q * q;  // InteriorMap(dim, 0.3)
+          g.SetSize(2);
+          g[0] = 0.2 * f * x[0];
+          g[1] = -0.2 * f * x[1];
+        });
+    rel.SetTidalLoad(grad_psi_rel);
+    rel.SetRelTol(1e-11);
+    rel.AssembleForce(0.0);
+    ASSERT_TRUE(rel.Solve());
+
+    double du2 = 0.0, un2 = 0.0;
+    std::vector<double> dz;
+    double zn2 = 0.0;
+    Vector x(dim), y(dim);
+    int n_pts = 0;
+    for (int i = 0; i < 40; i++) {
+      const double r = 0.15 + 0.75 * (i % 8) / 7.0;
+      const double th = 2.0 * std::numbers::pi * i / 40.0 + 0.1;
+      x(0) = r * std::cos(th);
+      x(1) = r * std::sin(th);
+      {  // y = xi(x), the same formula as InteriorMap(dim, 0.3)
+        const double q = r * (1.0 - r);
+        y = x;
+        y *= 1.0 + 0.3 * q * q;
+      }
+      Vector ur, zr, urel, zrel;
+      if (!EvalAt(rel.Displacement(), *s2.body, x, urel) ||
+          !EvalAt(ref.Displacement(), *s.body, y, ur) ||
+          !EvalAt(rel.Potential(), *s2.parent, x, zrel) ||
+          !EvalAt(ref.Potential(), *s.parent, y, zr)) {
+        continue;
+      }
+      n_pts++;
+      for (int d = 0; d < dim; d++) {
+        du2 += (urel(d) - ur(d)) * (urel(d) - ur(d));
+        un2 += ur(d) * ur(d);
+      }
+      dz.push_back(zrel(0) - zr(0));
+      zn2 += zr(0) * zr(0);
+    }
+    ASSERT_GT(n_pts, 30);
+    double dz_mean = 0.0;
+    for (double v : dz) {
+      dz_mean += v;
+    }
+    dz_mean /= dz.size();
+    double dz2 = 0.0;
+    for (double v : dz) {
+      dz2 += (v - dz_mean) * (v - dz_mean);
+    }
+    u_err.push_back(std::sqrt(du2 / un2));
+    z_err.push_back(std::sqrt(dz2 / zn2));
+  }
   EXPECT_LT(u_err[0], 1.5e-2);
   EXPECT_LT(u_err[1], 1.5e-2);
   EXPECT_LT(z_err[0], 1.5e-2);

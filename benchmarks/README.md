@@ -53,11 +53,11 @@ and the MPI launcher of that build:
 What a script writes goes where it is started, or to `--out`: `runs/`
 beside the Love-number launchers for the sweeps, `runs_campaign/` for the
 campaign, one directory per model holding its cases, results and figures.
-Run the launchers in the build tree so that the outputs stay there. The
-scripts of `viscoelastic/box` and `viscoelastic/sphere` refuse an output
-path inside the source tree (`common/outputs.py`); the others do not check.
+Run the launchers in the build tree so that the outputs stay there; every
+script refuses an output path inside the source tree (`common/outputs.py`).
 The reference histories in `viscoelastic/love/references/` are committed
-reference data, not outputs.
+reference data, not outputs: they are updated by copying in a
+regeneration written to the build tree.
 
 ## The master script
 

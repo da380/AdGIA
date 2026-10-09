@@ -90,6 +90,93 @@ TEST_P(SphericalHarmonicsTest, IndexMap) {
   EXPECT_LT(Y2.Normlinf(), 1e-13);
 }
 
+// The gradient of the interior-harmonic expansion: (a) matches a
+// central finite difference of the scalar expansion away from the
+// centre; (b) with a mapping, equals the unmapped gradient evaluated
+// at the mapped point (the composition SetTidalLoad relies on).
+TEST(SphericalHarmonics, InteriorExpansionGradient) {
+  for (int dim : {2, 3}) {
+    SurfaceHarmonics basis(dim, 3);
+    Vector c(basis.Size());
+    for (int i = 0; i < c.Size(); i++) {
+      c(i) = 0.3 + 0.1 * i;
+    }
+    Vector x0(dim);
+    x0 = 0.0;
+    const real_t R = 0.8;
+    HarmonicExpansionCoefficient psi(basis, c, x0, R, true);
+    HarmonicExpansionGradientCoefficient grad(basis, c, x0, R);
+
+    // A tiny one-element mesh supplies the ElementTransformation; the
+    // probe points are set through the physical coordinates directly.
+    Mesh mesh = dim == 2 ? Mesh::MakeCartesian2D(1, 1, Element::QUADRILATERAL,
+                                                 false, 1.0, 1.0)
+                         : Mesh::MakeCartesian3D(1, 1, 1,
+                                                 Element::HEXAHEDRON, 1.0,
+                                                 1.0, 1.0);
+    auto& T = *mesh.GetElementTransformation(0);
+    const real_t h = 1e-5;
+    IntegrationPoint ip;
+    auto probe_ip = [&](const Vector& x) {
+      // The unit cell maps affinely: reference coords = physical.
+      ip.Set(x.GetData(), dim);
+      T.SetIntPoint(&ip);
+    };
+    Vector x(dim), xp(dim), g(dim);
+    real_t max_err = 0.0;
+    for (int trial = 0; trial < 6; trial++) {
+      for (int d = 0; d < dim; d++) {
+        x(d) = 0.15 + 0.1 * ((trial + d) % 5);
+      }
+      probe_ip(x);
+      grad.Eval(g, T, ip);
+      for (int d = 0; d < dim; d++) {
+        xp = x;
+        xp(d) += h;
+        probe_ip(xp);
+        const real_t fp = psi.Eval(T, ip);
+        xp(d) -= 2.0 * h;
+        probe_ip(xp);
+        const real_t fm = psi.Eval(T, ip);
+        max_err = std::max(max_err,
+                           std::abs(g(d) - (fp - fm) / (2.0 * h)));
+      }
+    }
+    EXPECT_LT(max_err, 1e-7) << "dim " << dim;
+
+    // (b) mapped evaluation = unmapped at the mapped point.
+    CallableDiffeomorphism map(
+        dim,
+        [](const Vector& x, Vector& y) {
+          y = x;
+          y *= 1.1;
+          y(0) += 0.05;
+        },
+        [](const Vector&, DenseMatrix& F) {
+          F = 0.0;
+          for (int i = 0; i < F.Height(); i++) {
+            F(i, i) = 1.1;
+          }
+        });
+    HarmonicExpansionGradientCoefficient grad_mapped(basis, c, x0, R, &map);
+    Vector gm(dim), ge(dim);
+    for (int trial = 0; trial < 4; trial++) {
+      for (int d = 0; d < dim; d++) {
+        x(d) = 0.1 + 0.12 * ((trial + 2 * d) % 4);
+      }
+      probe_ip(x);
+      grad_mapped.Eval(gm, T, ip);
+      xp = x;
+      xp *= 1.1;
+      xp(0) += 0.05;
+      probe_ip(xp);
+      grad.Eval(ge, T, ip);
+      gm -= ge;
+      EXPECT_LT(gm.Norml2(), 1e-12) << "dim " << dim;
+    }
+  }
+}
+
 TEST(SphericalHarmonicsAccuracy, DegreeOneNearThePolarAxis) {
   // Y_{1,0} = c z/r, Y_{1,1} = -c x/r, Y_{1,-1} = -c y/r, c = sqrt(3/(4 pi)).
   SurfaceHarmonics basis(3, 4);

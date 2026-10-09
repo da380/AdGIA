@@ -385,10 +385,31 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
                       const mfem::Array<int>& bdr_marker);
 
   /**
+   * @brief Tidal (applied-potential) load from the PHYSICAL gradient
+   * @f$\nabla\psi@f$ of an external potential, evaluated at the
+   * equilibrium-mapped position: a displacement-row load only,
+   * @f$\ell_u(v) = -\int_B \tilde\rho\,(\nabla\psi\circ\varphi_e)
+   * \cdot v\,dV@f$ with @f$\tilde\rho@f$ the referential density.
+   * This is the whole referential statement: by the chain rule
+   * @f$F_e^{-T}\nabla_X(\psi\circ\varphi_e) = (\nabla\psi)\circ
+   * \varphi_e@f$, so composing analytic physical data with the mapping
+   * (HarmonicExpansionGradientCoefficient takes the mapping directly) is
+   * the same as differentiating the referential tidal potential — and
+   * unlike the Eulerian classes nothing loads the potential row, whose
+   * fluid term belongs to the mixed formulation's fluid-density unknown.
+   * The centrifugal potential's force fits the same door (its
+   * degree-zero @f$r^2@f$ part is not an interior harmonic, so pass its
+   * gradient as plain analytic data), which is where rotational
+   * feedbacks will later enter (Maitra & Al-Attar 2024). Registered as
+   * time-dependent; call before the first AssembleForce().
+   */
+  void SetTidalLoad(mfem::VectorCoefficient& grad_psi);
+
+  /**
    * @brief Ball-wide mode: regularise the pure-gauge vacuum-extension
    * field with the harmonic penalty @f$\epsilon\mu_g\int \nabla u :
-   * \nabla v@f$ on the marked (buffer) attributes, through the gauge
-   * machinery of SetGaugedFluid() with @p refinements Tikhonov
+   * \nabla v@f$ on the marked (buffer) attributes, through the fluid
+   * engine's Harmonic form with @p refinements Tikhonov
    * refinements. Unlike the gauged fluid, the refinement is not reliable
    * here: the buffer carries no physical stiffness, the generalised
    * spectrum of the (operator, penalty) pair degenerates like @f$h^2@f$,
@@ -403,15 +424,14 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
                           mfem::Coefficient& mu_gauge, mfem::real_t epsilon,
                           int refinements = 3);
 
-  /** @brief As the base, but the Deviatoric penalty is assembled
+  /** @brief As the base, but the Deviatoric form is assembled
    * covariantly through the rheology's equilibrium mapping when the
    * caller passes no map of its own, so that a relabelled problem's
    * penalty is the exact pull-back of the unmapped one. */
-  void SetGaugedFluid(const mfem::Array<int>& fluid_marker,
-                      mfem::Coefficient& mu_gauge, mfem::real_t epsilon,
-                      int refinements = 2,
-                      GaugePenalty penalty = GaugePenalty::Deviatoric,
-                      Diffeomorphism* map = nullptr) override;
+  void ConfigureFluidOperator(const mfem::Array<int>& marker,
+                              mfem::Coefficient& mu, mfem::real_t epsilon,
+                              GaugePenalty form,
+                              Diffeomorphism* map) override;
 
   /**
    * @brief SubMesh mode: supply the buffer's gravity terms through a
@@ -521,11 +541,6 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
   void SetupSolver(mfem::OperatorHandle& A) override;
   bool SolveLinearSystem(const mfem::Vector& B, mfem::Vector& X) override;
 
-  /** @brief Tikhonov refinement on the coupled system, as for the gauged
-   * fluid: refinement solves are cold-started and carry zero potential
-   * load, and the potential accumulates alongside the displacement. */
-  bool GaugeRefine(mfem::Vector& X) override;
-
  protected:
   // Protected (not private) so that the slip-interface subclass can reuse
   // the potential machinery, the coupling and the extension folds.
@@ -553,6 +568,8 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
   // physics
   const ReferentialElasticRheology* ref_rheology_;
   mfem::Coefficient* rho_;
+  std::vector<std::unique_ptr<mfem::Coefficient>> tidal_scalar_coefs_;
+  std::vector<std::unique_ptr<mfem::VectorCoefficient>> tidal_coefs_;
   mfem::real_t G_, four_pi_G_;
   int dtn_degree_;
   mfem::ConstantCoefficient one_, inv_four_pi_G_, shift_coef_;
@@ -597,6 +614,12 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
       pext_Ct_total_;
 #endif
   mfem::OperatorHandle A_aug_;
+  mfem::OperatorHandle A_aug_clean_;  // clean-A augmentation of the
+                                      // SetGaugePreconditionerOnly mode
+  // Keep-alive: the fold matrix the REUSED preconditioner was built on
+  // (SetupSolver rebuilds A_aug_ on every call; without the capture a
+  // reused AMG would reference the freed previous one).
+  mfem::OperatorHandle prec_A_aug_;
 
   // loads
   std::unique_ptr<mfem::LinearForm> b_zeta_;
@@ -677,6 +700,17 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
 class LinearQuasiStaticReferentialSelfGravitatingSlipProblem
     : public LinearQuasiStaticReferentialSelfGravitatingProblem {
  public:
+  /** @brief Refused: the slipping classes do not yet carry the tidal
+   * body force on the fluid displacement row, and a solid-row-only
+   * load under-drives a fluid core by tens of percent. Welded
+   * referential and maxwell solve tides (the base class). */
+  void SetTidalLoad(mfem::VectorCoefficient&) {
+    MFEM_ABORT(
+        "SetTidalLoad: not yet supported by the slipping classes (the "
+        "fluid row carries no tidal force); use the welded referential "
+        "or maxwell treatment for tides.");
+  }
+
   /**
    * @param fes_s Solid displacement space on a SubMesh of the ball; the
    * base class's displacement space.
@@ -732,6 +766,18 @@ class LinearQuasiStaticReferentialSelfGravitatingSlipProblem
    * first Solve().
    */
   void SetFluidGauge(mfem::Coefficient& mu_gauge, mfem::real_t epsilon);
+
+  /** @brief The solid-everywhere preconditioner experiment for the
+   * slipping organisations: the Krylov operator keeps the CLEAN fluid
+   * block (physics + the AL constraint penalty, no gauge term) while
+   * the fluid-block preconditioner stays on the
+   * @f$+\epsilon_{\mathrm{prec}} Q_f@f$ matrix, and the per-sweep
+   * Tikhonov term @f$\epsilon Q u_f@f$ of the AL right-hand side is
+   * dropped (no operator bias to remove). @p eps_prec replaces the
+   * SetFluidGauge() epsilon for the preconditioner matrix. AL paths
+   * only (EnableKKT refuses the mode); combine with
+   * SetGaugePlateauStop() for the per-sweep stagnation stop. */
+  void SetGaugePreconditionerOnly(mfem::real_t eps_prec) override;
 
   /** @brief Constraint penalty @f$\theta@f$ (default 100) and the number
    * of augmented-Lagrangian iterations per Solve() (default 8; each
@@ -917,11 +963,11 @@ class LinearQuasiStaticReferentialSelfGravitatingSlipProblem
   void ApplyBrokenKernel(const std::string& kernel, const mfem::Vector& x,
                          mfem::Vector& y);
 
-  /** @brief The base-class gauged fluid is not meaningful here (the fluid
-   * has its own space); use SetFluidGauge(). */
-  void SetGaugedFluid(const mfem::Array<int>&, mfem::Coefficient&,
-                      mfem::real_t, int, GaugePenalty,
-                      Diffeomorphism*) override;
+  /** @brief The base-class fluid treatments are not meaningful here
+   * (the fluid has its own space); use SetFluidGauge(). */
+  void ConfigureFluidOperator(const mfem::Array<int>&, mfem::Coefficient&,
+                              mfem::real_t, GaugePenalty,
+                              Diffeomorphism*) override;
 
   void RegisterFields(mfem::DataCollection& dc) override;
 
@@ -976,6 +1022,13 @@ class LinearQuasiStaticReferentialSelfGravitatingSlipProblem
 #endif
   mfem::Coefficient* fluid_mu_gauge_ = nullptr;
   mfem::real_t fluid_gauge_eps_ = 0.0;
+  // The gauge-free (1,1) solver block of SetGaugePreconditionerOnly:
+  // physics + constraint penalty, no eps Q_f (the Krylov operator's
+  // fluid block; the preconditioner keeps the +Q_f matrix).
+  std::unique_ptr<mfem::SparseMatrix> S11_noq_;
+#ifdef MFEM_USE_MPI
+  std::unique_ptr<mfem::HypreParMatrix> pS11_noq_;
+#endif
   mfem::real_t theta_ = 1.0e2;
   int al_iterations_ = 8;
   mfem::real_t sweep_loose_rel_ = 0.0;  ///< 0: every sweep at full tol

@@ -893,11 +893,17 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetupSolver(OperatorHandle& A
     SetupMinres(A);
   }
   if (gauge_kkt_) {
+    MFEM_VERIFY(!GaugePreconditionerOnly(),
+                "SetGaugePreconditionerOnly: incompatible with the "
+                "gauge-KKT saddle.");
     SetupKKTGauge();
   }
 }
 
 void LinearQuasiStaticMixedSelfGravitatingProblem::SetupSchur(OperatorHandle& A) {
+  MFEM_VERIFY(!GaugePreconditionerOnly(),
+              "SetGaugePreconditionerOnly: block-MINRES (or BlockCG) only; "
+              "the Schur path eliminates through the regularised block.");
   schur_ = std::make_unique<SchurOperator>(*this, *A.Ptr());
   projected_op_ = std::make_unique<ProjectedOperator>(*schur_, *projector_u_);
   projected_prec_ = std::make_unique<ProjectedSolver>(*projector_u_);
@@ -914,7 +920,13 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetupSchur(OperatorHandle& A)
 
 void LinearQuasiStaticMixedSelfGravitatingProblem::SetupMinres(OperatorHandle& A) {
   block_op_ = std::make_unique<BlockOperator>(offsets_);
-  block_op_->SetBlock(0, 0, A.Ptr());
+  // The solid-everywhere preconditioner experiment: the Krylov operator
+  // keeps the CLEAN displacement block while prec_ (built by
+  // SetupDefaultCG on the handle passed in) sits on A + eps_prec Q;
+  // MINRES ignores the exact gauge kernel, the near-gauge modes move
+  // into the stopping rule (SetGaugePreconditionerOnly).
+  block_op_->SetBlock(0, 0,
+                      GaugePreconditionerOnly() ? A_.Ptr() : A.Ptr());
   block_op_->SetBlock(0, 1, const_cast<Operator*>(C_op_));
   block_op_->SetBlock(1, 0, const_cast<Operator*>(Ct_op_));
   block_op_->SetBlock(1, 1, const_cast<Operator*>(A_phiphi_));
@@ -973,15 +985,15 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetupMinres(OperatorHandle& A
   B_block_ = std::make_unique<BlockVector>(offsets_);
 }
 
-void LinearQuasiStaticMixedSelfGravitatingProblem::SetGaugedFluid(
-    const Array<int>& fluid_marker, Coefficient& mu_gauge, real_t epsilon,
-    int refinements, GaugePenalty penalty, Diffeomorphism* map) {
+void LinearQuasiStaticMixedSelfGravitatingProblem::ConfigureFluidOperator(
+    const Array<int>& marker, Coefficient& mu, real_t epsilon,
+    GaugePenalty form, Diffeomorphism* map) {
   MFEM_VERIFY(fluids_.empty(),
-              "SetGaugedFluid: the gauged formulation carries the fluid "
+              "SetFluid: the gauged formulation carries the fluid "
               "inside the displacement SubMesh; construct the problem "
               "without FluidRegions.");
-  LinearQuasiStaticProblemBase::SetGaugedFluid(
-      fluid_marker, mu_gauge, epsilon, refinements, penalty, map);
+  LinearQuasiStaticProblemBase::ConfigureFluidOperator(marker, mu, epsilon,
+                                                       form, map);
 }
 
 namespace {
@@ -1019,8 +1031,10 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::EnableGaugeKKT(
   // Unit-scale penalty: the base then assembles Q_ itself and
   // A_solve_ = A + Q, whose preconditioner the KKT diagonal slots
   // reuse; zero refinements (the KKT solve needs none).
-  SetGaugedFluid(fluid_marker, mu_gauge, 1.0, 0, GaugePenalty::Deviatoric,
-                 nullptr);
+  GaugePenaltyOptions o;
+  o.epsilon = 1.0;
+  o.refinements = 0;
+  SetFluid(fluid_marker, mu_gauge, o);
 }
 
 void LinearQuasiStaticMixedSelfGravitatingProblem::SetupKKTGauge() {
@@ -1039,7 +1053,7 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetupKKTGauge() {
   // [  A  | 0 ]
   block_op_kkt4_ = std::make_unique<BlockOperator>(offsets_kkt4_);
   Operator* Auu = A_.Ptr();
-  block_op_kkt4_->SetBlock(0, 0, Q_.Ptr());
+  block_op_kkt4_->SetBlock(0, 0, GaugeQ().Ptr());
   block_op_kkt4_->SetBlock(0, 2, Auu);
   block_op_kkt4_->SetBlock(0, 3, const_cast<Operator*>(C_op_));
   block_op_kkt4_->SetBlock(1, 2, const_cast<Operator*>(Ct_op_));
@@ -1084,7 +1098,8 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetupKKTGauge() {
 #ifdef MFEM_USE_MPI
   if (pfes_) {
     auto amg = std::make_unique<HypreBoomerAMG>(*A_.As<HypreParMatrix>());
-    amg->SetSystemsOptions(fes_->GetMesh()->Dimension());
+    // order_bynodes = true: the displacement space is Ordering::byNODES.
+    amg->SetSystemsOptions(fes_->GetVDim(), true);
     amg->SetPrintLevel(0);
     prec_clean_u_ = std::move(amg);
   } else
@@ -1152,56 +1167,12 @@ LinearQuasiStaticMixedSelfGravitatingProblem::KKTResiduals() const {
     stat += r.GetBlock(b) * r.GetBlock(b);
   }
   Vector qu(offsets_kkt4_[1]);
-  Q_.Ptr()->Mult(Xk4_->GetBlock(0), qu);
+  GaugeQ().Ptr()->Mult(Xk4_->GetBlock(0), qu);
   qun = qu * qu;
   return {std::sqrt(prim / std::max(prim_f, real_t{1e-300})),
           std::sqrt(stat / std::max(qun, real_t{1e-300}))};
 }
 
-bool LinearQuasiStaticMixedSelfGravitatingProblem::GaugeRefine(Vector& X) {
-  // Each step solves the regularised coupled system for the physical
-  // residual, which after an exact step is [eps Q delta_u; 0]: the
-  // refinement solves carry zero potential load and no tidal term, and the
-  // potential accumulates alongside the displacement.
-  gauge_residuals_.clear();
-  Vector B_phi_saved(B_phi_);
-  Coefficient* psi_saved = psi_;
-  psi_ = nullptr;
-  B_phi_ = 0.0;
-
-  Vector Phi_acc(Phi_true_);
-  Vector r(X.Size()), d(X.Size()), prev;
-  bool ok = true;
-  int outer = outer_its_;
-  int inner = inner_its_;
-  for (int k = 0; k < gauge_refinements_; ++k) {
-    Q_.Ptr()->Mult(k == 0 ? X : prev, r);
-    gauge_residuals_.push_back(std::sqrt(Dot(r, r)));
-    d = 0.0;
-    if (X_block_) {
-      *X_block_ = 0.0;  // cold-start the increment solve
-    }
-    ok = SolveLinearSystem(r, d) && ok;
-    outer += outer_its_;
-    inner += inner_its_;
-    X += d;
-    Phi_acc += Phi_true_;
-    prev = d;
-  }
-  psi_ = psi_saved;
-  B_phi_ = B_phi_saved;
-  Phi_true_ = Phi_acc;
-  outer_its_ = outer;
-  inner_its_ = inner;
-  WarnGaugeContraction();
-  if (X_block_) {
-    // Leave the accumulated solution as the next solve's warm start.
-    X_block_->GetBlock(0) = X;
-    X_block_->GetBlock(1) = Phi_true_;
-  }
-  DistributePotential(Phi_true_);
-  return ok;
-}
 
 bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveLinearSystem(
     const Vector& B_in, Vector& X) {
@@ -1265,10 +1236,18 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveLinearSystem(
       Phi_true_ = 0.0;
       *X_block_ = 0.0;
     } else {
-      // Warm start from the previous MINRES iterate.
-      projected_->Mult(*B_block_, *X_block_);
-      ok = minres_->GetConverged();
-      outer_its_ = minres_->GetNumIterations();
+      if (GaugePreconditionerOnly() && gauge_plateau_ratio_ > 0.0) {
+        // Chunked restarts with the stagnation stop (PlateauMult).
+        bool conv = false;
+        outer_its_ = PlateauMult(*projected_, *minres_, *B_block_,
+                                 *X_block_, conv);
+        ok = conv;
+      } else {
+        // Warm start from the previous MINRES iterate.
+        projected_->Mult(*B_block_, *X_block_);
+        ok = minres_->GetConverged();
+        outer_its_ = minres_->GetNumIterations();
+      }
       NoteIterations(outer_its_);
       X = X_block_->GetBlock(0);
       if (mass_gauge_) {

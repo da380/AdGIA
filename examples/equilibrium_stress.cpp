@@ -37,6 +37,16 @@
 // One source serves the serial and the parallel build, as in
 // gauged_fluid_cavity.cpp.
 //
+// Options (defaults in brackets):
+//   -m    mesh file [../data/elastogravity_2d.msh]: the 2-D disc whose
+//         body is deformed to the ellipse.
+//   -o    velocity/displacement order [3]; the pressure space sits one
+//         order lower (Taylor-Hood).
+//   -e    ellipticity [0.2]: semi-axes a = 1 + e, b = 1/a; 0 recovers
+//         the disc, where the deviatoric fraction collapses and the
+//         pressure reproduces the hydrostatic p0.
+//   -vis / -no-vis   GLVis windows on or off [on].
+//
 // Sample runs (with mpiexec -np N in front in a parallel build):
 //    ./equilibrium_stress
 //    ./equilibrium_stress -e 0
@@ -49,6 +59,7 @@
 #include <memory>
 
 #include "AdGIA.hpp"
+#include "visualisation.hpp"
 
 using namespace mfem;
 using namespace AdGIA;
@@ -136,17 +147,12 @@ void StressNorms(MatrixCoefficient& S, Mesh& mesh, int order, double& full,
   dev = std::sqrt(GlobalSum(dev2));
 }
 
+// One GLVis window per field, through the shared GLVisWindow: it skips
+// the ranks a SubMesh leaves empty, which an unconditional
+// "parallel <size> <rank>" header does not survive (visualisation.hpp).
 void Show(Mesh& mesh, const GridFunction& f, const char* title) {
-  char vishost[] = "localhost";
-  socketstream sock(vishost, 19916);
-  sock.precision(8);
-#ifdef MFEM_USE_MPI
-  sock << "parallel " << Mpi::WorldSize() << " " << Mpi::WorldRank() << "\n";
-#endif
-  sock << "solution\n"
-       << mesh << f << "window_title '" << title << "'"
-       << "\nkeys Rjlbc\n"
-       << std::flush;
+  examples::GLVisWindow window(title, "Rjlbc");
+  window.Send(mesh, f);
 }
 
 }  // namespace

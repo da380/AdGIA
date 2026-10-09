@@ -2,8 +2,9 @@
 
 outside_source(path) returns the resolved path, or stops with a message
 when it lies inside the repository but not under a build* directory.
-Every script of the viscoelastic box and sphere sub-families that writes
-output passes its output paths through it.
+Every benchmark script that writes output passes its output root through
+it (the committed reference histories of viscoelastic/love/references/
+are data, updated by copying a build-tree regeneration in).
 """
 from __future__ import annotations
 

@@ -55,6 +55,22 @@
 // products for the penalty blocks) and the diagonal blocks are
 // preconditioned with AMG instead of Gauss-Seidel.
 //
+// Options (defaults in brackets):
+//   -m      mesh file [../data/elastogravity_two_layer_2d.msh]: the
+//           2-D two-layer disc (attribute 1 fluid, attribute 2 solid).
+//   -o      finite element order [2].
+//   -e      ellipticity [0.2]: semi-axes a = 1 + e, b = 1/a; 0
+//           recovers the disc (no slip, independent rotations).
+//   -eps    gauge penalty factor epsilon on the fluid shear [1e-2].
+//   -theta  normal-jump penalty parameter [1e2]: the AL iterations
+//           drive the jump to zero at this moderate value.
+//   -nal    augmented-Lagrangian iterations [8].
+//   -P0     uniform radial traction amplitude [0.01].
+//   -P2     degree-2 traction pattern amplitude [0]; even with 0 the
+//           ellipse slips at O(e).
+//   -vis / -no-vis   GLVis windows (solid and fluid displacement,
+//           fluid pressure) [on].
+//
 // Sample runs (with mpiexec -np N in front in a parallel build):
 //    ./sliding_fluid_ellipse
 //    ./sliding_fluid_ellipse -e 0

@@ -53,15 +53,18 @@ gitignored for `.msh` and `.json` anyway).
 | `disc_with_buffer.py` | `elastogravity_2d.msh` | elastogravity_layered, equilibrium_stress, lateral_viscosity, love_numbers, referential_elastogravity; tests |
 | `disc_with_wide_buffer.py` | `elastogravity_2d_wide.msh` (buffer out to radius 2, for strongly non-trivial equilibrium mappings) | prestress_loading |
 | `ball_with_buffer.py` | `coupled_poisson.msh` | coupled_poisson, elastogravity_layered, love_numbers, referential_elastogravity, viscoelastic_love_numbers; tests |
-| `layered_earth.py --all` | `elastogravity_two_layer_2d.msh` | elastogravity_layered, gauged_fluid_cavity, self_gravitating_relaxation, self_gravitating_solvers, sliding_fluid_ellipse; tests |
-| | `elastogravity_three_layer_2d.msh` | elastogravity_layered, self_gravitating_relaxation; tests |
-| | `elastogravity_three_layer_3d.msh` | elastogravity_layered, gauged_fluid_cavity, self_gravitating_relaxation; tests |
+| `layered_earth.py --all` | `elastogravity_two_layer_2d.msh` | elastogravity_layered, equilibrium_density, gauged_fluid_cavity, self_gravitating_relaxation, self_gravitating_solvers, sliding_fluid_ellipse; tests |
+| | `elastogravity_three_layer_2d.msh` | elastogravity_layered, equilibrium_density, self_gravitating_relaxation; tests |
+| | `elastogravity_two_layer_3d.msh` | equilibrium_density |
+| | `elastogravity_three_layer_3d.msh` | elastogravity_layered, equilibrium_density, gauged_fluid_cavity, self_gravitating_relaxation; tests |
+| `equilibrium_bodies.py --all` | `flattened_{two,three}_layer_{2d,3d}.mesh` (every interface flattened, `--flattening`), `cmb_topo_{two,three}_layer_{2d,3d}.mesh` (oscillatory CMB topography, `--amplitude`, `--degree`), `cmb_bump_{two,three}_layer_{2d,3d}.mesh` (one Gaussian CMB bump, `--amplitude`, `--width`); `--scale` refines | equilibrium_density (its `-shape flat\|cmb\|bump` defaults) |
 | `aspherical_body.py --all` | `aspherical_{2d,3d}.mesh`, `aspherical_buffer_{2d,3d}.mesh` | any example given `-m` (the script's docstring lists runs); `aspherical_buffer_3d.mesh`: `benchmarks/relabelling/aspherical_reference.cpp` and `benchmarks/campaign.py` |
 | | `aspherical_fluid_core_buffer_{2d,3d}.mesh` (fluid core and mantle, both stretched, buffer) and `spherical_fluid_core_buffer_{2d,3d}.mesh` (the same unstretched) | slipping_interface |
 | `make_all.py` | runs `unit_disc`, `offset_disc`, `disc_with_buffer`, `ball_with_buffer`, `layered_earth --all` and `unit_ball` | |
 
-The build runs every script, including the two `make_all.py` does not
-(`disc_with_wide_buffer.py`, `aspherical_body.py`). The benchmarks mesh
+The build runs every script, including the three `make_all.py` does not
+(`disc_with_wide_buffer.py`, `aspherical_body.py`,
+`equilibrium_bodies.py`). The benchmarks mesh
 their own models (`benchmarks/common/make_case.py`,
 `benchmarks/viscoelastic/sphere/meshes.py`) and do not read these except
 where listed.

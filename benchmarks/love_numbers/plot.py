@@ -38,8 +38,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from dataclasses import dataclass
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
+from outputs import outside_source  # noqa: E402
 
 import matplotlib
 
@@ -60,7 +64,8 @@ INK, MUTED, GRID, SURFACE = "#0b0b0b", "#52514e", "#e4e3df", "#fcfcfb"
 #: figure of every family (talk_figures.py uses the same map), so that a
 #: series keeps its colour whatever else is drawn beside it.
 VARIANT_COLOURS = {"dahlen": "#2a78d6", "gauged": "#eb6834",
-                   "referential": "#eda100", "slip": "#008300",
+                   "referential": "#eda100", "maxwell": "#7a2ea8",
+                   "slip": "#008300",
                    "slip_broken": "#4a3aa7", "nomass": "#1baf7a",
                    "uniform": "#e87ba4", "winkler": "#e34948"}
 #: The marker of each finite-element order.
@@ -506,11 +511,12 @@ def plot_field_convergence(runs_by: dict[str, Run],
     """The relative L2 errors of the cap-load fields against the element
     size at fixed order and method; True when there was a ladder to
     draw."""
-    by_series: dict[tuple[int, str], list[tuple[float, dict]]] = {}
+    by_series: dict[tuple[int, str, bool], list[tuple[float, dict]]] = {}
     for key, field in fields:
         run = runs_by.get(key)
         h = run.h if run is not None else float(key.split("_o")[0][1:])
-        by_series.setdefault((field["order"], field_method(field)),
+        by_series.setdefault((field["order"], field_variant(field),
+                              field.get("solver") == "schur_cg"),
                              []).append((h, field))
     if not any(len(v) > 1 for v in by_series.values()):
         return False
@@ -519,15 +525,17 @@ def plot_field_convergence(runs_by: dict[str, Run],
     for ax, (key, label) in zip(axes, (("u_error", "$u$ over the solid"),
                                        ("phi_error",
                                         "$\\phi$ over body and buffer"))):
-        for (order, method), entries in sorted(by_series.items()):
+        for (order, variant, schur), entries in sorted(by_series.items()):
             pts = sorted((h, f[key]) for h, f in entries)
             if len(pts) < 2:
                 continue
             rate = fitted_rate(*zip(*pts))
-            ax.loglog(*zip(*pts), color=VARIANT_COLOURS.get(method, MUTED),
+            name = variant + (", schur" if schur else "")
+            ax.loglog(*zip(*pts), color=VARIANT_COLOURS.get(variant, MUTED),
                       marker=ORDER_MARKERS.get(order, "o"),
+                      linestyle="--" if schur else "-",
                       markeredgecolor=SURFACE, markeredgewidth=1.0,
-                      label=f"{method}, order {order} ($p$ = {rate:.1f})")
+                      label=f"{name}, order {order} ($p$ = {rate:.1f})")
         ax.set_title(f"relative L2 error of {label}", loc="left")
         ax.set_xlabel("element size $h$ on the interfaces")
         size_axis(ax, sizes)
@@ -696,8 +704,11 @@ def plot_field_maps(field: dict, title: str, out: Path) -> None:
             bar.formatter.set_powerlimits((-2, 2))
             bar.outline.set_visible(False)
     cap = field["cap"]
+    variant = field_method(field) + (
+        "" if field.get("cmb", "full") == "full"
+        else f", cmb {field['cmb']}")
     fig.suptitle(
-        f"{title} ({field_method(field)}): response on the surface to a "
+        f"{title} ({variant}): response on the surface to a "
         f"cap of radius "
         f"{cap['radius']:g} degrees at latitude {cap['latitude']:g}, "
         f"longitude {cap['longitude']:g}, degrees {field['lmin']} to "
@@ -712,6 +723,30 @@ def field_method(field: dict) -> str:
     fluid_treatment says so, else Dahlen."""
     return field.get("method", "gauged" if field.get("fluid_treatment")
                      == "gauged" else "dahlen")
+
+
+def field_variant(field: dict) -> str:
+    """The series a field run belongs to: its CMB treatment when that is
+    the axis of the sweep, else the formulation — the same convention,
+    and so the same VARIANT_COLOURS entry, as the Love-number figures."""
+    cmb = field.get("cmb", "full")
+    return cmb if cmb != "full" else field_method(field)
+
+
+def field_key(case: str, field: dict) -> str:
+    """The key of the Love-number run of the same variant: the run tag of
+    read_run, rebuilt from the field header, so that the field runs of a
+    CMB or solver sweep are told apart instead of colliding in the
+    figures and the summary."""
+    key = f"{case}_o{field['order']}"
+    method = field_method(field)
+    if method != "dahlen":
+        key += f"_{method}"
+    if field.get("cmb", "full") != "full":
+        key += f"_{field['cmb']}"
+    if field.get("solver") == "schur_cg":
+        key += "_schur"
+    return key
 
 
 def plot_field_spectrum(fields: list[tuple[str, dict]], title: str,
@@ -740,11 +775,12 @@ def plot_field_spectrum(fields: list[tuple[str, dict]], title: str,
                     errors.append(np.sqrt(np.mean((fe[m] - ref[m]) ** 2))
                                   / size)
             ax.semilogy(ls, errors,
-                        color=VARIANT_COLOURS.get(field_method(field), MUTED),
+                        color=VARIANT_COLOURS.get(field_variant(field),
+                                                  MUTED),
                         marker=ORDER_MARKERS.get(field["order"], "o"),
                         markeredgecolor=SURFACE, markeredgewidth=1.0,
                         alpha=1.0 if len(sizes) < 2 else 0.9,
-                        label=f"{run} ({field_method(field)})")
+                        label=f"{run} ({field_variant(field)})")
         ax.set_title(f"{label} on the surface", loc="left")
         ax.set_xlabel("degree $l$")
         ax.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
@@ -776,12 +812,7 @@ def plot_model(directory: Path) -> list[str]:
             results[runs[-1].label] = json.loads(path.read_text())
         for path in sorted(case.glob("field_o*.json")):
             field = json.loads(path.read_text())
-            method = field_method(field)
-            # the key of the Love-number run of the same formulation, so
-            # that the summary pairs each field run with its own method
-            fields.append((f"{case.name}_o{field['order']}"
-                           + ("" if method == "dahlen" else f"_{method}"),
-                           field))
+            fields.append((field_key(case.name, field), field))
     if not runs and not fields:
         return []
     runs.sort(key=lambda r: (r.order, -r.h))
@@ -816,8 +847,20 @@ def plot_model(directory: Path) -> list[str]:
                                       directory / "field_convergence.png"):
             (directory / "field_convergence.png").unlink(missing_ok=True)
     by_field = dict(fields)
-    for key in sorted(set(by_run) | set(by_field)):
-        run, field = by_run.get(key), by_field.get(key)
+    paired: dict[str, tuple[Run | None, dict | None]] = {}
+    for key, run in by_run.items():
+        field = by_field.pop(key, None)
+        if field is None and run.combined:
+            # a field run is never combined: pair it with the combined
+            # Love run when no per-degree run claims it
+            base = key.removesuffix("_combined")
+            if base not in by_run:
+                field = by_field.pop(base, None)
+        paired[key] = (run, field)
+    for key, field in by_field.items():  # field runs without a Love run
+        paired[key] = (None, field)
+    for key in sorted(paired):
+        run, field = paired[key]
         worst = {}
         if run is not None:
             for l in (2, 5):
@@ -827,7 +870,7 @@ def plot_model(directory: Path) -> list[str]:
                 worst[l] = f"{max(errors):.1e}" if errors else "-"
         unknowns = run.unknowns if run is not None else (
             field["displacement_unknowns"] + field["potential_unknowns"])
-        method = run.method if run is not None else "dahlen"
+        method = run.method if run is not None else field_method(field)
         setup = f"{run.setup_seconds:.0f}" if run is not None else "-"
         summary.append(
             f"| {title} | {key} | {method} | {unknowns} | "
@@ -847,6 +890,9 @@ def main() -> None:
                    help="the tree of one model, <runs>/<model>, or the tree "
                         "of all of them, <runs>")
     args = p.parse_args()
+    # Figures and summary.md land in the results tree itself, so that
+    # tree must be outside the source (the build tree, in practice).
+    args.directory = outside_source(args.directory)
 
     style()
     if any(args.directory.glob("h*/reference.json")):

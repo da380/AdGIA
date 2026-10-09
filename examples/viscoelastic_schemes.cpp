@@ -52,6 +52,44 @@
 // table as JSON. No fields are shown: the beam's deformation is that of
 // viscoelasticity.cpp.
 //
+// Options (defaults in brackets):
+//   -m          mesh file [../data/beam-quad.mesh]; needs boundary
+//               attributes 1 (clamped) and 2 (pulled).
+//   -o          finite element order [2].
+//   -r          uniform mesh refinements [1].
+//   -tau        relaxation time [1].
+//   -mu-inf     long-term shear modulus [0]: 0 is a Maxwell body,
+//               > 0 a standard linear solid.
+//   -gamma      power-law nonlinearity of the relaxation [0:
+//               linear]; > 0 is the Crawford et al. (2017) law, with
+//               stress-dependent times and the corrector running.
+//   -tau-ratio  > 1 adds a second branch, with half the relaxable
+//               modulus and the relaxation time tau / ratio: the
+//               stiff case [1].
+//   -tf         final time, in units of tau [4].
+//   -p0         amplitude of the pull [0.05].
+//   -nref       RK4 steps of the reference solution [400]; raised
+//               automatically for stiff bodies and fast loads.
+//   -steps      comma-separated list of steps per relaxation time
+//               for the first table [1,2,4,8,16].
+//   -targets    comma-separated target relative errors of the
+//               displacement history (u-error) for the
+//               cost-to-target table [empty: none].
+//   -kmax       give up on a target beyond this many steps per tau
+//               [4096].
+//   -tp         period of the pull's oscillation, in units of tau
+//               [pi, i.e. the pull sin(2 t / tau)]: small is a
+//               load-controlled run, large a relaxation-controlled
+//               one.
+//   -ph         phase of the pull (radians) [0]: keep the checkpoint
+//               times off the load's nodes, or a coarse step can
+//               sample an aliased trajectory and score well
+//               stroboscopically.
+//   -csv        error against solves for plot_csv.py
+//               [viscoelastic_schemes.csv]; "" writes none.
+//   -out        write the cost-to-target table as JSON to this file
+//               [empty: none]; needs -targets.
+//
 // Sample runs:
 //    ./viscoelastic_schemes
 //    ./viscoelastic_schemes -o 1 -r 2 -tf 8
@@ -222,7 +260,7 @@ int main(int argc, char* argv[]) {
   args.AddOption(&targets_arg, "-targets", "--target-errors",
                  "Comma-separated target relative errors of the "
                  "displacement history (u-error) for the "
-                 "cost-to-tolerance table (empty: none).");
+                 "cost-to-target table (empty: none).");
   args.AddOption(&max_steps_per_tau, "-kmax", "--max-steps-per-tau",
                  "Give up on a target beyond this many steps per tau.");
   args.AddOption(&load_period, "-tp", "--load-period",

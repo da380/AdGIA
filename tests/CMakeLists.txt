@@ -95,6 +95,12 @@ if(USE_MPI)
     target_link_libraries(TestCompositeRheologyPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestSphericalHarmonicsPar TestSphericalHarmonicsPar.cpp)
     target_link_libraries(TestSphericalHarmonicsPar PRIVATE AdGIA MPI::MPI_CXX)
+    add_executable(TestEquilibriumFiguresPar TestEquilibriumFiguresPar.cpp)
+    target_link_libraries(TestEquilibriumFiguresPar PRIVATE AdGIA MPI::MPI_CXX)
+    add_executable(TestRieszPar TestRieszPar.cpp)
+    target_link_libraries(TestRieszPar PRIVATE AdGIA MPI::MPI_CXX)
+    add_executable(TestDescentPar TestDescentPar.cpp)
+    target_link_libraries(TestDescentPar PRIVATE AdGIA MPI::MPI_CXX)
     foreach(np 1 2 4)
         add_test(NAME TestSubMeshDofInjectionPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
@@ -138,6 +144,15 @@ if(USE_MPI)
         add_test(NAME TestSphericalHarmonicsPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestSphericalHarmonicsPar>)
+        add_test(NAME TestEquilibriumFiguresPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestEquilibriumFiguresPar>)
+        add_test(NAME TestRieszPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestRieszPar>)
+        add_test(NAME TestDescentPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestDescentPar>)
     endforeach()
 endif()
 
@@ -225,6 +240,18 @@ gtest_discover_tests(TestSlipProblem)
 add_executable(TestBackground TestBackground.cpp)
 target_link_libraries(TestBackground PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestBackground)
+
+add_executable(TestEquilibriumFigures TestEquilibriumFigures.cpp)
+target_link_libraries(TestEquilibriumFigures PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestEquilibriumFigures)
+
+add_executable(TestRiesz TestRiesz.cpp)
+target_link_libraries(TestRiesz PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestRiesz)
+
+add_executable(TestDescent TestDescent.cpp)
+target_link_libraries(TestDescent PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestDescent)
 
 add_executable(TestReferentialProblem TestReferentialProblem.cpp)
 target_link_libraries(TestReferentialProblem PRIVATE AdGIA gtest_main)

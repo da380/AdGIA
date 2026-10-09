@@ -40,6 +40,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "common"))
 sys.path.insert(0, str(HERE))
 
+from outputs import outside_source  # noqa: E402
 from perturbation_check import love_from, love_reference  # noqa: E402
 
 COLOURS = ("#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4",
@@ -82,7 +83,7 @@ def main() -> None:
                    default=["referential", "slip_broken"])
     p.add_argument("--order", type=int, default=2)
     args = p.parse_args()
-    root = args.out if args.out is not None else args.case
+    root = outside_source(args.out if args.out is not None else args.case)
 
     drawn = 0
     for method in args.method:

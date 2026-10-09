@@ -19,6 +19,41 @@
 // and SDIRK23 through MFEM's implicit solvers, and explicit RK4 / forward
 // Euler (stable only for dt < ~2.8 tau_min).
 //
+// Options (defaults in brackets):
+//   -m        mesh file [../data/star.mesh].
+//   -o        finite element order of the displacement [2].
+//   -mo       order of the internal-variable space [-1: the smallest
+//             order resolving eps(u) exactly, order - 1 on simplices
+//             and order on tensor-product elements].
+//   -r        uniform mesh refinements [1].
+//   -p        problem type [0]: 0 = pure traction on all external
+//             boundaries (any mesh), 1 = clamped (needs boundary
+//             attributes 1 and 2, e.g. beam-quad.mesh).
+//   -s        time integrator [0]: 0 = exponential trapezoid, 1 =
+//             exponential Euler, 2 = backward Euler, 3 = SDIRK23,
+//             4 = RK4, 5 = forward Euler (4 and 5 are explicit,
+//             stable only for dt < ~2.8 tau_min).
+//   -map      strain map [0]: 0 = Galerkin projection, 1 =
+//             interpolation.
+//   -tf       final time [5].
+//   -n        number of time steps [50]; with -rtol > 0, the output
+//             times between which the adaptive solver steps.
+//   -tau      Maxwell relaxation time tau = eta / mu [1].
+//   -mu-inf   long-term shear modulus [0]: 0 is a Maxwell body,
+//             > 0 a standard linear solid.
+//   -gamma    nonlinearity of the power-law relaxation [0: linear];
+//             > 0 puts the composite law of Crawford et al. (2017,
+//             App. A) on the Maxwell branch.
+//   -nexp     exponent n of the power-law relaxation [3].
+//   -rtol     relative tolerance of adaptive stepping [0: fixed dt];
+//             > 0 replaces the fixed steps by the adaptive
+//             exponential trapezoid solver.
+//   -ti       anisotropy factor of a transversely isotropic body
+//             [0: isotropic; 1 reproduces the isotropic run through
+//             the anisotropic path].
+//   -pv / -no-pv     ParaView time slices on or off [on].
+//   -vis / -no-vis   final displacement to GLVis on or off [on].
+//
 // Sample runs:
 //    ./viscoelasticity -m ../data/star.mesh -o 2 -r 2
 //    ./viscoelasticity -m ../data/star.mesh -o 2 -r 2 -s 4 -n 200

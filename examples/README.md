@@ -94,6 +94,63 @@ on the undeformed reference mesh with `TransformedDiffusionIntegrator`
 on the reference mesh, the pulled-back one, and that one pushed forward
 (always sent to GLVis; there is no `-vis` option).
 
+**`relabelled_elasticity`**: the particle-relabelling symmetry for
+elasticity: one aspherical two-layer body (a quadrupole bump moving the
+core-mantle boundary AND the surface) solved as itself — a curved
+deformed mesh with the plain layer-wise coefficients — and as the
+relabelled description on the pristine circular reference, with the
+pulled-back elastic tensor, the Jacobian-weighted density
+`rho~ = J rho` and the composed body force carried by the equilibrium
+mapping. The physical nodes are the mapped reference nodes, so the two
+solutions agree dof by dof (printed, with the invariant strain
+energies). Shows (`-vis`): the two densities, the two displacements,
+and the relabelled solution pushed forward onto the deformed body.
+`./relabelled_elasticity -a 0.15 -o 3`
+
+**`adjoint_elasticity`**: first-order sensitivity kernels for static
+isotropic elasticity, and the kernel-versus-gradient distinction. The
+physical body is the inner layer of the two-layer disc alone (the rest
+of the mesh is the Sobolev extension buffer); the observable is the
+geodetic one, the linearised distance change between two surface
+stations, assembled as a boundary integral of narrow opposite-signed
+angular windows (rigid-mode invariant; the adjoint is the same traction
+problem loaded by the station pair, by self-adjointness). The kernels
+`K_kappa = -(div u)(div u+)`, `K_mu = -2 dev eps(u):dev eps(u+)` are
+verified against central finite differences of fresh forward solves
+(inner-disc, Gaussian-blob and whole-body perturbations of each
+modulus; agreement printed, ~1e-6 and improving with refinement). The
+closing section turns each derivative into a gradient through the
+library's Riesz maps (`riesz.hpp`) — L2, and Sobolev metrics of order 1
+and 2 posed on the buffered mesh with outer Dirichlet conditions — with
+only the H2 representative mathematically right for continuous moduli.
+Conventions are stated in the header; the gravitating version, where
+the equilibrium state varies too, is deliberately left to a later
+example (Yu et al. 2025, `doc/Elasticity/ggae388.pdf`). Shows (`-vis`):
+the forward and adjoint displacements and each modulus's sensitivity in
+the three metrics, on the physical sub-domain. `-vd`/`-va` add a smooth
+radial / harmonic-polynomial variation of the base moduli. `./adjoint_elasticity -r 1`
+
+**`viscoelastic_adjoint`**: the same disc, stations and localised step
+load, now over a uniform Maxwell body: first-order sensitivity kernels
+of a FINAL-TIME observation with respect to kappa, mu and the viscosity
+eta (Yu et al. 2025 specialised to the non-gravitating case). The
+adjoint is the same forward Maxwell machinery run in reversed time with
+zero load: the measurement's impulsive elastic response jumps the
+adjoint internal variable to `dev eps(u+_g)/tau`, which then relaxes
+freely; the kernels pair the stored forward trajectory at `t` with the
+adjoint one at `t1 - t` (store-all checkpointing — the dissipative
+forward field cannot be recovered by backward integration, the key
+practical difference from the seismological adjoint). The FD
+verification table converges as O(dt^2) in `-n` down to a spatial floor
+that is O(h) in `-r` for the rows touching the viscous coupling (nodal
+mu/tau sampling; see the header). The same Riesz-map section as the
+static example turns all three derivatives into L2/H1/H2 gradients on
+the buffered mesh, and `-vd`/`-va` add a smooth radial /
+harmonic-polynomial variation of the moduli, and `-ba`/`-bs`/`-bphi`
+give the viscosity a localised Gaussian anomaly of variable amplitude,
+size and angular position (tau varies with it). Shows (`-vis`): the viscosity field and each kernel
+in the three metrics. `./viscoelastic_adjoint -n 96`
+
 **`submesh_injection`**: a tour of `SubMeshDofInjection`: moving fields
 between a mesh and a submesh and assembling coupling blocks, serially by
 re-indexing and in parallel by hypre products. Shows (`-vis`): the two
@@ -137,6 +194,46 @@ isotropic, as in PREM) elasticity with `ElasticTensorIntegrator`; with
 protocol of the quasi-static problem classes over a sequence of times.
 Shows: the displacement.
 
+**`coseismic_deformation`**: static coseismic deformation on a Cartesian
+box with a free surface and no gravity: the earthquake is a stress glut,
+a planar fault split into moment-tensor point sources
+(`MatrixDeltaCoefficient` through
+`DomainLFDeformationGradientIntegrator`), with dip, and in 3-D strike and
+rake; the slip is tapered as cos^2 to zero at the fault ends by default
+(`-no-taper` for a uniform distribution, whose abrupt edges are
+themselves an artifact; a single patch keeps full amplitude);
+`-nd 1 -ns 1` collapses it to a single point source, and
+`-smooth <s>` replaces each delta by a normalised Gaussian s element
+widths wide through the same integrator's volume path — the same moment
+(the captured fraction is printed) and the same far field to
+O(sigma^2/r^2), but a resolved density instead of mesh-scale artifacts
+near the fault. Optional depth
+stiffening, a lateral modulus gradient, a soft Gaussian basin and
+Gaussian surface topography mapped onto the mesh nodes. Shows: u_z, scaled to the surface peaks, the vector
+displacement (`v` for arrows, `d` in 2-D to displace the mesh by it) and
+the moduli kappa and mu; the CSV plots the surface displacement profile.
+`./coseismic_deformation`, `./coseismic_deformation -dip 60 -s -0.01`,
+`./coseismic_deformation -d 3 -o 1 -rake 0`
+
+**`postseismic_deformation`**: post-seismic relaxation of the same box
+and fault (shared through `fault_box.hpp`): an elastic lid of a whole
+number of element rows (the discontinuity is meshed) over a standard
+linear solid, the stress glut held from t = 0 in a
+`LinearQuasiStaticClampedProblem`'s external load, stepped by the
+`ViscoelasticOperator`. The SLS is set by its stress-relaxation and
+creep-retardation times (their ratio fixes the relaxed modulus), both
+scaled by one parametric spatial factor (depth, lateral, Gaussian weak
+zone). Checks itself against the directly solved relaxed limit. Shows:
+the coseismic u_z, the relaxation animation and the final u_z on one
+colour scale; the CSVs plot the history at the surface point above the
+uplift peak and the coseismic/final/relaxed-limit profiles. A streamed
+animation cannot be replayed in GLVis (space pauses a live stream only),
+so the frames are also saved with a script:
+`glvis -run postseismic_deformation.glvs` replays them, space playing
+and pausing (`-no-anim` turns the saving off).
+`./postseismic_deformation`, `./postseismic_deformation -nl 0 -tau-e 4 -tf 20`,
+`./postseismic_deformation -tgamma 0.9 -tbx 1 -tbz 2`
+
 ### Fluids and interfaces
 
 **`gauged_fluid_cavity`**: an elastic body with a fluid core under a
@@ -177,6 +274,55 @@ equilibrium-stress generators on a homogeneous ellipse, which admits no
 hydrostatic equilibrium. Shows: the minimum-deviatoric pressure, and
 |dev T| of both. Compare
 `-e 0`.
+
+**`equilibrium_density`**: density restoration, the first milestone of
+the equilibrium-figures programme (`doc/equilibrium_figures.tex`): a
+layered model starts without a static state, and the fluid-only
+feasibility functional is driven to its floor — by default the study's
+measured recipe, Levenberg–Marquardt Gauss–Newton with a roughness
+prior, stopped where the dimensionless |dev T|/|p| stagnates (`-eta`
+sets an explicit threshold instead); `-loop cg` descends in a choosable
+metric (`-metric l2|h1|h2`, `-length`), `-loop advect` runs the
+advection flow. The model: by default the GEOMETRY denies equilibrium —
+`-shape flat` flattens every interface, `-shape cmb` puts oscillatory
+topography on the CMB (prior off there: its correction is oscillatory),
+and the restoration generates the container's non-spherical equilibrium
+density from a radial start (`-shape bump`, one Gaussian CMB bump, is
+the strongest and best-behaved geometric signal); `-shape sphere` uses
+the spherical meshes with the `-amp` lateral density term instead, and
+`-blob` fixes a Gaussian density anomaly in the mantle whose gravity
+stresses the solid and moves the core. `-dim 2` (default; order 3, so the weak geometric
+signal clears the floor) or `-dim 3` (order 2 for cost — aspherical
+shapes there need `-o 3`); `-ic` (default) for the three-layer Earth
+with a solid inner core, `-no-ic` for the two-layer one. With a core,
+its force and torque balance joins the certificate by default
+(`-core rigid`): the run prints the core's multiplier motion and the
+clamped functional beside J, whose initial gap is the core imbalance
+the connected-solid certificate cannot see, closing as balance is
+restored. The CSVs plot J, the dimensionless |dev T|/|p|, the energy
+and the core motion by iteration, and the (Phi, rho) scatter before and
+after — restored barotropy is the scatter collapsed onto one curve.
+Shows five windows: the whole-body density and |dev T|/p_rms before and
+after (|dev T| against the RMS of the PHYSICAL fluid pressure, anchored
+by the recovered datum — a single scalar, since any pointwise pressure
+crosses zero somewhere: the gauged field inside the fluid, the physical
+one at the free surface — so map values read as fractions of the actual
+pressure), and the initial relaxation flow on the fluid. The initial stress window is the
+unweighted GLOBAL minimiser — the one equilibrium stress field the body
+admits away from feasibility, its fluid share carrying the solid's
+leakage, quantified by the printed split; the final one is the exact
+two-piece recovery (the certificate's own stress in the fluid; per
+solid component its minimum-deviatoric generator, loaded on its fluid
+interface by the certificate's pressure with the pressure datum
+recovered by minimising the deviatoric norm over the gauge constant), a
+genuine equilibrium field to numerical convergence since the neglected
+viscous interface traction is O(sqrt J). The relaxed fluid goes quiet
+while the aspherical solid keeps its unavoidable share; the run prints
+the fluid/mantle/core ||dev T|| split and the datum. The stress maps
+are elementwise, since |dev T| genuinely jumps at the CMB and ICB —
+refine the mesh (equilibrium_bodies.py --scale) for a finer image.
+`./equilibrium_density -vis`, `./equilibrium_density -shape cmb`,
+`./equilibrium_density -blob 0.5 -vis`, `./equilibrium_density -no-ic`
 
 **`prestress_loading`**: does the deviatoric part of the pre-stress matter
 for loading? Full against quasi-hydrostatic pre-stress on ellipses of

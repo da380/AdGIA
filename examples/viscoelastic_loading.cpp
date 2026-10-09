@@ -56,6 +56,31 @@
 // on the serial mesh first, so the layering is identical) and the
 // observation point, which lives on one rank and is reduced globally.
 //
+// Options (defaults in brackets):
+//   -d      space dimension, 2 or 3 [2].
+//   -o      finite element order of the displacement [2].
+//   -nx     elements across the width [40]; in 3-D also across the
+//           direction perpendicular to the load strip.
+//   -ny     elements through the depth H [10]; the layer thicknesses
+//           are rounded to this element grid.
+//   -W      width of the box [4].
+//   -H      depth of the box [1].
+//   -a      half-width of the surface load patch, |x - W/2| < a
+//           [0.5] (3-D: a square patch, also |y - W/2| < a).
+//   -p0     amplitude of the downward surface traction [0.05].
+//   -tl     duration the load is applied, t < t_load [5].
+//   -tf     final time [15].
+//   -n      number of time steps [60]; with -rtol > 0, the output
+//           times between which the adaptive solver steps.
+//   -tau-a  relaxation time of the asthenosphere channel [0.1]: the
+//           weak layer that lets the lithosphere flex.
+//   -tau-m  relaxation time of the mantle [1].
+//   -rtol   relative tolerance of adaptive stepping [0: fixed dt].
+//   -pv / -no-pv     ParaView time slices on or off [off].
+//   -vis / -no-vis   GLVis animation of u_z on or off [on].
+//   -csv    table of the history for plot_csv.py
+//           [viscoelastic_loading.csv]; "" writes none.
+//
 // Sample runs (with mpiexec -np N in front in a parallel build):
 //    ./viscoelastic_loading
 //    ./viscoelastic_loading -rtol 1e-3

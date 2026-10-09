@@ -5,7 +5,7 @@
   Tests for the gauged-fluid mode of LinearQuasiStaticMixedSelfGravitatingProblem
   on the three-layer meshes: the displacement SubMesh carries all three
   layers, the outer core has its bulk modulus and no shear, and
-  SetGaugedFluid() supplies the gauge penalty and the Tikhonov refinement;
+  SetFluid's gauge treatment supplies the penalty and the Tikhonov refinement;
   no FluidRegions, so the interface terms (F2)-(F3) and the fluid mass term
   never enter (doc/gauged_fluid.md).
 
@@ -82,7 +82,7 @@ struct GaugedCase {
     problem = std::make_unique<LinearQuasiStaticMixedSelfGravitatingProblem>(
         fes_u.get(), fes_phi.get(), *rheology, rho, kG, kDtNDegree);
     kappa.g = &problem->BackgroundGravity();
-    problem->SetGaugedFluid(fluid, mu_gauge, kEps, kRefine);
+    problem->SetFluid(fluid, mu_gauge, GaugePenaltyOptions{kEps, kRefine});
     problem->SetSurfaceLoad(sigma, surface);
     problem->SetRelTol(1e-11);
   }

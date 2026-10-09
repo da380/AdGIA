@@ -57,6 +57,7 @@ sys.path.insert(0, str(HERE.parent / "common"))
 
 import models  # noqa: E402
 from drivers import find_programs, run  # noqa: E402
+from outputs import outside_source  # noqa: E402
 
 
 def main() -> None:
@@ -77,13 +78,15 @@ def main() -> None:
     p.add_argument("--dtn-degree", type=int, default=16)
     p.add_argument("--rel-tol", type=float, default=1e-10)
     p.add_argument("--method", nargs="+",
-                   choices=("dahlen", "gauged", "referential", "slip",
-                            "slip_broken"),
+                   choices=("dahlen", "gauged", "referential", "maxwell",
+                            "slip", "slip_broken"),
                    default=["dahlen"],
                    help="the formulations to run, one results file each: "
                         "dahlen (Eulerian, fluid eliminated), gauged "
                         "(Eulerian, gauged fluid), referential (welded "
-                        "gauged referential), slip and slip_broken (the "
+                        "gauged referential), maxwell (the referential "
+                        "problem with the Maxwell-relaxed fluid — the "
+                        "secular route), slip and slip_broken (the "
                         "slipping interface, single-valued or broken "
                         "zeta); non-dahlen results carry the method as a "
                         "suffix")
@@ -152,6 +155,8 @@ def main() -> None:
     p.add_argument("--dry-run", action="store_true",
                    help="print the commands without running them")
     args = p.parse_args()
+    if not args.dry_run:
+        args.out = outside_source(args.out)
 
     programs = Path(".") if args.dry_run and args.programs is None \
         else find_programs(args.programs)

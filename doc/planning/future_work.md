@@ -280,24 +280,54 @@ interface"); `doc/gravitating_elasticity.md` §6;
 
 ### Adjoints and sensitivity kernels with full gravity
 
-**Status:** future work; no adjoint exists in the library.
+**Status:** non-gravitating first-order adjoints exist as examples;
+no library-level adjoint machinery yet.
 
-Among published GIA codes only the spectral code of Lloyd et al. (2024)
-has sensitivity kernels, with 1-D elastic and density structure; G-ADOPT
-has automatically derived adjoints but no self-gravity. Analytic shape
-derivatives combined with full self-gravity are a combination none of the
-surveyed codes offers, and a prerequisite for sensitivity kernels of
-aspherical models. First concrete targets: the adjoints of the
-equilibrium-figure stage 1; then l ≥ 1 interface-topography sensitivity
-kernels from boundary perturbation theory or the adjoint, verified
-against finite differences of the kind the degree-0 shift check uses.
-Until such kernels exist, the 1-D side of the present perturbation check
-is a finite difference of pyslfp solves and stays labelled so.
-Viscoelastic adjoints need unrelaxed-operator applications at many
-observation times (see [solvers.md](solvers.md), "Caching unrelaxed and
-effective operators").
+What exists: `examples/adjoint_elasticity.cpp` (static isotropic
+kernels for κ and μ from a windowed surface-station observable, FD
+verification at roundoff grade, and the derivative-versus-gradient
+distinction made concrete through the L2/H1/H2 Riesz maps of
+`riesz.hpp` on a buffered mesh) and `examples/viscoelastic_adjoint.cpp`
+(final-time observation, kernels for κ, μ AND the Maxwell viscosity η;
+the adjoint is the same forward operator in reversed time with the
+internal-variable jump `m⁺(0⁺) = dev ε(u⁺_g)/τ`; store-all
+checkpointing, because the dissipative forward field cannot be
+recovered by backward integration — the essential difference from the
+seismological trick; FD verification with an O(dt²) time floor and an
+O(h) nodal-sampling floor, both documented in the header).
 
-**See:** `doc/BenchmarkPapers/code_survey.md` ("Cross-cutting reading");
+Library work this implies: discrete interpolators for forming kernel
+fields (the examples use element-wise coefficients), checkpointing
+beyond store-all (windowed/binomial), and the exact discrete adjoint
+of the nodal μ/τ sampling if the O(h) verification floor ever matters.
+
+The gravitating extension: for MODULI kernels nothing changes beyond
+the forward and adjoint problems being gravitating. A DENSITY kernel
+must remember that the density also sources the equilibrium Poisson
+equation, so the zeroth- and first-order dynamics both enter the
+Lagrangian — same idea, more work. The subtle open point is that the
+equilibrium stress depends on the density too, and non-uniquely (the
+equilibrium-stress degeneracy of `equilibrium_stress.cpp` / the AW10
+generators). Theory: Yu, Al-Attar, Syvret & Lloyd (2025,
+`doc/Elasticity/ggae388.pdf`), whose rotational feedbacks enter
+through the `SetTidalLoad` substrate.
+
+Beyond that, as before: analytic shape derivatives combined with full
+self-gravity are a combination no surveyed code offers (only the
+spectral code of Lloyd et al. 2024 has kernels, 1-D structure;
+G-ADOPT has derived adjoints but no self-gravity); targets are the
+adjoints of the equilibrium-figure stage 1 and l ≥ 1
+interface-topography kernels verified against finite differences of
+the kind the degree-0 shift check uses. Until such kernels exist, the
+1-D side of the present perturbation check is a finite difference of
+pyslfp solves and stays labelled so. Viscoelastic adjoints at scale
+need unrelaxed-operator applications at many observation times (see
+[solvers.md](solvers.md), "Caching unrelaxed and effective
+operators").
+
+**See:** `examples/adjoint_elasticity.cpp`,
+`examples/viscoelastic_adjoint.cpp`;
+`doc/BenchmarkPapers/code_survey.md` ("Cross-cutting reading");
 `doc/benchmarks.tex`, "The perturbation family";
 `benchmarks/perturbation/perturbation_check.py`.
 

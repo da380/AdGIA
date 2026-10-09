@@ -9,6 +9,9 @@ a planetmodel `Model` in SI:
                    (the viscoelastic benchmark's elastic lithosphere)
   two_solid        two solid layers with a jump in every parameter
   fluid_core       a uniform fluid core under a uniform solid mantle
+  aw_core          fluid_core's neutrally stratified twin: a closed-form
+                   Adams-Williamson core (N^2 = 0 exactly) of the same
+                   mass under the same mantle
   inner_core       a solid inner core, a fluid outer core and a mantle,
                    each uniform
   linear_solid     one solid layer, density and velocities linear in radius
@@ -43,8 +46,11 @@ import math
 from collections.abc import Callable, Sequence
 
 import numpy as np
-from planetmodel import (PREM, LayeredIsotropicElastic, Model, RadialField,
-                         gravity, kappa_mu, polynomial_fit)
+from planetmodel import (DENSITY, PREM, SCALAR, Elastic, Geometry,
+                         LayeredIsotropicElastic, Model, RadialField,
+                         SelfGravitating, Skeleton, as_layer_function,
+                         constant_field, gravity, kappa_mu, polynomial_fit,
+                         polynomial_layer)
 from planetmodel.units import G_SI, Scales
 
 #: The outer radius of the constructed models, in metres.
@@ -98,6 +104,93 @@ def fluid_core(cmb: float = CMB) -> Model:
         [0.0, cmb, RADIUS], rho=[11000.0, 4500.0], vp=[9000.0, 11000.0],
         vs=[0.0, 6000.0], layer_names=["core", "mantle"],
         interface_names=["cmb", "surface"], name="fluid_core")
+
+
+class _CallableIsotropicElastic(Elastic, SelfGravitating, Model):
+    """LayeredIsotropicElastic with callables admitted per parameter: a
+    number is a constant, a sequence polynomial coefficients in
+    r / scale, and a callable the field itself (aw_core's vp)."""
+
+    def __init__(self, boundaries: Sequence[float], *,
+                 rho: Sequence, vp: Sequence, vs: Sequence,
+                 scale: float = 1.0,
+                 layer_names: Sequence[str | None] | None = None,
+                 interface_names: Sequence[str | None] | None = None,
+                 name: str | None = None) -> None:
+        sk = Skeleton(boundaries)
+        geometry = Geometry(sk, layer_names=layer_names,
+                            interface_names=interface_names)
+        values = {"rho": rho, "vp": vp, "vs": vs}
+        layers = []
+        for i in range(sk.nlayers):
+            iv = sk.interval(i)
+            fields = {}
+            for key, character in (("rho", DENSITY), ("vp", SCALAR),
+                                   ("vs", SCALAR)):
+                value = values[key][i]
+                if callable(value):
+                    fields[key] = RadialField(iv, as_layer_function(iv, value),
+                                              character=character, name=key)
+                elif np.isscalar(value):
+                    fields[key] = constant_field(iv, float(value),
+                                                 character=character, name=key)
+                else:
+                    fields[key] = RadialField(
+                        iv, polynomial_layer(iv, value, scale=scale),
+                        character=character, name=key)
+            layers.append(fields)
+        super().__init__(geometry, layers, name=name)
+
+
+#: aw_core: density falloff alpha and the central density that matches
+#: fluid_core's core mass, rho0 (1 - 3 alpha / 5) = 11000.
+AW_ALPHA = 0.2
+AW_RHO0 = 11000.0 / (1.0 - 3.0 * AW_ALPHA / 5.0)
+
+
+def aw_core(cmb: float = CMB) -> Model:
+    """fluid_core's neutrally stratified twin: a closed-form
+    Adams-Williamson core (N^2 = 0 exactly) under fluid_core's mantle.
+
+    The density is the one free profile; kappa follows from the
+    neutrality identity kappa = -rho^2 g / rho' with the core's own
+    enclosed-mass gravity, all closed form.  With x = r / cmb:
+
+        rho(r)   = rho0 (1 - alpha x^2)
+        g(r)     = (4 pi G rho0 / 3) r (1 - (3 alpha / 5) x^2)
+        kappa(r) = (2 pi G rho0^2 cmb^2 / 3 alpha)
+                     (1 - alpha x^2)^2 (1 - (3 alpha / 5) x^2)
+
+    rho0 matches the core's total mass to fluid_core's, so the mantle's
+    hydrostatic state and the surface gravity are identical to
+    fluid_core's and response differences isolate the core physics.
+    kappa is bounded away from zero on the core (its zero sits at
+    x = 1 / sqrt(alpha)); the limit alpha -> 0 recovers the uniform
+    core with kappa -> infinity, the statement that a uniform-density
+    core cannot be neutral at finite kappa.  Shifting `cmb` re-derives
+    kappa at the new radius with rho0 and alpha frozen, so every member
+    of the interface-shift family is itself exactly neutral.
+
+    The core's vp = sqrt(kappa / rho) is not polynomial, so the layer
+    is built from callable fields rather than LayeredIsotropicElastic's
+    polynomial ones; kappa and mu then derive from it exactly as for
+    every other model."""
+    rho0, alpha = AW_RHO0, AW_ALPHA
+    kappa0 = 2.0 * math.pi * G_SI * rho0 ** 2 * cmb ** 2 / (3.0 * alpha)
+
+    def vp_core(r):
+        x2 = (np.asarray(r, dtype=float) / cmb) ** 2
+        kappa = kappa0 * (1.0 - alpha * x2) ** 2 \
+            * (1.0 - 0.6 * alpha * x2)
+        rho = rho0 * (1.0 - alpha * x2)
+        return np.sqrt(kappa / rho)
+
+    return _CallableIsotropicElastic(
+        [0.0, cmb, RADIUS],
+        rho=[(rho0, 0.0, -rho0 * alpha * (RADIUS / cmb) ** 2), 4500.0],
+        vp=[vp_core, 11000.0], vs=[0.0, 6000.0], scale=RADIUS,
+        layer_names=["core", "mantle"], interface_names=["cmb", "surface"],
+        name="aw_core")
 
 
 def inner_core() -> Model:
@@ -167,6 +260,7 @@ def prem_6() -> Model:
 #: shift, with the keyword that moves it (SI metres).
 SHIFTABLE: dict[str, str] = {
     "fluid_core": "cmb",
+    "aw_core": "cmb",
     "two_solid": "discontinuity",
 }
 
@@ -175,6 +269,7 @@ MODELS: dict[str, Callable[[], Model]] = {
     "homogeneous_lithosphere": homogeneous_lithosphere,
     "two_solid": two_solid,
     "fluid_core": fluid_core,
+    "aw_core": aw_core,
     "inner_core": inner_core,
     "linear_solid": linear_solid,
     "stratified_core": stratified_core,

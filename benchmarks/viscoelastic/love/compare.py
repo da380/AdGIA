@@ -39,12 +39,18 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import sys
 from pathlib import Path
 
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent
+                       / "common"))
+
+from outputs import outside_source  # noqa: E402
 
 #: The numbers compared, and how they are labelled.
 LABELS = {"h_load": "h'", "l_load": "l'", "k_load": "k'",
@@ -272,7 +278,7 @@ def main() -> None:
         if not e["times"]:
             raise SystemExit(f"{path}: no output time matches a valid "
                              f"reference time of {args.reference}")
-        out = args.out or path.parent
+        out = outside_source(args.out or path.parent)
         out.mkdir(parents=True, exist_ok=True)
         stem = path.stem
         text = table(stem, fe, e)

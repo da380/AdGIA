@@ -440,9 +440,13 @@ law in one region only.
   the per-branch coupling rows are a plain row extraction from the one
   global `B`. For the same reason a region SubMesh with a dof injection
   would add nothing: the submesh L2 space is a row selection of the parent
-  one. The strain map stays global, since it is computed once per elastic
-  solve for all branches. A whole-mesh rheology has exactly the unrestricted
-  layout.
+  one. The per-step strain map is restricted the same way: when every
+  branch is confined to a region, the Galerkin (or interpolation) map is
+  applied on the union of the branch nodes only — an exact row restriction
+  by the same element-locality, shared by all branches and decided per
+  rank in parallel (`RestrictedStrainMap()`); the public `ComputeStrain()`
+  always evaluates on the whole mesh. A whole-mesh rheology has exactly
+  the unrestricted layout.
 - Output fields. `RegisterFields` names branch k's field
   `internal_variable_<label>` with the rheology's `BranchLabel(k)`:
   `branch<k>` by default, and `<region>_branch<j>` for a composite (region

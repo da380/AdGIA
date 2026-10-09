@@ -42,33 +42,40 @@ sys.path.insert(0, str(HERE.parent / "common"))
 import make_case  # noqa: E402
 import models  # noqa: E402
 from drivers import find_programs  # noqa: E402
+from outputs import outside_source  # noqa: E402
 
 #: Love numbers compared, as (results key path, reference key).
 QUANTITIES = (("h", "h_load"), ("l", "l_load"), ("k", "k_load"))
 
 
-def perturbed(model_name: str, eps: float):
+def perturbed(model_name: str, eps: float, time_scale: float):
     """The model with its shiftable interface moved by eps (units of the
-    outer radius), in the benchmark's units. The interface keyword takes
-    SI metres; the outer radius is unchanged, so the scaling matches the
-    base case's."""
+    outer radius), in the benchmark's units of the BASE case (its time
+    scale is read from the base reference, so a case made with
+    --time-scale gets consistent shifted profiles). The interface
+    keyword takes SI metres; the outer radius is unchanged, so the
+    length scale matches the base case's."""
     import inspect
     builder = models.MODELS[model_name]
     keyword = models.SHIFTABLE[model_name]
     default = inspect.signature(builder).parameters[keyword].default
     radius = float(builder().skeleton.boundaries[-1])
     return models.with_pressure(
-        models.scaled(builder(**{keyword: default + eps * radius})))
+        models.scaled(builder(**{keyword: default + eps * radius}),
+                      time_scale=time_scale))
 
 
-def prepare(root: Path, model_name: str, eps: float, lmax: int) -> Path:
-    """The perturbed model's profiles and reference under `root`."""
+def prepare(root: Path, model_name: str, eps: float, lmax: int,
+            time_scale: float, force: bool) -> Path:
+    """The perturbed model's profiles and reference under `root`. With
+    `force` they are remade, so a changed models.py or lmax cannot leave
+    the 1-D side stale while the 3-D solves rerun."""
     out = root / f"shift_{eps:+g}"
     out.mkdir(parents=True, exist_ok=True)
-    model = perturbed(model_name, eps)
-    if not (out / "radial_profiles.txt").exists():
+    model = perturbed(model_name, eps, time_scale)
+    if force or not (out / "radial_profiles.txt").exists():
         make_case.write_radial_profiles(model, out / "radial_profiles.txt")
-    if not (out / "reference.json").exists():
+    if force or not (out / "reference.json").exists():
         ref = make_case.reference(model, lmax, per_layer=17)
         (out / "reference.json").write_text(json.dumps(ref, indent=1))
     return out
@@ -140,6 +147,7 @@ def main() -> None:
     programs = find_programs(args.programs)
     root = args.out if args.out is not None else args.case
     if not args.dry_run:
+        root = outside_source(root)
         root.mkdir(parents=True, exist_ok=True)
 
     # The runs: base (eps = 0 uses the unmapped method result beside the
@@ -147,13 +155,17 @@ def main() -> None:
     all_eps = sorted({e for a in args.eps for e in (a, -a)} | {0.0})
     love: dict[str, dict[float, dict]] = {m: {} for m in args.method}
     refs: dict[float, dict] = {}
+    if not args.dry_run:
+        # the base case's units: the shifted models are built in them
+        base = json.loads((args.case / "reference.json").read_text())
     for eps in all_eps:
         if args.dry_run:
             pass  # the perturbed profiles and references are real work
         elif eps == 0.0:
             refs[eps] = love_reference(args.case / "reference.json")
         else:
-            sub = prepare(root, model_name, eps, args.lmax)
+            sub = prepare(root, model_name, eps, args.lmax,
+                          base["scales"]["time"], args.force)
             refs[eps] = love_reference(sub / "reference.json")
         for m in args.method:
             tag = f"{m}_shift{eps:+g}" if eps else m
