@@ -264,8 +264,12 @@ change (equal when mass is conserved) and the uniform term; exports the
 fingerprint's nodal values with `WriteSurfaceField`, which in 3-D maps
 to NetCDF/cartopy through `<build>/postprocess/surface_to_netcdf`.
 Shows (3-D by default): the displacement, and the fingerprint, the
-ocean function and the melt load on the surface shell.
-`./sea_level_fingerprint`, `./sea_level_fingerprint -melt 1.0`,
+ocean function and the melt load on the surface shell. `-mig` turns on
+shoreline migration (Picard on the ocean function via
+`ShorelineMigration`, the shoreline following the evolving sea level;
+off = frozen shorelines, first-order exact), printing the extra passes
+taken.
+`./sea_level_fingerprint`, `./sea_level_fingerprint -melt 1.0 -mig`,
 `./sea_level_fingerprint -m ../data/elastogravity_2d.msh`
 
 ### Fluids and interfaces

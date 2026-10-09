@@ -101,6 +101,8 @@ if(USE_MPI)
     target_link_libraries(TestSeaLevelCouplingPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestSeaLevelRotationPar TestSeaLevelRotationPar.cpp)
     target_link_libraries(TestSeaLevelRotationPar PRIVATE AdGIA MPI::MPI_CXX)
+    add_executable(TestShorelineMigrationPar TestShorelineMigrationPar.cpp)
+    target_link_libraries(TestShorelineMigrationPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestSphericalHarmonicsPar TestSphericalHarmonicsPar.cpp)
     target_link_libraries(TestSphericalHarmonicsPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestEquilibriumFiguresPar TestEquilibriumFiguresPar.cpp)
@@ -161,6 +163,9 @@ if(USE_MPI)
         add_test(NAME TestSeaLevelRotationPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestSeaLevelRotationPar>)
+        add_test(NAME TestShorelineMigrationPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestShorelineMigrationPar>)
         add_test(NAME TestSphericalHarmonicsPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestSphericalHarmonicsPar>)
@@ -264,6 +269,10 @@ gtest_discover_tests(TestSeaLevelCoupling)
 add_executable(TestSeaLevelRotation TestSeaLevelRotation.cpp)
 target_link_libraries(TestSeaLevelRotation PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestSeaLevelRotation)
+
+add_executable(TestShorelineMigration TestShorelineMigration.cpp)
+target_link_libraries(TestShorelineMigration PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestShorelineMigration)
 
 add_executable(TestSlipInterface TestSlipInterface.cpp)
 target_link_libraries(TestSlipInterface PRIVATE AdGIA gtest_main)

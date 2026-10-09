@@ -301,6 +301,10 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
    */
   void SetTidalPotential(mfem::Coefficient& psi);
 
+  /** @brief Release the tidal-potential slot (e.g. before SetRotation()
+   * on a problem whose construction wired a tidal expansion). */
+  void ClearTidalPotential() { psi_ = nullptr; }
+
   /**
    * @brief The symmetric tidal pairing of @p psi with the problem's
    * current solution: @f$T(\psi, (u,\phi)) = c(\psi, u) +
@@ -351,6 +355,17 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
                     mfem::Coefficient& sigma_data,
                     const mfem::Array<int>& surface_marker);
 
+  /**
+   * @brief Rebuild every piece of the water load that depends on the
+   * CURRENT values of the ocean-weight coefficient: the coupling and
+   * potential boundary blocks, the @f$\Phi_g@f$ border and the
+   * rotation cross data. Call after mutating the coefficient's internal
+   * state (shoreline migration: the ocean fraction moved); the volume
+   * operator reassembles on the next solve. The data-load coefficient
+   * needs no refresh — loads are reassembled every AssembleForce().
+   */
+  void RefreshWaterLoad();
+
   /** @brief @f$\Phi_g@f$ of the last Solve() (0 before). */
   mfem::real_t UniformPotentialTerm() const { return phi_g_; }
 
@@ -381,6 +396,10 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   /** @brief @f$\omega@f$ of the last Solve() (zero before; empty
    * without SetRotation()). */
   const mfem::Vector& AngularVelocity() const { return omega_; }
+
+  /** @brief @f$\psi(\omega)@f$ of the last Solve() as a coefficient
+   * (requires SetRotation()); amplitudes follow each solve. */
+  mfem::Coefficient& SolutionCentrifugalPotential();
 
   // --- solver controls ------------------------------------------------------
 
@@ -683,6 +702,7 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   mfem::real_t rot_Omega_ = 0.0;
   mfem::DenseMatrix rot_D_;
   std::vector<std::unique_ptr<mfem::Coefficient>> rot_psi_;
+  std::unique_ptr<mfem::Coefficient> rot_psi_total_;
   std::vector<mfem::Vector> rot_cpsi_u_, rot_cpsi_phi_;
   mfem::DenseMatrix rot_Pw_;   ///< int w psi_k psi_j dS
   mfem::Vector rot_mpsi_;     ///< int w psi_k dS
@@ -691,6 +711,12 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
 
   /** @brief Rebuild the water-rotation cross data (both features on). */
   void BuildBorderCrossData();
+  /** @brief (Re)build the water phi-phi boundary block and rewire the
+   * potential operator/solver. */
+  void BuildWaterPhiPhi();
+  /** @brief (Re)build the Phi_g border vectors and the mass-row scale. */
+  void BuildWaterBorder();
+  const mfem::Operator* sea_phiphi_base_ = nullptr;
   /** @brief The surface-mass column of density @p s: the tau'-pairing
    * vectors on the two rows. */
   void BuildSurfaceMassColumn(mfem::Coefficient& s, mfem::Vector& cu,

@@ -162,6 +162,10 @@ def main() -> None:
     p.add_argument("--out", type=Path, default=Path("runs"))
     p.add_argument("--programs", type=Path, default=None)
     p.add_argument("--mpiexec", default=None)
+    p.add_argument("--rot", action="store_true",
+                   help="rotational feedback on both sides, with pyslfp's "
+                        "Earth rotation rate and principal moments as the "
+                        "shared data")
     p.add_argument("--remake", action="store_true")
     p.add_argument("--force", action="store_true")
     p.add_argument("--dry-run", action="store_true")
@@ -186,6 +190,16 @@ def main() -> None:
     rho_i_case = rho_i_si / D
     shore = 0.05 * rho_w_case * STATE["ocean_depth"]
 
+    # The rotation data, shared by both sides: pyslfp's Earth rotation
+    # rate and principal moments (the traditional theory takes them as
+    # data), in case units for the driver. The case time scale is
+    # 1/sqrt(G rho_scale), its inertia scale rho_scale L^5.
+    G_SI = ps.raw_gravitational_constant
+    T_case = 1.0 / np.sqrt(G_SI * D)
+    Omega_case = ps.raw_rotation_frequency * T_case
+    C_case = ps.raw_polar_moment_of_inertia / (D * L**5)
+    A_case = ps.raw_equatorial_moment_of_inertia / (D * L**5)
+
     # The case and the AdGIA solve.
     if args.remake or not (case / "case.json").exists():
         ok = run([sys.executable,
@@ -195,8 +209,9 @@ def main() -> None:
                  log=None, dry_run=args.dry_run)
         if not ok:
             raise SystemExit(f"{case}: make_case.py failed")
-    slcsv = case / f"sea_level_o{args.order}.csv"
-    sljson = case / f"sea_level_o{args.order}.json"
+    tag = f"o{args.order}" + ("_rot" if args.rot else "")
+    slcsv = case / f"sea_level_{tag}.csv"
+    sljson = case / f"sea_level_{tag}.json"
     if args.force or not sljson.exists():
         mpiexec = args.mpiexec or "mpiexec"
         cmd = [mpiexec, "-np", str(args.np),
@@ -213,7 +228,10 @@ def main() -> None:
                "-melt-width", f"{STATE['melt_width']}",
                "-shore", f"{shore}",
                "-slcsv", str(slcsv), "-out", str(sljson)]
-        ok = run(cmd, log=case / f"log_o{args.order}.txt",
+        if args.rot:
+            cmd += ["-Omega", f"{Omega_case}", "-C1", f"{A_case}",
+                    "-C2", f"{A_case}", "-C3", f"{C_case}"]
+        ok = run(cmd, log=case / f"log_{tag}.txt",
                  dry_run=args.dry_run)
         if not ok:
             raise SystemExit("sea_level_benchmark failed")
@@ -231,8 +249,8 @@ def main() -> None:
                                          grid=em.grid)
     state = pyslfp.EarthState(ice_g, sl0_g, em, exclude_caspian=False)
     lin = pyslfp.LinearSeaLevelEquation(state)
-    sl_ps, _, _, _ = lin.solve_sea_level_equation(
-        load_g, rotational_feedbacks=False)
+    sl_ps, _, _, omega_ps = lin.solve_sea_level_equation(
+        load_g, rotational_feedbacks=args.rot)
     ref = sl_ps.data * ps.length_scale  # metres
 
     # The AdGIA fingerprint, gridded and in metres.
@@ -259,6 +277,16 @@ def main() -> None:
         "diff_max_m": float(np.max(np.abs(diff))),
         "adgia": json.loads(sljson.read_text()),
     }
+    if args.rot:
+        # omega / Omega on both sides (dimensionless; components
+        # [wander_1, wander_2, spin]). The wander rows carry the
+        # near-neutral amplification of any convention or
+        # discretisation difference (C - A is small for the Earth
+        # data), so they are reported, not gated.
+        m_ps = (np.asarray(omega_ps) / ps.rotation_frequency).tolist()
+        om_case = report["adgia"].get("omega", [])
+        m_ad = [o / Omega_case for o in om_case]
+        report["omega_over_Omega"] = {"adgia": m_ad, "pyslfp": m_ps}
     # Per-degree amplitudes of both fields and the difference.
     ca = pyshtools.SHGrid.from_array(adgia, grid=em.grid).expand(
         normalization="ortho")
@@ -274,9 +302,9 @@ def main() -> None:
          "diff": float(np.sqrt(power_d[l]))}
         for l in range(lshow + 1)
     ]
-    (case / f"report_o{args.order}.json").write_text(
+    (case / f"report_{tag}.json").write_text(
         json.dumps(report, indent=2) + "\n")
-    figure(case / f"fingerprint_o{args.order}.png", em, adgia, ref, frac,
+    figure(case / f"fingerprint_{tag}.png", em, adgia, ref, frac,
            report)
 
     print(f"\n{args.model}, h = {args.h:g}, order {args.order}, "
@@ -286,11 +314,18 @@ def main() -> None:
           f"(rel {report['diff_ocean_rel']:.3f})")
     print("  l    |SL|_adgia    |SL|_pyslfp   |diff|")
     for row in report["degrees"]:
-        tag = "   (frame convention unreconciled)" if row["l"] == 1 else ""
+        note = "   (frame convention unreconciled)" if row["l"] == 1 else ""
         print(f"  {row['l']:<3} {row['adgia']:<13.4g} "
-              f"{row['pyslfp']:<13.4g} {row['diff']:.4g}{tag}")
-    print(f"  report: {case / f'report_o{args.order}.json'}")
-    print(f"  figure: {case / f'fingerprint_o{args.order}.png'}")
+              f"{row['pyslfp']:<13.4g} {row['diff']:.4g}{note}")
+    if args.rot:
+        mm = report["omega_over_Omega"]
+        print("  omega/Omega  adgia  " +
+              " ".join(f"{v: .4g}" for v in mm["adgia"]))
+        print("               pyslfp " +
+              " ".join(f"{v: .4g}" for v in mm["pyslfp"]) +
+              "   (wander rows amplification-prone, reported not gated)")
+    print(f"  report: {case / f'report_{tag}.json'}")
+    print(f"  figure: {case / f'fingerprint_{tag}.png'}")
 
 
 if __name__ == "__main__":

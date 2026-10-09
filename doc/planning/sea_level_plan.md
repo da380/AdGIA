@@ -285,7 +285,37 @@ Three separately-testable couplings, built in order of complexity
 - **WP5** — shoreline migration (Picard on C) + rung 3 — *required
   for ice-age production (switchable; frozen C₀ = the off-switch and
   first-order control)*; includes the quadratic-scaling certificate
-  and the inexact-iteration machinery above.
+  and the inexact-iteration machinery above. **DONE 9 Oct 2026**:
+  `ShorelineMigration` (sea_level.hpp) owns the C-dependent weight and
+  data-load coefficients and hands them to `SetWaterLoad` at
+  construction; each pass stores nodal SL₁ on the body AND (transferred)
+  the parent — the water blocks assemble on both meshes — then
+  `RefreshWaterLoad()` rebuilds only the boundary-coupled pieces
+  (coupling, φφ sum, Φ_g border, rotation cross data) and re-solves.
+  The first pass IS the frozen-C₀ solve (`max_iterations = 0` = the
+  off-switch; before the first state update the flotation criterion
+  reduces to C₀ exactly, ice change excluded — the load law's
+  linearisation point). The stop is the relative surface-L2 SL₁
+  increment (a ΔC snapshot cannot resolve a shoreline strip narrower
+  than the mesh). Gates (serial + np 1/2/4): off-switch ≡ direct
+  frozen-C at solver grade; converged mass conservation with the FINAL
+  ocean fraction; composition with `SetRotation`; and the Crawford
+  certificate — the migrating-minus-frozen difference scales
+  quadratically in the melt amplitude, measured in the sharp-shoreline
+  regime (band ≪ ρ_w·SL₁, strip resolved by boundary quadrature; a
+  band wider than the shift adds a first-order-in-band piece, and an
+  under-resolved strip deflates the small-amplitude leg — both
+  observed before the parameters were set). Inexact Picard DONE same
+  day (the quasi-static stepper's pattern): pass k at relative
+  tolerance clamp(inexact·(previous SL₁ increment), [RelTol,
+  inexact_max]), seed at inexact_max, endpoint always polished by one
+  full-tolerance solve on the FINAL ocean function; `inexact = 0` is
+  the reproducible-path mode and the off-switch always solves tight.
+  Gated: inexact ≡ tight at 1e-5 relative, and never more outer
+  iterations (measured ~10% saved on the 2–3-pass test states; the
+  economy grows with pass count). The loop converges in ≲ 3 extra
+  passes on the test states.
+  `sea_level_fingerprint -mig` demonstrates it.
 - **WP6** — viscoelastic composition + ice-history demo.
 - **WP7** — the **referential leg**: port the boundary terms (the ζζ
   collapse), gate against the mixed results; the M&A generalised

@@ -150,13 +150,19 @@ double OceanWeight(const Vector& x) {
   return g_rho_w * OceanFraction(x) / G0();
 }
 
-// The melt load sigma_data = -rho_i (1 - C0) melt H(x) I0 with the
-// smooth hemispheric factor H = (1 + tanh(x0/melt_width))/2, regular at
-// the pole (Cartesian coordinate, not an angle).
-double MeltLoad(const Vector& x) {
+// The ice-thickness change -melt H(x) I0 with the smooth hemispheric
+// factor H = (1 + tanh(x0/melt_width))/2, regular at the pole
+// (Cartesian coordinate, not an angle).
+double IceChange(const Vector& x) {
   const double hemi = 0.5 * (1.0 + std::tanh(x[0] / g_melt_width));
-  return -(1.0 - OceanFraction(x)) * g_rho_i * g_melt * hemi *
-         IceThickness(x);
+  return -g_melt * hemi * IceThickness(x);
+}
+
+// The melt load sigma_data = rho_i (1 - C0) dI (the frozen-shoreline
+// reduction of the load law; with -migrate the orchestrator rebuilds
+// the C-dependent version itself).
+double MeltLoad(const Vector& x) {
+  return (1.0 - OceanFraction(x)) * g_rho_i * IceChange(x);
 }
 
 }  // namespace
@@ -172,6 +178,7 @@ int main(int argc, char* argv[]) {
   int ref_levels = 0;
   double Omega = 0.0;
   double C1 = 1.2, C2 = 1.3, C3 = 2.0;
+  bool migrate = false;
   bool visualization = true;
 
   OptionsParser args(argc, argv);
@@ -203,6 +210,9 @@ int main(int argc, char* argv[]) {
   args.AddOption(&g_melt_width, "-melt-width", "--melt-width",
                  "Smoothing width of the hemispheric unloading factor "
                  "(1 + tanh(x/width))/2.");
+  args.AddOption(&migrate, "-mig", "--migrate", "-no-mig", "--no-migrate",
+                 "Shoreline migration (Picard on the ocean function; "
+                 "off = frozen shorelines).");
   args.AddOption(&g_shore, "-shore", "--shoreline-width",
                  "Shoreline smoothing width of the ocean fraction.");
   args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
@@ -258,7 +268,21 @@ int main(int argc, char* argv[]) {
   LinearQuasiStaticMixedSelfGravitatingProblem prob(&fes_u, &fes_phi,
                                                     rheology, rho, kG,
                                                     kDtNDegree);
-  prob.SetWaterLoad(w, sigma_data, surface);
+  // With -mig the orchestrator owns the water load (its constructor
+  // wires SetWaterLoad with C-dependent coefficients); otherwise the
+  // frozen-C coefficients go in directly.
+  FunctionCoefficient sl0(InitialSeaLevel), ice(IceThickness);
+  FunctionCoefficient dice(IceChange);
+  std::unique_ptr<ShorelineMigration> mig;
+  if (migrate) {
+    ShorelineMigration::Options opt;
+    opt.shore = g_shore;
+    mig = std::make_unique<ShorelineMigration>(prob, grad_phi0, sl0, ice,
+                                               dice, g_rho_w, g_rho_i,
+                                               surface, opt);
+  } else {
+    prob.SetWaterLoad(w, sigma_data, surface);
+  }
   if (Omega != 0.0) {
     // Rotational feedback inside the same bordered solve; the moments
     // are data (a spherical model's own would be degenerate).
@@ -273,18 +297,33 @@ int main(int argc, char* argv[]) {
     prob.SetRotation(Omega, moments);
   }
   prob.SetRelTol(1e-11);
-  prob.AssembleForce(0.0);
-  if (!prob.Solve()) {
-    if (IsRoot()) {
-      std::cout << "solve failed\n";
+  if (migrate) {
+    if (!mig->Solve(0.0)) {
+      if (IsRoot()) {
+        std::cout << "solve failed\n";
+      }
+      return 1;
     }
-    return 1;
+    if (IsRoot()) {
+      std::cout << "shoreline migration: " << mig->Iterations()
+                << " extra passes, final relative SL1 increment "
+                << mig->LastShorelineChange() << ", "
+                << mig->TotalOuterIterations()
+                << " outer iterations in all\n";
+    }
+  } else {
+    prob.AssembleForce(0.0);
+    if (!prob.Solve()) {
+      if (IsRoot()) {
+        std::cout << "solve failed\n";
+      }
+      return 1;
+    }
   }
 
   // The surface layer: the initial state, the fingerprint, diagnostics.
   SeaLevelOperator sea(fes_u, surface);
   sea.SetDensities(g_rho_w, g_rho_i);
-  FunctionCoefficient sl0(InitialSeaLevel), ice(IceThickness);
   sea.SetInitialState(sl0, ice);
   CentrifugalPotential psi(dim, Omega);
   if (Omega != 0.0) {

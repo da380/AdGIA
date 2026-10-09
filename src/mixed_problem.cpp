@@ -726,35 +726,51 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetWaterLoad(
   // SetupCoupling); C^T follows by transposition.
   SetupCoupling();
 
-  // The phi-phi block: -int w phi chi dS on the parent mesh's surface
-  // boundary elements (their attributes are inherited, so the caller's
-  // marker lists the right attributes; the parent's marker is just the
-  // same list at the parent's size).
-  {
-    Array<int> parent_marker(fes_phi_->GetMesh()->bdr_attributes.Max());
-    parent_marker = 0;
-    for (int a = 1; a <= sea_marker_.Size(); a++) {
-      if (sea_marker_[a - 1]) {
-        MFEM_VERIFY(a <= parent_marker.Size(),
-                    "SetWaterLoad: surface attribute missing on the "
-                    "parent mesh.");
-        parent_marker[a - 1] = 1;
-      }
-    }
-    auto minus_w = std::make_unique<ProductCoefficient>(-1.0, *sea_w_);
-    sea_phiphi_form_ = detail::MakeBilinearForm(fes_phi_);
-    sea_phiphi_form_->AddBoundaryIntegrator(new MassIntegrator(*minus_w),
-                                            parent_marker);
-    sea_phiphi_form_->Assemble();
-    Array<int> empty;
-    sea_phiphi_form_->FormSystemMatrix(empty, S_sea_);
-    sea_coefs_.push_back(std::move(minus_w));
-    A_sea_sum_ = std::make_unique<SumOperator>(A_phiphi_, 1.0, S_sea_.Ptr(),
-                                               1.0, false, false);
-    A_phiphi_ = A_sea_sum_.get();
-    SetupPotentialSolver();
-  }
+  // The phi-phi block and the Phi_g border, shared with
+  // RefreshWaterLoad().
+  sea_phiphi_base_ = A_phiphi_;
+  BuildWaterPhiPhi();
+  BuildWaterBorder();
 
+  // The data load goes through the ordinary surface-load slot; its
+  // surface integral (the mass-row data) is refreshed per
+  // AssembleForce.
+  SetSurfaceLoad(sigma_data, surface_marker);
+  BuildBorderCrossData();
+  operator_dirty_ = true;
+}
+
+void LinearQuasiStaticMixedSelfGravitatingProblem::BuildWaterPhiPhi() {
+  // -int w phi chi dS on the parent mesh's surface boundary elements
+  // (their attributes are inherited, so the caller's marker lists the
+  // right attributes; the parent's marker is just the same list at the
+  // parent's size).
+  Array<int> parent_marker(fes_phi_->GetMesh()->bdr_attributes.Max());
+  parent_marker = 0;
+  for (int a = 1; a <= sea_marker_.Size(); a++) {
+    if (sea_marker_[a - 1]) {
+      MFEM_VERIFY(a <= parent_marker.Size(),
+                  "SetWaterLoad: surface attribute missing on the "
+                  "parent mesh.");
+      parent_marker[a - 1] = 1;
+    }
+  }
+  auto minus_w = std::make_unique<ProductCoefficient>(-1.0, *sea_w_);
+  sea_phiphi_form_ = detail::MakeBilinearForm(fes_phi_);
+  sea_phiphi_form_->AddBoundaryIntegrator(new MassIntegrator(*minus_w),
+                                          parent_marker);
+  sea_phiphi_form_->Assemble();
+  Array<int> empty;
+  sea_phiphi_form_->FormSystemMatrix(empty, S_sea_);
+  sea_coefs_.push_back(std::move(minus_w));
+  A_sea_sum_ = std::make_unique<SumOperator>(
+      const_cast<Operator*>(sea_phiphi_base_), 1.0, S_sea_.Ptr(), 1.0,
+      false, false);
+  A_phiphi_ = A_sea_sum_.get();
+  SetupPotentialSolver();
+}
+
+void LinearQuasiStaticMixedSelfGravitatingProblem::BuildWaterBorder() {
   // The Phi_g border c = int w tau' dS: the surface-mass column of
   // density w, and m = int w dS.
   BuildSurfaceMassColumn(*sea_w_, sea_cu_, sea_cphi_);
@@ -764,11 +780,16 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetWaterLoad(
   ProductCoefficient w_one(*sea_w_, one_c);
   sea_m_ = SurfaceIntegralOnMarker(w_one);
   MFEM_VERIFY(sea_m_ > 0.0, "SetWaterLoad: the ocean has zero area.");
+}
 
-  // The data load goes through the ordinary surface-load slot; its
-  // surface integral (the mass-row data) is refreshed per
-  // AssembleForce.
-  SetSurfaceLoad(sigma_data, surface_marker);
+void LinearQuasiStaticMixedSelfGravitatingProblem::RefreshWaterLoad() {
+  MFEM_VERIFY(sea_enabled_, "RefreshWaterLoad: SetWaterLoad first.");
+  // The coupling block holds the mutated coefficient through its
+  // integrator; rebuilding re-evaluates it. The stiffness's uu block
+  // re-evaluates at the next operator assembly.
+  SetupCoupling();
+  BuildWaterPhiPhi();
+  BuildWaterBorder();
   BuildBorderCrossData();
   operator_dirty_ = true;
 }
@@ -836,8 +857,20 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetRotation(
   omega_ = 0.0;
   rot_r_.SetSize(nw);
   rot_r_ = 0.0;
+  {
+    auto total = std::make_unique<CentrifugalPotential>(dim_, Omega);
+    total->SetZero();
+    rot_psi_total_ = std::move(total);
+  }
   BuildBorderCrossData();
   operator_dirty_ = true;
+}
+
+Coefficient&
+LinearQuasiStaticMixedSelfGravitatingProblem::SolutionCentrifugalPotential() {
+  MFEM_VERIFY(rot_enabled_,
+              "SolutionCentrifugalPotential: SetRotation first.");
+  return *rot_psi_total_;
 }
 
 void LinearQuasiStaticMixedSelfGravitatingProblem::BuildBorderCrossData() {
@@ -1550,6 +1583,10 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveLinearSystem(
   phi_g_ = sea_enabled_ ? y[0] : 0.0;
   for (int k = 0; k < nw; k++) {
     omega_[k] = y[ns + k];
+  }
+  if (rot_enabled_) {
+    static_cast<CentrifugalPotential*>(rot_psi_total_.get())
+        ->SetAmplitudes(omega_);
   }
   for (int j = 0; j < nb; j++) {
     X.Add(-y[j], Yu[j]);

@@ -12,6 +12,7 @@
 #include <string>
 
 #include "mfem.hpp"
+#include "AdGIA/mixed_problem.hpp"
 
 namespace AdGIA {
 
@@ -212,6 +213,112 @@ class SeaLevelOperator {
 
   std::unique_ptr<mfem::GridFunction> sl0_, ice_, sl1_;
   mfem::real_t rho_water_ = 1.0, rho_ice_ = 0.9;
+};
+
+namespace detail {
+class MigratingOceanState;
+}
+
+/**
+ * @brief Shoreline migration for the coupled water load
+ * (doc/planning/sea_level_plan.md, WP5): required machinery for
+ * ice-age work, with frozen shorelines as the switchable first-order
+ * control.
+ *
+ * The ocean function of eq. (29) follows the evolving sea level,
+ * @f$C = C(\rho_w SL - \rho_i I > 0)@f$ with @f$SL = SL_0 + SL_1@f$
+ * and @f$SL_1@f$ read from the problem's own solution (including
+ * @f$\psi(\omega)@f$ when SetRotation() is on). The load law (eq. 32)
+ * splits as in the frozen-C derivation but with the CURRENT C:
+ * the ocean weight is @f$w = \rho_w C/g@f$ and the data load
+ * @f$\sigma_d = \rho_w(C - C_0)SL_0 +
+ * \rho_i[(1-C)(I_0+\Delta I) - (1-C_0)I_0]@f$, which reduces to the
+ * frozen form at @f$C = C_0@f$. Both are owned here as mutable
+ * coefficients handed to SetWaterLoad() at construction; each Picard
+ * pass updates the state copies, calls
+ * RefreshWaterLoad() (boundary-only rebuilds) and re-solves, until the
+ * shoreline stops moving (@f$\int|\Delta C|\,dS@f$ below a fraction
+ * of the initial ocean area) or the iteration cap. The first pass IS
+ * the frozen-C solve, so `max_iterations = 0` is the off-switch.
+ *
+ * Shoreline migration is strictly second order in the instantaneous
+ * perturbation (the plan's Crawford note) — the certificate is that
+ * the migrating-minus-frozen difference scales quadratically with the
+ * load amplitude — but over ice-age histories the excursions are
+ * finite, hence this machinery.
+ *
+ * The state coefficients (initial sea level, initial ice, ice change)
+ * must be evaluable on the body mesh (analytic ones are); the smooth
+ * shoreline width is in units of @f$\rho_w \times@f$ length, as in
+ * the examples.
+ */
+class ShorelineMigration {
+ public:
+  struct Options {
+    int max_iterations = 12;  ///< 0: frozen shorelines (the off-switch)
+    mfem::real_t tol = 1e-3;  ///< stop: relative SL1 increment
+    mfem::real_t shore = 1e-5;  ///< smoothing width of the ocean fraction
+    /** @brief Inexact Picard (the quasi-static stepper's pattern): pass
+     * k's linear solve runs at relative tolerance inexact * (the
+     * previous SL1 increment), clamped to [the problem's RelTol(),
+     * inexact_max]; the Picard seed (the frozen-C pass) runs at
+     * inexact_max — a fixed-point iteration is self-correcting, so
+     * solver digits beyond the next shoreline correction are wasted.
+     * The returned state is always polished by one full-tolerance
+     * solve whose operator carries the FINAL ocean function, so the
+     * endpoint is the problem's RelTol() either way. 0 runs every pass
+     * at full tolerance (the reproducible-path mode); the off-switch
+     * (max_iterations = 0) always solves at full tolerance. */
+    mfem::real_t inexact = 0.1;
+    mfem::real_t inexact_max = 1e-3;  ///< loosest per-pass tolerance
+  };
+
+  ShorelineMigration(LinearQuasiStaticMixedSelfGravitatingProblem& problem,
+                     mfem::VectorCoefficient& grad_phi0,
+                     mfem::Coefficient& initial_sea_level,
+                     mfem::Coefficient& initial_ice,
+                     mfem::Coefficient& ice_change, mfem::real_t rho_water,
+                     mfem::real_t rho_ice,
+                     const mfem::Array<int>& surface_marker,
+                     Options options);
+  ~ShorelineMigration();
+
+  /** @brief Solve at time @p t: the frozen-C pass, then Picard on the
+   * shoreline until it stops moving. The problem's fields end at the
+   * final (migrated) solution. */
+  bool Solve(mfem::real_t t);
+
+  int Iterations() const { return iterations_; }
+  /** @brief Outer solver iterations summed over every pass of the last
+   * Solve(), the polish included — the inexact option's economy shows
+   * here. */
+  int TotalOuterIterations() const { return outer_its_total_; }
+  /** @brief The relative surface-L2 increment of @f$SL_1@f$ between
+   * the last two passes — the loop's convergence measure (a direct
+   * @f$\Delta C@f$ snapshot cannot resolve a shoreline strip narrower
+   * than the mesh). */
+  mfem::real_t LastShorelineChange() const { return last_change_; }
+  /** @brief The current ocean fraction (for inspection/plotting). */
+  mfem::Coefficient& OceanFraction();
+
+ private:
+  mfem::real_t ShorelineChange();
+  void UpdateState();
+
+  LinearQuasiStaticMixedSelfGravitatingProblem& problem_;
+  Options options_;
+  mfem::Array<int> marker_;
+  std::unique_ptr<detail::MigratingOceanState> state_;
+  std::unique_ptr<mfem::Coefficient> weight_, data_, frac_coef_;
+  mfem::VectorCoefficient* grad_phi0_ = nullptr;
+  std::unique_ptr<mfem::FiniteElementCollection> sfec_;
+  std::unique_ptr<mfem::FiniteElementSpace> sfes_, pfes_;
+  mfem::real_t last_change_ = 0.0;
+  int iterations_ = 0, outer_its_total_ = 0;
+  bool parallel_ = false;
+#ifdef MFEM_USE_MPI
+  MPI_Comm comm_ = MPI_COMM_NULL;
+#endif
 };
 
 }  // namespace AdGIA

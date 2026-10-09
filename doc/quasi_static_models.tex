@@ -1318,6 +1318,95 @@ The 2-D fluid problem is inconsistent at the level of a constant, the
 regularisation changes the answer at the percent level, and 2-D fluid runs
 are for cheap testing only. Three dimensions are unaffected.
 
+\subsection{The sea-level equation, rotation, and shoreline migration}
+\label{sec:mixed-sea}
+
+Following Yu et al.\ \cite{Yu2025}, the elastic sea-level equation is not
+an outer iteration around the loading problem but a modification of the
+operator itself: the ocean load is an affine function of the solution, and
+substituting it into the surface-load term keeps the weak form symmetric.
+With $C$ the ocean function on the outer surface, $w = \rho_wC/g$,
+$g = |\grad\Phi_0|$, and the physicist sign convention
+($\grad\Phi_0$ outward, so $\vu\cdot\grad\Phi_0 = gu_r$), the sea-level
+change splits into a solution-dependent part and a spatial constant,
+\begin{equation}
+  SL_1 = \frac{-\tau - \psi(\bm\omega) + \Phi_g}{g}, \qquad
+  \tau = \vu\cdot\grad\Phi_0 + \phi,
+  \label{eq:sl1}
+\end{equation}
+where $\psi$ is the centrifugal-potential perturbation of the rotation
+feedback and $\Phi_g$ is the uniform term fixed by mass conservation of
+the ocean--ice system. The water load $\sigma = \rho_wC\,SL_1 +
+\sigma_d$ then contributes
+\begin{itemize}
+\item a symmetric positive semi-definite boundary modification $-Q$: a
+  \code{BoundaryNormalNormalIntegrator}$(-wq_g^2)$ on the displacement
+  block, a \code{BoundaryNormalScalarIntegrator}$(-wq_g)$ beside the
+  coupling (its transpose by symmetry), and a
+  \code{MassIntegrator}$(-w)$ on the potential block, with
+  $q_g = \vn\cdot\grad\Phi_0$ (\code{SetWaterLoad});
+\item a rank-one \emph{border}: the column $c = \int w\,\tau'\dS$ against
+  the unknown $\Phi_g$, closed by the mass row $\int_{\partial B}\sigma\dS
+  = 0$; and
+\item the data load $\sigma_d$ through the ordinary surface-load slot.
+\end{itemize}
+The rotational feedback (\code{SetRotation}) adds further border columns,
+one per wander/spin component: the inertia perturbations are evaluated
+directly from the deformation by the tidal pairing
+$T(\psi_k) = (C\Psi_k)\cdot U + (\MF\Psi_k)\cdot\Phi$ --- the transpose of
+the verified tidal-load machinery, so the signs are inherited, not
+re-derived --- and the dense closing block carries the background inertia
+differences. One convention is load-bearing: $\psi$ enters
+\emph{everywhere} through its interpolant on the potential space (columns,
+rows, cross data, and any instrument that probes them). Mixing
+interpolated and exactly-integrated $\psi$ breaks the feedback at
+interpolation grade; the error is invisible in 2-D, where the surface
+nodes sit exactly on the circle, and is amplified in the wander
+components by the near-neutral factor $1/(C_3 - C_1)$.
+
+The bordered system is solved by block elimination: the base solve plus
+one solve per border column (all warm-started, through the same projected
+Krylov solver), then a dense $(1 + n_\omega)$ system for
+$(\Phi_g, \bm\omega)$. $SL_1$ itself is postprocessing, \eqref{eq:sl1} on
+the surface SubMesh (\code{SeaLevelOperator}).
+
+\paragraph{Shoreline migration.} For ice-age work the ocean function must
+follow the evolving sea level: $C = C(\rho_w SL - \rho_i I > 0)$ with the
+current ice $I$. \code{ShorelineMigration} owns the $C$-dependent
+coefficients and iterates: each Picard pass stores the nodal $SL_1$ (on
+the body \emph{and}, transferred, on the parent, where the potential-block
+term assembles), rebuilds only the boundary-coupled pieces
+(\code{RefreshWaterLoad}: coupling, potential boundary term, border and
+cross data; the volume operator reassembles lazily), and re-solves.
+Before the first update the flotation criterion reduces exactly to the
+initial $C_0$ --- the linearisation point of the load law --- so
+\code{max\_iterations = 0} is the frozen-shoreline off-switch, first-order
+exact. The stop is the relative surface-$L^2$ increment of $SL_1$: a
+snapshot of $\Delta C$ itself cannot resolve a shoreline strip narrower
+than the mesh. Migration is strictly second order in the instantaneous
+load (Crawford: the load integrand vanishes at the shoreline), and the
+certificate measures exactly that --- but only in the resolved sharp
+regime: a smoothing band wider than $\rho_w SL_1$ adds a first-order
+piece in the band width, and a moved strip narrower than the boundary
+quadrature deflates the small-amplitude leg. The passes run inexactly on
+the pattern of the viscoelastic stepper (\S\ref{sec:visco}): pass $k$ at
+relative tolerance $\min(\max(\code{inexact}\cdot\delta_{k-1},
+\text{RelTol}), \code{inexact\_max})$ with $\delta$ the previous $SL_1$
+increment, and the endpoint always polished by one full-tolerance solve
+whose operator carries the final ocean function. On the analytic test
+states the loop converges in 2--3 extra passes; the inexact route saves
+roughly 10\,\% of the outer iterations there, more when the driving
+history forces longer loops.
+
+Verification: the monolithic solve equals the converged fixed point of
+the iterated water load; mass conservation holds to the mass-row's
+closure, with the final ocean function when migrating; the off-switch
+equals the directly wired frozen-$C_0$ problem at solver tolerance;
+rotating and non-rotating fingerprints against \code{pyslfp} on a
+homogeneous sphere agree at 1\,\% ocean-RMS (order 2, $h = 0.4$), with
+the spin and first wander components of $\bm\omega/\Omega$ at matching
+magnitude and the second zero on both sides.
+
 \subsection{Verification}
 
 Symmetry of the assembled block operator to round-off and decreasing

@@ -38,6 +38,8 @@
 //   -cap-width      [0.35]        -melt       [0.5]
 //   -shore          smoothing width of the ocean fraction, in units of
 //                   rho_w*SL [1e-5]
+//   -Omega          rotation rate, case units [0: rotation off]
+//   -C1 -C2 -C3     principal moments, case units [0, 0, 0]
 //   -slcsv          the fingerprint CSV [sea_level.csv]
 //   -out            the scalars JSON [sea_level.json]
 //
@@ -68,6 +70,8 @@ double g_melt = 0.5;
 double g_melt_width = 0.15;
 double g_shore = 1e-5;
 double g_gravity = 1.0;
+double g_Omega = 0.0;
+double g_C1 = 0.0, g_C2 = 0.0, g_C3 = 0.0;
 
 double Colatitude(const Vector& x) {
   const double r = x.Norml2();
@@ -134,6 +138,12 @@ int main(int argc, char* argv[]) {
                  "unloading factor (1 + tanh(x/width))/2.");
   args.AddOption(&g_shore, "-shore", "--shoreline-width",
                  "Ocean-fraction smoothing width (rho_w * length units).");
+  args.AddOption(&g_Omega, "-Omega", "--rotation-rate",
+                 "Equilibrium rotation rate about e3, case units (0: "
+                 "rotational feedback off).");
+  args.AddOption(&g_C1, "-C1", "--moment-1", "Principal moment C1.");
+  args.AddOption(&g_C2, "-C2", "--moment-2", "Principal moment C2.");
+  args.AddOption(&g_C3, "-C3", "--moment-3", "Principal moment C3.");
   args.AddOption(&slcsv, "-slcsv", "--sea-level-csv",
                  "Output CSV of the fingerprint's nodal values.");
   args.AddOption(&out, "-out", "--output", "Output JSON of the scalars.");
@@ -154,6 +164,16 @@ int main(int argc, char* argv[]) {
 
   FunctionCoefficient w(OceanWeight), sigma_data(MeltLoad);
   c.problem->SetWaterLoad(w, sigma_data, surface);
+  if (g_Omega != 0.0) {
+    // The Case wires the Love machinery's tidal expansion; the
+    // rotational border owns that slot here.
+    c.problem->ClearTidalPotential();
+    Vector moments(3);
+    moments[0] = g_C1;
+    moments[1] = g_C2;
+    moments[2] = g_C3;
+    c.problem->SetRotation(g_Omega, moments);
+  }
   const auto t0 = Clock::now();
   c.problem->AssembleForce(0.0);
   MFEM_VERIFY(c.problem->Solve(), "the coupled solve failed");
@@ -168,9 +188,14 @@ int main(int argc, char* argv[]) {
     v *= ga;
   });
   SeaLevelOperator sea(*c.fes_u, surface);
+  CentrifugalPotential psi(3, g_Omega);
+  if (g_Omega != 0.0) {
+    psi.SetAmplitudes(c.problem->AngularVelocity());
+  }
   sea.SeaLevelChangeFrom(c.problem->Displacement(), grad_phi0,
                          c.problem->Potential(),
-                         c.problem->UniformPotentialTerm());
+                         c.problem->UniformPotentialTerm(),
+                         g_Omega != 0.0 ? &psi : nullptr);
   sea.WriteSurfaceField(sea.SeaLevelChangeField(), slcsv);
 
   // Scalars, over the same analytic ocean fraction the solve used.
@@ -198,6 +223,15 @@ int main(int argc, char* argv[]) {
     os << "  \"ocean_mean\": " << Num(ocean_mean) << ",\n";
     os << "  \"displacement_unknowns\": " << c.displacement_unknowns
        << ",\n";
+    os << "  \"Omega\": " << Num(g_Omega) << ",\n";
+    os << "  \"omega\": [";
+    if (g_Omega != 0.0) {
+      const Vector& om = c.problem->AngularVelocity();
+      for (int k = 0; k < om.Size(); k++) {
+        os << Num(om[k]) << (k + 1 < om.Size() ? ", " : "");
+      }
+    }
+    os << "],\n";
     os << "  \"iterations\": " << c.problem->TotalIterations() << ",\n";
     os << "  \"solve_seconds\": " << Num(solve_s) << "\n";
     os << "}\n";
