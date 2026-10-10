@@ -5,9 +5,14 @@
 
 #include "AdGIA/sea_level.hpp"
 
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <fstream>
+#include <limits>
+#include <sstream>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "AdGIA/detail/fem_factory.hpp"
@@ -304,32 +309,41 @@ SeaLevelOperator::SeaLevelChangeInfo SeaLevelOperator::SeaLevelChange(
   return info;
 }
 
+namespace {
+
+// Nodal coordinates of a scalar surface space: the identity projected
+// on a matching vector space (byNODES: component c of node i at
+// i + c * nd). The CSV writer and reader must form them identically.
+std::unique_ptr<GridFunction> NodalCoordinates(
+    Mesh& mesh, FiniteElementCollection& fec, int sdim, bool parallel,
+    std::unique_ptr<mfem::FiniteElementSpace>& vfes) {
+#ifdef MFEM_USE_MPI
+  if (parallel) {
+    vfes = std::make_unique<ParFiniteElementSpace>(
+        static_cast<ParMesh*>(&mesh), &fec, sdim, Ordering::byNODES);
+  } else
+#endif
+  {
+    vfes = std::make_unique<mfem::FiniteElementSpace>(&mesh, &fec, sdim,
+                                                      Ordering::byNODES);
+  }
+  auto coords = detail::MakeGridFunction(vfes.get());
+  VectorFunctionCoefficient identity(
+      sdim, [](const Vector& x, Vector& v) { v = x; });
+  coords->ProjectCoefficient(identity);
+  return coords;
+}
+
+}  // namespace
+
 void SeaLevelOperator::WriteSurfaceField(const GridFunction& f,
                                          const std::string& path) const {
   MFEM_VERIFY(f.FESpace() == sfes_.get(),
               "SeaLevelOperator::WriteSurfaceField: a surface field "
               "expected.");
   const int sdim = surf_mesh_->SpaceDimension();
-  // Nodal coordinates of the scalar space: the identity projected on a
-  // matching vector space (byNODES: component c of node i at i + c nd).
-  FiniteElementCollection& fec = *fec_;
   std::unique_ptr<mfem::FiniteElementSpace> vfes;
-  std::unique_ptr<GridFunction> coords;
-#ifdef MFEM_USE_MPI
-  if (parallel_) {
-    vfes = std::make_unique<ParFiniteElementSpace>(
-        static_cast<ParMesh*>(surf_mesh_.get()), &fec, sdim,
-        Ordering::byNODES);
-  } else
-#endif
-  {
-    vfes = std::make_unique<mfem::FiniteElementSpace>(
-        surf_mesh_.get(), &fec, sdim, Ordering::byNODES);
-  }
-  coords = detail::MakeGridFunction(vfes.get());
-  VectorFunctionCoefficient identity(
-      sdim, [](const Vector& x, Vector& v) { v = x; });
-  coords->ProjectCoefficient(identity);
+  auto coords = NodalCoordinates(*surf_mesh_, *fec_, sdim, parallel_, vfes);
 
   const int nd = sfes_->GetVSize();
   // Pack the rows this rank owns (true dofs, so shared nodes are
@@ -386,6 +400,125 @@ void SeaLevelOperator::WriteSurfaceField(const GridFunction& f,
       out << all[r + c] << (c + 1 < stride ? ',' : '\n');
     }
   }
+}
+
+std::vector<std::string> SeaLevelOperator::ReadSurfaceField(
+    GridFunction& f, const std::string& path, int column) const {
+  MFEM_VERIFY(f.FESpace() == sfes_.get(),
+              "SeaLevelOperator::ReadSurfaceField: a surface field "
+              "expected.");
+  const int sdim = surf_mesh_->SpaceDimension();
+  std::ifstream in(path);
+  MFEM_VERIFY(in,
+              "SeaLevelOperator::ReadSurfaceField: cannot open " << path);
+  std::string line;
+  MFEM_VERIFY(std::getline(in, line),
+              "SeaLevelOperator::ReadSurfaceField: " << path << " is empty");
+  std::vector<std::string> names;
+  {
+    std::stringstream ss(line);
+    std::string tok;
+    while (std::getline(ss, tok, ',')) {
+      names.push_back(tok);
+    }
+  }
+  MFEM_VERIFY(static_cast<int>(names.size()) > sdim + column,
+              "SeaLevelOperator::ReadSurfaceField: " << path
+                  << " has no value column " << column);
+  names.erase(names.begin(), names.begin() + sdim);
+
+  // Quantized-coordinate table of the file's rows: the quantum sits far
+  // below any node separation and far above the 16-digit print
+  // round-trip noise, and the lookup searches the neighbouring bins, so
+  // a coordinate on a bin boundary cannot be missed. Matching by
+  // coordinates makes the file independent of row order and of the rank
+  // count that wrote it.
+  const real_t q = 1e-9;
+  using Key = std::array<long long, 3>;
+  auto key_of = [&](const real_t* x) {
+    Key k{0, 0, 0};
+    for (int c = 0; c < sdim; c++) {
+      k[c] = llround(x[c] / q);
+    }
+    return k;
+  };
+  struct KeyHash {
+    std::size_t operator()(const Key& k) const {
+      std::size_t h = 1469598103934665603ull;
+      for (long long v : k) {
+        h ^= static_cast<std::size_t>(v);
+        h *= 1099511628211ull;
+      }
+      return h;
+    }
+  };
+  std::unordered_map<Key, real_t, KeyHash> table;
+  const std::size_t ncols = names.size() + sdim;
+  std::vector<real_t> row(ncols);
+  while (std::getline(in, line)) {
+    if (line.empty()) {
+      continue;
+    }
+    std::stringstream ss(line);
+    std::string tok;
+    std::size_t c = 0;
+    while (std::getline(ss, tok, ',') && c < ncols) {
+      row[c++] = std::stod(tok);
+    }
+    MFEM_VERIFY(c == ncols,
+                "SeaLevelOperator::ReadSurfaceField: short row in " << path);
+    table[key_of(row.data())] = row[sdim + column];
+  }
+
+  std::unique_ptr<mfem::FiniteElementSpace> vfes;
+  auto coords = NodalCoordinates(*surf_mesh_, *fec_, sdim, parallel_, vfes);
+  const int nd = sfes_->GetVSize();
+  for (int i = 0; i < nd; i++) {
+    real_t x[3] = {0.0, 0.0, 0.0};
+    for (int c = 0; c < sdim; c++) {
+      x[c] = (*coords)[i + c * nd];
+    }
+    const Key k0 = key_of(x);
+    bool found = false;
+    real_t value = 0.0;
+    const long long dlo = sdim == 3 ? -1 : 0, dhi = sdim == 3 ? 1 : 0;
+    for (long long dx = -1; dx <= 1 && !found; dx++) {
+      for (long long dy = -1; dy <= 1 && !found; dy++) {
+        for (long long dz = dlo; dz <= dhi && !found; dz++) {
+          const Key k{k0[0] + dx, k0[1] + dy, k0[2] + dz};
+          auto it = table.find(k);
+          if (it != table.end()) {
+            value = it->second;
+            found = true;
+          }
+        }
+      }
+    }
+    MFEM_VERIFY(found, "SeaLevelOperator::ReadSurfaceField: no row of "
+                           << path
+                           << " matches a surface node (a different mesh?)");
+    f[i] = value;
+  }
+  return names;
+}
+
+void SeaLevelOperator::Extend(const GridFunction& surface_field,
+                              GridFunction& out) const {
+  MFEM_VERIFY(surface_field.FESpace() == sfes_.get(),
+              "SeaLevelOperator::Extend: a surface field expected.");
+  Mesh* m = out.FESpace()->GetMesh();
+  out = 0.0;
+  if (m == top_mesh_) {
+    TransferPair(surface_field, out);
+    return;
+  }
+  MFEM_VERIFY(m == body_mesh_,
+              "SeaLevelOperator::Extend: the target lives on neither the "
+              "body nor the top mesh.");
+  GridFunction& hop = TopScratch();
+  hop = 0.0;
+  TransferPair(surface_field, hop);
+  TransferPair(hop, out);
 }
 
 real_t SeaLevelOperator::SurfaceIntegral(Coefficient& f) const {
@@ -454,8 +587,11 @@ class MigratingOceanState {
    * assemble on both meshes); evaluation dispatches on the
    * transformation's mesh. */
   void SetSeaLevelChange(std::unique_ptr<GridFunction> body,
-                         std::unique_ptr<GridFunction> parent) {
-    sl1_prev_ = std::move(sl1_body_);
+                         std::unique_ptr<GridFunction> parent,
+                         bool replace = false) {
+    if (!replace) {
+      sl1_prev_ = std::move(sl1_body_);
+    }
     sl1_body_ = std::move(body);
     sl1_parent_ = std::move(parent);
   }
@@ -615,7 +751,7 @@ real_t ShorelineMigration::ShorelineChange() {
   return norm(diff) / (norm(*cur) + 1e-300);
 }
 
-void ShorelineMigration::UpdateState() {
+void ShorelineMigration::UpdateState(bool replace) {
   // Nodal SL1 = (-(u.grad Phi0 + phi + psi) + Phi_g)/g on the body
   // scalar space, then transferred up to the parent, so the state is
   // evaluable wherever the water blocks assemble.
@@ -660,7 +796,7 @@ void ShorelineMigration::UpdateState() {
   {
     SubMesh::Transfer(*body, *parent);
   }
-  state_->SetSeaLevelChange(std::move(body), std::move(parent));
+  state_->SetSeaLevelChange(std::move(body), std::move(parent), replace);
 }
 
 bool ShorelineMigration::Solve(real_t t) {
@@ -680,23 +816,74 @@ bool ShorelineMigration::Solve(real_t t) {
     problem_.SetRelTol(base);
     return ok;
   };
+  auto root = [&]() {
+#ifdef MFEM_USE_MPI
+    if (parallel_) {
+      int rank = 0;
+      MPI_Comm_rank(comm_, &rank);
+      return rank == 0;
+    }
+#endif
+    return true;
+  };
+  auto trace = [&](const char* what, real_t value) {
+    if (options_.verbose && root()) {
+      mfem::out << "shoreline migration: " << what << " " << value
+                << ", Phi_g " << problem_.UniformPotentialTerm() << "\n";
+    }
+  };
 
   // The frozen-C pass (the state is empty, so C = C0): the production
   // answer when migration is off, the Picard seed otherwise.
   if (!solve_at(loose ? options_.inexact_max : base)) {
     return finish(false);
   }
+  trace("seed solved, tolerance",
+        loose ? options_.inexact_max : base);
+  real_t prev_change = std::numeric_limits<real_t>::infinity();
+  bool inexact_abandoned = false;
   for (int it = 0; it < options_.max_iterations; it++) {
     UpdateState();
     last_change_ = ShorelineChange();
+    // The contraction guard (the Options note): a loose pass whose SL1
+    // increment fails to contract may have been poisoned by the
+    // border-amplified solver error. Redo this iterate at full
+    // tolerance, measured against the same baseline — and abandon
+    // inexactness for the rest of the loop: with this operator and
+    // solver the amplification is a property of the configuration, so
+    // every further loose pass would poison the state again (observed:
+    // a non-sticky guard leaves the loop bouncing between flooded and
+    // dried shorelines). The tight loop is globally attracted — C is
+    // bounded and the water feedback is a weak contraction — so it
+    // recovers even from a poisoned seed.
+    // The absolute floor: an honest loose pass can move SL1 by about
+    // the loosest solver tolerance, so the benign rattle of the
+    // increments near convergence sits at ~inexact_max and must not
+    // fire the guard; a non-contracting move an order of magnitude
+    // bigger than any honest loose move is poison.
+    const real_t floor = 10.0 * options_.inexact_max;
+    if (loose && !inexact_abandoned && options_.guard > 0.0 &&
+        state_->Previous() && last_change_ > options_.guard * prev_change &&
+        last_change_ > floor) {
+      trace("guard fired at change", last_change_);
+      inexact_abandoned = true;
+      if (!solve_at(base)) {
+        return finish(false);
+      }
+      UpdateState(/*replace=*/true);
+      last_change_ = ShorelineChange();
+    }
+    trace("pass change", last_change_);
     if (last_change_ <= options_.tol) {
       break;
     }
+    prev_change = last_change_;
     problem_.RefreshWaterLoad();
     const real_t tol =
-        loose ? std::min(std::max(options_.inexact * last_change_, base),
-                         options_.inexact_max)
-              : base;
+        loose && !inexact_abandoned
+            ? std::min(std::max(options_.inexact * last_change_, base),
+                       options_.inexact_max)
+            : base;
     if (!solve_at(tol)) {
       return finish(false);
     }
@@ -712,6 +899,167 @@ bool ShorelineMigration::Solve(real_t t) {
     }
   }
   return finish(true);
+}
+
+// --- IceHistory --------------------------------------------------------------
+
+namespace detail {
+
+/** The stack's storage: each time's field on the surface space and its
+ * nodal extensions to the top and (when distinct) body meshes, so the
+ * coefficients evaluate wherever the load machinery assembles. */
+class IceStack {
+ public:
+  IceStack(SeaLevelOperator& sea, const std::string& path) {
+    auto first = detail::MakeGridFunction(&sea.SurfaceSpace());
+    const auto names = sea.ReadSurfaceField(*first, path, 0);
+    for (const auto& name : names) {
+      std::size_t pos = 0;
+      real_t t = 0.0;
+      bool ok = true;
+      try {
+        t = std::stod(name, &pos);
+      } catch (...) {
+        ok = false;
+      }
+      MFEM_VERIFY(ok && pos == name.size(),
+                  "IceHistory: the column name '"
+                      << name << "' of " << path << " is not a time.");
+      MFEM_VERIFY(times_.empty() || t > times_.back(),
+                  "IceHistory: the times of " << path << " must ascend.");
+      times_.push_back(t);
+    }
+    const int n = static_cast<int>(times_.size());
+    surface_.resize(n);
+    top_.resize(n);
+    body_.resize(n);
+    mfem::FiniteElementSpace* bfes = sea.BodyScalarSpace();
+    for (int k = 0; k < n; k++) {
+      surface_[k] = detail::MakeGridFunction(&sea.SurfaceSpace());
+      if (k == 0) {
+        *surface_[k] = *first;
+      } else {
+        sea.ReadSurfaceField(*surface_[k], path, k);
+      }
+      top_[k] = detail::MakeGridFunction(&sea.TopScalarSpace());
+      sea.Extend(*surface_[k], *top_[k]);
+      if (bfes) {
+        body_[k] = detail::MakeGridFunction(bfes);
+        sea.Extend(*surface_[k], *body_[k]);
+      }
+    }
+  }
+
+  int NumTimes() const { return static_cast<int>(times_.size()); }
+  real_t Time(int k) const { return times_[k]; }
+  const GridFunction& Surface(int k) const { return *surface_[k]; }
+
+  /** Bracketing pair and weight of time @p t, clamped to the stack. */
+  void Bracket(real_t t, int& k0, int& k1, real_t& a) const {
+    const int n = NumTimes();
+    if (t <= times_.front() || n == 1) {
+      k0 = k1 = 0;
+      a = 0.0;
+      return;
+    }
+    if (t >= times_.back()) {
+      k0 = k1 = n - 1;
+      a = 0.0;
+      return;
+    }
+    int k = 1;
+    while (times_[k] < t) {
+      k++;
+    }
+    k0 = k - 1;
+    k1 = k;
+    a = (t - times_[k0]) / (times_[k1] - times_[k0]);
+  }
+
+  real_t Value(ElementTransformation& T, const IntegrationPoint& ip,
+               int k) const {
+    const GridFunction* g = nullptr;
+    if (T.mesh == surface_[k]->FESpace()->GetMesh()) {
+      g = surface_[k].get();
+    } else if (T.mesh == top_[k]->FESpace()->GetMesh()) {
+      g = top_[k].get();
+    } else if (body_[k] && T.mesh == body_[k]->FESpace()->GetMesh()) {
+      g = body_[k].get();
+    }
+    MFEM_ASSERT(g, "IceStack: unknown evaluation mesh");
+    return g->GetValue(T, ip);
+  }
+
+ private:
+  std::vector<real_t> times_;
+  std::vector<std::unique_ptr<GridFunction>> surface_, top_, body_;
+};
+
+namespace {
+
+class IceStackCoefficient : public Coefficient {
+ public:
+  /** @p fixed >= 0 evaluates that field regardless of the time. */
+  IceStackCoefficient(IceStack& stack, bool change, int fixed = -1)
+      : stack_(stack), change_(change), fixed_(fixed) {}
+
+  real_t Eval(ElementTransformation& T, const IntegrationPoint& ip) override {
+    if (fixed_ >= 0) {
+      return stack_.Value(T, ip, fixed_);
+    }
+    int k0 = 0, k1 = 0;
+    real_t a = 0.0;
+    stack_.Bracket(GetTime(), k0, k1, a);
+    real_t v = (1.0 - a) * stack_.Value(T, ip, k0);
+    if (a != 0.0) {
+      v += a * stack_.Value(T, ip, k1);
+    }
+    if (change_) {
+      v -= stack_.Value(T, ip, 0);
+    }
+    return v;
+  }
+
+ private:
+  IceStack& stack_;
+  bool change_;
+  int fixed_;
+};
+
+}  // namespace
+
+}  // namespace detail
+
+IceHistory::IceHistory(SeaLevelOperator& sea, const std::string& path)
+    : stack_(std::make_unique<detail::IceStack>(sea, path)),
+      interp_(std::make_unique<detail::IceStackCoefficient>(*stack_, false)),
+      change_(std::make_unique<detail::IceStackCoefficient>(*stack_, true)) {}
+
+IceHistory::~IceHistory() = default;
+
+int IceHistory::NumTimes() const { return stack_->NumTimes(); }
+
+real_t IceHistory::Time(int k) const { return stack_->Time(k); }
+
+const GridFunction& IceHistory::Field(int k) const {
+  return stack_->Surface(k);
+}
+
+Coefficient& IceHistory::Interpolant() { return *interp_; }
+
+Coefficient& IceHistory::Change() { return *change_; }
+
+Coefficient& IceHistory::FieldCoefficient(int k) {
+  MFEM_VERIFY(k >= 0 && k < NumTimes(),
+              "IceHistory::FieldCoefficient: no field " << k);
+  if (fixed_.size() < static_cast<std::size_t>(NumTimes())) {
+    fixed_.resize(NumTimes());
+  }
+  if (!fixed_[k]) {
+    fixed_[k] =
+        std::make_unique<detail::IceStackCoefficient>(*stack_, false, k);
+  }
+  return *fixed_[k];
 }
 
 }  // namespace AdGIA

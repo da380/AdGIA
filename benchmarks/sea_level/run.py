@@ -26,8 +26,25 @@ builds the machinery; the resolved comparison belongs to the server
 campaign). The degree-1 row is listed separately: the reference-frame
 convention there has not yet been reconciled.
 
+--nonlinear (rung 3) adds shoreline migration: AdGIA's Picard loop
+(-mig) against pyslfp's nonlinear solver, both from the same initial
+state and ice change. The frozen/linear pair is solved too, so the
+report carries the migration effect delta = SL(migrating) - SL(frozen)
+on each side — the sharp probe, since the common linear part cancels.
+Convention note: pyslfp's nonlinear ocean updates are sharp where ours
+are smoothed over the `shore` width, so the delta comparison is
+shoreline-dominated at toy resolution and tightens as shore shrinks
+with h on the resolved ladder.
+
+--timings (no comparison) times the solve across the feature axis —
+the same melt load as a plain elastic solve (-no-water), with the
+water feedback, with rotation, and with shoreline migration — min and
+mean of --repeat runs, with ratios against the elastic control.
+
     python run.py --h 0.4 --order 2 --np 4 --lmax 32
     python run.py --model homogeneous --h 0.2 --order 2 --np 8
+    python run.py --nonlinear
+    python run.py --timings --repeat 5
 
 The build makes a launcher, <build>/benchmarks/sea_level/run, meant to
 be started there so that `runs` is in the build tree.
@@ -63,8 +80,9 @@ STATE = {
 
 
 def state_grids(em, rho_w_case, rho_i_case, shore):
-    """The initial state and the melt load on pyslfp's grid, in the
-    CASE's units (conversion happens at the comparison)."""
+    """The initial state, the ice-thickness change and the (frozen-C)
+    melt load on pyslfp's grid, in the CASE's units (conversion happens
+    at the comparison)."""
     lats, lons = np.meshgrid(em.lats(), em.lons(), indexing="ij")
     colat = np.deg2rad(90.0 - lats)
     t6 = (colat / STATE["cont_width"]) ** 6
@@ -77,8 +95,9 @@ def state_grids(em, rho_w_case, rho_i_case, shore):
     # at the pole: the factor is in the Cartesian coordinate).
     xdir = np.cos(np.deg2rad(lats)) * np.cos(np.deg2rad(lons))
     hemi = 0.5 * (1.0 + np.tanh(xdir / STATE["melt_width"]))
-    melt_load = -(1.0 - frac) * rho_i_case * STATE["melt"] * hemi * ice
-    return sl0, ice, melt_load
+    dice = -STATE["melt"] * hemi * ice
+    melt_load = (1.0 - frac) * rho_i_case * dice
+    return sl0, ice, dice, melt_load
 
 
 def rbf_to_grid(xyz, values, em):
@@ -94,6 +113,80 @@ def rbf_to_grid(xyz, values, em):
     rbf = RBFInterpolator(d, values, neighbors=min(64, values.size),
                           kernel="thin_plate_spline")
     return rbf(target).reshape(lats.shape)
+
+
+def degree_rows(adgia, ref, em, lmax):
+    """Per-degree amplitudes of the two gridded fields and their
+    difference (orthonormalised power), through min(8, lmax)."""
+    import pyshtools
+    ca = pyshtools.SHGrid.from_array(adgia, grid=em.grid).expand(
+        normalization="ortho")
+    cr = pyshtools.SHGrid.from_array(ref, grid=em.grid).expand(
+        normalization="ortho")
+    power_a, power_r = ca.spectrum(), cr.spectrum()
+    power_d = (ca - cr).spectrum()
+    return [
+        {"l": l, "adgia": float(np.sqrt(power_a[l])),
+         "pyslfp": float(np.sqrt(power_r[l])),
+         "diff": float(np.sqrt(power_d[l]))}
+        for l in range(min(8, lmax) + 1)
+    ]
+
+
+def timings(args, case, solve, rot_args):
+    """Time the solve across the feature axis: the same melt load as a
+    plain elastic solve, with the water feedback, with rotation, with
+    shoreline migration. Best (and mean) of --repeat runs each, ratios
+    against the elastic control; no pyslfp side."""
+    rows = [("elastic", ["-no-water"]),
+            ("water", []),
+            ("water_rotation", rot_args),
+            # Tight migration, as the comparison runs it on this stack
+            # (the loose path only pays the contraction guard's rescue
+            # here).
+            ("water_migration", ["-mig", "-mig-inexact", "0"])]
+    results = {}
+    for name, extra in rows:
+        secs, info = [], None
+        for _ in range(max(1, args.repeat)):
+            _, sljson = solve(f"timing_{name}_o{args.order}", extra,
+                              force=True)
+            if args.dry_run:
+                continue
+            info = json.loads(sljson.read_text())
+            secs.append(info["solve_seconds"])
+        if args.dry_run:
+            continue
+        row = {"solve_seconds_min": min(secs),
+               "solve_seconds_mean": sum(secs) / len(secs),
+               "iterations": info["iterations"]}
+        if info.get("migrate"):
+            row["mig_passes"] = info["mig_passes"]
+            row["mig_outer_iterations"] = info["mig_outer_iterations"]
+        results[name] = row
+    if args.dry_run:
+        return
+    base = results["elastic"]["solve_seconds_min"]
+    for row in results.values():
+        row["ratio_vs_elastic"] = row["solve_seconds_min"] / base
+    out = case / f"timings_o{args.order}.json"
+    out.write_text(json.dumps(
+        {"model": args.model, "h": args.h, "order": args.order,
+         "np": args.np, "repeat": args.repeat, "rows": results},
+        indent=2) + "\n")
+    print(f"\nsolve timings: {args.model}, h = {args.h:g}, "
+          f"order {args.order}, np {args.np}, best of {args.repeat}")
+    print(f"  {'configuration':<16} {'min (s)':>9} {'mean (s)':>9} "
+          f"{'x elastic':>10}  iterations")
+    for name, row in results.items():
+        note = (f" ({row['mig_passes']} extra passes, "
+                f"{row['mig_outer_iterations']} outer)"
+                if "mig_passes" in row else "")
+        print(f"  {name:<16} {row['solve_seconds_min']:>9.3f} "
+              f"{row['solve_seconds_mean']:>9.3f} "
+              f"{row['ratio_vs_elastic']:>10.2f}  "
+              f"{row['iterations']}{note}")
+    print(f"  written: {out}")
 
 
 
@@ -166,6 +259,15 @@ def main() -> None:
                    help="rotational feedback on both sides, with pyslfp's "
                         "Earth rotation rate and principal moments as the "
                         "shared data")
+    p.add_argument("--nonlinear", action="store_true",
+                   help="rung 3: shoreline migration (AdGIA -mig) against "
+                        "pyslfp's nonlinear solver; the frozen/linear pair "
+                        "is solved too, for the migration-effect delta")
+    p.add_argument("--timings", action="store_true",
+                   help="time the solve across the feature axis (elastic / "
+                        "water / rotation / migration) instead of comparing")
+    p.add_argument("--repeat", type=int, default=3,
+                   help="timing repetitions per configuration (--timings)")
     p.add_argument("--remake", action="store_true")
     p.add_argument("--force", action="store_true")
     p.add_argument("--dry-run", action="store_true")
@@ -209,37 +311,55 @@ def main() -> None:
                  log=None, dry_run=args.dry_run)
         if not ok:
             raise SystemExit(f"{case}: make_case.py failed")
+    rot_args = ["-Omega", f"{Omega_case}", "-C1", f"{A_case}",
+                "-C2", f"{A_case}", "-C3", f"{C_case}"]
+    base_cmd = [args.mpiexec or "mpiexec", "-np", str(args.np),
+                str(programs / "sea_level_benchmark"),
+                "-c", str(case / "case.json"), "-o", str(args.order),
+                "-method", "dahlen",
+                "-rhow", f"{rho_w_case}", "-rhoi", f"{rho_i_case}",
+                "-ocean-depth", f"{STATE['ocean_depth']}",
+                "-cont-amp", f"{STATE['cont_amp']}",
+                "-cont-width", f"{STATE['cont_width']}",
+                "-cap-amp", f"{STATE['cap_amp']}",
+                "-cap-width", f"{STATE['cap_width']}",
+                "-melt", f"{STATE['melt']}",
+                "-melt-width", f"{STATE['melt_width']}",
+                "-shore", f"{shore}"]
+
+    def solve(tag, extra, force=None):
+        """One driver run (files reused unless forced); the paths of the
+        fingerprint CSV and the scalars JSON."""
+        slcsv = case / f"sea_level_{tag}.csv"
+        sljson = case / f"sea_level_{tag}.json"
+        if (args.force if force is None else force) or not sljson.exists():
+            ok = run(base_cmd + extra +
+                     ["-slcsv", str(slcsv), "-out", str(sljson)],
+                     log=case / f"log_{tag}.txt", dry_run=args.dry_run)
+            if not ok:
+                raise SystemExit("sea_level_benchmark failed")
+        return slcsv, sljson
+
+    if args.timings:
+        timings(args, case, solve, rot_args)
+        return
+
     tag = f"o{args.order}" + ("_rot" if args.rot else "")
-    slcsv = case / f"sea_level_{tag}.csv"
-    sljson = case / f"sea_level_{tag}.json"
-    if args.force or not sljson.exists():
-        mpiexec = args.mpiexec or "mpiexec"
-        cmd = [mpiexec, "-np", str(args.np),
-               str(programs / "sea_level_benchmark"),
-               "-c", str(case / "case.json"), "-o", str(args.order),
-               "-method", "dahlen",
-               "-rhow", f"{rho_w_case}", "-rhoi", f"{rho_i_case}",
-               "-ocean-depth", f"{STATE['ocean_depth']}",
-               "-cont-amp", f"{STATE['cont_amp']}",
-               "-cont-width", f"{STATE['cont_width']}",
-               "-cap-amp", f"{STATE['cap_amp']}",
-               "-cap-width", f"{STATE['cap_width']}",
-               "-melt", f"{STATE['melt']}",
-               "-melt-width", f"{STATE['melt_width']}",
-               "-shore", f"{shore}",
-               "-slcsv", str(slcsv), "-out", str(sljson)]
-        if args.rot:
-            cmd += ["-Omega", f"{Omega_case}", "-C1", f"{A_case}",
-                    "-C2", f"{A_case}", "-C3", f"{C_case}"]
-        ok = run(cmd, log=case / f"log_{tag}.txt",
-                 dry_run=args.dry_run)
-        if not ok:
-            raise SystemExit("sea_level_benchmark failed")
+    slcsv, sljson = solve(tag, rot_args if args.rot else [])
+    if args.nonlinear:
+        # The migration runs tight (-mig-inexact 0): this solver stack
+        # amplifies a loose residual into an O(tolerance) absolute error
+        # in Phi_g (the library's contraction guard would rescue the
+        # loop, at more passes than solving tight from the start).
+        slcsv_nl, sljson_nl = solve(
+            tag + "_nl",
+            (rot_args if args.rot else []) + ["-mig", "-mig-inexact", "0"])
     if args.dry_run:
         return
 
     # The pyslfp fingerprint of the same problem.
-    sl0, ice, melt_load = state_grids(em, rho_w_case, rho_i_case, shore)
+    sl0, ice, dice, melt_load = state_grids(em, rho_w_case, rho_i_case,
+                                            shore)
     to_ps_len = L / ps.length_scale
     to_ps_sigma = (D * L) / (ps.density_scale * ps.length_scale)
     import pyshtools
@@ -288,20 +408,7 @@ def main() -> None:
         m_ad = [o / Omega_case for o in om_case]
         report["omega_over_Omega"] = {"adgia": m_ad, "pyslfp": m_ps}
     # Per-degree amplitudes of both fields and the difference.
-    ca = pyshtools.SHGrid.from_array(adgia, grid=em.grid).expand(
-        normalization="ortho")
-    cr = pyshtools.SHGrid.from_array(ref, grid=em.grid).expand(
-        normalization="ortho")
-    power_a = ca.spectrum()
-    power_r = cr.spectrum()
-    power_d = (ca - cr).spectrum()
-    lshow = min(8, args.lmax)
-    report["degrees"] = [
-        {"l": l, "adgia": float(np.sqrt(power_a[l])),
-         "pyslfp": float(np.sqrt(power_r[l])),
-         "diff": float(np.sqrt(power_d[l]))}
-        for l in range(lshow + 1)
-    ]
+    report["degrees"] = degree_rows(adgia, ref, em, args.lmax)
     (case / f"report_{tag}.json").write_text(
         json.dumps(report, indent=2) + "\n")
     figure(case / f"fingerprint_{tag}.png", em, adgia, ref, frac,
@@ -326,6 +433,84 @@ def main() -> None:
               "   (wander rows amplification-prone, reported not gated)")
     print(f"  report: {case / f'report_{tag}.json'}")
     print(f"  figure: {case / f'fingerprint_{tag}.png'}")
+
+    if not args.nonlinear:
+        return
+
+    # Rung 3: shoreline migration against pyslfp's nonlinear solver, from
+    # the same initial state and ice-thickness change. The primary row is
+    # the migrating-fingerprint comparison; the sharp probe is the
+    # migration effect delta = SL(migrating) - SL(frozen) on each side,
+    # where the common linear part cancels. pyslfp's ocean updates are
+    # sharp where ours are smoothed over `shore`, so the delta difference
+    # is shoreline-dominated at toy resolution.
+    sle = pyslfp.SeaLevelEquation(em)
+    dice_g = pyshtools.SHGrid.from_array(dice * to_ps_len, grid=em.grid)
+    _, sl_nl, _, _, omega_nl = sle.solve_nonlinear_equation(
+        state, ice_thickness_change=dice_g, rotational_feedbacks=args.rot)
+    ref_nl = sl_nl.data * ps.length_scale
+
+    rows_nl = np.genfromtxt(slcsv_nl, delimiter=",", names=True)
+    xyz_nl = np.column_stack([rows_nl["x"], rows_nl["y"], rows_nl["z"]])
+    adgia_nl = rbf_to_grid(xyz_nl, np.asarray(rows_nl["value"]), em) * L
+
+    diff_nl = adgia_nl - ref_nl
+    scale_nl = wrms(ref_nl, frac)
+    delta_a, delta_p = adgia_nl - adgia, ref_nl - ref
+    delta_scale = wrms(delta_p, frac)
+    report_nl = {
+        "model": args.model, "h": args.h, "order": args.order,
+        "lmax": args.lmax, "rot": args.rot,
+        "ref_ocean_rms_m": scale_nl,
+        "diff_ocean_rms_m": wrms(diff_nl, frac),
+        "diff_ocean_rel": wrms(diff_nl, frac) / scale_nl,
+        "diff_max_m": float(np.max(np.abs(diff_nl))),
+        "delta_ocean_rms_m": {"adgia": wrms(delta_a, frac),
+                              "pyslfp": delta_scale},
+        "delta_diff_ocean_rel": wrms(delta_a - delta_p, frac) / delta_scale,
+        "adgia": json.loads(sljson_nl.read_text()),
+        "degrees": degree_rows(adgia_nl, ref_nl, em, args.lmax),
+    }
+    if args.rot:
+        report_nl["omega_over_Omega"] = {
+            "adgia": [o / Omega_case
+                      for o in report_nl["adgia"].get("omega", [])],
+            "pyslfp": (np.asarray(omega_nl) /
+                       ps.rotation_frequency).tolist()}
+    (case / f"report_{tag}_nl.json").write_text(
+        json.dumps(report_nl, indent=2) + "\n")
+    figure(case / f"fingerprint_{tag}_nl.png", em, adgia_nl, ref_nl, frac,
+           report_nl)
+    # The migration effect, drawn with the same four panels (per-degree
+    # rows and the headline number are the delta's own).
+    report_delta = {
+        "model": args.model, "h": args.h, "order": args.order,
+        "lmax": args.lmax,
+        "diff_ocean_rel": report_nl["delta_diff_ocean_rel"],
+        "degrees": degree_rows(delta_a, delta_p, em, args.lmax),
+    }
+    figure(case / f"migration_effect_{tag}.png", em, delta_a, delta_p,
+           frac, report_delta)
+
+    mg = report_nl["adgia"]
+    print(f"\nnonlinear (rung 3): AdGIA {mg.get('mig_passes', '?')} extra "
+          f"passes (relative SL1 increment {mg.get('mig_last_change', 0):.2e}, "
+          f"{mg.get('mig_outer_iterations', '?')} outer iterations)")
+    print(f"  migrating fingerprints: ocean-RMS rel diff "
+          f"{report_nl['diff_ocean_rel']:.3f}")
+    print(f"  migration effect:  adgia {report_nl['delta_ocean_rms_m']['adgia']:.4g} m, "
+          f"pyslfp {delta_scale:.4g} m  "
+          f"(rel diff {report_nl['delta_diff_ocean_rel']:.3f}; "
+          f"shoreline-convention-dominated at toy resolution)")
+    if args.rot:
+        mm = report_nl["omega_over_Omega"]
+        print("  omega/Omega  adgia  " +
+              " ".join(f"{v: .4g}" for v in mm["adgia"]))
+        print("               pyslfp " +
+              " ".join(f"{v: .4g}" for v in mm["pyslfp"]))
+    print(f"  report: {case / f'report_{tag}_nl.json'}")
+    print(f"  figures: {case / f'fingerprint_{tag}_nl.png'}, "
+          f"{case / f'migration_effect_{tag}.png'}")
 
 
 if __name__ == "__main__":

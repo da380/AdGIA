@@ -13,8 +13,11 @@ version comes for free through `ViscoelasticOperator` in the usual way.
 `pyslfp` (`~/dev/pyslfp`) is the cross-validation reference (pseudo-
 spectral, Anderson-accelerated load iteration, linear and nonlinear
 variants, rotation via MacCullagh + tidal Love numbers) and the source of
-the analytical-test-state trick and the ice-ng data files. NetCDF
-ingestion is deferred.
+the analytical-test-state trick and the ice-ng data files. NetCDF stays
+on the Python side for good (David, 10 Oct): no C++ NetCDF dependency —
+pyslfp's Zenodo downloader and `IceNG` loader are borrowed wholesale,
+with a small export step writing what the C++ needs into the build tree
+(see WP6).
 
 ## The formulation of record
 
@@ -257,10 +260,21 @@ resolution ladders and ice-ng runs go to the server.
 - **Rung 2 — sea level and rotation composed.** Rotating fingerprints
   vs pyslfp; the eq.-(40)-style invariance checks.
 - **Rung 3 — shoreline migration.** Vs pyslfp's nonlinear solver on
-  analytical states; Picard iteration counts recorded.
+  analytical states; Picard iteration counts recorded. *MACHINERY BUILT
+  10 Oct 2026 (`run.py --nonlinear`: AdGIA `-mig` against
+  `SeaLevelEquation.solve_nonlinear_equation` from the same state and
+  ice change, with the frozen/linear pair solved too so the report
+  carries the migration-effect delta on each side). Toy-size status:
+  the migrating fingerprints agree at the frozen pair's grade (1.4% at
+  h 0.4/o2/lmax 16), validating the machinery, but the deltas
+  themselves are resolution-starved — the moving strip is tens of km,
+  below both the toy FE mesh and pyslfp's sharp ocean function on an
+  lmax-16 grid — so the resolved numbers are SERVER-CAMPAIGN material
+  and also want the coastline-refined meshes
+  (doc/planning/planetmodel_coastline_sizing_plan.md). Agreed with
+  David 10 Oct: park the numbers there; don't tune the toy comparison.*
 - **Then viscoelastic**: composition smoke + conservation over a loading
-  history; first ice-ng demo (data via pyslfp's local files, exported to
-  our sampling by a small Python step — no C++ NetCDF dependency yet).
+  history; first ice-ng demo (data flow settled 10 Oct, see WP6).
 
 ## Work packages (chunked as usual; review+commit per chunk)
 
@@ -316,7 +330,97 @@ Three separately-testable couplings, built in order of complexity
   economy grows with pass count). The loop converges in ≲ 3 extra
   passes on the test states.
   `sea_level_fingerprint -mig` demonstrates it.
-- **WP6** — viscoelastic composition + ice-history demo.
+  **Contraction guard added 10 Oct 2026** (found by the rung-3
+  benchmark, whose solver stack diverged the loose loop): the
+  self-correction argument fails when the loose pass's error is
+  amplified through the bordered Φ_g recovery into an O(tolerance)
+  ABSOLUTE error — a uniform SL1 shift of several smoothing bands
+  floods or dries shorelines globally, and since the error enters the
+  next operator through C (not just the iterate), the Picard loop
+  leaves its basin and bounces between flooded and dried states. The
+  guard (`Options::guard`, default 0.95): a loose pass whose SL1
+  increment fails to contract — change_k > guard·change_{k-1} — AND
+  exceeds the benign-rattle floor of 10×`inexact_max` (an honest loose
+  pass moves SL1 by about the loose tolerance; near convergence the
+  increments rattle at that floor and grind down by themselves) is
+  re-solved at full tolerance against the same baseline, and
+  inexactness is abandoned for the remainder of the loop — sticky,
+  because the amplification is a property of the configuration, and
+  the tight loop is globally attracted (C bounded, weak feedback), so
+  it recovers even from a poisoned seed. Measured on the benchmark
+  stack: unguarded loose loop diverges (increment ~1.3 at the pass
+  cap); guarded converges to the tight fixed point in 5 passes;
+  tight-from-the-start takes 2. Gated serially and in parallel
+  (GuardEscalatesToTight; the benign rattle verified not to fire it on
+  the healthy states, preserving the inexact economy).
+- **WP6** — viscoelastic composition + ice-history demo. **DONE 10 Oct
+  2026 (uncommitted, review queue).**
+  *Composition (gated serial + np 1/2/4, TestSeaLevelViscoelastic +
+  Par)*: the design holds with no library change — SetWaterLoad's
+  displacement block rides the registered stiffness integrators, so
+  SetRelaxationWeights() reassembles it with each effective modulus,
+  the potential/coupling/border pieces are modulus-independent, and
+  every stepper solve routes through the bordered SolveLinearSystem().
+  Gates: instantaneous Maxwell response ≡ elastic water solve (solver
+  grade); the Φ_g mass row holds at every step of a Heaviside
+  relaxation history (route grade: ~1e-5 o1, ~1e-6 o2, ~1e-3 3-D o1
+  faceted — the WP3 hierarchy) while the body visibly relaxes; the
+  full Maxwell + water + rotation stack composes.
+  *Ingest (the exchange format's second leg)*:
+  `SeaLevelOperator::ReadSurfaceField` (coordinate-matched, quantized
+  with neighbour-bin lookup — row order and writing rank count
+  irrelevant; exact round-trip gated serial + parallel) and `Extend()`
+  (the reverse of Restrict); `IceHistory` reads a multi-column time
+  stack (header names = ascending model times), extends every column
+  to the body/top meshes, and serves `Interpolant()`, `Change()` and
+  the time-pinned `FieldCoefficient(k)` as body-evaluable
+  time-dependent Coefficients (AssembleForce's SetTime drives the
+  bracketing).
+  *Export*: `postprocess/ice_ng_to_surface.py` (pyslfp ≥ 2.2.0 added
+  to postprocess deps; launcher wired) — `IceNG` +`ensure_data`
+  borrowed wholesale, bilinear sampling of the wrapped DH grids at the
+  node directions, `--length-scale/--time-scale` for a run's units.
+  Verified against the real cache: LGM 3.7 km max ice over 9.6 % of
+  the sphere shrinking to present 3.2 km over 4.3 %.
+  *Demo*: `examples/ice_age_loading.cpp` — the three-step chain
+  (nodes out → pyslfp sampling → Maxwell water-load stepping through
+  the deglaciation), frozen C0 at the oldest date's flotation, history
+  CSV + endpoint fingerprint + GLVis; np4 ≡ serial at solver grade
+  (the stepped bordered solves amplify Krylov noise — the default
+  tolerance is 1e-11 for that reason, verified by the
+  tolerance-scaling of the np differences). Toy rheology: qualitative
+  by design; resolved runs = server.
+  **Original data-flow decision (10 Oct, David): borrow pyslfp's
+  machinery, build nothing native.**
+  - *Download/cache*: pyslfp's `ensure_data("ICE7G")` (Zenodo-backed,
+    retry logic, cached in its own config DATADIR, `refresh=` for
+    updates) — never reimplemented, and the raw NetCDF files are
+    **not** copied into our build tree; the cache is pyslfp's.
+  - *Load/interpolate*: pyslfp's `IceNG` class (per-date file
+    resolution for ICE5G/6G/7G, linear interpolation between time
+    slices, flotation logic) does the reading.
+  - *Export step* (the only new code, Python): a script that samples
+    ice thickness / topography at the mesh's surface nodes for a
+    requested date list and writes the nodal stack into
+    `<build>/…` — the exact inverse of `WriteSurfaceField` +
+    `surface_to_netcdf.py`, riding the same launcher.sh.in/CMake
+    pattern. Spatial sampling from the 1° grids via
+    RegularGridInterpolator with longitude wrap (the data is on a
+    regular lat-lon grid; the RBF lesson applies to scattered nodes →
+    grid, not this direction). Home: `postprocess/` (it is the same
+    surface-field toolbox run in reverse), with `pyslfp>=2.2.0` as a
+    dependency there — pyslfp is already a published dep of
+    `adgia-benchmarks`, so nothing new enters the ecosystem.
+  - *C++ side*: a `ReadSurfaceField` counterpart (nodal CSV → surface
+    GridFunction, the mirror of the exporter incl. the parallel
+    true-dof story) plus a small `IceHistory` that holds the date
+    stack and hands out the load coefficient at a requested time for
+    the viscoelastic stepper.
+  - *Mesh resolution*: coastline-adaptive lateral refinement is a
+    planetmodel feature, planned separately in
+    `doc/planning/planetmodel_coastline_sizing_plan.md` (10 Oct) —
+    David carries it to that repo; the ice-ng demo does not gate on
+    it.
 - **WP7** — the **referential leg**: port the boundary terms (the ζζ
   collapse), gate against the mixed results; the M&A generalised
   rotational theory hangs off this leg as the future extension.

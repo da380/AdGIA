@@ -8,6 +8,7 @@ dependencies = [
     "scipy (>=1.13)",
     "matplotlib (>=3.9.0)",
     "netCDF4 (>=1.6)",
+    "pyslfp (>=2.2.0)",
 ]
 
 [project.optional-dependencies]

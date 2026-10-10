@@ -19,6 +19,7 @@
 #include <iostream>
 #include <memory>
 #include <numbers>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -34,6 +35,12 @@ namespace {
 
 int num_checks = 0;
 int num_fails = 0;
+
+double GlobalSum(double v) {
+  double g = 0.0;
+  MPI_Allreduce(&v, &g, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+  return g;
+}
 
 double GlobalMax(double v) {
   double g = 0.0;
@@ -151,13 +158,72 @@ void RunCase(int dim, int order, bool rank0_partition,
       while (std::getline(in, line)) {
         rows += 1.0;
       }
-      std::remove(path.c_str());
     }
     MPI_Bcast(&rows, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
     const double expected =
         static_cast<ParFiniteElementSpace&>(sea.SurfaceSpace())
             .GlobalTrueVSize();
     Check(std::abs(rows - expected), 0.0, label + ": export row count");
+
+    // The ingest leg: every rank reads the root's file back and matches
+    // its own local nodes by coordinates (any partitioning).
+    MPI_Barrier(MPI_COMM_WORLD);
+    ParGridFunction back(
+        static_cast<ParFiniteElementSpace*>(&sea.SurfaceSpace()));
+    back = 0.0;
+    sea.ReadSurfaceField(back, path);
+    back -= field;
+    Check(GlobalMax(back.Normlinf()), 1e-12, label + ": export round-trip");
+
+    // A two-time stack from the same file: IceHistory interpolates
+    // between its columns, evaluable on the body side too.
+    const std::string stacked = "ice_history_par.csv";
+    if (Mpi::Root()) {
+      std::ifstream in(path);
+      std::ofstream out(stacked);
+      out.precision(16);
+      std::string line;
+      std::getline(in, line);  // header
+      std::stringstream hs(line);
+      int ncoord = -1;  // columns before "value"
+      {
+        std::string tok;
+        ncoord = 0;
+        while (std::getline(hs, tok, ',') && tok != "value") {
+          ncoord++;
+        }
+      }
+      out << (ncoord == 2 ? "x,y,0,2\n" : "x,y,z,0,2\n");
+      while (std::getline(in, line)) {
+        const auto comma = line.rfind(',');
+        const double v = std::stod(line.substr(comma + 1));
+        out << line.substr(0, comma) << ',' << v << ',' << 3.0 * v << '\n';
+      }
+    }
+    MPI_Barrier(MPI_COMM_WORLD);
+    {
+      IceHistory ice(sea, stacked);
+      Check(ice.NumTimes() - 2.0, 0.0, label + ": stack times");
+      GridFunctionCoefficient fc(&field);
+      ParLinearForm lf(
+          static_cast<ParFiniteElementSpace*>(&sea.SurfaceSpace()));
+      lf.AddDomainIntegrator(new DomainLFIntegrator(fc));
+      lf.Assemble();
+      const double s0 = GlobalSum(lf.Sum());
+      Coefficient& I = ice.Interpolant();
+      I.SetTime(1.0);  // the midpoint: 2 field
+      ParLinearForm li(
+          static_cast<ParFiniteElementSpace*>(&sea.SurfaceSpace()));
+      li.AddDomainIntegrator(new DomainLFIntegrator(I));
+      li.Assemble();
+      Check(GlobalSum(li.Sum()) - 2.0 * s0, 1e-10 * std::abs(s0),
+            label + ": stack midpoint integral");
+    }
+    MPI_Barrier(MPI_COMM_WORLD);
+    if (Mpi::Root()) {
+      std::remove(path.c_str());
+      std::remove(stacked.c_str());
+    }
   }
 
   // Half-flooded ocean.

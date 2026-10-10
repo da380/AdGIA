@@ -124,7 +124,7 @@ struct Run {
 Run Migrate(Case& c, VectorCoefficient& grad_phi0, Coefficient& sl0,
             Coefficient& ice0, Coefficient& dice, bool migrate,
             bool rotate = false, double shore = kShore,
-            double inexact = 0.1) {
+            double inexact = 0.1, double guard = 0.5) {
   Run r;
   r.p = c.Problem();
   if (rotate) {
@@ -143,6 +143,7 @@ Run Migrate(Case& c, VectorCoefficient& grad_phi0, Coefficient& sl0,
   opt.tol = 1e-6;
   opt.shore = shore;
   opt.inexact = inexact;
+  opt.guard = guard;
   r.mig = std::make_unique<ShorelineMigration>(
       *r.p, grad_phi0, sl0, ice0, dice, kRhoW, kRhoI, c.surface, opt);
   EXPECT_TRUE(r.mig->Solve(0.0));
@@ -304,6 +305,33 @@ TEST_P(ShorelineTest, InexactMatchesTight) {
             << tight.mig->TotalOuterIterations() << "\n";
   EXPECT_LE(loose.mig->TotalOuterIterations(),
             tight.mig->TotalOuterIterations());
+}
+
+TEST_P(ShorelineTest, GuardEscalatesToTight) {
+  const auto [dim, order] = GetParam();
+  if (dim == 3 && order > 1) {
+    GTEST_SKIP() << "covered at order 1";
+  }
+  Case c(dim, order);
+  auto grad_phi0 = c.GradPhi0();
+  FunctionCoefficient sl0(SL0), ice0(Ice0);
+  FunctionCoefficient dice([](const Vector& x) { return -0.5 * Ice0(x); });
+
+  // A vanishing guard fraction trips on the first measurable pass and
+  // abandons inexactness (the sticky escalation of the Options note):
+  // the run must land on the tight loop's fixed point, exercising the
+  // re-solve-and-re-measure path that rescues a border-poisoned loose
+  // pass on solver stacks that amplify (the sea-level benchmark's).
+  auto guarded = Migrate(c, grad_phi0, sl0, ice0, dice, true, false,
+                         kShore, 0.1, 1e-12);
+  auto tight = Migrate(c, grad_phi0, sl0, ice0, dice, true, false, kShore,
+                       0.0);
+  EXPECT_LE(guarded.change, 1e-6);
+  GridFunction du(guarded.p->Displacement());
+  du -= tight.p->Displacement();
+  const double rel =
+      L2Norm(du) / (L2Norm(tight.p->Displacement()) + 1e-30);
+  EXPECT_LT(rel, 1e-5);
 }
 
 TEST_P(ShorelineTest, ComposesWithRotation) {

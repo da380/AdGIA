@@ -272,6 +272,24 @@ taken.
 `./sea_level_fingerprint`, `./sea_level_fingerprint -melt 1.0 -mig`,
 `./sea_level_fingerprint -m ../data/elastogravity_2d.msh`
 
+**`ice_age_loading`**: the ICE-7G deglaciation on a Maxwell planet —
+the surface exchange chain end to end. Step 1 (no `-ice`) exports the
+surface node CSV; step 2 samples the real ice history at those nodes
+(`<build>/postprocess/ice_ng_to_surface`, pyslfp's downloader caching
+the data); step 3 reads the time stacks back (`IceHistory`), freezes
+the ocean function at the oldest date's flotation and steps the
+viscoelastic water-load solve through the history
+(`ExponentialTrapezoidSolver`; the grounded-ice load
+`rho_i (1 - C0) dI(t)` follows the stack's linear time interpolation).
+Prints the eustatic equivalent, ocean-mean sea level, uniform term and
+displacement norm per step; writes the history CSV (`plot_csv.py`) and
+the endpoint fingerprint for the NetCDF/cartopy map chain. The body is
+the toy homogeneous planet, so the output is qualitative — real
+geography on a model rheology; resolved runs belong to the server.
+`./ice_age_loading`, then the two printed `ice_ng_to_surface` calls,
+then `./ice_age_loading -ice ice_age_nodes_ice.csv -state
+ice_age_nodes_state.csv`
+
 ### Fluids and interfaces
 
 **`gauged_fluid_cavity`**: an elastic body with a fluid core under a

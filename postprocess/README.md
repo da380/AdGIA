@@ -12,3 +12,15 @@ for cartopy and pyshtools).
   the file directly. `--plot` writes a quick-look map (Robinson with
   coastlines when cartopy is installed). GLVis and ParaView have no
   cartographic projections; this is the route to map-quality figures.
+
+- `ice_ng_to_surface.py` — the ingest leg: samples an ICE-5G/6G/7G
+  field (ice thickness, topography or sea level) at the nodes of an
+  exported surface CSV for a list of dates, and writes the time-stack
+  CSV that `IceHistory` reads (one value column per time, the header
+  naming each column by ascending model time). The data files are
+  pyslfp's: its Zenodo downloader fetches and caches them in its own
+  data directory on first use — nothing is bundled or copied here — and
+  its `IceNG` loader does the per-date file resolution and time
+  interpolation. `--length-scale` (metres per length unit) and
+  `--time-scale` (ka per time unit) put the output in a run's own
+  units. `examples/ice_age_loading.cpp` is the end-to-end chain.

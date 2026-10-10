@@ -21,14 +21,21 @@
 // fingerprint carries non-zonal harmonics (order m != 0) as well.
 //
 // run.py passes the same constants to the pyslfp side, so the two
-// solvers see one problem. Shorelines are frozen (first-order exact) and
-// rotation is off (WP4). The surface gravity entering the ocean weight
-// w = rho_w C0 / g is the case's own (G M / a^2).
+// solvers see one problem. Shorelines are frozen (first-order exact)
+// unless -mig runs the WP5 Picard loop (rung 3: against pyslfp's
+// nonlinear solver, whose ocean-function updates are SHARP where ours
+// are smoothed over -shore — a convention difference that lives at the
+// shoreline and shrinks with the smoothing on the resolved ladder).
+// Rotation is off unless -Omega (WP4). The surface gravity entering the
+// ocean weight w = rho_w C0 / g is the case's own (G M / a^2).
+// -no-water applies the same melt load WITHOUT the water feedback (a
+// plain elastic loading solve) — the control row of the timing sweep,
+// quantifying what the sea-level machinery adds to a solve.
 //
 // Output: the sea-level change as a nodal CSV
 // (SeaLevelOperator::WriteSurfaceField) and a JSON of scalars (the
 // uniform term, ocean area, eustatic equivalent, ocean mean, sizes,
-// iterations, times).
+// iterations, times, migration statistics).
 //
 // Options (defaults in brackets): the case options of
 // benchmark_case.hpp (-c, -o, ...; -method must stay dahlen) plus
@@ -40,6 +47,11 @@
 //                   rho_w*SL [1e-5]
 //   -Omega          rotation rate, case units [0: rotation off]
 //   -C1 -C2 -C3     principal moments, case units [0, 0, 0]
+//   -mig            shoreline migration (Picard on C; off = frozen C0)
+//   -mig-tol        migration stop, relative SL1 increment [1e-3]
+//   -mig-iters      migration pass cap [12]
+//   -no-water       melt load without the water feedback (elastic
+//                   control; incompatible with -mig)
 //   -slcsv          the fingerprint CSV [sea_level.csv]
 //   -out            the scalars JSON [sea_level.json]
 //
@@ -50,6 +62,7 @@
 #include <cmath>
 #include <fstream>
 #include <iostream>
+#include <memory>
 
 #include "benchmark_case.hpp"
 
@@ -100,10 +113,13 @@ double OceanWeight(const Vector& x) {
 // The melt unloads the +x hemisphere of the cap, smoothly: the factor
 // (1 + tanh(x0/width))/2 is expressed in the Cartesian coordinate, so
 // it is regular at the pole.
-double MeltLoad(const Vector& x) {
+double IceChange(const Vector& x) {
   const double hemi = 0.5 * (1.0 + std::tanh(x[0] / g_melt_width));
-  return -(1.0 - OceanFraction(x)) * g_rho_i * g_melt * hemi *
-         IceThickness(x);
+  return -g_melt * hemi * IceThickness(x);
+}
+
+double MeltLoad(const Vector& x) {
+  return (1.0 - OceanFraction(x)) * g_rho_i * IceChange(x);
 }
 
 }  // namespace
@@ -115,6 +131,13 @@ int main(int argc, char* argv[]) {
   CaseOptions options;
   const char* slcsv = "sea_level.csv";
   const char* out = "sea_level.json";
+  bool migrate = false;
+  bool water = true;
+  double mig_tol = 1e-3;
+  double mig_inexact = 0.1;
+  double mig_inexact_max = 1e-3;
+  bool mig_verbose = false;
+  int mig_iters = 12;
   OptionsParser args(argc, argv);
   options.Add(args);
   args.AddOption(&g_rho_w, "-rhow", "--water-density",
@@ -144,6 +167,27 @@ int main(int argc, char* argv[]) {
   args.AddOption(&g_C1, "-C1", "--moment-1", "Principal moment C1.");
   args.AddOption(&g_C2, "-C2", "--moment-2", "Principal moment C2.");
   args.AddOption(&g_C3, "-C3", "--moment-3", "Principal moment C3.");
+  args.AddOption(&migrate, "-mig", "--migrate", "-no-mig", "--no-migrate",
+                 "Shoreline migration (Picard on the ocean function; off: "
+                 "frozen C0, first-order exact).");
+  args.AddOption(&mig_tol, "-mig-tol", "--migration-tolerance",
+                 "Migration stop: relative surface-L2 SL1 increment.");
+  args.AddOption(&mig_iters, "-mig-iters", "--migration-iterations",
+                 "Migration pass cap.");
+  args.AddOption(&mig_inexact, "-mig-inexact", "--migration-inexact",
+                 "Inexact Picard factor (0: every pass at full tolerance).");
+  args.AddOption(&mig_inexact_max, "-mig-inexact-max",
+                 "--migration-inexact-max",
+                 "Loosest per-pass relative tolerance of the inexact "
+                 "Picard.");
+  args.AddOption(&mig_verbose, "-mig-verbose", "--migration-verbose",
+                 "-no-mig-verbose", "--no-migration-verbose",
+                 "Per-pass migration trace (tolerances, increments, "
+                 "Phi_g, guard events).");
+  args.AddOption(&water, "-water", "--water-load", "-no-water",
+                 "--no-water-load",
+                 "Water-load feedback; off applies the same melt load as a "
+                 "plain elastic surface load (the timing control).");
   args.AddOption(&slcsv, "-slcsv", "--sea-level-csv",
                  "Output CSV of the fingerprint's nodal values.");
   args.AddOption(&out, "-out", "--output", "Output JSON of the scalars.");
@@ -157,13 +201,44 @@ int main(int argc, char* argv[]) {
   MFEM_VERIFY(std::string(options.method) == "dahlen" && !options.gauged,
               "sea_level_benchmark: the water load lives on the plain "
               "Eulerian problem (-method dahlen).");
+  MFEM_VERIFY(water || !migrate,
+              "sea_level_benchmark: -mig needs the water load (-water)");
 
   Case c(options);
   g_gravity = c.gravity;
   const Array<int>& surface = c.analyses[c.surface].radial->Marker();
 
+  // grad Phi0 = (g/a) x, exact at the surface (only surface values
+  // enter the restriction and the migration's flotation criterion).
+  const double ga = c.gravity / c.radius;
+  VectorFunctionCoefficient grad_phi0(3, [ga](const Vector& x, Vector& v) {
+    v = x;
+    v *= ga;
+  });
+
+  // The load: with -mig the orchestrator owns it (its constructor wires
+  // SetWaterLoad with C-dependent coefficients); frozen C0 otherwise;
+  // with -no-water the same melt load enters as a plain surface load.
   FunctionCoefficient w(OceanWeight), sigma_data(MeltLoad);
-  c.problem->SetWaterLoad(w, sigma_data, surface);
+  FunctionCoefficient sl0(InitialSeaLevel), ice(IceThickness);
+  FunctionCoefficient dice(IceChange);
+  std::unique_ptr<ShorelineMigration> mig;
+  if (migrate) {
+    ShorelineMigration::Options opt;
+    opt.shore = g_shore;
+    opt.tol = mig_tol;
+    opt.max_iterations = mig_iters;
+    opt.inexact = mig_inexact;
+    opt.inexact_max = mig_inexact_max;
+    opt.verbose = mig_verbose;
+    mig = std::make_unique<ShorelineMigration>(*c.problem, grad_phi0, sl0,
+                                               ice, dice, g_rho_w, g_rho_i,
+                                               surface, opt);
+  } else if (water) {
+    c.problem->SetWaterLoad(w, sigma_data, surface);
+  } else {
+    c.problem->SetSurfaceLoad(sigma_data, surface);
+  }
   if (g_Omega != 0.0) {
     // The Case wires the Love machinery's tidal expansion; the
     // rotational border owns that slot here.
@@ -175,18 +250,15 @@ int main(int argc, char* argv[]) {
     c.problem->SetRotation(g_Omega, moments);
   }
   const auto t0 = Clock::now();
-  c.problem->AssembleForce(0.0);
-  MFEM_VERIFY(c.problem->Solve(), "the coupled solve failed");
+  if (migrate) {
+    MFEM_VERIFY(mig->Solve(0.0), "the migrating solve failed");
+  } else {
+    c.problem->AssembleForce(0.0);
+    MFEM_VERIFY(c.problem->Solve(), "the coupled solve failed");
+  }
   const double solve_s = Seconds(t0);
 
-  // The fingerprint: SL1 = -(u.grad Phi0 + phi)/g + Phi_g/g, with
-  // grad Phi0 = (g/a) x exact at the surface (only surface nodal values
-  // enter the restriction).
-  const double ga = c.gravity / c.radius;
-  VectorFunctionCoefficient grad_phi0(3, [ga](const Vector& x, Vector& v) {
-    v = x;
-    v *= ga;
-  });
+  // The fingerprint: SL1 = -(u.grad Phi0 + phi + psi)/g + Phi_g/g.
   SeaLevelOperator sea(*c.fes_u, surface);
   CentrifugalPotential psi(3, g_Omega);
   if (g_Omega != 0.0) {
@@ -232,6 +304,15 @@ int main(int argc, char* argv[]) {
       }
     }
     os << "],\n";
+    os << "  \"water\": " << (water ? "true" : "false") << ",\n";
+    os << "  \"migrate\": " << (migrate ? "true" : "false") << ",\n";
+    if (migrate) {
+      os << "  \"mig_passes\": " << mig->Iterations() << ",\n";
+      os << "  \"mig_last_change\": " << Num(mig->LastShorelineChange())
+         << ",\n";
+      os << "  \"mig_outer_iterations\": " << mig->TotalOuterIterations()
+         << ",\n";
+    }
     os << "  \"iterations\": " << c.problem->TotalIterations() << ",\n";
     os << "  \"solve_seconds\": " << Num(solve_s) << "\n";
     os << "}\n";

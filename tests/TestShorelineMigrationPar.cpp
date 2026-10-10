@@ -127,12 +127,14 @@ void RunCase(int order, const std::string& label) {
   };
 
   auto migrate = [&](LinearQuasiStaticMixedSelfGravitatingProblem& p,
-                     bool moving, double inexact = 0.1) {
+                     bool moving, double inexact = 0.1,
+                     double guard = 0.5) {
     ShorelineMigration::Options opt;
     opt.max_iterations = moving ? 12 : 0;
     opt.tol = 1e-6;
     opt.shore = kShore;
     opt.inexact = inexact;
+    opt.guard = guard;
     auto m = std::make_unique<ShorelineMigration>(p, grad_phi0, sl0, ice0,
                                                   dice, kRhoW, kRhoI,
                                                   surface, opt);
@@ -224,7 +226,26 @@ void RunCase(int order, const std::string& label) {
           0.0, label + ": inexact economy");
   }
 
-  // 4. Composition with rotation.
+  // 4. The guard's sticky escalation: a vanishing guard fraction trips
+  //    on the first measurable pass, abandons inexactness, and must
+  //    land on the tight loop's fixed point (the rescue path for
+  //    border-poisoned loose passes).
+  auto pg = make_problem(false);
+  {
+    auto mg = migrate(*pg, true, 0.1, 1e-12);
+    Check(mg->LastShorelineChange(), 1e-6, label + ": guarded converged");
+    ParGridFunction du(
+        static_cast<const ParGridFunction&>(pg->Displacement()));
+    du -= pt->Displacement();
+    const double rel =
+        GlobalNorm(du) /
+        (GlobalNorm(static_cast<const ParGridFunction&>(
+             pt->Displacement())) +
+         1e-30);
+    Check(rel, 1e-5, label + ": guard escalates to tight");
+  }
+
+  // 5. Composition with rotation.
   auto pr = make_problem(true);
   auto mr = migrate(*pr, true);
   Check(mr->LastShorelineChange(), 1e-6, label + ": rotating converged");

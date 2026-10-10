@@ -10,6 +10,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "mfem.hpp"
 #include "AdGIA/mixed_problem.hpp"
@@ -174,6 +175,34 @@ class SeaLevelOperator {
   void WriteSurfaceField(const mfem::GridFunction& f,
                          const std::string& path) const;
 
+  /**
+   * @brief Read one value column of a surface CSV in WriteSurfaceField's
+   * format into the surface field @p f — the ingest leg of the exchange
+   * format (the `postprocess/` ice-ng export writes it). Rows are
+   * matched to local nodes by their coordinates (quantized, with a
+   * neighbour-bin search; every rank reads the whole file), so neither
+   * the file's row order nor the rank count that wrote it matters.
+   * @p column indexes the value columns (0 = the first). Returns the
+   * names of ALL value columns, in order — a time stack (IceHistory)
+   * names each column by its time.
+   */
+  std::vector<std::string> ReadSurfaceField(mfem::GridFunction& f,
+                                            const std::string& path,
+                                            int column = 0) const;
+
+  /** @brief The reverse of Restrict(): a surface field extended to a
+   * nodal field on the body or the top mesh (@p out's mesh decides;
+   * values off the surface are zero). */
+  void Extend(const mfem::GridFunction& surface_field,
+              mfem::GridFunction& out) const;
+
+  /** @brief The scalar hop space on the top mesh (the mesh the surface
+   * SubMesh is cut from): the home of parent-side nodal surface data. */
+  mfem::FiniteElementSpace& TopScalarSpace() { return *top_sfes_; }
+  /** @brief The scalar hop space on the body mesh, when the body is not
+   * itself the top mesh (null then: TopScalarSpace() is the body's). */
+  mfem::FiniteElementSpace* BodyScalarSpace() { return body_sfes_.get(); }
+
   /** @brief @f$\int_{\partial M} f\,dS@f$ over the surface (global in
    * parallel). */
   mfem::real_t SurfaceIntegral(mfem::Coefficient& f) const;
@@ -271,6 +300,34 @@ class ShorelineMigration {
      * (max_iterations = 0) always solves at full tolerance. */
     mfem::real_t inexact = 0.1;
     mfem::real_t inexact_max = 1e-3;  ///< loosest per-pass tolerance
+    /** @brief Contraction guard on the inexact path. The self-correction
+     * argument above holds only while the loose pass's error stays small
+     * against the shoreline smoothing band: the solution feeds back into
+     * the OPERATOR through C, and the uniform term @f$\Phi_g@f$ is
+     * recovered through a bordered elimination that can amplify a loose
+     * solver residual into an O(tolerance) ABSOLUTE error — a uniform
+     * SL1 shift of several bands floods or dries shorelines globally and
+     * the Picard loop leaves its basin (observed on the sea-level
+     * benchmark's solver stack, where the plain-tolerance loop converges
+     * in 2 passes). So a loose pass whose SL1 increment fails to
+     * contract — change_k > guard * change_{k-1} — is re-solved at full
+     * tolerance (warm-started; counted in TotalOuterIterations()) and
+     * inexactness is ABANDONED for the remainder of the loop: the
+     * amplification is a property of the configuration, so further
+     * loose passes would poison the state again, and the tight loop is
+     * globally attracted (C bounded, weak feedback), recovering even
+     * from a poisoned seed. A genuinely slow migration fires it once
+     * and degrades to the plain-tolerance loop: economy lost,
+     * correctness kept. 0 disables the guard. The default fires on
+     * stagnation or growth only — a poisoned pass shows change ratios
+     * ~1 — while an honest slow contraction (ratios well below 1,
+     * observed on the test states) keeps its loose economy. Changes at
+     * or below ~10x inexact_max never fire it: that is the benign
+     * rattle of loose increments near convergence (an honest loose
+     * pass moves SL1 by about the loose tolerance), which the loop
+     * grinds down by itself. */
+    mfem::real_t guard = 0.95;
+    bool verbose = false;  ///< per-pass trace (tolerance, change, Phi_g)
   };
 
   ShorelineMigration(LinearQuasiStaticMixedSelfGravitatingProblem& problem,
@@ -303,7 +360,9 @@ class ShorelineMigration {
 
  private:
   mfem::real_t ShorelineChange();
-  void UpdateState();
+  /** @p replace overwrites the current SL1 without pushing the
+   * previous one (the guard's re-measure against the same baseline). */
+  void UpdateState(bool replace = false);
 
   LinearQuasiStaticMixedSelfGravitatingProblem& problem_;
   Options options_;
@@ -319,6 +378,56 @@ class ShorelineMigration {
 #ifdef MFEM_USE_MPI
   MPI_Comm comm_ = MPI_COMM_NULL;
 #endif
+};
+
+namespace detail {
+class IceStack;
+}
+
+/**
+ * @brief A time stack of nodal surface fields, linearly interpolated in
+ * time — ice-age loading histories, read from the `postprocess/` ice-ng
+ * export (WP6 of doc/planning/sea_level_plan.md).
+ *
+ * The file is WriteSurfaceField's CSV with one value column per time
+ * and the header naming each column by its time, ascending (the export
+ * writes model time; whatever unit the caller steps in). Each column is
+ * read onto the surface space and extended to the body and top meshes,
+ * so the coefficients are evaluable wherever the load machinery
+ * assembles (SetSurfaceLoad's body boundary, SetWaterLoad's parent-side
+ * blocks, and the surface mesh itself).
+ *
+ * Interpolant() is the field @f$I(t)@f$ and Change() the increment
+ * @f$I(t) - I(t_0)@f$ from the stack's first time (what the load laws
+ * want); both are time-dependent Coefficients — AssembleForce()'s
+ * SetTime() picks the bracketing pair, Eval() interpolates linearly,
+ * clamped outside the stack's range.
+ */
+class IceHistory {
+ public:
+  /** @param sea The surface layer (fixes meshes, spaces, parallelism);
+   * must outlive this object.
+   * @param path The time-stack CSV. */
+  IceHistory(SeaLevelOperator& sea, const std::string& path);
+  ~IceHistory();
+
+  int NumTimes() const;
+  mfem::real_t Time(int k) const;
+  /** @brief The k-th field on the surface space. */
+  const mfem::GridFunction& Field(int k) const;
+  /** @brief @f$I(t)@f$, time-interpolated (body/top/surface evaluable). */
+  mfem::Coefficient& Interpolant();
+  /** @brief @f$I(t) - I(t_0)@f$, the load laws' increment. */
+  mfem::Coefficient& Change();
+  /** @brief The k-th field as a TIME-INDEPENDENT coefficient (evaluable
+   * like Interpolant()): the linearisation-instant data of frozen-C
+   * load laws, immune to the stepper's SetTime(). */
+  mfem::Coefficient& FieldCoefficient(int k);
+
+ private:
+  std::unique_ptr<detail::IceStack> stack_;
+  std::unique_ptr<mfem::Coefficient> interp_, change_;
+  std::vector<std::unique_ptr<mfem::Coefficient>> fixed_;
 };
 
 }  // namespace AdGIA

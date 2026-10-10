@@ -248,7 +248,101 @@ TEST(SeaLevelExport, NodalCsvRoundTrips) {
   // One row per node, values exact at the nodes.
   EXPECT_EQ(rows, sea.SurfaceSpace().GetVSize());
   EXPECT_LT(worst, 1e-12);
+
+  // The ingest leg: reading the file back (coordinate-matched) returns
+  // the nodal values exactly.
+  GridFunction back(&sea.SurfaceSpace());
+  back = 0.0;
+  const auto names = sea.ReadSurfaceField(back, path);
+  ASSERT_EQ(names.size(), 1u);
+  EXPECT_EQ(names[0], "value");
+  back -= field;
+  EXPECT_LT(back.Normlinf(), 1e-12);
   std::remove(path.c_str());
+}
+
+TEST(SeaLevelExport, IceHistoryInterpolates) {
+  Case s(3, 2);
+  SeaLevelOperator sea(*s.fes_u, s.surface);
+  FunctionCoefficient f(Smooth);
+  GridFunction field(&sea.SurfaceSpace());
+  field.ProjectCoefficient(f);
+  const std::string single = "ice_history_single_test.csv";
+  sea.WriteSurfaceField(field, single);
+
+  // A two-time stack from the written file: I(t=1) = the field,
+  // I(t=3) = 2 field + 5 (the header names the columns by their times).
+  const std::string stacked = "ice_history_stack_test.csv";
+  {
+    std::ifstream in(single);
+    std::ofstream out(stacked);
+    out.precision(16);
+    std::string line;
+    std::getline(in, line);
+    out << "x,y,z,1,3\n";
+    while (std::getline(in, line)) {
+      double x[3], v;
+      ASSERT_EQ(std::sscanf(line.c_str(), "%lf,%lf,%lf,%lf", &x[0], &x[1],
+                            &x[2], &v),
+                4);
+      out << x[0] << ',' << x[1] << ',' << x[2] << ',' << v << ','
+          << 2.0 * v + 5.0 << '\n';
+    }
+  }
+
+  IceHistory ice(sea, stacked);
+  ASSERT_EQ(ice.NumTimes(), 2);
+  EXPECT_DOUBLE_EQ(ice.Time(0), 1.0);
+  EXPECT_DOUBLE_EQ(ice.Time(1), 3.0);
+  {
+    GridFunction d(ice.Field(0));
+    d -= field;
+    EXPECT_LT(d.Normlinf(), 1e-12);
+  }
+
+  // The interpolant against closed forms of its surface integral:
+  // S(t) = (1 + (t-1)/2) S0 + 5 A (t-1)/2 on [1,3], clamped outside;
+  // the change is the increment from t = 1.
+  ConstantCoefficient one(1.0);
+  const double area = sea.SurfaceIntegral(one);
+  // The stack stores the NODAL field, so the reference integral is the
+  // field's own (the analytic coefficient differs by interpolation
+  // error on the curved surface).
+  GridFunctionCoefficient fc(&field);
+  const double s0 = sea.SurfaceIntegral(fc);
+  auto integral_at = [&](Coefficient& c, double t) {
+    c.SetTime(t);
+    return sea.SurfaceIntegral(c);
+  };
+  Coefficient& I = ice.Interpolant();
+  EXPECT_NEAR(integral_at(I, 0.0), s0, 1e-10 * std::abs(s0));  // clamped
+  EXPECT_NEAR(integral_at(I, 1.0), s0, 1e-10 * std::abs(s0));
+  EXPECT_NEAR(integral_at(I, 2.0), 1.5 * s0 + 2.5 * area,
+              1e-10 * (std::abs(s0) + area));
+  EXPECT_NEAR(integral_at(I, 3.0), 2.0 * s0 + 5.0 * area,
+              1e-10 * (std::abs(s0) + area));
+  EXPECT_NEAR(integral_at(I, 9.0), 2.0 * s0 + 5.0 * area,
+              1e-10 * (std::abs(s0) + area));  // clamped
+  Coefficient& dI = ice.Change();
+  EXPECT_NEAR(integral_at(dI, 1.0), 0.0, 1e-10 * (std::abs(s0) + area));
+  EXPECT_NEAR(integral_at(dI, 3.0), s0 + 5.0 * area,
+              1e-10 * (std::abs(s0) + area));
+
+  // Body-side evaluation (the Extend leg): the same integral assembled
+  // as a boundary form on the body mesh.
+  {
+    H1_FECollection sfec(2, 3);
+    FiniteElementSpace sfes(s.body.get(), &sfec);
+    LinearForm lf(&sfes);
+    I.SetTime(3.0);
+    lf.AddBoundaryIntegrator(new BoundaryLFIntegrator(I), s.surface);
+    lf.Assemble();
+    EXPECT_NEAR(lf.Sum(), 2.0 * s0 + 5.0 * area,
+                1e-10 * (std::abs(s0) + area));
+  }
+
+  std::remove(single.c_str());
+  std::remove(stacked.c_str());
 }
 
 INSTANTIATE_TEST_SUITE_P(SeaLevel, SeaLevelTest,

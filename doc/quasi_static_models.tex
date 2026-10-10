@@ -1398,6 +1398,28 @@ states the loop converges in 2--3 extra passes; the inexact route saves
 roughly 10\,\% of the outer iterations there, more when the driving
 history forces longer loops.
 
+The self-correction argument behind the inexact passes has a measured
+limit: the bordered elimination recovers $\Phi_g$ through
+near-cancelling inner products, and on some solver configurations (the
+sea-level benchmark's stack) a loose relative residual becomes an
+$O(\text{tolerance})$ \emph{absolute} error in $\Phi_g$ --- a uniform
+$SL_1$ shift of several smoothing bands that floods or dries shorelines
+globally. Because that error enters the next operator through $C$
+rather than just the iterate, the Picard loop can leave its basin and
+bounce between flooded and dried states. A contraction guard
+(\code{Options::guard}) catches this: a loose pass whose increment
+fails to contract, $\delta_k > \code{guard}\cdot\delta_{k-1}$,
+\emph{and} exceeds the benign-rattle floor $10\times\code{inexact\_max}$
+(an honest loose pass moves $SL_1$ by about the loose tolerance, and
+near convergence the increments rattle at that floor harmlessly) is
+re-solved at full tolerance against the same baseline, after which
+inexactness is abandoned for the remainder of the loop --- the
+amplification is a property of the configuration, and the tight loop is
+globally attracted, $C$ being bounded and the feedback weak. On the
+benchmark stack the unguarded loose loop diverges, the guarded one
+converges to the tight fixed point in five passes, and tight solving
+from the start takes two.
+
 Verification: the monolithic solve equals the converged fixed point of
 the iterated water load; mass conservation holds to the mass-row's
 closure, with the final ocean function when migrating; the off-switch

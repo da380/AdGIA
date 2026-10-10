@@ -45,3 +45,4 @@ function(postprocess_launcher script)
 endfunction()
 
 postprocess_launcher(surface_to_netcdf)
+postprocess_launcher(ice_ng_to_surface)
