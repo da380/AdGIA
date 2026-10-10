@@ -1,6 +1,8 @@
 # AdGIA: An FEM code for forward and adjoint modelling of GIA
 
 [![CI](https://github.com/da380/AdGIA/actions/workflows/ci.yml/badge.svg)](https://github.com/da380/AdGIA/actions/workflows/ci.yml)
+[![Docs](https://github.com/da380/AdGIA/actions/workflows/docs.yml/badge.svg)](https://da380.github.io/AdGIA/)
+[![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD--3--Clause-blue.svg)](LICENSE)
 
 An open-source finite-element library for modelling glacial isostatic
 adjustment (GIA) and related processes of the solid Earth, such as
@@ -111,8 +113,10 @@ load and tidal Love numbers read off one solve per degree.
 
 ## Documentation
 
-The API is documented in the headers (Doxygen; build with `BUILD_DOCS`). The
-documents in the source tree are of two kinds.
+The API is documented in the headers: the Doxygen pages are hosted at
+[da380.github.io/AdGIA](https://da380.github.io/AdGIA/), rebuilt from `main`
+by CI, and are built locally with `BUILD_DOCS`. The documents in the source
+tree are of two kinds.
 
 **Reference** — how the library works and why:
 
@@ -197,3 +201,8 @@ hand"). That includes the coastline-refined Earth of
 topography grid; a sharper or re-dated grid comes from the
 post-processing tools and pyslfp (`meshes/README.md`, "The coastline
 mesh").
+
+## License
+
+AdGIA is distributed under the BSD 3-clause license ([LICENSE](LICENSE)),
+the same license as MFEM.

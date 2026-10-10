@@ -1,0 +1,65 @@
+# Builds the Doxygen documentation and publishes it to GitHub Pages
+# (https://da380.github.io/AdGIA/). Doxygen needs only the sources, so the
+# Doxyfile template is filled in directly (the same substitutions CMake makes
+# for the local `doc` target) rather than configuring the project, which
+# would require an MFEM build. Pull requests build the docs as a check but
+# do not deploy; only pushes to main deploy.
+name: Docs
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Doxygen
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends doxygen
+
+      - name: Configure Doxyfile
+        # The MPI macro is defined so the parallel classes are documented,
+        # as in a local MPI build. HTML only: the LaTeX and XML outputs are
+        # for local consumers.
+        run: |
+          mkdir -p build/doc
+          sed -e "s|@CMAKE_SOURCE_DIR@|$GITHUB_WORKSPACE|g" \
+              -e "s|@CMAKE_CURRENT_BINARY_DIR@|$GITHUB_WORKSPACE/build|g" \
+              -e "s|@DOXYGEN_PREDEFINED_MACROS@|DOXYGEN_SHOULD_PARSE_THIS DOXYGEN_ONLY MFEM_USE_MPI=1|" \
+              doc/Doxyfile.in > build/Doxyfile
+          printf 'GENERATE_LATEX = NO\nGENERATE_XML = NO\n' >> build/Doxyfile
+
+      - name: Run Doxygen
+        # From the source root, so the relative MATHJAX_CODEFILE
+        # (doc/mathjax_config.js) resolves to the committed file.
+        run: doxygen build/Doxyfile
+
+      - name: Upload Pages artifact
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/doc/html
+
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
