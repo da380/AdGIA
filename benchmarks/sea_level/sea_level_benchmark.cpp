@@ -70,6 +70,16 @@
 //                   control; incompatible with -mig)
 //   -slcsv          the fingerprint CSV [sea_level.csv]
 //   -out            the scalars JSON [sea_level.json]
+//   -export-nodes   write the surface node CSV and exit (run.py --earth
+//                   samples the state there; the node set depends on
+//                   the mesh AND the order)
+//   -state -ice -dice   sampled node CSVs (IceHistory stacks, one
+//                   column): the field state replaces the analytic one
+//                   — SL0, I0 and the ice change dI, with C0 and the
+//                   load law built from them exactly as above. run.py
+//                   --earth defines the melt once for both sides, so
+//                   no geographic mask lives here. Not with -feedback
+//                   picard.
 //
 // Sample run (through run.py normally):
 //    mpiexec -np 4 sea_level_benchmark -c <case>/case.json -o 2
@@ -138,6 +148,50 @@ double MeltLoad(const Vector& x) {
   return (1.0 - OceanFraction(x)) * g_rho_i * IceChange(x);
 }
 
+// --- The sampled-state mode (-state/-ice/-dice, run.py --earth): the
+// same three roles built from node CSVs (IceHistory; the stacks'
+// FieldCoefficients evaluate on the body side, their GridFunctions
+// serve the surface-side diagnostics). The ice change comes from its
+// own CSV, so run.py defines the melt ONCE for both sides — no
+// geographic mask lives here.
+
+class FieldFlotation : public Coefficient {
+ public:
+  FieldFlotation(Coefficient& sl0, Coefficient& i0) : sl0_(sl0), i0_(i0) {}
+  real_t Eval(ElementTransformation& T, const IntegrationPoint& ip) override {
+    const double q =
+        g_rho_w * sl0_.Eval(T, ip) - g_rho_i * i0_.Eval(T, ip);
+    return 0.5 * (1.0 + std::tanh(q / g_shore));
+  }
+
+ private:
+  Coefficient &sl0_, &i0_;
+};
+
+class FieldWeight : public Coefficient {
+ public:
+  explicit FieldWeight(FieldFlotation& c0) : c0_(c0) {}
+  real_t Eval(ElementTransformation& T, const IntegrationPoint& ip) override {
+    return g_rho_w * c0_.Eval(T, ip) / g_gravity;
+  }
+
+ private:
+  FieldFlotation& c0_;
+};
+
+class FieldMeltLoad : public Coefficient {
+ public:
+  FieldMeltLoad(FieldFlotation& c0, Coefficient& dice)
+      : c0_(c0), dice_(dice) {}
+  real_t Eval(ElementTransformation& T, const IntegrationPoint& ip) override {
+    return g_rho_i * (1.0 - c0_.Eval(T, ip)) * dice_.Eval(T, ip);
+  }
+
+ private:
+  FieldFlotation& c0_;
+  Coefficient& dice_;
+};
+
 // The Picard-feedback load: sigma_data + rho_w C0 SL1, with SL1 the
 // previous pass's sea-level change (nodal on the body scalar space;
 // zero on the first pass, which is then the plain elastic melt solve).
@@ -164,6 +218,10 @@ int main(int argc, char* argv[]) {
   CaseOptions options;
   const char* slcsv = "sea_level.csv";
   const char* out = "sea_level.json";
+  const char* export_nodes = "";
+  const char* state_csv = "";
+  const char* ice_csv = "";
+  const char* dice_csv = "";
   bool migrate = false;
   bool water = true;
   const char* feedback = "border";
@@ -234,6 +292,16 @@ int main(int argc, char* argv[]) {
   args.AddOption(&slcsv, "-slcsv", "--sea-level-csv",
                  "Output CSV of the fingerprint's nodal values.");
   args.AddOption(&out, "-out", "--output", "Output JSON of the scalars.");
+  args.AddOption(&export_nodes, "-export-nodes", "--export-nodes",
+                 "Write the surface node CSV to this path and exit (the "
+                 "sampling step of run.py --earth).");
+  args.AddOption(&state_csv, "-state", "--state-csv",
+                 "Sampled initial sea level at the nodes (with -ice and "
+                 "-dice: the field state replaces the analytic one).");
+  args.AddOption(&ice_csv, "-ice", "--ice-csv",
+                 "Sampled initial ice thickness at the nodes.");
+  args.AddOption(&dice_csv, "-dice", "--dice-csv",
+                 "Sampled ice-thickness change at the nodes.");
   args.Parse();
   if (!args.Good()) {
     if (Mpi::Root()) {
@@ -253,6 +321,13 @@ int main(int argc, char* argv[]) {
   MFEM_VERIFY(!picard || (water && !migrate),
               "sea_level_benchmark: -feedback picard iterates the water "
               "feedback (no -no-water, no -mig)");
+  const bool fields = !std::string(state_csv).empty();
+  MFEM_VERIFY(fields == !std::string(ice_csv).empty() &&
+                  fields == !std::string(dice_csv).empty(),
+              "sea_level_benchmark: -state, -ice and -dice come together");
+  MFEM_VERIFY(!(fields && picard),
+              "sea_level_benchmark: -feedback picard is wired for the "
+              "analytic state only");
 
   Case c(options);
   g_gravity = c.gravity;
@@ -281,6 +356,54 @@ int main(int argc, char* argv[]) {
   // The surface layer before the solve: the picard loop needs its
   // fields and transfers; the postprocessing uses it either way.
   SeaLevelOperator sea(*c.fes_u, surface);
+
+  // The sampling step of run.py --earth: the node set, then exit (it
+  // depends on the mesh AND the order, so run.py exports it per case).
+  if (!std::string(export_nodes).empty()) {
+    GridFunction zero(&sea.SurfaceSpace());
+    zero = 0.0;
+    sea.WriteSurfaceField(zero, export_nodes);
+    if (Mpi::Root()) {
+      std::cout << "wrote " << export_nodes << " (surface nodes)\n";
+    }
+    return 0;
+  }
+
+  // The sampled state: body-side coefficients (the stacks') for the
+  // load and the migration, surface GridFunctions for the diagnostics.
+  std::unique_ptr<IceHistory> state_stack, ice_stack, dice_stack;
+  std::unique_ptr<FieldFlotation> c0_body, c0_surf;
+  std::unique_ptr<FieldWeight> w_body;
+  std::unique_ptr<FieldMeltLoad> sigma_body, sigma_surf;
+  std::unique_ptr<GridFunctionCoefficient> sl0_surf, i0_surf, dice_surf;
+  Coefficient* w_p = &w;
+  Coefficient* sigma_p = &sigma_data;
+  Coefficient* sl0_p = &sl0;
+  Coefficient* ice_p = &ice;
+  Coefficient* dice_p = &dice;
+  if (fields) {
+    state_stack = std::make_unique<IceHistory>(sea, state_csv);
+    ice_stack = std::make_unique<IceHistory>(sea, ice_csv);
+    dice_stack = std::make_unique<IceHistory>(sea, dice_csv);
+    c0_body = std::make_unique<FieldFlotation>(
+        state_stack->FieldCoefficient(0), ice_stack->FieldCoefficient(0));
+    w_body = std::make_unique<FieldWeight>(*c0_body);
+    sigma_body = std::make_unique<FieldMeltLoad>(
+        *c0_body, dice_stack->FieldCoefficient(0));
+    sl0_surf = std::make_unique<GridFunctionCoefficient>(
+        const_cast<GridFunction*>(&state_stack->Field(0)));
+    i0_surf = std::make_unique<GridFunctionCoefficient>(
+        const_cast<GridFunction*>(&ice_stack->Field(0)));
+    dice_surf = std::make_unique<GridFunctionCoefficient>(
+        const_cast<GridFunction*>(&dice_stack->Field(0)));
+    c0_surf = std::make_unique<FieldFlotation>(*sl0_surf, *i0_surf);
+    sigma_surf = std::make_unique<FieldMeltLoad>(*c0_surf, *dice_surf);
+    w_p = w_body.get();
+    sigma_p = sigma_body.get();
+    sl0_p = &state_stack->FieldCoefficient(0);
+    ice_p = &ice_stack->FieldCoefficient(0);
+    dice_p = &dice_stack->FieldCoefficient(0);
+  }
   // SL1 state of the picard loop, on the body scalar space (the
   // benchmark body is a SubMesh of the case's parent, so the space is
   // there); the load coefficient reads its current values each pass.
@@ -302,15 +425,16 @@ int main(int argc, char* argv[]) {
     opt.inexact = mig_inexact;
     opt.inexact_max = mig_inexact_max;
     opt.verbose = mig_verbose;
-    mig = std::make_unique<ShorelineMigration>(*c.problem, grad_phi0, sl0,
-                                               ice, dice, g_rho_w, g_rho_i,
+    mig = std::make_unique<ShorelineMigration>(*c.problem, grad_phi0,
+                                               *sl0_p, *ice_p, *dice_p,
+                                               g_rho_w, g_rho_i,
                                                surface, opt);
   } else if (picard) {
     c.problem->SetSurfaceLoad(*picard_load, surface);
   } else if (water) {
-    c.problem->SetWaterLoad(w, sigma_data, surface);
+    c.problem->SetWaterLoad(*w_p, *sigma_p, surface);
   } else {
-    c.problem->SetSurfaceLoad(sigma_data, surface);
+    c.problem->SetSurfaceLoad(*sigma_p, surface);
   }
   CentrifugalPotential psi_total(3, g_Omega);
   Vector moments(3);
@@ -438,16 +562,21 @@ int main(int argc, char* argv[]) {
   }
   sea.WriteSurfaceField(sea.SeaLevelChangeField(), slcsv);
 
-  // Scalars, over the same analytic ocean fraction the solve used.
+  // Scalars, over the same ocean fraction the solve used (surface-side
+  // coefficients in the sampled-state mode).
   FunctionCoefficient ocean_ind(OceanFraction);
-  ConstantCoefficient one(1.0);
-  ProductCoefficient area_ind(ocean_ind, one);
-  const double area = sea.SurfaceIntegral(area_ind);
   FunctionCoefficient melt(MeltLoad);
-  const double melted_mass = -sea.SurfaceIntegral(melt);
+  Coefficient& ocean_diag = fields ? static_cast<Coefficient&>(*c0_surf)
+                                   : ocean_ind;
+  Coefficient& melt_diag = fields ? static_cast<Coefficient&>(*sigma_surf)
+                                  : melt;
+  ConstantCoefficient one(1.0);
+  ProductCoefficient area_ind(ocean_diag, one);
+  const double area = sea.SurfaceIntegral(area_ind);
+  const double melted_mass = -sea.SurfaceIntegral(melt_diag);
   const double eustatic = melted_mass / (g_rho_w * area);
   GridFunctionCoefficient slc(&sea.SeaLevelChangeField());
-  ProductCoefficient ocean_sl(ocean_ind, slc);
+  ProductCoefficient ocean_sl(ocean_diag, slc);
   const double ocean_mean = sea.SurfaceIntegral(ocean_sl) / area;
 
   if (Mpi::Root()) {

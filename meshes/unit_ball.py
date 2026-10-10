@@ -9,7 +9,7 @@ Used by: transformed_diffusion, anisotropic_elasticity.
 from planetmodel import Geometry, Skeleton
 from planetmodel.mesh3d import MeshSpec, UniformInterfaces, build_layered_mesh
 
-from common import parser, report
+from common import parser, report, sizes
 
 
 def main() -> None:
@@ -20,7 +20,7 @@ def main() -> None:
 
     # Elements of size 0.047 on the boundary, growing to 0.094 over a
     # distance of 0.2 into the ball.
-    sizing = UniformInterfaces(0.047, 0.094, 0.2)
+    sizing = UniformInterfaces(*sizes(args, 0.047, 0.094, 0.2))
 
     spec = MeshSpec(ball, sizing, dimension=3, order=2)
     report(build_layered_mesh(spec, args.out / "ball", verbose=args.verbose))

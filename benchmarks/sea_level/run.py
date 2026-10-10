@@ -36,6 +36,22 @@ are smoothed over the `shore` width, so the delta comparison is
 shoreline-dominated at toy resolution and tightens as shore shrinks
 with h on the resolved ladder.
 
+--earth swaps the analytic state for the real present-day geography:
+the ICE-7G sea level and ice at --lmax (loaded by pyslfp), a SMALL
+melt of one ice sheet (--melt-region greenland | west-antarctica, the
+smooth windows of examples/sea_level_fingerprint.cpp; --melt-fraction,
+default 1% — both sides are linear, so the relative comparison is
+independent of it and the stated problem stays in the fingerprint
+regime, flotation changes negligible), and a case mesh
+refined along the real coastlines (the committed grid of
+meshes/earth_coastlines.py through make_case.py --coast-grid). The
+state and melt are built once here on pyslfp's grid; the driver gets
+them sampled at its surface nodes (-state/-ice/-dice; the node set is
+mesh- and order-specific, so the sampling is per case). Everything
+downstream — the comparison, the report, the figure — is the simple
+leg's, so the two geographies read side by side. Linear and frozen-C
+only for now (no --nonlinear, --timings or --coast with it).
+
 --timings (no comparison) times the solve across the feature axis —
 the same melt load as a plain elastic solve (-no-water), with the
 water feedback, with rotation, and with shoreline migration — min and
@@ -45,6 +61,8 @@ mean of --repeat runs, with ratios against the elastic control.
     python run.py --model homogeneous --h 0.2 --order 2 --np 8
     python run.py --nonlinear
     python run.py --timings --repeat 5
+    python run.py --earth --lmax 64 --np 8
+    python run.py --earth --melt-region west-antarctica --h 0.3 --np 8
 
 The build makes a launcher, <build>/benchmarks/sea_level/run, meant to
 be started there so that `runs` is in the build tree.
@@ -77,6 +95,69 @@ STATE = {
     "melt": 0.5,
     "melt_width": 0.15,
 }
+
+# The real-geography leg (--earth): the present-day ICE-7G state and a
+# melt of one ice sheet, confined by the smooth geographic windows of
+# examples/sea_level_fingerprint.cpp (degrees: lat_min, lat_max,
+# lon_min, lon_max; the edge smoothing in radians).
+REGIONS = {
+    "greenland": (59.0, 84.0, 285.0, 350.0),
+    "west-antarctica": (-85.0, -72.0, 190.0, 300.0),
+}
+REGION_EDGE = 0.05
+
+
+def earth_state_grids(em, rho_w_case, rho_i_case, shore, region, lmax,
+                      melt_fraction):
+    """The ICE-7G initial state, the sheet melt and the frozen-C melt
+    load on pyslfp's grid, in case units — the --earth counterpart of
+    state_grids(), defined once here for both sides. The melt fraction
+    is SMALL by default: both sides are linear, so the relative
+    comparison is independent of it, and a small melt keeps the stated
+    problem in the fingerprint regime, where the frozen flotation is
+    the physics and not just the linearisation."""
+    from pyslfp.ice import IceNG
+    ice_g, sl_g = IceNG().get_ice_thickness_and_sea_level(0.0, lmax)
+    assert ice_g.data.shape == (em.lats().size, em.lons().size)
+    sl0 = sl_g.data / models.RADIUS
+    ice = ice_g.data / models.RADIUS
+    lats, lons = np.meshgrid(np.deg2rad(em.lats()), np.deg2rad(em.lons()),
+                             indexing="ij")
+
+    def smooth_edge(d):
+        return 0.5 * (1.0 + np.tanh(d / REGION_EDGE))
+
+    lat0, lat1, lon0, lon1 = (np.deg2rad(v) for v in REGIONS[region])
+    mask = (smooth_edge(lats - lat0) * smooth_edge(lat1 - lats) *
+            smooth_edge(lons - lon0) * smooth_edge(lon1 - lons))
+    dice = -melt_fraction * mask * ice
+    q = rho_w_case * sl0 - rho_i_case * ice
+    frac = 0.5 * (1.0 + np.tanh(q / shore))
+    melt_load = (1.0 - frac) * rho_i_case * dice
+    return sl0, ice, dice, melt_load
+
+
+def write_node_stacks(em, nodes_csv, grids):
+    """Sample wrapped em-grid fields at the driver's exported surface
+    nodes (bilinear; the grids include the poles and the 360-degree
+    column) and write each as a one-column IceHistory stack CSV."""
+    from scipy.interpolate import RegularGridInterpolator
+    rows = np.genfromtxt(nodes_csv, delimiter=",", names=True)
+    xyz = np.column_stack([rows["x"], rows["y"], rows["z"]])
+    d = xyz / np.linalg.norm(xyz, axis=1, keepdims=True)
+    lat = np.rad2deg(np.arcsin(np.clip(d[:, 2], -1.0, 1.0)))
+    lon = np.rad2deg(np.arctan2(d[:, 1], d[:, 0])) % 360.0
+    order = np.argsort(em.lats())
+    for path, grid in grids.items():
+        interp = RegularGridInterpolator(
+            (np.asarray(em.lats())[order], np.asarray(em.lons())),
+            np.asarray(grid)[order, :], bounds_error=False,
+            fill_value=None)
+        values = interp(np.column_stack([lat, lon]))
+        with open(path, "w") as f:
+            f.write("x,y,z,0\n")
+            for p, v in zip(xyz, values):
+                f.write(f"{p[0]:.16g},{p[1]:.16g},{p[2]:.16g},{v:.16g}\n")
 
 
 def state_grids(em, rho_w_case, rho_i_case, shore):
@@ -292,15 +373,34 @@ def main() -> None:
                    help="coastline-refined mesh: a near_curve ring at the "
                         "state's shoreline (planetmodel >= 1.2.4); the case "
                         "lands in its own h<h>_coast directory")
+    p.add_argument("--earth", action="store_true",
+                   help="real geography: the present-day ICE-7G state, a "
+                        "melt of --melt-region, and the committed "
+                        "real-coastline refinement; the case lands in its "
+                        "own h<h>_earth directory")
+    p.add_argument("--melt-region", default="greenland",
+                   choices=sorted(REGIONS),
+                   help="the melted ice sheet (--earth)")
+    p.add_argument("--melt-fraction", type=float, default=0.01,
+                   help="melted fraction of the sheet (--earth). Both "
+                        "sides are linear, so the relative comparison "
+                        "does not depend on it; small keeps the stated "
+                        "problem in the fingerprint regime, flotation "
+                        "changes negligible")
     p.add_argument("--remake", action="store_true")
     p.add_argument("--force", action="store_true")
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args()
 
+    if args.earth and (args.nonlinear or args.timings or args.coast):
+        raise SystemExit("--earth is the linear comparison on the "
+                         "real-coastline mesh: no --nonlinear, --timings "
+                         "or --coast with it (yet)")
     programs = find_programs(args.programs)
     out = outside_source(args.out)
     case = out / args.model / (f"h{args.h:g}" +
-                               ("_coast" if args.coast else ""))
+                               ("_coast" if args.coast else "") +
+                               ("_earth" if args.earth else ""))
     case.mkdir(parents=True, exist_ok=True)
 
     # pyslfp first: it also supplies the densities, so that the flotation
@@ -315,7 +415,16 @@ def main() -> None:
     rho_i_si = ps.ice_density * ps.density_scale
     rho_w_case = rho_w_si / D
     rho_i_case = rho_i_si / D
-    shore = 0.05 * rho_w_case * STATE["ocean_depth"]
+    if args.earth:
+        # The same 5% convention as the analytic state, on the data's
+        # own mean ocean depth (the loader caches, so the second read
+        # in earth_state_grids is free).
+        from pyslfp.ice import IceNG
+        _, _sl = IceNG().get_ice_thickness_and_sea_level(0.0, args.lmax)
+        _sl0 = _sl.data / models.RADIUS
+        shore = 0.05 * rho_w_case * float(np.mean(_sl0[_sl0 > 0.0]))
+    else:
+        shore = 0.05 * rho_w_case * STATE["ocean_depth"]
 
     # The rotation data, shared by both sides: pyslfp's Earth rotation
     # rate and principal moments (the traditional theory takes them as
@@ -338,24 +447,60 @@ def main() -> None:
             print(f"shoreline colatitude {theta:.4f} rad "
                   f"({np.degrees(theta):.1f} deg): ring refinement on")
             cmd += ["--refine-rings", f"{theta:.12g}"]
+        if args.earth:
+            cmd += ["--coast-grid",
+                    str(HERE.parent.parent / "meshes" /
+                        "ice7g_topography_lmax64.npz")]
         ok = run(cmd, log=None, dry_run=args.dry_run)
         if not ok:
             raise SystemExit(f"{case}: make_case.py failed")
     rot_args = ["-Omega", f"{Omega_case}", "-C1", f"{A_case}",
                 "-C2", f"{A_case}", "-C3", f"{C_case}"]
+    state_args = [] if args.earth else [
+        "-ocean-depth", f"{STATE['ocean_depth']}",
+        "-cont-amp", f"{STATE['cont_amp']}",
+        "-cont-width", f"{STATE['cont_width']}",
+        "-cap-amp", f"{STATE['cap_amp']}",
+        "-cap-width", f"{STATE['cap_width']}",
+        "-melt", f"{STATE['melt']}",
+        "-melt-width", f"{STATE['melt_width']}"]
     base_cmd = [args.mpiexec or "mpiexec", "-np", str(args.np),
                 str(programs / "sea_level_benchmark"),
                 "-c", str(case / "case.json"), "-o", str(args.order),
                 "-method", "dahlen",
-                "-rhow", f"{rho_w_case}", "-rhoi", f"{rho_i_case}",
-                "-ocean-depth", f"{STATE['ocean_depth']}",
-                "-cont-amp", f"{STATE['cont_amp']}",
-                "-cont-width", f"{STATE['cont_width']}",
-                "-cap-amp", f"{STATE['cap_amp']}",
-                "-cap-width", f"{STATE['cap_width']}",
-                "-melt", f"{STATE['melt']}",
-                "-melt-width", f"{STATE['melt_width']}",
-                "-shore", f"{shore}"]
+                "-rhow", f"{rho_w_case}", "-rhoi", f"{rho_i_case}"] + \
+        state_args + ["-shore", f"{shore}"]
+
+    # The sampled state of the earth leg: the node set of this case and
+    # order (exact nodal data — mesh- and order-specific), the grids of
+    # earth_state_grids sampled there, three stack CSVs for the driver.
+    earth_grids = None
+    if args.earth:
+        earth_grids = earth_state_grids(em, rho_w_case, rho_i_case,
+                                        shore, args.melt_region, args.lmax,
+                                        args.melt_fraction)
+        # The node set and the state are shared between melt regions;
+        # the ice change (and the run tag below) carry the region.
+        region = args.melt_region.replace("-", "_")
+        nodes = case / f"nodes_o{args.order}.csv"
+        dice_csv = case / f"dice_o{args.order}_{region}.csv"
+        stacks = {case / f"state_o{args.order}.csv": earth_grids[0],
+                  case / f"ice_o{args.order}.csv": earth_grids[1],
+                  dice_csv: earth_grids[2]}
+        if args.remake or args.force or not nodes.exists():
+            ok = run([args.mpiexec or "mpiexec", "-np", "1",
+                      str(programs / "sea_level_benchmark"),
+                      "-c", str(case / "case.json"), "-o", str(args.order),
+                      "-method", "dahlen",
+                      "-export-nodes", str(nodes)],
+                     log=case / "log_nodes.txt", dry_run=args.dry_run)
+            if not ok:
+                raise SystemExit("node export failed")
+        if not args.dry_run:
+            write_node_stacks(em, nodes, stacks)
+        base_cmd += ["-state", str(case / f"state_o{args.order}.csv"),
+                     "-ice", str(case / f"ice_o{args.order}.csv"),
+                     "-dice", str(dice_csv)]
 
     def solve(tag, extra, force=None):
         """One driver run (files reused unless forced); the paths of the
@@ -374,7 +519,8 @@ def main() -> None:
         timings(args, case, solve, rot_args)
         return
 
-    tag = f"o{args.order}" + ("_rot" if args.rot else "")
+    tag = (f"o{args.order}" + ("_rot" if args.rot else "") +
+           (f"_{args.melt_region.replace('-', '_')}" if args.earth else ""))
     slcsv, sljson = solve(tag, rot_args if args.rot else [])
     if args.nonlinear:
         # The migration runs tight (-mig-inexact 0): this solver stack
@@ -388,8 +534,11 @@ def main() -> None:
         return
 
     # The pyslfp fingerprint of the same problem.
-    sl0, ice, dice, melt_load = state_grids(em, rho_w_case, rho_i_case,
-                                            shore)
+    if args.earth:
+        sl0, ice, dice, melt_load = earth_grids
+    else:
+        sl0, ice, dice, melt_load = state_grids(em, rho_w_case,
+                                                rho_i_case, shore)
     to_ps_len = L / ps.length_scale
     to_ps_sigma = (D * L) / (ps.density_scale * ps.length_scale)
     import pyshtools
@@ -427,6 +576,10 @@ def main() -> None:
         "diff_max_m": float(np.max(np.abs(diff))),
         "adgia": json.loads(sljson.read_text()),
     }
+    if args.earth:
+        report["earth"] = {"melt_region": args.melt_region,
+                           "melt_fraction": args.melt_fraction,
+                           "ice_model": "ICE7G", "date_ka": 0.0}
     if args.rot:
         # omega / Omega on both sides (dimensionless; components
         # [wander_1, wander_2, spin]). The wander rows carry the
@@ -445,7 +598,8 @@ def main() -> None:
            report)
 
     print(f"\n{args.model}, h = {args.h:g}, order {args.order}, "
-          f"pyslfp lmax {args.lmax}")
+          f"pyslfp lmax {args.lmax}" +
+          (f", ICE-7G melting {args.melt_region}" if args.earth else ""))
     print(f"  ocean RMS   pyslfp {scale:.4g} m,  "
           f"diff {report['diff_ocean_rms_m']:.4g} m  "
           f"(rel {report['diff_ocean_rel']:.3f})")

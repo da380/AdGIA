@@ -148,7 +148,10 @@ void RunCase(int dim, int order, bool rank0_partition,
     ParGridFunction field(
         static_cast<ParFiniteElementSpace*>(&sea.SurfaceSpace()));
     field.ProjectCoefficient(f);
-    const std::string path = "sea_level_export_par.csv";
+    // One file per world size: under ctest -j the np2 and np4 instances
+    // of this test can run at the same time in the same directory.
+    const std::string np = std::to_string(Mpi::WorldSize());
+    const std::string path = "sea_level_export_par_np" + np + ".csv";
     sea.WriteSurfaceField(field, path);
     double rows = 0.0;
     if (Mpi::Root()) {
@@ -177,7 +180,7 @@ void RunCase(int dim, int order, bool rank0_partition,
 
     // A two-time stack from the same file: IceHistory interpolates
     // between its columns, evaluable on the body side too.
-    const std::string stacked = "ice_history_par.csv";
+    const std::string stacked = "ice_history_par_np" + np + ".csv";
     if (Mpi::Root()) {
       std::ifstream in(path);
       std::ofstream out(stacked);

@@ -26,7 +26,7 @@ from planetmodel import Geometry, Skeleton
 from planetmodel.mesh3d import (MeshSpec, Shell, UniformInterfaces,
                                 build_layered_mesh)
 
-from common import parser, report
+from common import parser, report, sizes
 
 EARTH_RADIUS_KM = 6371.0
 ICB = 1230.0 / EARTH_RADIUS_KM
@@ -36,8 +36,8 @@ SURFACE = 1.0
 # Element size on every interface, far from them, and the distance over
 # which it grows, by dimension.
 SIZING = {
-    2: UniformInterfaces(0.085, 0.17, 0.85),
-    3: UniformInterfaces(0.135, 0.27, 1.35),
+    2: (0.085, 0.17, 0.85),
+    3: (0.135, 0.27, 1.35),
 }
 
 
@@ -57,7 +57,8 @@ def geometry(layers: int) -> Geometry:
 def build(layers: int, dim: int, args) -> None:
     words = {2: "two", 3: "three"}
     name = f"elastogravity_{words[layers]}_layer_{dim}d"
-    spec = MeshSpec(geometry(layers), SIZING[dim], dimension=dim, order=2,
+    sizing = UniformInterfaces(*sizes(args, *SIZING[dim]))
+    spec = MeshSpec(geometry(layers), sizing, dimension=dim, order=2,
                     shells=[Shell(ratio=0.2, name="buffer")])
     report(build_layered_mesh(spec, args.out / name, verbose=args.verbose))
 

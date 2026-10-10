@@ -86,21 +86,51 @@ def ring_refinements(model: Model, rings, *, size: float, far_size: float,
     return out
 
 
+def coast_refinement(model: Model, grid: Path, *, width: float,
+                     size: float, far_size: float):
+    """The real-coastline refinement of meshes/earth_coastlines.py, on
+    a benchmark case: SeaLevelBand on the pre-processed `coast_rad`
+    field of a topography_grid.py export (meshes/README.md, "The
+    coastline mesh")."""
+    import importlib.util
+    path = Path(__file__).resolve().parents[2] / "meshes" / "common.py"
+    spec = importlib.util.spec_from_file_location("meshes_common", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    outer = float(np.asarray(model.skeleton.boundaries, dtype=float)[-1])
+    # coast_rad is angular; the band arithmetic assumes the benchmark
+    # convention of a unit outer radius.
+    assert np.isclose(outer, 1.0), "coast refinement wants outer radius 1"
+    data = np.load(grid, allow_pickle=False)
+    return mod.SeaLevelBand(data["coast_lats"], data["coast_lons"],
+                            data["coast_rad"], band=width, size=size,
+                            far_size=far_size, radius=outer,
+                            depth_width=0.05, gradation=1.5)
+
+
 def build_mesh(model: Model, out: Path, *, h: float, h_max: float, decay: float,
                angular: float, thin: float, buffer: float, order: int,
                optimise: bool = True, verbose: bool = False,
                rings=(), ring_size: float | None = None,
                ring_far: float | None = None,
-               ring_decay: float | None = None) -> dict:
+               ring_decay: float | None = None,
+               coast_grid: Path | None = None,
+               coast_width: float = 0.04) -> dict:
     """The mesh, the fields and the manifest; returns a summary."""
     refinements = []
-    if rings:
+    if rings or coast_grid is not None:
         ring_size = ring_size if ring_size is not None else h / 3.0
         ring_far = ring_far if ring_far is not None else h_max
         ring_decay = ring_decay if ring_decay is not None else 2.0 * h
+    if rings:
         refinements = ring_refinements(model, rings, size=ring_size,
                                        far_size=ring_far,
                                        decay_width=ring_decay)
+    if coast_grid is not None:
+        refinements.append(coast_refinement(model, coast_grid,
+                                            width=coast_width,
+                                            size=ring_size,
+                                            far_size=ring_far))
     spec = MeshSpec(model.geometry,
                     CappedInterfaces(h, h_max, decay, angular=angular,
                                      thin=thin),
@@ -277,6 +307,12 @@ def main() -> None:
     p.add_argument("--ring-decay", type=float, default=None,
                    help="distance over which the ring size grows "
                         "(default 2 h)")
+    p.add_argument("--coast-grid", type=Path, default=None,
+                   help="topography_grid.py export: refine along its "
+                        "pre-processed real coastline (coast_rad), sizes "
+                        "from --ring-size/--ring-far")
+    p.add_argument("--coast-width", type=float, default=0.04,
+                   help="angular half-width of the coastline band (rad)")
     p.add_argument("--lmax", type=int, default=10,
                    help="highest degree of the reference")
     p.add_argument("--time-scale", type=float, default=None,
@@ -315,7 +351,9 @@ def main() -> None:
                          optimise=not args.no_optimise, order=args.order,
                          verbose=args.verbose, rings=rings,
                          ring_size=args.ring_size, ring_far=args.ring_far,
-                         ring_decay=args.ring_decay)
+                         ring_decay=args.ring_decay,
+                         coast_grid=args.coast_grid,
+                         coast_width=args.coast_width)
     (args.out / "mesh_summary.json").write_text(json.dumps(summary, indent=1))
     print(f"{BASENAME}.mesh: {summary['summary']}")
 

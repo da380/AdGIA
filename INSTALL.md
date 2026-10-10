@@ -59,7 +59,13 @@ known to work — the full test suite passes on both.
    Python with planetmodel, pyslfp and matplotlib, normally the poetry
    environment of `benchmarks/` (`poetry install` there). See
    `benchmarks/README.md`.
-7. **Doxygen** (optional), for the API documentation.
+7. **Post-processing** (optional): the tools in `postprocess/` (NetCDF
+   export, maps, ice-model ingest, topography grids) run through
+   launchers in `<build>/postprocess` with the poetry environment of
+   `postprocess/` (`poetry install` there; a build configured before the
+   environment existed is configured again to pick it up). See
+   `postprocess/README.md`.
+8. **Doxygen** (optional), for the API documentation.
 
 ## Configure
 
@@ -101,9 +107,11 @@ takes effect only on a fresh build directory.
 | `BUILD_TESTS` | `OFF` | build the test suite in `tests/` (googletest is fetched at configure time) |
 | `BUILD_BENCHMARKS` | `OFF` | build the benchmark drivers and the launchers of their scripts into `<build>/benchmarks`; needs `USE_MPI` (skipped with a message otherwise) |
 | `BENCHMARKS_PYTHON` | the poetry environment of `benchmarks/` | the Python interpreter the benchmark launchers use; falls back to `python3`, with a warning, when neither is available |
+| `POSTPROCESS_PYTHON` | the poetry environment of `postprocess/` | the Python interpreter the post-processing launchers use; falls back to `python3`, with a message, when neither is available |
 | `BUILD_DOCS` | `OFF` | generate the Doxygen documentation (HTML in `<build>/doc/html`) as part of the build |
 | `GENERATE_MESHES` | on with examples or tests | generate the gmsh meshes into `<build>/data` |
 | `MESHES_PYTHON` | found or created | the Python interpreter used for mesh generation |
+| `MESHES_SCALE` | `1` | factor on every generated mesh's element sizes (smaller is finer); changing it regenerates the whole set |
 
 The usual CMake variables (`CMAKE_BUILD_TYPE`, `CMAKE_INSTALL_PREFIX`)
 apply.

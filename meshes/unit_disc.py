@@ -8,7 +8,7 @@ Used by: transformed_diffusion.
 from planetmodel import Geometry, Skeleton
 from planetmodel.mesh3d import MeshSpec, UniformInterfaces, build_layered_mesh
 
-from common import parser, report
+from common import parser, report, sizes
 
 
 def main() -> None:
@@ -19,7 +19,7 @@ def main() -> None:
 
     # Elements of size 0.045 on the boundary, growing to 0.09 over a
     # distance of 0.2 into the disc.
-    sizing = UniformInterfaces(0.045, 0.09, 0.2)
+    sizing = UniformInterfaces(*sizes(args, 0.045, 0.09, 0.2))
 
     spec = MeshSpec(disc, sizing, dimension=2, order=3)
     report(build_layered_mesh(spec, args.out / "disk", verbose=args.verbose))

@@ -20,6 +20,7 @@ READMEs here say how to run them.
 | `relabelling/` | the mapped (aspherical) machinery: the same spherical physics from relabelled coordinates, the discrete change-of-variables identity, an aspherical reference body | the same, exact under the relabelling |
 | `perturbation/` | derivatives of the response with respect to the model: the degree-0 interface-shift check | pyslfp on the perturbed models |
 | `viscoelastic/` | the viscoelastic time stepping, in four sub-families: non-gravitating box and sphere problems, the stepper survey, Maxwell Love-number histories | exact modal/Talbot references; RK4 at a small step; pyslfp through the correspondence principle |
+| `sea_level/` | the monolithic sea-level solve (`SetWaterLoad`): elastic fingerprints, with rotation, shoreline-migration and timing legs, and `--earth` — the same comparison on the real ICE-7G geography and the coastline-refined mesh, melting Greenland or West Antarctica; not a campaign stage, run through its launchers | pyslfp's pseudo-spectral solution of the same problem |
 
 ## Setting up
 
@@ -49,6 +50,7 @@ and the MPI launcher of that build:
 | `viscoelastic/sphere/` | `meshes`, `cases`, `reference`, `study` |
 | `viscoelastic/love/` | `laplace_reference`, `compare`, `make_case` |
 | `viscoelastic/stepping/` | `survey` |
+| `sea_level/` | `run`, `make_case` |
 
 What a script writes goes where it is started, or to `--out`: `runs/`
 beside the Love-number launchers for the sweeps, `runs_campaign/` for the
@@ -139,7 +141,7 @@ environment's Python:
 
 ```
 cd <build>/benchmarks
-poetry -C <repo>/benchmarks run python <repo>/benchmarks/talk_figures.py --out talk
+poetry -P <repo>/benchmarks run python <repo>/benchmarks/talk_figures.py --out talk
 ```
 
 `talk_render.py` is a ParaView render of a cap-load solve, run with

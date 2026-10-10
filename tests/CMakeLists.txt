@@ -67,6 +67,8 @@ target_link_libraries(TestSubMeshDofInjection PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestSubMeshDofInjection)
 
 if(USE_MPI)
+    add_executable(TestMpiWorldPar TestMpiWorldPar.cpp)
+    target_link_libraries(TestMpiWorldPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestSubMeshDofInjectionPar TestSubMeshDofInjectionPar.cpp)
     target_link_libraries(TestSubMeshDofInjectionPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestSubMeshMixedBilinearFormPar TestSubMeshMixedBilinearFormPar.cpp)
@@ -116,6 +118,10 @@ if(USE_MPI)
     add_executable(TestDescentPar TestDescentPar.cpp)
     target_link_libraries(TestDescentPar PRIVATE AdGIA MPI::MPI_CXX)
     foreach(np 1 2 4)
+        # First, so a broken launcher fails the batch at its first test.
+        add_test(NAME TestMpiWorldPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestMpiWorldPar> ${np})
         add_test(NAME TestSubMeshDofInjectionPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestSubMeshDofInjectionPar>)

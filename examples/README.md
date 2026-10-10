@@ -259,7 +259,15 @@ benchmark family's (smooth polar continent, ice cap, a melt unloading
 the +x hemisphere of the cap smoothly), with every piece of the
 geometry and load an option, and `-Omega` adding the rotational
 feedback to the same bordered solve; frozen shorelines (first-order
-exact). Prints the eustatic equivalent against the ocean-mean sea-level
+exact). The default mesh, `data/sea_level_fingerprint.msh`, is refined
+in a ring about this state's shoreline circle
+(`meshes/fingerprint_coastline.py`). `-earth` swaps in the real
+present-day geography — ICE-7G topography and ice sampled at the
+surface nodes by the `ice_ng_to_surface` chain (the first run prints
+the exact commands) — and melts Greenland or West Antarctica
+(`-melt-region`) through a smooth geographic window, the classic
+fingerprint maps from the same solve; run it on the coastline-refined
+ball, `-m ../data/earth_coastlines.msh`. Prints the eustatic equivalent against the ocean-mean sea-level
 change (equal when mass is conserved) and the uniform term; exports the
 fingerprint's nodal values with `WriteSurfaceField`, which in 3-D maps
 to NetCDF/cartopy through `<build>/postprocess/surface_to_netcdf`.
@@ -270,7 +278,9 @@ shoreline migration (Picard on the ocean function via
 off = frozen shorelines, first-order exact), printing the extra passes
 taken. 3-D only — the sea-level equation is not wired for 2-D (2-D
 elastic solves with gravity remain useful; a 2-D ocean is not).
-`./sea_level_fingerprint`, `./sea_level_fingerprint -melt 1.0 -mig`
+`./sea_level_fingerprint`, `./sea_level_fingerprint -melt 1.0 -mig`,
+`./sea_level_fingerprint -earth -m ../data/earth_coastlines.msh` (then
+the printed sampling commands, then the same with `-state`/`-ice`)
 
 **`ice_age_loading`**: the ICE-7G deglaciation on a Maxwell planet —
 the surface exchange chain end to end. Step 1 (no `-ice`) exports the
@@ -286,11 +296,11 @@ displacement norm per step; writes the history CSV (`plot_csv.py`) and
 the endpoint fingerprint for the NetCDF/cartopy map chain. The body is
 the toy homogeneous planet, so the output is qualitative — real
 geography on a model rheology; resolved runs belong to the server. An
-optional step 0 (`postprocess/topography_grid` +
-`meshes/earth_coastlines.py`) builds `data/earth_coastlines.msh`, the
-ball refined where |topography| is within a band of sea level — real
-shorelines and shallow shelves together, as a planetmodel `Refinement`
-field with no coastline isolation — for `-m`.
+the build's `data/earth_coastlines.msh` — the ball refined along the
+real coastlines and the shallow shelves, one sizing field with no
+coastline isolation — suits `-m`
+out of the box, and an optional step 0 rebuilds it from a sharper or
+re-dated topography (`meshes/README.md`, "The coastline mesh").
 `./ice_age_loading`, then the two printed `ice_ng_to_surface` calls,
 then `./ice_age_loading -ice ice_age_nodes_ice.csv -state
 ice_age_nodes_state.csv`

@@ -494,9 +494,13 @@ std::vector<std::string> SeaLevelOperator::ReadSurfaceField(
         }
       }
     }
-    MFEM_VERIFY(found, "SeaLevelOperator::ReadSurfaceField: no row of "
-                           << path
-                           << " matches a surface node (a different mesh?)");
+    MFEM_VERIFY(found,
+                "SeaLevelOperator::ReadSurfaceField: no row of "
+                    << path
+                    << " matches a surface node. The node set depends on "
+                       "the mesh AND the finite-element order: re-export "
+                       "the nodes and resample the fields after changing "
+                       "either.");
     f[i] = value;
   }
   return names;

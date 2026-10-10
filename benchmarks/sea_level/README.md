@@ -8,6 +8,20 @@ rotational border on both sides (rung 2), `--nonlinear` adds shoreline
 migration against pyslfp's nonlinear solver (rung 3), and `--timings`
 times the solve across the feature axis instead of comparing.
 
+`--earth` keeps the comparison but swaps the analytic state for the
+real present-day geography: the ICE-7G sea level and ice at `--lmax`,
+a small melt of Greenland or West Antarctica (`--melt-region`, the
+smooth windows of `examples/sea_level_fingerprint.cpp`;
+`--melt-fraction`, default 1% — both sides are linear, so the
+relative comparison is independent of it and the stated problem stays
+in the fingerprint regime), and a case mesh
+refined along the real coastlines (`make_case.py --coast-grid` with
+the committed grid of `meshes/`). The state and the melt are built
+once on pyslfp's grid and sampled at the driver's surface nodes
+(`-state/-ice/-dice`), so both sides see one problem; the report and
+figure are the simple leg's, side by side in `h<h>_earth/`. Linear,
+frozen shorelines only for now.
+
 One spherically layered model (homogeneous by default), one smooth
 analytical state (polar continent, ice cap, melt), defined once in
 `run.py` and handed to both sides; pyslfp computes its own Love numbers

@@ -9,16 +9,17 @@
 // demo of doc/planning/sea_level_plan.md, chaining the surface exchange
 // format end to end.
 //
-// The chain has three steps (the first and last are this program), and
-// an optional step 0 builds a mesh refined where the sea level is near
-// zero — real shorelines and shallow shelves together (no coastline
-// isolation; a planetmodel Refinement field from the truncated
-// topography):
+// The chain has three steps (the first and last are this program). The
+// build's data/earth_coastlines.msh — refined along the real
+// coastlines and the shallow shelves (one sizing field, no coastline
+// isolation) — suits every run below through
+// -m ../data/earth_coastlines.msh; an optional step 0 rebuilds it from
+// a sharper or re-dated topography (meshes/README.md, "The coastline
+// mesh"):
 //
-//   0.  <build>/postprocess/topography_grid --lmax 24
-//       poetry -C meshes run python meshes/earth_coastlines.py \
-//           --topography topography.npz --out <build>/data
-//       ... then add -m ../data/earth_coastlines.msh to the runs below.
+//   0.  <build>/postprocess/topography_grid --lmax 96
+//       poetry -P meshes run python meshes/earth_coastlines.py \
+//           --topography topography.npz --coast-size 0.03 --out <build>/data
 //
 //   1.  ./ice_age_loading                 # no -ice: writes the surface
 //       node CSV (ice_age_nodes.csv) and prints step 2's commands.
@@ -28,7 +29,9 @@
 //           --field sea_level --dates 21 --length-scale 6.371e6 \
 //           -o ice_age_nodes_state.csv
 //       (pyslfp samples ICE-7G at the nodes; lengths in planet radii,
-//       model time in ka from the oldest date.)
+//       model time in ka from the oldest date. The CSVs are exact
+//       nodal data: the node set depends on the mesh AND the order,
+//       so changing -m or -o means re-running steps 1 and 2.)
 //   3.  ./ice_age_loading -ice ice_age_nodes_ice.csv \
 //                         -state ice_age_nodes_state.csv
 //

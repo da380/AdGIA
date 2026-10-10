@@ -79,11 +79,29 @@ message(STATUS "Meshes: generated with ${MESHES_PYTHON}")
 set(MESHES_DIR "${CMAKE_BINARY_DIR}/data")
 file(MAKE_DIRECTORY "${MESHES_DIR}")
 
-# meshes_add(<script> <output basename>... [MFEM] [ARGS <script arguments>...])
+# One knob for the whole set's resolution: every script is run with
+# --scale MESHES_SCALE (a factor on all element sizes, smaller is
+# finer). Changing it regenerates every mesh: the value is written to a
+# stamp file (only when it changes) that every mesh depends on.
+set(MESHES_SCALE "1" CACHE STRING
+    "factor on every generated mesh's element sizes (smaller is finer)")
+set(MESHES_SCALE_STAMP "${CMAKE_CURRENT_BINARY_DIR}/meshes_scale.txt")
+set(_scale_stamp_content "")
+if(EXISTS "${MESHES_SCALE_STAMP}")
+    file(READ "${MESHES_SCALE_STAMP}" _scale_stamp_content)
+endif()
+if(NOT _scale_stamp_content STREQUAL "${MESHES_SCALE}\n")
+    file(WRITE "${MESHES_SCALE_STAMP}" "${MESHES_SCALE}\n")
+endif()
+
+# meshes_add(<script> <output basename>... [MFEM] [ARGS <script arguments>...]
+#            [DEPENDS <extra input files>...])
 # One command per script run; its outputs are <basename>.msh and .json, or
 # <basename>.mesh and .json for a script that writes MFEM's own format.
+# DEPENDS names data files of this directory the script reads, so the mesh
+# is regenerated when they change.
 function(meshes_add script)
-    cmake_parse_arguments(M "MFEM" "" "ARGS" ${ARGN})
+    cmake_parse_arguments(M "MFEM" "" "ARGS;DEPENDS" ${ARGN})
     if(M_MFEM)
         set(ext ".mesh")
     else()
@@ -94,12 +112,18 @@ function(meshes_add script)
     foreach(name IN LISTS M_UNPARSED_ARGUMENTS)
         list(APPEND outputs "${MESHES_DIR}/${name}${ext}" "${MESHES_DIR}/${name}.json")
     endforeach()
+    set(extra_deps)
+    foreach(dep IN LISTS M_DEPENDS)
+        list(APPEND extra_deps "${CMAKE_CURRENT_SOURCE_DIR}/${dep}")
+    endforeach()
     add_custom_command(
         OUTPUT ${outputs}
         COMMAND "${MESHES_PYTHON}" "${CMAKE_CURRENT_SOURCE_DIR}/${script}"
-                ${M_ARGS} --out "${MESHES_DIR}"
+                ${M_ARGS} --scale "${MESHES_SCALE}" --out "${MESHES_DIR}"
         DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${script}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/common.py"
+                "${MESHES_SCALE_STAMP}"
+                ${extra_deps}
         WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
         COMMENT "Generating ${names} with ${script}"
         VERBATIM)
@@ -107,6 +131,9 @@ function(meshes_add script)
 endfunction()
 
 meshes_add(unit_disc.py        disk)
+meshes_add(earth_coastlines.py earth_coastlines
+                               DEPENDS ice7g_topography_lmax64.npz)
+meshes_add(fingerprint_coastline.py sea_level_fingerprint)
 meshes_add(unit_ball.py        ball)
 meshes_add(offset_disc.py      circular_offset)
 meshes_add(disc_with_buffer.py elastogravity_2d)

@@ -1,8 +1,32 @@
 # Post-processing
 
 Python tools for AdGIA outputs, a poetry project in the style of
-`meshes/` and `benchmarks/` (`poetry install` here; add `--extras maps`
-for cartopy and pyshtools).
+`meshes/` and `benchmarks/`.
+
+## Running
+
+The build puts a launcher for each script in `<build>/postprocess/`
+(`surface_to_netcdf`, `ice_ng_to_surface`, `topography_grid`): each
+starts the script of the source tree with the Python found at
+configuration — the poetry environment of this directory, or the one
+`POSTPROCESS_PYTHON` names. The environment is made once, and a build
+configured before it existed is configured again so the launchers pick
+it up:
+
+```
+cd postprocess
+poetry install              # numpy, scipy, matplotlib, netCDF4, pyslfp
+cd <build> && cmake .       # regenerates the launchers
+./postprocess/topography_grid --lmax 24
+```
+
+`--extras maps` on the install adds cartopy and pyshtools for the map
+figures. When no environment is found at configuration the launchers
+fall back on `python3`, which fails at the first pyslfp import
+(`ModuleNotFoundError: No module named 'pyslfp'`) — that error means
+the two commands above. A script writes where it is started (or to
+`-o`), so run the launchers from the build tree; every script's `-h`
+and docstring give its options, defaults and a sample run.
 
 - `surface_to_netcdf.py` — grids the nodal surface-field CSV written by
   `SeaLevelOperator::WriteSurfaceField` (sea level, ice, any surface
@@ -26,9 +50,14 @@ for cartopy and pyshtools).
   units. `examples/ice_age_loading.cpp` is the end-to-end chain.
 
 - `topography_grid.py` — exports the lmax-truncated ICE-NG topography
-  as a wrapped lat-lon grid (.npz) for mesh refinement:
-  `meshes/earth_coastlines.py` turns it into a planetmodel `Refinement`
-  that sizes elements by how close the sea level is to zero — no
-  polyline isolation; shorelines and shallow shelves, where the
-  flotation criterion is delicate, refine together. pyslfp downloads
-  and caches the data on first use.
+  plus a pre-processed shoreline (.npz, wrapped lat-lon grids):
+  `coast_rad` is the great-circle distance to the coast of the
+  near-native-resolution topography (its sign changes, plus the
+  shallow shelves within `--band`, where the flotation criterion is
+  delicate), a unit-gradient field that defines the shoreline evenly
+  at cliff coasts and shelf seas alike; `meshes/earth_coastlines.py`
+  refines on it directly — no polyline isolation. pyslfp downloads
+  and caches the data on first use. The build's default mesh reads a
+  committed grid instead, so this tool is only needed for a
+  re-dated or re-banded one (`meshes/README.md`, "The coastline
+  mesh").
