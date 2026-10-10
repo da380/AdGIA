@@ -26,7 +26,7 @@ yet reconciled — the report prints that row with a flag.
 The `--nonlinear` leg solves the frozen/linear pair too and reports the
 migration effect delta = SL(migrating) − SL(frozen) on each side — the
 probe in which the common linear part cancels. Two resolution caveats
-make its numbers server-campaign material (agreed 10 Oct 2026): the
+make its numbers server-campaign material: the
 shoreline strip a realistic melt moves is tens of km, far below both a
 toy FE mesh and a sharp ocean function on an lmax ≈ 16 grid (pyslfp's
 nonlinear updates are sharp where ours are smoothed over `shore`), so
@@ -37,19 +37,34 @@ coastline-refined meshes planned in
 `doc/planning/planetmodel_coastline_sizing_plan.md`. The AdGIA
 migration runs tight here (`-mig-inexact 0`): this solver stack
 amplifies a loose residual into an O(tolerance) absolute error in
-Phi_g, and the library's contraction guard (`ShorelineMigration::
-Options::guard`, found by this benchmark) would rescue the loop at more
+Phi_g, and the library's contraction guard
+(`ShorelineMigration::Options::guard`) would rescue the loop at more
 passes than solving tight from the start.
 
 `--timings` runs the same melt load as a plain elastic solve
-(`-no-water`), with the water feedback, with rotation, and with
-migration — best/mean of `--repeat` runs and ratios against the elastic
-control, written to `timings_o<p>.json`. Toy-size measurement (h 0.4,
-o2, np 4): water ≈ 1.4–1.7×, rotation ≈ 3.7×, migration ≈ 5× the
-elastic solve; each border column is one extra unbordered solve, so the
-scaling is structural rather than resolution-bound.
+(`-no-water`), with the water feedback (elimination and monolithic),
+with rotation (both again), and with migration — best/mean of
+`--repeat` runs and ratios against the elastic control, written to
+`timings_o<p>.json`. Toy-size measurement (h 0.4, o2, np 4):
+elimination water ≈ 1.6×, rotation ≈ 3.8×, migration ≈ 5.3×; the
+monolithic border (`-feedback monolithic`, one MINRES on the extended
+system instead of one solve per border column) brings the composed
+water–rotation case to ≈ 2.3× while the single-border water case stays
+with the elimination. Each elimination border column is one extra
+unbordered solve, so its scaling is structural rather than
+resolution-bound; the monolithic cost is flat in the border count.
+
+`--coast` (planetmodel >= 1.2.4) builds the case on a
+coastline-refined mesh: a `near_curve` ring refinement at the state's
+shoreline colatitude (computed from the same flotation the state
+defines), in its own `h<h>_coast` directory. The global comparison is
+unchanged at toy resolution (spectral/FE floor), but the shoreline
+strip is where it bites: measured at h 0.4/o2, the migration loop
+converges in 1 pass instead of 2 and the AdGIA-side migration-effect
+delta drops 4x — most of it was shoreline-quadrature noise.
 
     cd <build>/benchmarks/sea_level
     ./run --h 0.4 --order 2 --np 4 --lmax 32
     ./run --nonlinear
     ./run --timings --repeat 5
+    ./run --coast --nonlinear

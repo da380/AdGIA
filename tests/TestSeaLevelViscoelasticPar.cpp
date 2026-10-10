@@ -4,7 +4,7 @@
   4 ranks; a standalone MPI program that exits with status 1 if any
   check fails.
 
-  Mirrors the serial gates on the 2-D two-layer mesh with the
+  Mirrors the serial gates on the 3-D two-layer mesh with the
   fingerprint-style analytical state and frozen shorelines: the
   instantaneous Maxwell response equals the elastic water-load solve,
   the Phi_g mass row holds at every step of a Heaviside loading
@@ -58,7 +58,7 @@ constexpr double kMelt = 0.5;
 
 double Colat(const Vector& x) {
   const double r = x.Norml2();
-  const double c = x[1] / r;
+  const double c = x[2] / r;
   return std::acos(std::min(1.0, std::max(-1.0, c)));
 }
 
@@ -95,20 +95,20 @@ double GlobalNorm(const ParGridFunction& f) {
 }
 
 void RunCase(int order, const std::string& label) {
-  Mesh smesh(MeshFile(2).c_str(), 1, 1);
+  Mesh smesh(MeshFile(3).c_str(), 1, 1);
   int nxyz[3] = {Mpi::WorldSize(), 1, 1};
   int* partitioning = smesh.CartesianPartitioning(nxyz);
   ParMesh pmesh(MPI_COMM_WORLD, smesh, partitioning);
   delete[] partitioning;
   ParSubMesh body(ParSubMesh::CreateFromDomain(pmesh, BodyMarker(pmesh)));
-  H1_FECollection fec(order, 2);
-  ParFiniteElementSpace fes_u(&body, &fec, 2), fes_phi(&pmesh, &fec);
+  H1_FECollection fec(order, 3);
+  ParFiniteElementSpace fes_u(&body, &fec, 3), fes_phi(&pmesh, &fec);
   ConstantCoefficient kappa(kKappa), mu(kMu), rho(kRho), tau(kTauM);
-  IsotropicElasticRheology elastic(2, kappa, mu);
-  auto maxwell = IsotropicMaxwellRheology::Maxwell(2, kappa, mu, tau);
+  IsotropicElasticRheology elastic(3, kappa, mu);
+  auto maxwell = IsotropicMaxwellRheology::Maxwell(3, kappa, mu, tau);
   const Array<int> surface = SurfaceMarker(body);
-  const double g0 = 2.0 * std::numbers::pi * kG * kRho;
-  VectorFunctionCoefficient grad_phi0(2, [g0](const Vector& x, Vector& v) {
+  const double g0 = 4.0 * std::numbers::pi * kG * kRho / 3.0;
+  VectorFunctionCoefficient grad_phi0(3, [g0](const Vector& x, Vector& v) {
     v = x;
     v *= g0;
   });
@@ -118,7 +118,7 @@ void RunCase(int order, const std::string& label) {
   FunctionCoefficient sigma_d(MeltLoad);
 
   auto surface_integral = [&](Coefficient& f) {
-    H1_FECollection sfec(order, 2);
+    H1_FECollection sfec(order, 3);
     ParFiniteElementSpace sfes(&body, &sfec);
     ParLinearForm lf(&sfes);
     lf.AddBoundaryIntegrator(new BoundaryLFIntegrator(f),
@@ -133,8 +133,10 @@ void RunCase(int order, const std::string& label) {
     p->SetRelTol(1e-12);
     p->SetWaterLoad(w, sigma_d, surface);
     if (rotate) {
-      Vector moments(1);
-      moments[0] = 2.0;
+      Vector moments(3);
+      moments[0] = 1.2;
+      moments[1] = 1.3;
+      moments[2] = 2.0;
       p->SetRotation(0.1, moments);
     }
     return p;
@@ -226,7 +228,9 @@ void RunCase(int order, const std::string& label) {
     }
     Check(visco.SolveElastic(m, t) ? 0.0 : 1.0, 0.0,
           label + ": rotating stack steps");
-    Check(mass_residual(*pr), 1e-4, label + ": rotating mass");
+    // 3-D order 1 sits at the faceted-sphere route grade (~1e-3, the
+    // WP3 hierarchy; measured 3.2e-4 here).
+    Check(mass_residual(*pr), 2e-3, label + ": rotating mass");
     const double om = pr->AngularVelocity().Norml2();
     Check(std::isfinite(om) && om > 0.0 ? 0.0 : 1.0, 0.0,
           label + ": finite spin");
@@ -238,9 +242,9 @@ void RunCase(int order, const std::string& label) {
 int main(int argc, char* argv[]) {
   Mpi::Init(argc, argv);
   Hypre::Init();
-  for (int order : {1, 2}) {
-    RunCase(order, "order " + std::to_string(order));
-  }
+  // Order 1 alone: the parallel twin exercises the plumbing; the order
+  // axis lives in the serial suite.
+  RunCase(1, "order 1");
   if (Mpi::Root()) {
     std::cout << num_checks << " checks, " << num_failures
               << " failures\n";

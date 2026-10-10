@@ -9,7 +9,16 @@
 // demo of doc/planning/sea_level_plan.md, chaining the surface exchange
 // format end to end.
 //
-// The chain has three steps (the first and last are this program):
+// The chain has three steps (the first and last are this program), and
+// an optional step 0 builds a mesh refined where the sea level is near
+// zero — real shorelines and shallow shelves together (no coastline
+// isolation; a planetmodel Refinement field from the truncated
+// topography):
+//
+//   0.  <build>/postprocess/topography_grid --lmax 24
+//       poetry -C meshes run python meshes/earth_coastlines.py \
+//           --topography topography.npz --out <build>/data
+//       ... then add -m ../data/earth_coastlines.msh to the runs below.
 //
 //   1.  ./ice_age_loading                 # no -ice: writes the surface
 //       node CSV (ice_age_nodes.csv) and prints step 2's commands.

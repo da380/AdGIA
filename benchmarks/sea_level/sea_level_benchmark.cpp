@@ -50,6 +50,22 @@
 //   -mig            shoreline migration (Picard on C; off = frozen C0)
 //   -mig-tol        migration stop, relative SL1 increment [1e-3]
 //   -mig-iters      migration pass cap [12]
+//   -feedback       border | monolithic | picard [border]: the bordered
+//                   solve by column elimination; the same system as ONE
+//                   MINRES with a block preconditioner whose border
+//                   block is the preconditioner-probed Schur complement
+//                   (no column solves; BlockMINRES solver type); or the
+//                   feedback iterated as explicit loads
+//                   around the PLAIN elastic operator (the spectral
+//                   codes' route: water as the redistributed-ocean
+//                   load, rotation through the tidal slot, the uniform
+//                   term by mass bookkeeping, omega by the dense
+//                   angular-momentum row). The loop gain is the small
+//                   physical feedback, so a handful of warm-started
+//                   passes should converge — the per-pass iteration
+//                   counts are printed to measure exactly that.
+//   -picard-tol     picard stop: relative SL1 increment [1e-8]
+//   -picard-max     picard pass cap [30]
 //   -no-water       melt load without the water feedback (elastic
 //                   control; incompatible with -mig)
 //   -slcsv          the fingerprint CSV [sea_level.csv]
@@ -122,6 +138,23 @@ double MeltLoad(const Vector& x) {
   return (1.0 - OceanFraction(x)) * g_rho_i * IceChange(x);
 }
 
+// The Picard-feedback load: sigma_data + rho_w C0 SL1, with SL1 the
+// previous pass's sea-level change (nodal on the body scalar space;
+// zero on the first pass, which is then the plain elastic melt solve).
+class PicardLoad : public Coefficient {
+ public:
+  explicit PicardLoad(GridFunction& sl1) : sl1_(sl1) {}
+  real_t Eval(ElementTransformation& T,
+              const IntegrationPoint& ip) override {
+    Vector x;
+    T.Transform(ip, x);
+    return MeltLoad(x) + g_rho_w * OceanFraction(x) * sl1_.GetValue(T, ip);
+  }
+
+ private:
+  GridFunction& sl1_;
+};
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -133,6 +166,9 @@ int main(int argc, char* argv[]) {
   const char* out = "sea_level.json";
   bool migrate = false;
   bool water = true;
+  const char* feedback = "border";
+  double picard_tol = 1e-8;
+  int picard_max = 30;
   double mig_tol = 1e-3;
   double mig_inexact = 0.1;
   double mig_inexact_max = 1e-3;
@@ -184,6 +220,13 @@ int main(int argc, char* argv[]) {
                  "-no-mig-verbose", "--no-migration-verbose",
                  "Per-pass migration trace (tolerances, increments, "
                  "Phi_g, guard events).");
+  args.AddOption(&feedback, "-feedback", "--feedback",
+                 "border (monolithic) or picard (feedback as explicit "
+                 "loads around the plain elastic operator).");
+  args.AddOption(&picard_tol, "-picard-tol", "--picard-tolerance",
+                 "Picard stop: relative SL1 increment.");
+  args.AddOption(&picard_max, "-picard-max", "--picard-maximum",
+                 "Picard pass cap.");
   args.AddOption(&water, "-water", "--water-load", "-no-water",
                  "--no-water-load",
                  "Water-load feedback; off applies the same melt load as a "
@@ -203,9 +246,21 @@ int main(int argc, char* argv[]) {
               "Eulerian problem (-method dahlen).");
   MFEM_VERIFY(water || !migrate,
               "sea_level_benchmark: -mig needs the water load (-water)");
+  const bool picard = std::string(feedback) == "picard";
+  const bool monolithic = std::string(feedback) == "monolithic";
+  MFEM_VERIFY(picard || monolithic || std::string(feedback) == "border",
+              "-feedback is border, monolithic or picard");
+  MFEM_VERIFY(!picard || (water && !migrate),
+              "sea_level_benchmark: -feedback picard iterates the water "
+              "feedback (no -no-water, no -mig)");
 
   Case c(options);
   g_gravity = c.gravity;
+  if (monolithic) {
+    // The same bordered system, solved as one MINRES with the probed
+    // border Schur preconditioner instead of by column elimination.
+    c.problem->SetMonolithicBorder();
+  }
   const Array<int>& surface = c.analyses[c.surface].radial->Marker();
 
   // grad Phi0 = (g/a) x, exact at the surface (only surface values
@@ -222,6 +277,22 @@ int main(int argc, char* argv[]) {
   FunctionCoefficient w(OceanWeight), sigma_data(MeltLoad);
   FunctionCoefficient sl0(InitialSeaLevel), ice(IceThickness);
   FunctionCoefficient dice(IceChange);
+
+  // The surface layer before the solve: the picard loop needs its
+  // fields and transfers; the postprocessing uses it either way.
+  SeaLevelOperator sea(*c.fes_u, surface);
+  // SL1 state of the picard loop, on the body scalar space (the
+  // benchmark body is a SubMesh of the case's parent, so the space is
+  // there); the load coefficient reads its current values each pass.
+  std::unique_ptr<ParGridFunction> sl1_body;  // benchmarks are MPI-only
+  std::unique_ptr<PicardLoad> picard_load;
+  if (picard) {
+    sl1_body = std::make_unique<ParGridFunction>(
+        static_cast<ParFiniteElementSpace*>(sea.BodyScalarSpace()));
+    *sl1_body = 0.0;
+    picard_load = std::make_unique<PicardLoad>(*sl1_body);
+  }
+
   std::unique_ptr<ShorelineMigration> mig;
   if (migrate) {
     ShorelineMigration::Options opt;
@@ -234,40 +305,137 @@ int main(int argc, char* argv[]) {
     mig = std::make_unique<ShorelineMigration>(*c.problem, grad_phi0, sl0,
                                                ice, dice, g_rho_w, g_rho_i,
                                                surface, opt);
+  } else if (picard) {
+    c.problem->SetSurfaceLoad(*picard_load, surface);
   } else if (water) {
     c.problem->SetWaterLoad(w, sigma_data, surface);
   } else {
     c.problem->SetSurfaceLoad(sigma_data, surface);
   }
+  CentrifugalPotential psi_total(3, g_Omega);
+  Vector moments(3);
+  moments[0] = g_C1;
+  moments[1] = g_C2;
+  moments[2] = g_C3;
   if (g_Omega != 0.0) {
     // The Case wires the Love machinery's tidal expansion; the
-    // rotational border owns that slot here.
+    // rotational physics owns that slot here (the border, or the
+    // picard loop's updated centrifugal potential).
     c.problem->ClearTidalPotential();
-    Vector moments(3);
-    moments[0] = g_C1;
-    moments[1] = g_C2;
-    moments[2] = g_C3;
-    c.problem->SetRotation(g_Omega, moments);
+    if (picard) {
+      c.problem->SetTidalPotential(psi_total);
+    } else {
+      c.problem->SetRotation(g_Omega, moments);
+    }
   }
+
+  int picard_passes = 0;
+  std::vector<int> pass_its;
+  Vector omega_p(3);
+  omega_p = 0.0;
+  real_t picard_uniform = 0.0;
   const auto t0 = Clock::now();
   if (migrate) {
     MFEM_VERIFY(mig->Solve(0.0), "the migrating solve failed");
+  } else if (picard) {
+    // The feedback as a fixed point around the plain operator: solve,
+    // read SL1 (mass-conserving uniform) and omega (the dense
+    // angular-momentum row), update the loads, repeat. The loop gain is
+    // the physical feedback (percent-grade for water; the wander rows
+    // approach neutrality as C3 - C1 -> 0), and each pass warm-starts
+    // the solver from the last.
+    const double melted = -sea.SurfaceIntegral(sigma_data);
+    // The mass bookkeeping must run over the state's own ocean, not
+    // the all-ocean default (the uniform term is a constant: a wrong
+    // ocean shifts the whole fingerprint).
+    sea.SetDensities(g_rho_w, g_rho_i);
+    sea.SetInitialState(sl0, ice);
+    std::vector<std::unique_ptr<CentrifugalPotential>> psi_unit;
+    DenseMatrix Aw(3);
+    if (g_Omega != 0.0) {
+      Aw = InertiaMatrix(moments);
+      for (int k = 0; k < 3; k++) {
+        psi_unit.push_back(std::make_unique<CentrifugalPotential>(
+            3, g_Omega));
+        psi_unit[k]->SetUnit(k);
+        for (int j = 0; j < 3; j++) {
+          Aw(k, j) += c.problem->TidalTidalCoupling(*psi_unit[k],
+                                                    *psi_unit[j]);
+        }
+      }
+    }
+    auto body_surface_integral = [&](Coefficient& f) {
+      ParLinearForm lf(
+          static_cast<ParFiniteElementSpace*>(sea.BodyScalarSpace()));
+      lf.AddBoundaryIntegrator(new BoundaryLFIntegrator(f),
+                               const_cast<Array<int>&>(surface));
+      lf.Assemble();
+      double v = lf.Sum();
+      double g = 0.0;
+      MPI_Allreduce(&v, &g, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+      return g;
+    };
+    auto surf_l2 = [&](const GridFunction& f) {
+      GridFunctionCoefficient fc(const_cast<GridFunction*>(&f));
+      ProductCoefficient f2(fc, fc);
+      return std::sqrt(std::max(sea.SurfaceIntegral(f2), real_t{0}));
+    };
+    GridFunction prev(&sea.SurfaceSpace());
+    prev = 0.0;
+    for (int k = 0; k < picard_max; k++) {
+      c.problem->AssembleForce(0.0);
+      MFEM_VERIFY(c.problem->Solve(), "the picard solve failed");
+      pass_its.push_back(c.problem->LastOuterIterations());
+      const auto info = sea.SeaLevelChange(
+          c.problem->Displacement(), grad_phi0, c.problem->Potential(),
+          g_Omega != 0.0 ? &psi_total : nullptr, melted);
+      picard_uniform = info.uniform;
+      GridFunction d(sea.SeaLevelChangeField());
+      d -= prev;
+      const real_t rel = surf_l2(d) /
+                         (surf_l2(sea.SeaLevelChangeField()) + 1e-300);
+      prev = sea.SeaLevelChangeField();
+      sea.Extend(sea.SeaLevelChangeField(), *sl1_body);
+      if (g_Omega != 0.0) {
+        Vector rhs(3);
+        for (int j = 0; j < 3; j++) {
+          ProductCoefficient spj(*picard_load, *psi_unit[j]);
+          rhs[j] = -(c.problem->TidalCoupling(*psi_unit[j]) +
+                     body_surface_integral(spj));
+        }
+        DenseMatrixInverse Ainv(Aw);
+        Ainv.Mult(rhs, omega_p);
+        psi_total.SetAmplitudes(omega_p);
+      }
+      picard_passes++;
+      if (Mpi::Root()) {
+        std::cout << "picard pass " << picard_passes << ": "
+                  << pass_its.back() << " outer its, rel increment "
+                  << rel << "\n";
+      }
+      if (k > 0 && rel <= picard_tol) {
+        break;
+      }
+    }
   } else {
     c.problem->AssembleForce(0.0);
     MFEM_VERIFY(c.problem->Solve(), "the coupled solve failed");
   }
   const double solve_s = Seconds(t0);
 
-  // The fingerprint: SL1 = -(u.grad Phi0 + phi + psi)/g + Phi_g/g.
-  SeaLevelOperator sea(*c.fes_u, surface);
+  // The fingerprint: SL1 = -(u.grad Phi0 + phi + psi)/g + Phi_g/g. The
+  // picard loop already left SeaLevelChangeField() at its converged
+  // state (mass-conserving uniform in place of the border's Phi_g).
   CentrifugalPotential psi(3, g_Omega);
-  if (g_Omega != 0.0) {
-    psi.SetAmplitudes(c.problem->AngularVelocity());
+  if (!picard) {
+    if (g_Omega != 0.0) {
+      psi.SetAmplitudes(c.problem->AngularVelocity());
+    }
+    sea.SeaLevelChangeFrom(c.problem->Displacement(), grad_phi0,
+                           c.problem->Potential(),
+                           c.problem->UniformPotentialTerm(),
+                           g_Omega != 0.0 ? &psi : nullptr);
   }
-  sea.SeaLevelChangeFrom(c.problem->Displacement(), grad_phi0,
-                         c.problem->Potential(),
-                         c.problem->UniformPotentialTerm(),
-                         g_Omega != 0.0 ? &psi : nullptr);
   sea.WriteSurfaceField(sea.SeaLevelChangeField(), slcsv);
 
   // Scalars, over the same analytic ocean fraction the solve used.
@@ -287,7 +455,9 @@ int main(int argc, char* argv[]) {
     os << "{\n";
     os << "  \"gravity\": " << Num(c.gravity) << ",\n";
     os << "  \"radius\": " << Num(c.radius) << ",\n";
-    os << "  \"phi_g\": " << Num(c.problem->UniformPotentialTerm())
+    os << "  \"phi_g\": "
+       << Num(picard ? picard_uniform * g_gravity
+                     : c.problem->UniformPotentialTerm())
        << ",\n";
     os << "  \"ocean_area\": " << Num(area) << ",\n";
     os << "  \"melted_mass\": " << Num(melted_mass) << ",\n";
@@ -298,12 +468,21 @@ int main(int argc, char* argv[]) {
     os << "  \"Omega\": " << Num(g_Omega) << ",\n";
     os << "  \"omega\": [";
     if (g_Omega != 0.0) {
-      const Vector& om = c.problem->AngularVelocity();
+      const Vector& om = picard ? omega_p : c.problem->AngularVelocity();
       for (int k = 0; k < om.Size(); k++) {
         os << Num(om[k]) << (k + 1 < om.Size() ? ", " : "");
       }
     }
     os << "],\n";
+    os << "  \"feedback\": \"" << feedback << "\",\n";
+    if (picard) {
+      os << "  \"picard_passes\": " << picard_passes << ",\n";
+      os << "  \"picard_pass_iterations\": [";
+      for (std::size_t k = 0; k < pass_its.size(); k++) {
+        os << pass_its[k] << (k + 1 < pass_its.size() ? ", " : "");
+      }
+      os << "],\n";
+    }
     os << "  \"water\": " << (water ? "true" : "false") << ",\n";
     os << "  \"migrate\": " << (migrate ? "true" : "false") << ",\n";
     if (migrate) {

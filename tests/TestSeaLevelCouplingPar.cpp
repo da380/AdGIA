@@ -3,7 +3,7 @@
   and 4 ranks; a standalone MPI program that exits with status 1 if any
   check fails.
 
-  Mirrors the serial rung-0 gates on the 2-D two-layer mesh, all-ocean:
+  Mirrors the serial rung-0 gates on the 3-D two-layer mesh, all-ocean:
   the spectral identity s = -T/(1 + rho_w T) against the plain-solve
   response, the mass-conservation certificate, the inert uniform term
   for a zero-mean load, and SchurCG == BlockMINRES through the
@@ -56,19 +56,19 @@ double GlobalSum(double v) {
 }
 
 void RunCase(int order, const std::string& label) {
-  Mesh smesh(MeshFile(2).c_str(), 1, 1);
+  Mesh smesh(MeshFile(3).c_str(), 1, 1);
   int nxyz[3] = {Mpi::WorldSize(), 1, 1};
   int* partitioning = smesh.CartesianPartitioning(nxyz);
   ParMesh pmesh(MPI_COMM_WORLD, smesh, partitioning);
   delete[] partitioning;
   ParSubMesh body(ParSubMesh::CreateFromDomain(pmesh, BodyMarker(pmesh)));
-  H1_FECollection fec(order, 2);
-  ParFiniteElementSpace fes_u(&body, &fec, 2), fes_phi(&pmesh, &fec);
+  H1_FECollection fec(order, 3);
+  ParFiniteElementSpace fes_u(&body, &fec, 3), fes_phi(&pmesh, &fec);
   ConstantCoefficient kappa(kKappa), mu(kMu), rho(kRho);
-  IsotropicElasticRheology rheology(2, kappa, mu);
+  IsotropicElasticRheology rheology(3, kappa, mu);
   const Array<int> surface = SurfaceMarker(body);
-  const double g0 = 2.0 * std::numbers::pi * kG * kRho;
-  VectorFunctionCoefficient grad_phi0(2, [g0](const Vector& x, Vector& v) {
+  const double g0 = 4.0 * std::numbers::pi * kG * kRho / 3.0;
+  VectorFunctionCoefficient grad_phi0(3, [g0](const Vector& x, Vector& v) {
     v = x;
     v *= g0;
   });
@@ -76,7 +76,7 @@ void RunCase(int order, const std::string& label) {
   ConstantCoefficient w(kRhoW / g0);
 
   auto surface_integral = [&](Coefficient& f) {
-    H1_FECollection sfec(order, 2);
+    H1_FECollection sfec(order, 3);
     ParFiniteElementSpace sfes(&body, &sfec);
     ParLinearForm lf(&sfes);
     lf.AddBoundaryIntegrator(new BoundaryLFIntegrator(f),
@@ -121,8 +121,9 @@ void RunCase(int order, const std::string& label) {
   sea.SeaLevelChangeFrom(p->Displacement(), grad_phi0, p->Potential(),
                          p->UniformPotentialTerm());
   const double s = amplitude(sea);
-  Check(std::abs(s + T / (1.0 + kRhoW * T)),
-        (order == 1 ? 1e-3 : 2e-4) * std::abs(T),
+  // 3-D order-1 route grade (the faceted-sphere hierarchy of the
+  // serial suite).
+  Check(std::abs(s + T / (1.0 + kRhoW * T)), 2e-3 * std::abs(T),
         label + ": spectral identity");
   Check(std::abs(p->UniformPotentialTerm()), 2e-3,
         label + ": inert uniform term");
@@ -140,7 +141,7 @@ void RunCase(int order, const std::string& label) {
     const double total = surface_integral(sigma_data) -
                          surface_integral(wtau) +
                          p->UniformPotentialTerm() * surface_integral(wone);
-    Check(std::abs(total), 1e-5, label + ": mass certificate");
+    Check(std::abs(total), 5e-5, label + ": mass certificate");
   }
 
   // Solver-type agreement.
@@ -160,9 +161,9 @@ int main(int argc, char* argv[]) {
   Mpi::Init(argc, argv);
   Hypre::Init();
 
-  for (auto order : {1, 2}) {
-    RunCase(order, "p=" + std::to_string(order));
-  }
+  // Order 1 alone: the parallel twin exercises the plumbing; the order
+  // axis lives in the serial suite.
+  RunCase(1, "p=1");
 
   if (Mpi::Root()) {
     if (num_fails == 0) {

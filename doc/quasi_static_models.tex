@@ -1398,6 +1398,30 @@ states the loop converges in 2--3 extra passes; the inexact route saves
 roughly 10\,\% of the outer iterations there, more when the driving
 history forces longer loops.
 
+The sea-level machinery is three-dimensional only: 2-D elastic solves
+with gravity remain useful for visualisation and testing, but a 2-D
+ocean is not physics anyone needs, and the 2-D exterior's compatibility
+relocation (the log-DtN monopole gauge) would make the bordered system
+asymmetric. \code{SetWaterLoad} refuses the dimension.
+
+The bordered system can also be solved monolithically
+(\code{SetMonolithicBorder}, BlockMINRES path): one MINRES over
+$(u, \phi \mid \Phi_g, \bm\omega)$ with the border scalars owned by
+one rank, preconditioned by the two-block preconditioner alongside the
+absolute value of the preconditioner-probed border Schur complement
+$\tilde S = D_b - B^T P^{-1} B$ (MINRES needs a definite
+preconditioner), the border columns equilibrated to unit norm, and the
+endpoint polished by true-residual iterative refinement (the
+recurrence-tracked residual drifts at $\tilde S$'s conditioning). It
+matches the elimination at solver grade (gated, including near-neutral
+moments) and replaces the per-column solves by a mildly longer single
+iteration: measured on the benchmark, the composed water--rotation
+solve drops from $3.8\times$ to $2.3\times$ an elastic solve, while
+the single-border water case stays with the elimination
+($1.6\times$), and the elimination's cached columns remain the
+cheapest route when the operator is frozen across solves (time
+stepping; the cache invalidates on any reassembly).
+
 The self-correction argument behind the inexact passes has a measured
 limit: the bordered elimination recovers $\Phi_g$ through
 near-cancelling inner products, and on some solver configurations (the

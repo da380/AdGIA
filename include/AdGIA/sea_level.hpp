@@ -307,9 +307,9 @@ class ShorelineMigration {
      * recovered through a bordered elimination that can amplify a loose
      * solver residual into an O(tolerance) ABSOLUTE error — a uniform
      * SL1 shift of several bands floods or dries shorelines globally and
-     * the Picard loop leaves its basin (observed on the sea-level
-     * benchmark's solver stack, where the plain-tolerance loop converges
-     * in 2 passes). So a loose pass whose SL1 increment fails to
+     * the Picard loop leaves its basin (solver-stack dependent; see
+     * doc/planning/open_issues.md, "The sea-level equation"). So a
+     * loose pass whose SL1 increment fails to
      * contract — change_k > guard * change_{k-1} — is re-solved at full
      * tolerance (warm-started; counted in TotalOuterIterations()) and
      * inexactness is ABANDONED for the remainder of the loop: the

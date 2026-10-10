@@ -2,7 +2,7 @@
   Parallel tests for the composed water-rotation border (SetWaterLoad +
   SetRotation). Run with 1, 2 and 4 ranks; exits 1 on any failure.
 
-  The 2-D two-layer case: the composed solve succeeds, Omega -> 0
+  The 3-D two-layer case: the composed solve succeeds, Omega -> 0
   recovers the water-only solution, and the mass row holds at the
   composed state with psi through its interpolant (the border's
   convention).
@@ -44,9 +44,11 @@ constexpr double kRhoW = 0.02;
 constexpr double kOmega = 0.1;
 
 double RotLoad(const Vector& x) {
+  // A degree-2-flavoured load with order-1 content, so the wander rows
+  // of the 3-D border are genuinely forced.
   const double r = x.Norml2();
-  const double c = x[1] / r;
-  return 0.02 * (1.0 + 3.0 * c * c);
+  const double c = x[2] / r;
+  return 0.02 * (1.0 + 3.0 * c * c + x[0] * x[2] / (r * r));
 }
 
 double GlobalSum(double v) {
@@ -62,29 +64,31 @@ double GlobalMax(double v) {
 }
 
 void RunCase(int order, const std::string& label) {
-  Mesh smesh(MeshFile(2).c_str(), 1, 1);
+  Mesh smesh(MeshFile(3).c_str(), 1, 1);
   int nxyz[3] = {Mpi::WorldSize(), 1, 1};
   int* partitioning = smesh.CartesianPartitioning(nxyz);
   ParMesh pmesh(MPI_COMM_WORLD, smesh, partitioning);
   delete[] partitioning;
   ParSubMesh body(ParSubMesh::CreateFromDomain(pmesh, BodyMarker(pmesh)));
-  H1_FECollection fec(order, 2);
-  ParFiniteElementSpace fes_u(&body, &fec, 2), fes_phi(&pmesh, &fec);
+  H1_FECollection fec(order, 3);
+  ParFiniteElementSpace fes_u(&body, &fec, 3), fes_phi(&pmesh, &fec);
   ConstantCoefficient kappa(kKappa), mu(kMu), rho(kRho);
-  IsotropicElasticRheology rheology(2, kappa, mu);
+  IsotropicElasticRheology rheology(3, kappa, mu);
   const Array<int> surface = SurfaceMarker(body);
-  const double g0 = 2.0 * std::numbers::pi * kG * kRho;
-  VectorFunctionCoefficient grad_phi0(2, [g0](const Vector& x, Vector& v) {
+  const double g0 = 4.0 * std::numbers::pi * kG * kRho / 3.0;
+  VectorFunctionCoefficient grad_phi0(3, [g0](const Vector& x, Vector& v) {
     v = x;
     v *= g0;
   });
   FunctionCoefficient sigma(RotLoad);
   ConstantCoefficient w(kRhoW / g0);
-  Vector moments(1);
-  moments[0] = 2.0;
+  Vector moments(3);
+  moments[0] = 1.2;
+  moments[1] = 1.3;
+  moments[2] = 2.0;
 
   auto surface_int = [&](Coefficient& f) {
-    H1_FECollection sfec(order, 2);
+    H1_FECollection sfec(order, 3);
     ParFiniteElementSpace sfes(&body, &sfec);
     ParLinearForm lf(&sfes);
     lf.AddBoundaryIntegrator(new BoundaryLFIntegrator(f),
@@ -106,9 +110,9 @@ void RunCase(int order, const std::string& label) {
   p->AssembleForce(0.0);
   Check(p->Solve() ? 0.0 : 1.0, 0.0, label + ": composed solve");
   {
-    CentrifugalPotential psi(2, kOmega);
+    CentrifugalPotential psi(3, kOmega);
     psi.SetAmplitudes(p->AngularVelocity());
-    H1_FECollection sfec(order, 2);
+    H1_FECollection sfec(order, 3);
     ParFiniteElementSpace sfes(&body, &sfec);
     ParGridFunction psig(&sfes);
     psig.ProjectCoefficient(psi);
@@ -124,7 +128,7 @@ void RunCase(int order, const std::string& label) {
     ProductCoefficient wone(w, one);
     const double total = surface_int(sigma) - surface_int(wtp) +
                          p->UniformPotentialTerm() * surface_int(wone);
-    Check(std::abs(total), 1e-5, label + ": composed mass row");
+    Check(std::abs(total), 5e-5, label + ": composed mass row");
   }
 
   // Omega -> 0 recovers water-only.
@@ -148,9 +152,9 @@ void RunCase(int order, const std::string& label) {
 int main(int argc, char* argv[]) {
   Mpi::Init(argc, argv);
   Hypre::Init();
-  for (auto order : {1, 2}) {
-    RunCase(order, "p=" + std::to_string(order));
-  }
+  // Order 1 alone: the parallel twin exercises the plumbing; the order
+  // axis lives in the serial suite.
+  RunCase(1, "p=1");
   if (Mpi::Root()) {
     if (num_fails == 0) {
       std::cout << "All " << num_checks << " checks passed on "

@@ -1,5 +1,36 @@
 # Installing AdGIA
 
+## Building a minimal MFEM first
+
+AdGIA needs nothing of MFEM beyond its core: no PETSc, no SUNDIALS, no
+GPU backends. The quickest route is the script the CI uses, which runs
+equally well on a workstation:
+
+```bash
+# serial: MFEM alone
+.github/ci/install_mfem.sh serial  ~/mfem-serial
+
+# parallel: hypre + MFEM with one MPI's wrappers; METIS from the system
+sudo apt install libmetis-dev        # or set METIS_DIR
+MPICC=mpicc MPICXX=mpicxx .github/ci/install_mfem.sh parallel ~/mfem-parallel
+```
+
+It builds the reference versions (MFEM v4.10, hypre 3.1.0; overridable
+through `MFEM_VERSION`/`HYPRE_VERSION`) into the given prefix, which is
+then the `MFEM_DIR` below. By hand, the minimum is:
+
+- **serial** — MFEM with its defaults:
+  `cmake -S mfem -B mfem/build -DCMAKE_BUILD_TYPE=Release` and build;
+- **parallel** — hypre and MFEM compiled with the *same* MPI compiler
+  wrappers (mixing MPIs is the usual cause of link and launch
+  failures), plus a serial METIS 5:
+  `cmake -S mfem -B mfem/build -DMFEM_USE_MPI=YES
+  -DCMAKE_CXX_COMPILER=mpicxx -DHYPRE_DIR=<hypre prefix>
+  -DMETIS_DIR=/usr`.
+
+MFEM v4.10 is the reference (what the CI tests against); v4.9 is also
+known to work — the full test suite passes on both.
+
 ## Prerequisites
 
 1. **CMake** 3.15 or later.

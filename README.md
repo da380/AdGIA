@@ -9,16 +9,33 @@ provide both the forward problem and its adjoints, to first and second order,
 so that the sensitivity of observables to the Earth model, the load or the
 source can be computed and used in inversion.
 
-**Status.** The solid-Earth part of the forward problem is in place:
-quasi-static deformation of a self-gravitating, elastic or viscoelastic body,
-with fluid regions, laterally varying and anisotropic structure, general
-(non-hydrostatic, non-natural) reference states and slipping fluid–solid
-interfaces, in serial and in parallel (MPI). Current work is on benchmarking
-it against independent reference solutions (`benchmarks/`,
-`doc/benchmarks.tex`) and on refining its solvers. Planned for the near
-future, and not yet in the code, are the sea-level equation and rotational
-feedbacks, which complete the GIA forward problem, and the first- and
-second-order adjoint machinery.
+**Status.** The GIA forward problem is in place, in its traditional
+form: quasi-static deformation of a self-gravitating, elastic or
+viscoelastic body, with fluid regions, laterally varying and anisotropic
+structure, general (non-hydrostatic, non-natural) reference states and
+slipping fluid–solid interfaces; the sea-level equation solved
+monolithically with the elastic operator, rotational feedbacks, shoreline
+migration, and ice histories read from the ICE-NG models — in serial and
+in parallel (MPI). Current work is on benchmarking against independent
+reference solutions (`benchmarks/`, `doc/benchmarks.tex`) and on solver
+performance; next are the first- and second-order adjoints and the
+referential sea-level leg. The library is under active development and
+is not yet user-facing: interfaces move, and the documents below — not
+this page — are the working contract.
+
+## Quick start
+
+```bash
+# a minimal MFEM (see INSTALL.md, "Building a minimal MFEM first")
+.github/ci/install_mfem.sh serial ~/mfem-serial
+
+cmake -S . -B build -DMFEM_DIR=~/mfem-serial -DBUILD_EXAMPLES=ON
+cmake --build build -j          # first build also generates the meshes
+cd build/examples && ./love_numbers
+```
+
+`INSTALL.md` has the parallel build, every option, and the Python
+pieces (mesh generation, benchmarks, post-processing).
 
 ## Library contents
 
@@ -67,6 +84,14 @@ includes them all), are
   aspherical bodies; the density feasibility functional of the
   equilibrium-figures programme and its adjoint-free derivative
   (`equilibrium_figures.hpp`);
+- the sea-level machinery (`sea_level.hpp`, `rotation.hpp`,
+  `centrifugal.hpp`): the water-load feedback and its uniform-term and
+  angular-velocity borders on the mixed problem (`SetWaterLoad`,
+  `SetRotation`, with elimination and monolithic solve routes),
+  shoreline migration (`ShorelineMigration`), the surface layer
+  (`SeaLevelOperator`: surface fields, sea-level postprocessing, the
+  nodal CSV exchange format) and ice-history loading (`IceHistory`,
+  fed by the pyslfp-backed scripts in `postprocess/`);
 - the mapping (relabelling) layer (`mappings.hpp`): diffeomorphisms of the
   reference domain (identity, analytic, radial, tapered, grid-function),
   their interpolation, mapped meshes, and pull-back and Nanson coefficients;
@@ -112,6 +137,7 @@ documents in the source tree are of two kinds.
 | `examples/README.md` | how to run the examples, and what each one does |
 | `meshes/README.md` | mesh generation, the files written and the attribute conventions |
 | `benchmarks/README.md` | the benchmark families: comparisons with independent reference solutions |
+| `postprocess/README.md` | the Python post-processing and data-ingest tools (maps, NetCDF, ice-ng sampling, topography grids) |
 
 **Planning** — open issues and future work, not a description of the code:
 `doc/planning/`, indexed by its `README.md` (`open_issues.md`, `solvers.md`,
@@ -119,36 +145,14 @@ documents in the source tree are of two kinds.
 
 ## Installation
 
-MFEM must be built first (a parallel MFEM, with hypre and METIS, for the MPI
-build). MFEM v4.10 is the reference version — it is what CI builds against
-(`.github/workflows/ci.yml`) — and v4.9 is also known to work; the full test
-suite passes on both. The project uses CMake; in-source builds are refused.
-
-**Serial:**
-```bash
-cmake -S . -B build_serial \
-      -DCMAKE_PREFIX_PATH=/path/to/mfem_serial_build \
-      -DBUILD_EXAMPLES=ON -DBUILD_TESTS=ON
-cmake --build build_serial -j
-```
-
-**Parallel:**
-```bash
-cmake -S . -B build_parallel \
-      -DUSE_MPI=ON \
-      -DCMAKE_PREFIX_PATH=/path/to/mfem_parallel_build \
-      -DCMAKE_CXX_COMPILER=/path/to/mpic++ \
-      -DMPI_C_COMPILER=/path/to/mpicc \
-      -DMPI_CXX_COMPILER=/path/to/mpic++ \
-      -DBUILD_EXAMPLES=ON -DBUILD_TESTS=ON
-cmake --build build_parallel -j
-```
-
-`INSTALL.md` is the reference for the build: it lists every option
-(`USE_MPI`, `BUILD_EXAMPLES`, `BUILD_TESTS`, `BUILD_BENCHMARKS`,
-`BUILD_DOCS`, `GENERATE_MESHES`, and the Python interpreters used by the
-mesh and benchmark scripts) with its default, explains how the MPI launcher
-for the tests is chosen, and describes installation.
+MFEM must be built first — a parallel MFEM, with hypre and METIS, for
+the MPI build; AdGIA needs nothing beyond MFEM's core, and
+`.github/ci/install_mfem.sh serial|parallel <prefix>` builds the
+reference versions (MFEM v4.10, hypre 3.1.0) on a workstation as well
+as in CI. `INSTALL.md` is the reference for the build: the minimal MFEM
+recipes, the serial and parallel configure lines, every option with its
+default, how the MPI launcher for the tests is chosen, and
+installation.
 
 ## Examples
 

@@ -226,6 +226,7 @@ void LinearQuasiStaticProblemBase::ClearRelaxationWeights() {
 }
 
 void LinearQuasiStaticProblemBase::AssembleOperator() {
+  operator_version_++;
   if (a_ && prec_ && !prec_stale_ && prec_reuse_ > 1.0 && !prec_form_ &&
       !prec_A_.Ptr()) {
     // The preconditioner was built on the current solver matrix and stays on
@@ -273,6 +274,7 @@ void LinearQuasiStaticProblemBase::AssembleOperator() {
 }
 
 void LinearQuasiStaticProblemBase::RescaleGaugeOperator() {
+  operator_version_++;
   MFEM_ASSERT(HasGaugedFluid() && fluid_op_.HasUnitCache(),
               "RescaleGaugeOperator: no cached unit penalty.");
   // Keep the matrix the (reused) preconditioner was built on alive, as

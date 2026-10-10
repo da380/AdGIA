@@ -344,7 +344,10 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
    * surface integral feeds the mass row.
    *
    * Call once, after construction and before the first Solve();
-   * incompatible with the gauge-KKT saddle. The uniform term of the
+   * incompatible with the gauge-KKT saddle, and 3-D only (a 2-D ocean
+   * is not supported, and the 2-D compatibility relocation — the
+   * log-DtN monopole gauge — would make the bordered system
+   * asymmetric). The uniform term of the
    * last solve is UniformPotentialTerm(); the sea-level change is the
    * postprocessing @f$SL_1 = -\tau/g + \Phi_g/g@f$
    * (SeaLevelOperator). Shoreline migration is strictly second order
@@ -396,6 +399,23 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   /** @brief @f$\omega@f$ of the last Solve() (zero before; empty
    * without SetRotation()). */
   const mfem::Vector& AngularVelocity() const { return omega_; }
+
+  /** @brief Solve the bordered system monolithically — one MINRES on
+   * @f$[K\ B; B^T D_b]@f$ with a block-diagonal preconditioner whose
+   * border block is the preconditioner-probed Schur complement
+   * @f$|D_b - B^T P^{-1} B|@f$ (equilibrated columns, true-residual
+   * refinement) — instead of by block elimination: the per-column
+   * solves disappear at the price of an indefinite outer iteration
+   * whose cost is flat in the border count. Gated to agree with the
+   * elimination at solver grade; the elimination stays the default
+   * (doc/planning/solvers.md, "Bordered solves"). BlockMINRES/BlockCG
+   * solver types with the plain gauge, in 3-D only. */
+  void SetMonolithicBorder(bool on = true) {
+    MFEM_VERIFY(!on || dim_ == 3,
+                "SetMonolithicBorder: 3-D only (the 2-D compatibility "
+                "relocation makes the bordered system asymmetric).");
+    monolithic_border_ = on;
+  }
 
   /** @brief @f$\psi(\omega)@f$ of the last Solve() as a coefficient
    * (requires SetRotation()); amplitudes follow each solve. */
@@ -554,6 +574,11 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   /** @brief The system solve without the water-load border (the body of
    * SolveLinearSystem() before SetWaterLoad()). */
   bool SolveUnbordered(const mfem::Vector& B, mfem::Vector& X);
+  bool SolveBorderedMonolithic(const std::vector<mfem::Vector>& Bu,
+                               const std::vector<mfem::Vector>& Bphi,
+                               const mfem::DenseMatrix& Db,
+                               const mfem::Vector& r,
+                               const mfem::Vector& B_in, mfem::Vector& X);
 
  private:
   /** @brief @f$S x = A_{uu} x - C A_{\phi\phi}^{-1} C^T x@f$. */
@@ -708,6 +733,18 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   mfem::Vector rot_mpsi_;     ///< int w psi_k dS
   mfem::Vector rot_r_;        ///< -int sigma psi_k dS per assembly
   mfem::Vector omega_;
+  // The border-column cache: the unit responses K^-1 B_j of the
+  // bordered elimination are load-independent, so across solves with an
+  // unchanged operator (viscoelastic steps at fixed effective modulus,
+  // Picard passes between refreshes) they are reused rather than
+  // re-solved — the dominant cost of the bordered solve. Valid while
+  // OperatorVersion() stands still and the demanded tolerance is no
+  // tighter than the one they were built at.
+  std::vector<mfem::Vector> border_Yu_, border_Yphi_;
+  bool monolithic_border_ = false;
+  int border_cache_version_ = -1;
+  int border_cache_nb_ = 0;
+  mfem::real_t border_cache_tol_ = 0.0;
 
   /** @brief Rebuild the water-rotation cross data (both features on). */
   void BuildBorderCrossData();

@@ -105,6 +105,8 @@ if(USE_MPI)
     target_link_libraries(TestShorelineMigrationPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestSeaLevelViscoelasticPar TestSeaLevelViscoelasticPar.cpp)
     target_link_libraries(TestSeaLevelViscoelasticPar PRIVATE AdGIA MPI::MPI_CXX)
+    add_executable(TestMonolithicBorderPar TestMonolithicBorderPar.cpp)
+    target_link_libraries(TestMonolithicBorderPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestSphericalHarmonicsPar TestSphericalHarmonicsPar.cpp)
     target_link_libraries(TestSphericalHarmonicsPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestEquilibriumFiguresPar TestEquilibriumFiguresPar.cpp)
@@ -171,6 +173,9 @@ if(USE_MPI)
         add_test(NAME TestSeaLevelViscoelasticPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestSeaLevelViscoelasticPar>)
+        add_test(NAME TestMonolithicBorderPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestMonolithicBorderPar>)
         add_test(NAME TestSphericalHarmonicsPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestSphericalHarmonicsPar>)
@@ -281,6 +286,9 @@ gtest_discover_tests(TestShorelineMigration)
 add_executable(TestSeaLevelViscoelastic TestSeaLevelViscoelastic.cpp)
 target_link_libraries(TestSeaLevelViscoelastic PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestSeaLevelViscoelastic)
+add_executable(TestMonolithicBorder TestMonolithicBorder.cpp)
+target_link_libraries(TestMonolithicBorder PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestMonolithicBorder)
 
 add_executable(TestSlipInterface TestSlipInterface.cpp)
 target_link_libraries(TestSlipInterface PRIVATE AdGIA gtest_main)

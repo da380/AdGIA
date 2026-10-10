@@ -24,3 +24,11 @@ for cartopy and pyshtools).
   interpolation. `--length-scale` (metres per length unit) and
   `--time-scale` (ka per time unit) put the output in a run's own
   units. `examples/ice_age_loading.cpp` is the end-to-end chain.
+
+- `topography_grid.py` — exports the lmax-truncated ICE-NG topography
+  as a wrapped lat-lon grid (.npz) for mesh refinement:
+  `meshes/earth_coastlines.py` turns it into a planetmodel `Refinement`
+  that sizes elements by how close the sea level is to zero — no
+  polyline isolation; shorelines and shallow shelves, where the
+  flotation criterion is delicate, refine together. pyslfp downloads
+  and caches the data on first use.

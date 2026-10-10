@@ -46,3 +46,4 @@ endfunction()
 
 postprocess_launcher(surface_to_netcdf)
 postprocess_launcher(ice_ng_to_surface)
+postprocess_launcher(topography_grid)

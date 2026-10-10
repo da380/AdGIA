@@ -219,6 +219,8 @@ TEST_P(SeaLevelViscoTest, ConservesMassOverHistory) {
   // elastic response (the stepping genuinely engaged).
   const double u1 = L2Norm(p->Displacement());
   EXPECT_GT(std::abs(u1 - u0) / u0, 1e-2);
+  std::cout << "history outer iterations: " << p->TotalIterations()
+            << "\n";
 }
 
 TEST_P(SeaLevelViscoTest, FullStackComposes) {
@@ -260,10 +262,11 @@ TEST_P(SeaLevelViscoTest, FullStackComposes) {
   const double om = p->AngularVelocity().Norml2();
   EXPECT_TRUE(std::isfinite(om));
   EXPECT_GT(om, 0.0);
+  std::cout << "rotating-stack outer iterations: " << p->TotalIterations()
+            << "\n";
 }
 
 INSTANTIATE_TEST_SUITE_P(SeaLevelViscoelastic, SeaLevelViscoTest,
-                         testing::Values(Param{2, 1}, Param{2, 2},
-                                         Param{3, 1}));
+                         testing::Values(Param{3, 1}, Param{3, 2}));
 
 }  // namespace

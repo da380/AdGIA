@@ -100,6 +100,24 @@ def state_grids(em, rho_w_case, rho_i_case, shore):
     return sl0, ice, dice, melt_load
 
 
+def shoreline_colatitude(rho_w_case, rho_i_case):
+    """The colatitude of the state's shoreline, rho_w SL0 = rho_i I0
+    (axisymmetric: one ring; the melt does not move the frozen C0), by
+    bisection between the dry pole and the open ocean."""
+    def flot(theta):
+        sl0 = (STATE["ocean_depth"] - STATE["cont_amp"] *
+               np.exp(-0.5 * (theta / STATE["cont_width"]) ** 6))
+        ice = STATE["cap_amp"] * np.exp(
+            -0.5 * (theta / STATE["cap_width"]) ** 2)
+        return rho_w_case * sl0 - rho_i_case * ice
+    lo, hi = 1e-3, 0.5 * np.pi
+    assert flot(lo) < 0.0 < flot(hi)
+    for _ in range(80):
+        mid = 0.5 * (lo + hi)
+        lo, hi = (mid, hi) if flot(mid) < 0.0 else (lo, mid)
+    return 0.5 * (lo + hi)
+
+
 def rbf_to_grid(xyz, values, em):
     from scipy.interpolate import RBFInterpolator
     d = xyz / np.linalg.norm(xyz, axis=1, keepdims=True)
@@ -140,7 +158,9 @@ def timings(args, case, solve, rot_args):
     against the elastic control; no pyslfp side."""
     rows = [("elastic", ["-no-water"]),
             ("water", []),
+            ("water_mono", ["-feedback", "monolithic"]),
             ("water_rotation", rot_args),
+            ("water_rot_mono", rot_args + ["-feedback", "monolithic"]),
             # Tight migration, as the comparison runs it on this stack
             # (the loose path only pays the contraction guard's rescue
             # here).
@@ -268,6 +288,10 @@ def main() -> None:
                         "water / rotation / migration) instead of comparing")
     p.add_argument("--repeat", type=int, default=3,
                    help="timing repetitions per configuration (--timings)")
+    p.add_argument("--coast", action="store_true",
+                   help="coastline-refined mesh: a near_curve ring at the "
+                        "state's shoreline (planetmodel >= 1.2.4); the case "
+                        "lands in its own h<h>_coast directory")
     p.add_argument("--remake", action="store_true")
     p.add_argument("--force", action="store_true")
     p.add_argument("--dry-run", action="store_true")
@@ -275,7 +299,8 @@ def main() -> None:
 
     programs = find_programs(args.programs)
     out = outside_source(args.out)
-    case = out / args.model / f"h{args.h:g}"
+    case = out / args.model / (f"h{args.h:g}" +
+                               ("_coast" if args.coast else ""))
     case.mkdir(parents=True, exist_ok=True)
 
     # pyslfp first: it also supplies the densities, so that the flotation
@@ -304,11 +329,16 @@ def main() -> None:
 
     # The case and the AdGIA solve.
     if args.remake or not (case / "case.json").exists():
-        ok = run([sys.executable,
-                  str(HERE.parent / "common" / "make_case.py"), args.model,
-                  "--h", f"{args.h:g}", "--buffer", f"{args.buffer:g}",
-                  "--lmax", "10", "--out", str(case)],
-                 log=None, dry_run=args.dry_run)
+        cmd = [sys.executable,
+               str(HERE.parent / "common" / "make_case.py"), args.model,
+               "--h", f"{args.h:g}", "--buffer", f"{args.buffer:g}",
+               "--lmax", "10", "--out", str(case)]
+        if args.coast:
+            theta = shoreline_colatitude(rho_w_case, rho_i_case)
+            print(f"shoreline colatitude {theta:.4f} rad "
+                  f"({np.degrees(theta):.1f} deg): ring refinement on")
+            cmd += ["--refine-rings", f"{theta:.12g}"]
+        ok = run(cmd, log=None, dry_run=args.dry_run)
         if not ok:
             raise SystemExit(f"{case}: make_case.py failed")
     rot_args = ["-Omega", f"{Omega_case}", "-C1", f"{A_case}",

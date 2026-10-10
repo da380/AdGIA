@@ -263,14 +263,14 @@ exact). Prints the eustatic equivalent against the ocean-mean sea-level
 change (equal when mass is conserved) and the uniform term; exports the
 fingerprint's nodal values with `WriteSurfaceField`, which in 3-D maps
 to NetCDF/cartopy through `<build>/postprocess/surface_to_netcdf`.
-Shows (3-D by default): the displacement, and the fingerprint, the
+Shows: the displacement, and the fingerprint, the
 ocean function and the melt load on the surface shell. `-mig` turns on
 shoreline migration (Picard on the ocean function via
 `ShorelineMigration`, the shoreline following the evolving sea level;
 off = frozen shorelines, first-order exact), printing the extra passes
-taken.
-`./sea_level_fingerprint`, `./sea_level_fingerprint -melt 1.0 -mig`,
-`./sea_level_fingerprint -m ../data/elastogravity_2d.msh`
+taken. 3-D only — the sea-level equation is not wired for 2-D (2-D
+elastic solves with gravity remain useful; a 2-D ocean is not).
+`./sea_level_fingerprint`, `./sea_level_fingerprint -melt 1.0 -mig`
 
 **`ice_age_loading`**: the ICE-7G deglaciation on a Maxwell planet —
 the surface exchange chain end to end. Step 1 (no `-ice`) exports the
@@ -285,7 +285,12 @@ Prints the eustatic equivalent, ocean-mean sea level, uniform term and
 displacement norm per step; writes the history CSV (`plot_csv.py`) and
 the endpoint fingerprint for the NetCDF/cartopy map chain. The body is
 the toy homogeneous planet, so the output is qualitative — real
-geography on a model rheology; resolved runs belong to the server.
+geography on a model rheology; resolved runs belong to the server. An
+optional step 0 (`postprocess/topography_grid` +
+`meshes/earth_coastlines.py`) builds `data/earth_coastlines.msh`, the
+ball refined where |topography| is within a band of sea level — real
+shorelines and shallow shelves together, as a planetmodel `Refinement`
+field with no coastline isolation — for `-m`.
 `./ice_age_loading`, then the two printed `ice_ng_to_surface` calls,
 then `./ice_age_loading -ice ice_age_nodes_ice.csv -state
 ice_age_nodes_state.csv`

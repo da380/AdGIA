@@ -385,7 +385,6 @@ TEST_P(SeaLevelRotationTest, ZeroOmegaRecoversWaterOnly) {
 }
 
 INSTANTIATE_TEST_SUITE_P(SeaLevelRotation, SeaLevelRotationTest,
-                         testing::Values(Param{2, 1}, Param{2, 2},
-                                         Param{3, 1}));
+                         testing::Values(Param{3, 1}, Param{3, 2}));
 
 }  // namespace

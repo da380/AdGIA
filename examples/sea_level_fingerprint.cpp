@@ -16,7 +16,7 @@
 // The problem is the sea-level benchmark family's
 // (benchmarks/sea_level), at example-sized amplitudes and without the
 // pyslfp comparison: smooth analytical topography — a super-Gaussian
-// continent at the pole (+z in 3-D, +y in 2-D), ocean elsewhere — an
+// continent at the pole (+z), ocean elsewhere — an
 // ice cap on the continent, and a melt that unloads the +x hemisphere
 // of the cap through the smooth factor (1 + tanh(x/melt_width))/2
 // (regular at the pole), so the fingerprint carries non-zonal structure.
@@ -29,27 +29,26 @@
 // below zero — near the melted cap where gravitational attraction is
 // lost and the ground rebounds), the uniform term Phi_g, the eustatic
 // equivalent, the ocean area and the mass-conservation certificate. The
-// fingerprint is exported with SeaLevelOperator::WriteSurfaceField; in
-// 3-D, grid and map it with
+// fingerprint is exported with SeaLevelOperator::WriteSurfaceField;
+// grid and map it with
 //    <build>/postprocess/surface_to_netcdf sea_level_fingerprint.csv --plot
 // (cartopy/pyshtools-ready NetCDF; see postprocess/README.md). GLVis
-// shows the body displacement and, in 3-D, the fingerprint on the
-// surface shell; in 2-D the fingerprint is written as a polar profile
-// CSV for plot_csv.py.
+// shows the body displacement and the fingerprint on the surface shell.
+//
+// 3-D only: the sea-level equation is not wired for 2-D (2-D elastic
+// solves with gravity remain useful; a 2-D ocean is not).
 //
 // One source serves the serial and the parallel build; the only genuine
 // differences are the partitioning and typed field copies.
 //
 // Options (defaults in brackets):
-//   -m       mesh file [../data/coupled_poisson.msh, the 3-D ball];
-//            ../data/elastogravity_2d.msh runs the 2-D disc (a polar
-//            profile rather than a map).
+//   -m       mesh file [../data/coupled_poisson.msh, the 3-D ball].
 //   -o       finite element order [2].
 //   -r       uniform mesh refinements [0].
 //   -Omega   equilibrium rotation rate about e3 [0: rotational feedback
 //            off]; with it the angular-velocity border joins the solve
 //            and psi(omega) enters the fingerprint.
-//   -C1 -C2 -C3   principal moments [1.2, 1.3, 2.0]; 2-D uses -C3 only.
+//   -C1 -C2 -C3   principal moments [1.2, 1.3, 2.0].
 //   -rhow    water density [0.05] (non-dimensional, like the model).
 //   -rhoi    ice density [0.045].
 //   -ocean-depth   initial ocean depth [1.0].
@@ -73,7 +72,6 @@
 //    ./sea_level_fingerprint -melt 1.0 -melt-width 0.4
 //    ./sea_level_fingerprint -r 1 -o 2
 //    ./sea_level_fingerprint -Omega 0.1
-//    ./sea_level_fingerprint -m ../data/elastogravity_2d.msh
 // ============================================================================
 
 #include <cmath>
@@ -99,7 +97,7 @@ constexpr int kDtNDegree = 12;
 
 // The state of the sea-level benchmark family (benchmarks/sea_level),
 // at example-sized amplitudes and with every knob an option: a
-// super-Gaussian continent at the pole (+z in 3-D, +y in 2-D), an ice
+// super-Gaussian continent at the pole (+z), an ice
 // cap on it, a smoothed ocean fraction, and a melt that unloads the +x
 // hemisphere of the cap smoothly.
 double g_rho_w = 0.05;
@@ -119,7 +117,7 @@ double G0() {
                     : 4.0 * std::numbers::pi * kG * kRho / 3.0;
 }
 
-// Colatitude from the pole: +z in 3-D, +y in 2-D.
+// Colatitude from the pole (+z).
 double Colatitude(const Vector& x) {
   const double r = x.Norml2();
   const double c = x[x.Size() - 1] / r;
@@ -183,7 +181,7 @@ int main(int argc, char* argv[]) {
 
   OptionsParser args(argc, argv);
   args.AddOption(&mesh_file, "-m", "--mesh",
-                 "Body-in-buffer mesh (2-D disc or 3-D ball).");
+                 "Body-in-buffer mesh (the 3-D ball).");
   args.AddOption(&order, "-o", "--order", "Finite element order.");
   args.AddOption(&ref_levels, "-r", "--refine",
                  "Uniform mesh refinements before partitioning.");
@@ -231,6 +229,13 @@ int main(int argc, char* argv[]) {
   }
   g_dim = smesh.Dimension();
   const int dim = g_dim;
+  if (dim != 3) {
+    if (IsRoot()) {
+      std::cout << "the sea-level equation is 3-D only: use the ball mesh "
+                   "(../data/coupled_poisson.msh)\n";
+    }
+    return 1;
+  }
 #ifdef MFEM_USE_MPI
   ParMesh parent(MPI_COMM_WORLD, smesh);
   smesh.Clear();
@@ -393,11 +398,6 @@ int main(int argc, char* argv[]) {
       load.ProjectCoefficient(melt);
       GLVisWindow wl("melt load", DefaultKeys(2));
       wl.Send(sea.SurfaceMesh(), load);
-    } else if (IsRoot()) {
-      // 2-D: the surface is a circle; the exported CSV (x, y, value)
-      // is the profile — plot theta = atan2(y, x) against value.
-      std::cout << "  (2-D: plot the exported CSV as a polar profile, "
-                   "theta = atan2(y, x) vs value)\n";
     }
   }
   return 0;

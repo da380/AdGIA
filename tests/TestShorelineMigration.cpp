@@ -236,8 +236,9 @@ TEST_P(ShorelineTest, MigrationConvergesAndConservesMass) {
 
 TEST_P(ShorelineTest, QuadraticAmplitudeScaling) {
   const auto [dim, order] = GetParam();
-  if (dim == 3) {
-    GTEST_SKIP() << "the scaling identity is dimension-free; 2-D covers it";
+  if (order > 1) {
+    GTEST_SKIP() << "covered at order 1 (refinement keeps the strip "
+                    "resolved; order adds nothing to the certificate)";
   }
   // One refinement: the asymptotic regime needs the moved shoreline
   // strip resolved by the boundary quadrature.
@@ -349,7 +350,6 @@ TEST_P(ShorelineTest, ComposesWithRotation) {
 }
 
 INSTANTIATE_TEST_SUITE_P(Shoreline, ShorelineTest,
-                         testing::Values(Param{2, 1}, Param{2, 2},
-                                         Param{3, 1}));
+                         testing::Values(Param{3, 1}, Param{3, 2}));
 
 }  // namespace

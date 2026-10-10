@@ -697,6 +697,10 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetWaterLoad(
     Coefficient& ocean_weight, Coefficient& sigma_data,
     const Array<int>& surface_marker) {
   MFEM_VERIFY(!sea_enabled_, "SetWaterLoad: already set.");
+  MFEM_VERIFY(dim_ == 3,
+              "SetWaterLoad: the sea-level equation is 3-D only (a 2-D "
+              "ocean is not supported, and the 2-D compatibility "
+              "relocation would make the bordered system asymmetric).");
   MFEM_VERIFY(!gauge_kkt_,
               "SetWaterLoad: incompatible with the gauge-KKT saddle.");
   sea_enabled_ = true;
@@ -1548,24 +1552,46 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveLinearSystem(
     }
   }
 
-  // Base solve, then one solve per border column.
+  if (monolithic_border_) {
+    MFEM_VERIFY(type_ != SolverType::SchurCG && !gauge_kkt_ && !mass_gauge_,
+                "SetMonolithicBorder: the plain BlockMINRES/BlockCG path "
+                "only (experimental).");
+    return SolveBorderedMonolithic(Bu, Bphi, Db, r, B_in, X);
+  }
+
+  // Base solve, then one solve per border column — the columns are
+  // load-independent, so they are cached across solves with an
+  // unchanged operator (the viscoelastic stepping economy) and only
+  // re-solved when the operator changed or a tighter tolerance is
+  // demanded than they were built at.
   bool ok = SolveUnbordered(B_in, X);
   Vector phi0(Phi_true_);
-  Vector Bphi_save(B_phi_);
-  Coefficient* psi_save = psi_;
-  psi_ = nullptr;
-  std::vector<Vector> Yu(nb), Yphi(nb);
-  for (int j = 0; j < nb; j++) {
-    Vector col(Bphi[j]);
-    MakeCompatible(col);
-    B_phi_ = col;
-    Yu[j].SetSize(X.Size());
-    Yu[j] = 0.0;
-    ok = SolveUnbordered(Bu[j], Yu[j]) && ok;
-    Yphi[j] = Phi_true_;
+  const bool cached = border_cache_version_ == OperatorVersion() &&
+                      border_cache_nb_ == nb &&
+                      RelTol() >= border_cache_tol_;
+  if (!cached) {
+    Vector Bphi_save(B_phi_);
+    Coefficient* psi_save = psi_;
+    psi_ = nullptr;
+    border_Yu_.assign(nb, Vector());
+    border_Yphi_.assign(nb, Vector());
+    for (int j = 0; j < nb; j++) {
+      Vector col(Bphi[j]);
+      MakeCompatible(col);
+      B_phi_ = col;
+      border_Yu_[j].SetSize(X.Size());
+      border_Yu_[j] = 0.0;
+      ok = SolveUnbordered(Bu[j], border_Yu_[j]) && ok;
+      border_Yphi_[j] = Phi_true_;
+    }
+    B_phi_ = Bphi_save;
+    psi_ = psi_save;
+    border_cache_version_ = OperatorVersion();
+    border_cache_nb_ = nb;
+    border_cache_tol_ = RelTol();
   }
-  B_phi_ = Bphi_save;
-  psi_ = psi_save;
+  const std::vector<Vector>& Yu = border_Yu_;
+  const std::vector<Vector>& Yphi = border_Yphi_;
 
   // (Db - B^T Y) y = r - B^T x0.
   DenseMatrix S(nb);
@@ -1595,6 +1621,383 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveLinearSystem(
   Phi_true_ = phi0;
   // The column solves distributed their own potentials; redistribute
   // the combined one (the WP3 lesson).
+  DistributePotential(Phi_true_);
+  return ok;
+}
+
+namespace {
+
+/** The bordered block system [A2 B; B^T Db] as one operator over the
+ * monolithic vector (u, phi | y): A2 is the (projected) two-block
+ * operator, the columns are pre-projected, and the nb border scalars
+ * live on rank 0 alone so the solver's global inner products count them
+ * once; every rank keeps the current y by a broadcast per apply. */
+class BorderedBlockOperator : public Operator {
+ public:
+  BorderedBlockOperator(const Operator& A2, const std::vector<Vector>& cols,
+                        const DenseMatrix& Db, int rank, bool parallel,
+                        const mfem::FiniteElementSpace* fes)
+      : Operator(A2.Height() + (rank == 0 ? Db.Height() : 0)),
+        A2_(A2),
+        cols_(cols),
+        Db_(Db),
+        n2_(A2.Height()),
+        nb_(Db.Height()),
+        rank_(rank),
+        parallel_(parallel),
+        y_(Db.Height()),
+        dots_(Db.Height()) {
+#ifdef MFEM_USE_MPI
+    if (parallel_) {
+      comm_ = static_cast<const ParFiniteElementSpace*>(fes)->GetComm();
+    }
+#else
+    (void)fes;
+#endif
+  }
+
+  void Mult(const Vector& x, Vector& out) const override {
+    const Vector x2(const_cast<real_t*>(x.GetData()), n2_);
+    Vector out2(out.GetData(), n2_);
+    // The border scalars, known to every rank.
+    for (int j = 0; j < nb_; j++) {
+      y_[j] = rank_ == 0 ? x[n2_ + j] : 0.0;
+    }
+#ifdef MFEM_USE_MPI
+    if (parallel_) {
+      MPI_Bcast(y_.GetData(), nb_, MPITypeMap<real_t>::mpi_type, 0, comm_);
+    }
+#endif
+    A2_.Mult(x2, out2);
+    for (int j = 0; j < nb_; j++) {
+      out2.Add(y_[j], cols_[j]);
+      dots_[j] = cols_[j] * x2;
+    }
+#ifdef MFEM_USE_MPI
+    if (parallel_) {
+      MPI_Allreduce(MPI_IN_PLACE, dots_.GetData(), nb_,
+                    MPITypeMap<real_t>::mpi_type, MPI_SUM, comm_);
+    }
+#endif
+    if (rank_ == 0) {
+      for (int i = 0; i < nb_; i++) {
+        real_t v = dots_[i];
+        for (int j = 0; j < nb_; j++) {
+          v += Db_(i, j) * y_[j];
+        }
+        out[n2_ + i] = v;
+      }
+    }
+  }
+
+ private:
+  const Operator& A2_;
+  const std::vector<Vector>& cols_;
+  const DenseMatrix& Db_;
+  int n2_, nb_, rank_;
+  bool parallel_;
+#ifdef MFEM_USE_MPI
+  MPI_Comm comm_ = MPI_COMM_NULL;
+#endif
+  mutable Vector y_, dots_;
+};
+
+/** |S| of a small symmetric matrix by cyclic Jacobi: MINRES needs an
+ * SPD preconditioner, and the border Schur block is indefinite, so its
+ * absolute value V |Lambda| V^T is the standard surrogate. */
+DenseMatrix SymmetricAbs(const DenseMatrix& S) {
+  const int n = S.Height();
+  DenseMatrix A(S), V(n);
+  V = 0.0;
+  for (int i = 0; i < n; i++) {
+    V(i, i) = 1.0;
+  }
+  for (int sweep = 0; sweep < 30; sweep++) {
+    real_t off = 0.0;
+    for (int pp = 0; pp < n; pp++) {
+      for (int q = pp + 1; q < n; q++) {
+        off += A(pp, q) * A(pp, q);
+      }
+    }
+    if (off < 1e-30 * A.FNorm2()) {
+      break;
+    }
+    for (int pp = 0; pp < n; pp++) {
+      for (int q = pp + 1; q < n; q++) {
+        if (A(pp, q) == 0.0) {
+          continue;
+        }
+        const real_t theta = (A(q, q) - A(pp, pp)) / (2.0 * A(pp, q));
+        const real_t t = (theta >= 0 ? 1.0 : -1.0) /
+                         (std::abs(theta) +
+                          std::sqrt(theta * theta + 1.0));
+        const real_t cth = 1.0 / std::sqrt(t * t + 1.0), sth = t * cth;
+        for (int k = 0; k < n; k++) {
+          const real_t akp = A(k, pp), akq = A(k, q);
+          A(k, pp) = cth * akp - sth * akq;
+          A(k, q) = sth * akp + cth * akq;
+        }
+        for (int k = 0; k < n; k++) {
+          const real_t apk = A(pp, k), aqk = A(q, k);
+          A(pp, k) = cth * apk - sth * aqk;
+          A(q, k) = sth * apk + cth * aqk;
+          const real_t vkp = V(k, pp), vkq = V(k, q);
+          V(k, pp) = cth * vkp - sth * vkq;
+          V(k, q) = sth * vkp + cth * vkq;
+        }
+      }
+    }
+  }
+  DenseMatrix out(n);
+  out = 0.0;
+  for (int i = 0; i < n; i++) {
+    for (int j = 0; j < n; j++) {
+      for (int k = 0; k < n; k++) {
+        out(i, j) += V(i, k) * std::abs(A(k, k)) * V(j, k);
+      }
+    }
+  }
+  return out;
+}
+
+/** diag(P2, |S~|^{-1}): the two-block preconditioner on (u, phi) and the
+ * dense preconditioner-probed border Schur complement on y (its
+ * absolute value: MINRES needs SPD). */
+class BorderedBlockPreconditioner : public Solver {
+ public:
+  BorderedBlockPreconditioner(const Solver& P2, const DenseMatrix& Sb,
+                              int rank)
+      : Solver(P2.Height() + (rank == 0 ? Sb.Height() : 0)),
+        P2_(P2),
+        Sabs_(SymmetricAbs(Sb)),
+        Sinv_(Sabs_),
+        n2_(P2.Height()),
+        nb_(Sb.Height()),
+        rank_(rank) {}
+
+  void SetOperator(const Operator&) override {}
+
+  void Mult(const Vector& x, Vector& out) const override {
+    const Vector x2(const_cast<real_t*>(x.GetData()), n2_);
+    Vector out2(out.GetData(), n2_);
+    const_cast<Solver&>(P2_).Mult(x2, out2);
+    if (rank_ == 0 && nb_ > 0) {
+      Vector xb(const_cast<real_t*>(x.GetData()) + n2_, nb_);
+      Vector ob(out.GetData() + n2_, nb_);
+      Sinv_.Mult(xb, ob);
+    }
+  }
+
+ private:
+  const Solver& P2_;
+  DenseMatrix Sabs_;
+  DenseMatrixInverse Sinv_;
+  int n2_, nb_, rank_;
+};
+
+}  // namespace
+
+bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveBorderedMonolithic(
+    const std::vector<Vector>& Bu, const std::vector<Vector>& Bphi,
+    const DenseMatrix& Db, const Vector& r, const Vector& B_in, Vector& X) {
+  EnsureOperator();
+  const int nb = Db.Height();
+  const int n2 = offsets_[2];
+  int rank = 0;
+#ifdef MFEM_USE_MPI
+  if (IsParallel()) {
+    MPI_Comm_rank(static_cast<ParFiniteElementSpace*>(fes_)->GetComm(),
+                  &rank);
+  }
+#endif
+  const FiniteElementSpace* dfes = fes_;
+
+  // The columns as projected two-block vectors (compatibility applied to
+  // the potential parts, as the elimination does).
+  std::vector<Vector> cols(nb);
+  for (int j = 0; j < nb; j++) {
+    cols[j].SetSize(n2);
+    Vector cu(cols[j].GetData(), offsets_[1]);
+    Vector cphi(cols[j].GetData() + offsets_[1], offsets_[2] - offsets_[1]);
+    cu = Bu[j];
+    Vector col(Bphi[j]);
+    MakeCompatible(col);
+    cphi = col;
+    projector_block_->Project(cols[j]);
+  }
+
+  // Symmetric equilibration of the border: the scalars' natural scales
+  // sit orders away from the field rows' (inertia entries O(C) against
+  // field columns O(coupling)), so an unscaled global residual
+  // tolerance leaves the border rows' errors large against their own
+  // scale — percent-grade omega on the near-cancelling 2-D spin row.
+  // Scaling column j by s_j = 1/max(|col_j|, sqrt(|Db_jj|)) keeps the
+  // system symmetric and puts every border row at unit scale; the
+  // solution scalars are y_j = s_j y'_j.
+  Vector bscale(nb);
+  DenseMatrix Dbs(Db);
+  Vector rs(r);
+  for (int j = 0; j < nb; j++) {
+    real_t cn2 = cols[j] * cols[j];
+#ifdef MFEM_USE_MPI
+    if (IsParallel()) {
+      MPI_Allreduce(MPI_IN_PLACE, &cn2, 1, MPITypeMap<real_t>::mpi_type,
+                    MPI_SUM,
+                    static_cast<ParFiniteElementSpace*>(fes_)->GetComm());
+    }
+#endif
+    bscale[j] =
+        1.0 / std::max(std::sqrt(cn2), std::sqrt(std::abs(Db(j, j))));
+    cols[j] *= bscale[j];
+    rs[j] *= bscale[j];
+  }
+  for (int i = 0; i < nb; i++) {
+    for (int j = 0; j < nb; j++) {
+      Dbs(i, j) *= bscale[i] * bscale[j];
+    }
+  }
+
+  // The border block of the preconditioner: the preconditioner-probed
+  // Schur complement S~ = Db - B^T P^{-1} B — the cancellation structure
+  // of the exact border Schur at preconditioner grade, for a handful of
+  // preconditioner applications (no solves).
+  DenseMatrix Sb(nb);
+  {
+    Vector z(n2);
+    for (int j = 0; j < nb; j++) {
+      projected_prec_->Mult(cols[j], z);
+      for (int i = 0; i < nb; i++) {
+        real_t d = cols[i] * z;
+#ifdef MFEM_USE_MPI
+        if (IsParallel()) {
+          MPI_Allreduce(MPI_IN_PLACE, &d, 1, MPITypeMap<real_t>::mpi_type,
+                        MPI_SUM,
+                        static_cast<ParFiniteElementSpace*>(fes_)->GetComm());
+        }
+#endif
+        Sb(i, j) = Dbs(i, j) - d;
+      }
+    }
+  }
+
+  BorderedBlockOperator op(*projected_op_, cols, Dbs, rank, IsParallel(),
+                           dfes);
+  BorderedBlockPreconditioner prec(*projected_prec_, Sb, rank);
+
+  // The monolithic right-hand side and iterate.
+  const int nloc = n2 + (rank == 0 ? nb : 0);
+  Vector rhs(nloc), sol(nloc);
+  {
+    Vector r2(rhs.GetData(), n2);
+    Vector ru(r2.GetData(), offsets_[1]);
+    Vector rphi(r2.GetData() + offsets_[1], offsets_[2] - offsets_[1]);
+    B_eff_ = B_in;
+    if (psi_) {
+      B_eff_ -= tidal_u_;
+    }
+    ru = B_eff_;
+    rphi = B_phi_;
+    projector_block_->Project(r2);
+    if (rank == 0) {
+      for (int j = 0; j < nb; j++) {
+        rhs[n2 + j] = rs[j];
+      }
+    }
+  }
+  sol = 0.0;
+
+  std::unique_ptr<MINRESSolver> minres;
+#ifdef MFEM_USE_MPI
+  if (IsParallel()) {
+    minres = std::make_unique<MINRESSolver>(
+        static_cast<ParFiniteElementSpace*>(fes_)->GetComm());
+  } else
+#endif
+  {
+    minres = std::make_unique<MINRESSolver>();
+  }
+  minres->SetRelTol(rel_tol_);
+  minres->SetAbsTol(0.0);
+  minres->SetMaxIter(10000);
+  minres->SetPrintLevel(print_level_);
+  minres->SetOperator(op);
+  minres->SetPreconditioner(prec);
+  // Iterative refinement on the TRUE residual: with the border Schur
+  // preconditioner carrying the (physical) near-neutral directions,
+  // MINRES's recurrence-tracked residual can drift from the true one
+  // and report convergence at a stagnation floor; recomputing the
+  // residual with the exact operator and re-solving for the correction
+  // removes the floor at the cost of a short extra solve per pass.
+  auto global_dot = [&](const Vector& a, const Vector& b) {
+    real_t v = a * b;
+#ifdef MFEM_USE_MPI
+    if (IsParallel()) {
+      MPI_Allreduce(MPI_IN_PLACE, &v, 1, MPITypeMap<real_t>::mpi_type,
+                    MPI_SUM,
+                    static_cast<ParFiniteElementSpace*>(fes_)->GetComm());
+    }
+#endif
+    return v;
+  };
+  Vector res(rhs), dsol(nloc);
+  const real_t rhs_norm = std::sqrt(global_dot(rhs, rhs));
+  bool ok = false;
+  outer_its_ = 0;
+  for (int pass = 0; pass < 4; pass++) {
+    dsol = 0.0;
+    minres->Mult(res, dsol);
+    sol += dsol;
+    outer_its_ += minres->GetNumIterations();
+    op.Mult(sol, res);
+    res -= rhs;
+    res.Neg();
+    const real_t rn = std::sqrt(global_dot(res, res));
+    ok = rn <= rel_tol_ * rhs_norm;
+    if (ok) {
+      break;
+    }
+  }
+  NoteIterations(outer_its_);
+
+  // The gauge: the operator is blind to the projected-out modes, so
+  // the preconditioner's rounding lets the iterates drift along them
+  // without any residual signature — project the solution back, as the
+  // elimination path does.
+  {
+    Vector s2(sol.GetData(), n2);
+    projector_block_->Project(s2);
+  }
+
+  // Unpack: fields, then the border scalars to every rank. The views
+  // are named lvalues so the assignments COPY: an rvalue Vector view
+  // would move-assign, leaving the caller's vector aliasing the dying
+  // local `sol`.
+  const Vector sol_u(sol.GetData(), offsets_[1]);
+  const Vector sol_phi(sol.GetData() + offsets_[1],
+                       offsets_[2] - offsets_[1]);
+  X = sol_u;
+  Phi_true_ = sol_phi;
+  Vector y(nb);
+  if (rank == 0) {
+    for (int j = 0; j < nb; j++) {
+      y[j] = bscale[j] * sol[n2 + j];
+    }
+  }
+#ifdef MFEM_USE_MPI
+  if (IsParallel()) {
+    MPI_Bcast(y.GetData(), nb, MPITypeMap<real_t>::mpi_type, 0,
+              static_cast<ParFiniteElementSpace*>(fes_)->GetComm());
+  }
+#endif
+  const int ns = sea_enabled_ ? 1 : 0;
+  phi_g_ = sea_enabled_ ? y[0] : 0.0;
+  for (int k = 0; k < static_cast<int>(omega_.Size()); k++) {
+    omega_[k] = y[ns + k];
+  }
+  if (rot_enabled_) {
+    static_cast<CentrifugalPotential*>(rot_psi_total_.get())
+        ->SetAmplitudes(omega_);
+  }
   DistributePotential(Phi_true_);
   return ok;
 }

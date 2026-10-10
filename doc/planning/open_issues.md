@@ -610,6 +610,62 @@ correct for the model's timescales; it has not been checked.
 
 ---
 
+## The sea-level equation
+
+### Degree-1 reference frame against pyslfp
+
+**Status:** open (flagged in every rung-1/2 report).
+
+The AdGIA and pyslfp degree-1 fingerprint rows agree at the same ~1 %
+grade as the other degrees (homogeneous model, h 0.4, order 2,
+lmax 16), which suggests the two sides' reference-frame conventions
+already coincide (both centre-of-mass?), but this has not been
+deliberately confirmed. Pin the conventions on both sides and either
+gate the row or document the transformation.
+
+**See:** `benchmarks/sea_level/run.py` (the report prints the row with
+a flag); pyslfp `physics.py`.
+
+### Resolved rung 3: shoreline migration against pyslfp's nonlinear solver
+
+**Status:** open — server campaign; the machinery is in place
+(`run.py --nonlinear`).
+
+At toy resolution only the machinery is validated: the migrating
+fingerprints agree at the frozen pair's grade (1.4 % at
+h 0.4/o2/lmax 16), but the migration-effect deltas are
+resolution-starved on both sides — the moved strip is tens of km,
+below the FE mesh and below a sharp ocean function on an lmax-16 grid
+(pyslfp's nonlinear updates are sharp where ours are smoothed over
+`shore`). The coastline-refined mesh (`--coast`) already cuts the
+AdGIA-side delta 4× at fixed resolution; the resolved comparison needs
+the server ladders with `shore` shrinking alongside `h`.
+
+**See:** `benchmarks/sea_level/README.md`; `run.py --nonlinear
+--coast`; `report_o<p>_nl.json`.
+
+### Loose-tolerance Φ_g amplification
+
+**Status:** guarded (production safe); the sharper stopping question is
+in `solvers.md`.
+
+On the benchmark solver stack a loose relative solver tolerance becomes
+an O(tolerance) *absolute* error in Φ_g through the bordered recovery's
+near-cancelling inner products (measured |δΦ_g| ≈ 3× the tolerance at
+h 0.4/o2). A uniform SL₁ shift of several shoreline-smoothing bands
+floods or dries shorelines globally, and since the error enters the
+next operator through C the migration Picard can leave its basin. The
+`ShorelineMigration` contraction guard (ratio 0.95 with the
+10×`inexact_max` benign-rattle floor, sticky escalation to full
+tolerance) is the production mitigation, gated serially and in
+parallel.
+
+**See:** `include/AdGIA/sea_level.hpp` (`Options::guard`);
+`doc/quasi_static_models.tex`, the mixed class's sea-level section;
+`tests/TestShorelineMigration.cpp` (GuardEscalatesToTight).
+
+---
+
 ## Benchmark results not yet explained
 
 ### `fluid_core` h-ladder: residual items
@@ -706,8 +762,13 @@ the jump, as the box benchmark driver does.
   `<build>/doc/html`.
 - `meshes/make_all.py` omits `disc_with_wide_buffer.py` and
   `aspherical_body.py --all`.
+- `postprocess/pyproject.toml` gained `pyslfp (>=2.2.0)` (the ice-ng
+  export and the topography grid); `postprocess/poetry.lock` has not
+  been regenerated, and the postprocess poetry environment is not yet
+  installed (the launchers fall back to `python3`).
 
-**See:** `CMakeLists.txt`; `meshes/make_all.py`; `meshes/README.md`.
+**See:** `CMakeLists.txt`; `meshes/make_all.py`; `meshes/README.md`;
+`postprocess/pyproject.toml`.
 
 ### Code questions from the library comment pass
 

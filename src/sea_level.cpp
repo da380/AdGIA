@@ -849,13 +849,13 @@ bool ShorelineMigration::Solve(real_t t) {
     // increment fails to contract may have been poisoned by the
     // border-amplified solver error. Redo this iterate at full
     // tolerance, measured against the same baseline — and abandon
-    // inexactness for the rest of the loop: with this operator and
-    // solver the amplification is a property of the configuration, so
-    // every further loose pass would poison the state again (observed:
-    // a non-sticky guard leaves the loop bouncing between flooded and
-    // dried shorelines). The tight loop is globally attracted — C is
-    // bounded and the water feedback is a weak contraction — so it
-    // recovers even from a poisoned seed.
+    // inexactness for the rest of the loop: the amplification is a
+    // property of the operator-and-solver configuration, so every
+    // further loose pass would poison the state again (a non-sticky
+    // guard leaves the loop bouncing between flooded and dried
+    // shorelines). The tight loop is globally attracted — C is bounded
+    // and the water feedback is a weak contraction — so it recovers
+    // even from a poisoned seed.
     // The absolute floor: an honest loose pass can move SL1 by about
     // the loosest solver tolerance, so the benign rattle of the
     // increments near convergence sits at ~inexact_max and must not
