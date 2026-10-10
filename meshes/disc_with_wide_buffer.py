@@ -16,7 +16,7 @@ from planetmodel import Geometry, Skeleton
 from planetmodel.mesh3d import (MeshSpec, Shell, UniformInterfaces,
                                 build_layered_mesh)
 
-from common import parser, report
+from common import parser, report, sizes
 
 
 def main() -> None:
@@ -29,7 +29,7 @@ def main() -> None:
 
     # Elements of size 0.08 on the circles, growing to 0.2 in the (large)
     # buffer interior.
-    sizing = UniformInterfaces(0.08, 0.2, 0.8)
+    sizing = UniformInterfaces(*sizes(args, 0.08, 0.2, 0.8))
 
     spec = MeshSpec(body, sizing, dimension=2, order=2, shells=[buffer])
     report(build_layered_mesh(spec, args.out / "elastogravity_2d_wide",

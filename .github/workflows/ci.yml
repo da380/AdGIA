@@ -4,7 +4,13 @@
 # MFEM (and, for the parallel build, hypre) are built from source by
 # .github/ci/install_mfem.sh and cached, so they are rebuilt only when the
 # versions below or that script change. The parallel job uses one MPI,
-# Ubuntu's MPICH, for hypre, MFEM, AdGIA and the launcher of the tests.
+# Ubuntu's OpenMPI, for hypre, MFEM, AdGIA and the launcher of the tests.
+#
+# OpenMPI, not MPICH: Ubuntu 24.04's mpich package is built against PMIx,
+# which its own Hydra mpiexec cannot wire up (Launchpad #2072338, never
+# fixed in noble) — every launched process comes up as rank 0 of a world
+# of size 1, so the "parallel" tests silently run as independent serial
+# processes. TestMpiWorldPar guards against this class of failure.
 
 name: CI
 
@@ -44,23 +50,23 @@ jobs:
           # when it runs headless.
           packages="libglu1-mesa libxrender1 libxcursor1 libxft2 libxinerama1"
           if [[ ${{ matrix.mode }} == parallel ]]; then
-            packages="$packages mpich libmpich-dev libmetis-dev"
+            packages="$packages openmpi-bin libopenmpi-dev libmetis-dev"
           fi
           sudo apt-get install -y --no-install-recommends $packages
 
       - name: MPI compilers
         if: matrix.mode == 'parallel'
         run: |
-          # Name MPICH's wrappers and launcher explicitly, so nothing picks
-          # up another MPI from PATH.
-          echo "MPICC=$(command -v mpicc.mpich)" >> "$GITHUB_ENV"
-          echo "MPICXX=$(command -v mpicxx.mpich)" >> "$GITHUB_ENV"
-          echo "MPIEXEC=$(command -v mpiexec.mpich)" >> "$GITHUB_ENV"
-          # Ubuntu's MPICH goes through UCX, which by default probes the
-          # InfiniBand verbs transports; on runners without a verbs device
-          # that aborts MPI_Init (ibv_create_srq: Operation not supported).
-          # Restrict UCX to the transports the VM actually has.
+          # Name OpenMPI's wrappers and launcher explicitly, so nothing
+          # picks up another MPI from PATH.
+          echo "MPICC=$(command -v mpicc.openmpi)" >> "$GITHUB_ENV"
+          echo "MPICXX=$(command -v mpicxx.openmpi)" >> "$GITHUB_ENV"
+          echo "MPIEXEC=$(command -v mpiexec.openmpi)" >> "$GITHUB_ENV"
+          # Restrict UCX, when the MPI stack uses it, to the transports the
+          # VM actually has (no InfiniBand verbs devices on a runner).
           echo "UCX_TLS=sm,tcp,self" >> "$GITHUB_ENV"
+          # Let the 4-rank tests run even if the runner reports fewer slots.
+          echo "OMPI_MCA_rmaps_base_oversubscribe=1" >> "$GITHUB_ENV"
 
       # Restore and save are separate steps so that MFEM is cached as soon as
       # it is built, even if a later step fails or the run is cancelled.
@@ -69,7 +75,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.MFEM_PREFIX }}
-          key: mfem-${{ matrix.mode }}-${{ env.MFEM_VERSION }}-hypre-${{ env.HYPRE_VERSION }}-ubuntu-24.04-${{ hashFiles('.github/ci/install_mfem.sh') }}
+          key: mfem-${{ matrix.mode }}${{ matrix.mode == 'parallel' && '-openmpi' || '' }}-${{ env.MFEM_VERSION }}-hypre-${{ env.HYPRE_VERSION }}-ubuntu-24.04-${{ hashFiles('.github/ci/install_mfem.sh') }}
 
       - name: Build MFEM
         if: steps.mfem-cache.outputs.cache-hit != 'true'
@@ -117,10 +123,8 @@ jobs:
         run: |
           # The single-process tests run concurrently; the MPI tests (named
           # *_np<N>, up to 4 ranks) one at a time, so ranks never outnumber
-          # the runner's cores. The MPI phase takes several minutes: the
-          # 4-rank tests run 3-5 times slower on the runner than on a
-          # workstation (the slowest, TestFluidGaugePar_np4, about 2 min).
-          # The timeout turns a hang into a failure naming the test.
+          # the runner's cores. The MPI phase takes several minutes, and the
+          # timeout turns a hang into a failure naming the test.
           ctest -E '_np[0-9]+$' -j "$(nproc)" --timeout 600 --output-on-failure
           if [[ ${{ matrix.mode }} == parallel ]]; then
             ctest -R '_np[0-9]+$' --timeout 600 --output-on-failure

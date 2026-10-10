@@ -52,7 +52,7 @@ from planetmodel import CallableDisplacement, Geometry, Skeleton
 from planetmodel.mesh3d import (MeshSpec, Shell, UniformInterfaces,
                                 build_layered_mesh, export_mfem_mesh)
 
-from common import parser, report
+from common import parser, report, sizes
 
 EARTH_RADIUS_KM = 6371.0
 ICB = 1230.0 / EARTH_RADIUS_KM
@@ -175,7 +175,7 @@ def build(shape: str, layers: int, dim: int, args) -> None:
 
     name = f"{stem}_{words[layers]}_layer_{dim}d{args.name}"
     body = geometry(layers).stretched(displacement)
-    sizing = UniformInterfaces(*(args.scale * v for v in SIZING[dim]))
+    sizing = UniformInterfaces(*sizes(args, *SIZING[dim]))
     spec = MeshSpec(body, sizing, dimension=dim, order=2,
                     shells=[Shell(ratio=args.buffer, name="buffer")],
                     outer_boundary="spherical", meta=meta)
@@ -218,9 +218,6 @@ def main() -> None:
     p.add_argument("--buffer", type=float, default=BUFFER,
                    help="buffer-shell thickness; the flattening taper "
                         "needs about 2 f of room (default %(default)s)")
-    p.add_argument("--scale", type=float, default=1.0,
-                   help="scale factor on the element sizes (smaller is "
-                        "finer — e.g. 0.5 for picture-quality maps)")
     p.add_argument("--name", default="",
                    help="suffix on the file names, for parameter sweeps")
     p.add_argument("--all", action="store_true",

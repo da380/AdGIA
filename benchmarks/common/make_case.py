@@ -35,7 +35,7 @@ from pathlib import Path
 import numpy as np
 from planetmodel import Model, gravity, is_fluid
 from planetmodel.mesh3d import (CappedInterfaces, MeshSpec, Shell,
-                                build_layered_mesh, export_mfem)
+                                build_layered_mesh, export_mfem, near_curve)
 from pyslfp.love_numbers import LoveNumbers, love_numbers, solve_degree
 
 import models
@@ -66,15 +66,77 @@ def fluid_attributes(model: Model) -> list[int]:
     return [i + 1 for i, layer in enumerate(model.layers) if is_fluid(layer)]
 
 
+def ring_refinements(model: Model, rings, *, size: float, far_size: float,
+                     decay_width: float) -> list:
+    """near_curve refinements on colatitude rings of the outer surface.
+
+    `rings` are colatitudes in radians about +z (a benchmark state's
+    shoreline is such a ring); the vertices are laid at spacing <= size,
+    so the chord sagitta is far inside near_curve's own resampling rule.
+    """
+    outer = float(np.asarray(model.skeleton.boundaries, dtype=float)[-1])
+    out = []
+    for theta in rings:
+        r = outer * np.sin(theta)
+        m = max(16, int(np.ceil(2.0 * np.pi * r / size)))
+        t = np.linspace(0.0, 2.0 * np.pi, m + 1)  # closed: ends repeat
+        ring = np.column_stack([r * np.cos(t), r * np.sin(t),
+                                np.full_like(t, outer * np.cos(theta))])
+        out.append(near_curve(ring, size, far_size, decay_width))
+    return out
+
+
+def coast_refinement(model: Model, grid: Path, *, width: float,
+                     size: float, far_size: float):
+    """The real-coastline refinement of meshes/earth_coastlines.py, on
+    a benchmark case: SeaLevelBand on the pre-processed `coast_rad`
+    field of a topography_grid.py export (meshes/README.md, "The
+    coastline mesh")."""
+    import importlib.util
+    path = Path(__file__).resolve().parents[2] / "meshes" / "common.py"
+    spec = importlib.util.spec_from_file_location("meshes_common", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    outer = float(np.asarray(model.skeleton.boundaries, dtype=float)[-1])
+    # coast_rad is angular; the band arithmetic assumes the benchmark
+    # convention of a unit outer radius.
+    assert np.isclose(outer, 1.0), "coast refinement wants outer radius 1"
+    data = np.load(grid, allow_pickle=False)
+    return mod.SeaLevelBand(data["coast_lats"], data["coast_lons"],
+                            data["coast_rad"], band=width, size=size,
+                            far_size=far_size, radius=outer,
+                            depth_width=0.05, gradation=1.5)
+
+
 def build_mesh(model: Model, out: Path, *, h: float, h_max: float, decay: float,
                angular: float, thin: float, buffer: float, order: int,
-               optimise: bool = True, verbose: bool = False) -> dict:
+               optimise: bool = True, verbose: bool = False,
+               rings=(), ring_size: float | None = None,
+               ring_far: float | None = None,
+               ring_decay: float | None = None,
+               coast_grid: Path | None = None,
+               coast_width: float = 0.04) -> dict:
     """The mesh, the fields and the manifest; returns a summary."""
+    refinements = []
+    if rings or coast_grid is not None:
+        ring_size = ring_size if ring_size is not None else h / 3.0
+        ring_far = ring_far if ring_far is not None else h_max
+        ring_decay = ring_decay if ring_decay is not None else 2.0 * h
+    if rings:
+        refinements = ring_refinements(model, rings, size=ring_size,
+                                       far_size=ring_far,
+                                       decay_width=ring_decay)
+    if coast_grid is not None:
+        refinements.append(coast_refinement(model, coast_grid,
+                                            width=coast_width,
+                                            size=ring_size,
+                                            far_size=ring_far))
     spec = MeshSpec(model.geometry,
                     CappedInterfaces(h, h_max, decay, angular=angular,
                                      thin=thin),
                     dimension=3, order=order,
                     shells=[Shell(ratio=buffer, name="buffer")],
+                    refinements=refinements,
                     optimise="Netgen" if optimise else None,
                     meta={"model": model.name})
     scratch = out / "gmsh"
@@ -84,6 +146,9 @@ def build_mesh(model: Model, out: Path, *, h: float, h_max: float, decay: float,
     return {"h": h, "h_max": h_max, "decay": decay, "angular": angular,
             "thin": thin,
             "buffer": buffer, "optimised": optimise,
+            "rings": [float(t) for t in rings],
+            "ring_size": ring_size, "ring_far": ring_far,
+            "ring_decay": ring_decay,
             "order": order, "counts": dict(export.counts),
             "summary": built.summary(),
             "validation": str(built.validation)}
@@ -231,6 +296,23 @@ def main() -> None:
     p.add_argument("--buffer", type=float, default=0.2,
                    help="thickness of the buffer shell over the radius")
     p.add_argument("--order", type=int, default=2, help="geometry order")
+    p.add_argument("--refine-rings", default="",
+                   help="comma list of colatitudes (radians, about +z): "
+                        "near_curve refinement of the outer surface on "
+                        "those rings (a state's shoreline)")
+    p.add_argument("--ring-size", type=float, default=None,
+                   help="element size on the rings (default h / 3)")
+    p.add_argument("--ring-far", type=float, default=None,
+                   help="size far from the rings (default h_max)")
+    p.add_argument("--ring-decay", type=float, default=None,
+                   help="distance over which the ring size grows "
+                        "(default 2 h)")
+    p.add_argument("--coast-grid", type=Path, default=None,
+                   help="topography_grid.py export: refine along its "
+                        "pre-processed real coastline (coast_rad), sizes "
+                        "from --ring-size/--ring-far")
+    p.add_argument("--coast-width", type=float, default=0.04,
+                   help="angular half-width of the coastline band (rad)")
     p.add_argument("--lmax", type=int, default=10,
                    help="highest degree of the reference")
     p.add_argument("--time-scale", type=float, default=None,
@@ -262,11 +344,16 @@ def main() -> None:
 
     h_max = 2.0 * args.h if args.h_max is None else args.h_max
     decay = 10.0 * args.h if args.decay is None else args.decay
+    rings = [float(tok) for tok in args.refine_rings.split(",") if tok.strip()]
     summary = build_mesh(model, args.out, h=args.h, h_max=h_max, decay=decay,
                          angular=args.angular, thin=args.thin,
                          buffer=args.buffer,
                          optimise=not args.no_optimise, order=args.order,
-                         verbose=args.verbose)
+                         verbose=args.verbose, rings=rings,
+                         ring_size=args.ring_size, ring_far=args.ring_far,
+                         ring_decay=args.ring_decay,
+                         coast_grid=args.coast_grid,
+                         coast_width=args.coast_width)
     (args.out / "mesh_summary.json").write_text(json.dumps(summary, indent=1))
     print(f"{BASENAME}.mesh: {summary['summary']}")
 

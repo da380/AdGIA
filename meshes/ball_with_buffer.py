@@ -14,7 +14,7 @@ from planetmodel import Geometry, Skeleton
 from planetmodel.mesh3d import (MeshSpec, Shell, UniformInterfaces,
                                 build_layered_mesh)
 
-from common import parser, report
+from common import parser, report, sizes
 
 
 def main() -> None:
@@ -27,7 +27,7 @@ def main() -> None:
     buffer = Shell(radius=2.0, name="buffer")
 
     # Coarse: elements of size 0.45 on both spheres, growing to 0.9.
-    sizing = UniformInterfaces(0.45, 0.9, 4.5)
+    sizing = UniformInterfaces(*sizes(args, 0.45, 0.9, 4.5))
 
     spec = MeshSpec(body, sizing, dimension=3, order=2, shells=[buffer])
     report(build_layered_mesh(spec, args.out / "coupled_poisson",

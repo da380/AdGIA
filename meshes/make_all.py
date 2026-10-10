@@ -3,9 +3,10 @@
     poetry run python make_all.py --out DIR  # e.g. a build tree's data/
 
 The build does this itself through CMakeLists.txt; this is for running the
-set by hand. SCRIPTS leaves out disc_with_wide_buffer.py and
-aspherical_body.py, which the build runs; run those two by hand as well
-for the full set.
+set by hand — for instance `--scale 0.5` for a higher-resolution version
+of every mesh (forwarded to each script). SCRIPTS leaves out
+disc_with_wide_buffer.py, aspherical_body.py and equilibrium_bodies.py,
+which the build runs; run those by hand as well for the full set.
 
 The unit ball and the three-layer 3D Earth take a minute or two each.
 """
@@ -24,13 +25,16 @@ SCRIPTS = [
     ["disc_with_buffer.py"],
     ["ball_with_buffer.py"],
     ["layered_earth.py", "--all"],
+    ["earth_coastlines.py"],
+    ["fingerprint_coastline.py"],
     ["unit_ball.py"],
 ]
 
 
 def main() -> None:
     args = parser(__doc__).parse_args()
-    extra = ["--out", str(args.out)] + (["--verbose"] if args.verbose else [])
+    extra = ["--out", str(args.out), "--scale", str(args.scale)]
+    extra += ["--verbose"] if args.verbose else []
     for script, *options in SCRIPTS:
         print(f"== {script} {' '.join(options)}", flush=True)
         subprocess.run([sys.executable, str(HERE / script), *options, *extra],

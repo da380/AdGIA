@@ -506,6 +506,82 @@ adjoint work starts.
 
 ---
 
+## Bordered solves (sea level and rotation)
+
+The bordered system `[K B; Bᵀ Db]` (the Φ_g and ω borders of the
+sea-level machinery) has three solve routes, all gated to agree:
+the **elimination** (one unbordered solve per border column, the
+reference; columns cached while `OperatorVersion()` stands still, so
+repeated solves at a frozen operator pay one base solve), the
+**monolithic MINRES** (`SetMonolithicBorder`, 3-D BlockMINRES path:
+probed-|Schur| border preconditioner, equilibrated columns,
+true-residual refinement; cost flat in the border count), and the
+**Picard feedback** instrument (the loads iterated around the plain
+operator; `sea_level_benchmark -feedback picard`). Measured at
+h 0.4/o2/np4: elastic 1.00×, water 1.64× (monolithic 2.31×),
+water+rotation 3.80× (monolithic 2.34×).
+
+### Monolithic border: default and refinement economy
+
+**Status:** decided — the elimination stays the default; the monolithic
+route is the gated option for multi-border one-shots. Open: its
+refinement economy, and server soak before promoting it for rotating
+sweeps.
+
+The true-residual refinement guards against the MINRES recurrence
+drifting at the border preconditioner's conditioning, but at tight
+tolerances it costs a second full Krylov pass (pass 0 reaches ~2e-9,
+pass 1 ~3e-15 at h 0.4/o2), which is what loses the single-border water
+case to the elimination. A border-aware stop (refine only until the
+border rows' own residuals meet their scale, rather than the global
+norm) would reclaim most of that pass. Related: the loose-tolerance
+Φ_g amplification (`open_issues.md`, "The sea-level equation") is the
+same near-cancellation seen from the elimination side.
+
+**See:** `src/mixed_problem.cpp::SolveBorderedMonolithic`;
+`tests/TestMonolithicBorder(.Par).cpp`;
+`benchmarks/sea_level/run.py --timings`.
+
+### Picard feedback inside the time stepper
+
+**Status:** proposal, measured.
+
+The water and rotation feedbacks iterated as explicit loads around the
+plain elastic operator converge at the physical loop gain (water
+0.07–0.2 per pass; with rotation at Earth's near-neutral moments, 17
+passes, no stall), and the warm-started per-pass Krylov counts decay
+fast (66 → 59 → … → 4 at h 0.4/o2), so a cold loop costs ~3.7× one
+elastic solve. Inside viscoelastic stepping — where each step starts
+from the previous step's converged state, far down that decay curve —
+the route should approach one elastic solve per step with no borders
+at all. Requirements before productionising: the ψ-dependent
+instruments must use the interpolant convention throughout (the
+experiment's analytic-ψ integrals leave ω ~8 % off at near-neutral
+moments), and the loop belongs inside the stepper rather than per
+solve.
+
+**See:** `benchmarks/sea_level/sea_level_benchmark.cpp`
+(`-feedback picard`); the plan's settled decisions
+(`sea_level_plan.md`).
+
+### Border-column cache against the stepper's modulus switches
+
+**Status:** open; see also "Caching unrelaxed and effective operators"
+above.
+
+The border-column cache is keyed on `OperatorVersion()`, so the
+exponential-trapezoid stepper's per-step switch between the unrelaxed
+and effective operators invalidates it each step (measured: the water
+history keeps the full −43 % economy because its passes share one
+operator era; the rotating stack keeps only −23 %). Caching the
+columns per operator *flavour* alongside the cached operators would
+restore the full economy for schemes that alternate.
+
+**See:** `src/mixed_problem.cpp::SolveLinearSystem`;
+`tests/TestSeaLevelViscoelastic.cpp` (the iteration prints).
+
+---
+
 ## Multiple right-hand sides
 
 ### Combined-degree solves

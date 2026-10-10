@@ -1,5 +1,36 @@
 # Installing AdGIA
 
+## Building a minimal MFEM first
+
+AdGIA needs nothing of MFEM beyond its core: no PETSc, no SUNDIALS, no
+GPU backends. The quickest route is the script the CI uses, which runs
+equally well on a workstation:
+
+```bash
+# serial: MFEM alone
+.github/ci/install_mfem.sh serial  ~/mfem-serial
+
+# parallel: hypre + MFEM with one MPI's wrappers; METIS from the system
+sudo apt install libmetis-dev        # or set METIS_DIR
+MPICC=mpicc MPICXX=mpicxx .github/ci/install_mfem.sh parallel ~/mfem-parallel
+```
+
+It builds the reference versions (MFEM v4.10, hypre 3.1.0; overridable
+through `MFEM_VERSION`/`HYPRE_VERSION`) into the given prefix, which is
+then the `MFEM_DIR` below. By hand, the minimum is:
+
+- **serial** — MFEM with its defaults:
+  `cmake -S mfem -B mfem/build -DCMAKE_BUILD_TYPE=Release` and build;
+- **parallel** — hypre and MFEM compiled with the *same* MPI compiler
+  wrappers (mixing MPIs is the usual cause of link and launch
+  failures), plus a serial METIS 5:
+  `cmake -S mfem -B mfem/build -DMFEM_USE_MPI=YES
+  -DCMAKE_CXX_COMPILER=mpicxx -DHYPRE_DIR=<hypre prefix>
+  -DMETIS_DIR=/usr`.
+
+MFEM v4.10 is the reference (what the CI tests against); v4.9 is also
+known to work — the full test suite passes on both.
+
 ## Prerequisites
 
 1. **CMake** 3.15 or later.
@@ -28,7 +59,13 @@
    Python with planetmodel, pyslfp and matplotlib, normally the poetry
    environment of `benchmarks/` (`poetry install` there). See
    `benchmarks/README.md`.
-7. **Doxygen** (optional), for the API documentation.
+7. **Post-processing** (optional): the tools in `postprocess/` (NetCDF
+   export, maps, ice-model ingest, topography grids) run through
+   launchers in `<build>/postprocess` with the poetry environment of
+   `postprocess/` (`poetry install` there; a build configured before the
+   environment existed is configured again to pick it up). See
+   `postprocess/README.md`.
+8. **Doxygen** (optional), for the API documentation.
 
 ## Configure
 
@@ -70,9 +107,11 @@ takes effect only on a fresh build directory.
 | `BUILD_TESTS` | `OFF` | build the test suite in `tests/` (googletest is fetched at configure time) |
 | `BUILD_BENCHMARKS` | `OFF` | build the benchmark drivers and the launchers of their scripts into `<build>/benchmarks`; needs `USE_MPI` (skipped with a message otherwise) |
 | `BENCHMARKS_PYTHON` | the poetry environment of `benchmarks/` | the Python interpreter the benchmark launchers use; falls back to `python3`, with a warning, when neither is available |
+| `POSTPROCESS_PYTHON` | the poetry environment of `postprocess/` | the Python interpreter the post-processing launchers use; falls back to `python3`, with a message, when neither is available |
 | `BUILD_DOCS` | `OFF` | generate the Doxygen documentation (HTML in `<build>/doc/html`) as part of the build |
 | `GENERATE_MESHES` | on with examples or tests | generate the gmsh meshes into `<build>/data` |
 | `MESHES_PYTHON` | found or created | the Python interpreter used for mesh generation |
+| `MESHES_SCALE` | `1` | factor on every generated mesh's element sizes (smaller is finer); changing it regenerates the whole set |
 
 The usual CMake variables (`CMAKE_BUILD_TYPE`, `CMAKE_INSTALL_PREFIX`)
 apply.

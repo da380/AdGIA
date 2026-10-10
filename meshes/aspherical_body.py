@@ -54,7 +54,7 @@ from planetmodel import CallableDisplacement, Geometry, Skeleton
 from planetmodel.mesh3d import (MeshSpec, Shell, UniformInterfaces,
                                 build_layered_mesh, export_mfem_mesh)
 
-from common import parser, report
+from common import parser, report, sizes
 
 EPS = 0.05     # amplitude of the shape, relative to the radius
 BETA = 0.5     # elliptical part relative to the oblate part
@@ -83,8 +83,7 @@ def tapered_shape(r, theta, phi, eps=None, beta=None):
 
 def build(dim: int, buffer: bool, args) -> None:
     eps, beta = args.eps, args.beta
-    scale = args.scale
-    sizing = UniformInterfaces(*(scale * v for v in SIZING[dim]))
+    sizing = UniformInterfaces(*sizes(args, *SIZING[dim]))
 
     def my_shape(r, theta, phi):
         return shape(r, theta, phi, eps, beta)
@@ -129,8 +128,7 @@ def build_fluid_core(dim: int, spherical: bool, args) -> None:
     eps = 0.0 if spherical else args.eps
     beta = args.beta
     rc = args.rc
-    sizing = UniformInterfaces(*(args.scale * v
-                                 for v in SIZING_FLUID_CORE[dim]))
+    sizing = UniformInterfaces(*sizes(args, *SIZING_FLUID_CORE[dim]))
 
     def my_tapered(r, theta, phi):
         return tapered_shape(r, theta, phi, eps, beta)
@@ -181,9 +179,6 @@ def main() -> None:
                    help="amplitude of the shape (default %(default)s)")
     p.add_argument("--beta", type=float, default=BETA,
                    help="elliptical part (default %(default)s)")
-    p.add_argument("--scale", type=float, default=1.0,
-                   help="scale factor on the element sizes (smaller is "
-                        "finer)")
     p.add_argument("--name", default="",
                    help="suffix on the file names, for parameter sweeps")
     args = p.parse_args()

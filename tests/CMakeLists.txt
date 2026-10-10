@@ -67,6 +67,8 @@ target_link_libraries(TestSubMeshDofInjection PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestSubMeshDofInjection)
 
 if(USE_MPI)
+    add_executable(TestMpiWorldPar TestMpiWorldPar.cpp)
+    target_link_libraries(TestMpiWorldPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestSubMeshDofInjectionPar TestSubMeshDofInjectionPar.cpp)
     target_link_libraries(TestSubMeshDofInjectionPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestSubMeshMixedBilinearFormPar TestSubMeshMixedBilinearFormPar.cpp)
@@ -93,6 +95,20 @@ if(USE_MPI)
     target_link_libraries(TestNullSpacePar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestCompositeRheologyPar TestCompositeRheologyPar.cpp)
     target_link_libraries(TestCompositeRheologyPar PRIVATE AdGIA MPI::MPI_CXX)
+    add_executable(TestSeaLevelPar TestSeaLevelPar.cpp)
+    target_link_libraries(TestSeaLevelPar PRIVATE AdGIA MPI::MPI_CXX)
+    add_executable(TestRotationPar TestRotationPar.cpp)
+    target_link_libraries(TestRotationPar PRIVATE AdGIA MPI::MPI_CXX)
+    add_executable(TestSeaLevelCouplingPar TestSeaLevelCouplingPar.cpp)
+    target_link_libraries(TestSeaLevelCouplingPar PRIVATE AdGIA MPI::MPI_CXX)
+    add_executable(TestSeaLevelRotationPar TestSeaLevelRotationPar.cpp)
+    target_link_libraries(TestSeaLevelRotationPar PRIVATE AdGIA MPI::MPI_CXX)
+    add_executable(TestShorelineMigrationPar TestShorelineMigrationPar.cpp)
+    target_link_libraries(TestShorelineMigrationPar PRIVATE AdGIA MPI::MPI_CXX)
+    add_executable(TestSeaLevelViscoelasticPar TestSeaLevelViscoelasticPar.cpp)
+    target_link_libraries(TestSeaLevelViscoelasticPar PRIVATE AdGIA MPI::MPI_CXX)
+    add_executable(TestMonolithicBorderPar TestMonolithicBorderPar.cpp)
+    target_link_libraries(TestMonolithicBorderPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestSphericalHarmonicsPar TestSphericalHarmonicsPar.cpp)
     target_link_libraries(TestSphericalHarmonicsPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestEquilibriumFiguresPar TestEquilibriumFiguresPar.cpp)
@@ -102,6 +118,10 @@ if(USE_MPI)
     add_executable(TestDescentPar TestDescentPar.cpp)
     target_link_libraries(TestDescentPar PRIVATE AdGIA MPI::MPI_CXX)
     foreach(np 1 2 4)
+        # First, so a broken launcher fails the batch at its first test.
+        add_test(NAME TestMpiWorldPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestMpiWorldPar> ${np})
         add_test(NAME TestSubMeshDofInjectionPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestSubMeshDofInjectionPar>)
@@ -141,6 +161,27 @@ if(USE_MPI)
         add_test(NAME TestCompositeRheologyPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestCompositeRheologyPar>)
+        add_test(NAME TestSeaLevelPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestSeaLevelPar>)
+        add_test(NAME TestRotationPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestRotationPar>)
+        add_test(NAME TestSeaLevelCouplingPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestSeaLevelCouplingPar>)
+        add_test(NAME TestSeaLevelRotationPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestSeaLevelRotationPar>)
+        add_test(NAME TestShorelineMigrationPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestShorelineMigrationPar>)
+        add_test(NAME TestSeaLevelViscoelasticPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestSeaLevelViscoelasticPar>)
+        add_test(NAME TestMonolithicBorderPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestMonolithicBorderPar>)
         add_test(NAME TestSphericalHarmonicsPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestSphericalHarmonicsPar>)
@@ -228,6 +269,32 @@ gtest_discover_tests(TestMixedProblemFluid)
 add_executable(TestFluidGauge TestFluidGauge.cpp)
 target_link_libraries(TestFluidGauge PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestFluidGauge)
+
+add_executable(TestSeaLevel TestSeaLevel.cpp)
+target_link_libraries(TestSeaLevel PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestSeaLevel)
+
+add_executable(TestRotation TestRotation.cpp)
+target_link_libraries(TestRotation PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestRotation)
+
+add_executable(TestSeaLevelCoupling TestSeaLevelCoupling.cpp)
+target_link_libraries(TestSeaLevelCoupling PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestSeaLevelCoupling)
+
+add_executable(TestSeaLevelRotation TestSeaLevelRotation.cpp)
+target_link_libraries(TestSeaLevelRotation PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestSeaLevelRotation)
+
+add_executable(TestShorelineMigration TestShorelineMigration.cpp)
+target_link_libraries(TestShorelineMigration PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestShorelineMigration)
+add_executable(TestSeaLevelViscoelastic TestSeaLevelViscoelastic.cpp)
+target_link_libraries(TestSeaLevelViscoelastic PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestSeaLevelViscoelastic)
+add_executable(TestMonolithicBorder TestMonolithicBorder.cpp)
+target_link_libraries(TestMonolithicBorder PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestMonolithicBorder)
 
 add_executable(TestSlipInterface TestSlipInterface.cpp)
 target_link_libraries(TestSlipInterface PRIVATE AdGIA gtest_main)

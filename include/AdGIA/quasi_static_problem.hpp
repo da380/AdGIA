@@ -574,6 +574,11 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   void SetRelTol(mfem::real_t rel_tol) { rel_tol_ = rel_tol; }
   mfem::real_t RelTol() const { return rel_tol_; }
 
+  /** @brief A counter every operator (re)assembly or gauge rescale
+   * bumps: caches derived from the assembled operator (border columns,
+   * unit responses) are valid exactly while it stands still. */
+  int OperatorVersion() const { return operator_version_; }
+
   /** @brief Print level of the default CG solver (quiet by default); takes
    * effect at the next operator assembly. */
   void SetPrintLevel(mfem::IterativeSolver::PrintLevel level) {
@@ -804,6 +809,10 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   mfem::real_t rel_tol_ = 1e-12;
   mfem::IterativeSolver::PrintLevel print_level_;
   bool operator_dirty_ = true;
+  /** Bumped by every operator (re)assembly or rescale: anything derived
+   * from the assembled operator (cached border columns, unit responses)
+   * is valid exactly while this number stands still. */
+  int operator_version_ = 0;
   std::vector<mfem::Coefficient*> td_coefs_;
   std::vector<mfem::VectorCoefficient*> td_vcoefs_;
 };

@@ -473,6 +473,53 @@ slipping problems, e.g. for relaxation of an aspherical body.
 **See:** `include/AdGIA/referential_problem.hpp`
 (`ReferentialElasticRheology`); `doc/viscoelasticity.md`.
 
+## Sea level
+
+### The referential sea-level leg and the generalised rotational theory
+
+**Status:** proposal (the plan's WP7).
+
+Port the sea-level boundary terms to the referential class, where the
+combination `u·∇Φ + φ` is the referential potential ζ and the water
+feedback collapses to a single ζζ boundary mass (the condensed system
+of `sea_level_plan.md`); gate against the mixed-class results. The
+Maitra & Al-Attar (2024) generalised rotational theory hangs off this
+leg: the traditional theory implicitly assumes an isotropic background
+inertia tensor (Yu et al. §2.4), which bites for 3-D models.
+
+**See:** `sea_level_plan.md` ("The condensed system in our
+variables"); `doc/Elasticity/ggae092.pdf`.
+
+### Equilibrium backgrounds with surface water
+
+**Status:** parked (the foundational caveat).
+
+All sea-level theory to date computes forces that belong to a rotating
+model with oceans on a non-rotating model without them — the reference
+sea level is an equipotential of nothing. The consistent fix: the
+equilibrium-figures machinery builds self-consistent rotating
+backgrounds extended to carry surface water, and the generalised
+rotational theory is the matching perturbation framework — both on the
+referential leg.
+
+**See:** `equilibrium_figures.md`; `sea_level_plan.md`.
+
+### Ice-age production runs
+
+**Status:** open — the server campaign.
+
+The pieces exist end to end (`IceHistory`, the ice-ng export, the
+sea-level-band refined meshes, `examples/ice_age_loading.cpp` as the
+chain's demonstration on a toy rheology): a production run is a
+realistic layered viscoelastic model, the resolved meshes, the full
+ICE-NG date list and migration on — plus the resolution ladders of the
+sea-level benchmark family (rungs 1–3, `--coast`, `--timings` on the
+server profile).
+
+**See:** `benchmarks/sea_level/README.md`;
+`examples/ice_age_loading.cpp`; `open_issues.md` ("The sea-level
+equation").
+
 ## Deferred physics
 
 ### Out-of-scope physics of the linearised theory

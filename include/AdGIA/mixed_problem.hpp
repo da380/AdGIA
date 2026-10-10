@@ -301,6 +301,126 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
    */
   void SetTidalPotential(mfem::Coefficient& psi);
 
+  /** @brief Release the tidal-potential slot (e.g. before SetRotation()
+   * on a problem whose construction wired a tidal expansion). */
+  void ClearTidalPotential() { psi_ = nullptr; }
+
+  /**
+   * @brief The symmetric tidal pairing of @p psi with the problem's
+   * current solution: @f$T(\psi, (u,\phi)) = c(\psi, u) +
+   * \int_{M_F}\rho'_F\,\psi\,\phi@f$ — the coupling and fluid-mass
+   * operators applied to the interpolant of @f$\psi@f$ and paired with
+   * the state. This is the @f$\omega@f$-row functional of the
+   * rotational-feedback border (Yu et al. 2025, eqs. A5–A6): by the
+   * symmetry of the combined weak form it is exactly minus the tidal
+   * load of @f$\psi@f$ dotted with the solution, so its sign and its
+   * fluid/interface bookkeeping are inherited from the verified tidal
+   * machinery. Global in parallel.
+   */
+  mfem::real_t TidalCoupling(mfem::Coefficient& psi);
+
+  /** @brief The fluid block of the same pairing between two potentials:
+   * @f$\int_{M_F}\rho'_F\,\psi_a\,\psi_b@f$ (zero without fluid
+   * regions) — the @f$\psi\psi'@f$ term of eq. A6. */
+  mfem::real_t TidalTidalCoupling(mfem::Coefficient& a, mfem::Coefficient& b);
+
+  /**
+   * @brief Gravitationally self-consistent water load with a frozen
+   * shoreline — the condensed sea-level equation
+   * (doc/planning/sea_level_plan.md, "The WP3 derivation").
+   *
+   * With the ocean weight @f$w = \rho_w C_0/g@f$ and the surface trace
+   * @f$\tau = u\cdot\nabla\Phi_0 + \phi@f$, the load
+   * @f$\sigma = -w\,\tau + w\,\Phi_g + \sigma_{data}@f$ is folded into
+   * the operator: the symmetric boundary blocks
+   * @f$-\int w\,\tau'\tau\,dS@f$ (added to the stiffness, the coupling
+   * and the potential blocks, with @f$\nabla\Phi_0@f$ in its
+   * normal-projected form @f$(m\cdot\nabla\Phi_0)\,m@f$ — exact on an
+   * equipotential surface), and the rank-one @f$\Phi_g@f$ border with
+   * the mass-conservation row @f$\int\sigma\,dS = 0@f$, eliminated by
+   * Sherman–Morrison inside the solve (one extra inner solve per
+   * Solve()). @p sigma_data (e.g. @f$\rho_i(1-C_0)I_1@f$, may be
+   * time-dependent) is registered as an ordinary surface load, and its
+   * surface integral feeds the mass row.
+   *
+   * Call once, after construction and before the first Solve();
+   * incompatible with the gauge-KKT saddle, and 3-D only (a 2-D ocean
+   * is not supported, and the 2-D compatibility relocation — the
+   * log-DtN monopole gauge — would make the bordered system
+   * asymmetric). The uniform term of the
+   * last solve is UniformPotentialTerm(); the sea-level change is the
+   * postprocessing @f$SL_1 = -\tau/g + \Phi_g/g@f$
+   * (SeaLevelOperator). Shoreline migration is strictly second order
+   * (Crawford), so the frozen @f$C_0@f$ here is the first-order-exact
+   * production path.
+   */
+  void SetWaterLoad(mfem::Coefficient& ocean_weight,
+                    mfem::Coefficient& sigma_data,
+                    const mfem::Array<int>& surface_marker);
+
+  /**
+   * @brief Rebuild every piece of the water load that depends on the
+   * CURRENT values of the ocean-weight coefficient: the coupling and
+   * potential boundary blocks, the @f$\Phi_g@f$ border and the
+   * rotation cross data. Call after mutating the coefficient's internal
+   * state (shoreline migration: the ocean fraction moved); the volume
+   * operator reassembles on the next solve. The data-load coefficient
+   * needs no refresh — loads are reassembled every AssembleForce().
+   */
+  void RefreshWaterLoad();
+
+  /** @brief @f$\Phi_g@f$ of the last Solve() (0 before). */
+  mfem::real_t UniformPotentialTerm() const { return phi_g_; }
+
+  /**
+   * @brief Rotational feedback inside the solve (the WP4 composition of
+   * doc/planning/sea_level_plan.md): the angular-velocity border of the
+   * traditional theory, solved jointly with the water load's
+   * @f$\Phi_g@f$ border by a small block elimination.
+   *
+   * The border columns are the centrifugal coupling @f$T(\psi_k,
+   * \cdot)@f$ (the tidal operators applied to the unit potentials) and,
+   * with SetWaterLoad(), the water's @f$-\int w\,\tau'\psi_k\,dS@f$
+   * columns; the dense block is @f$D + P@f$ (inertia + the fluid
+   * @f$\psi\psi'@f$ term) minus the surface @f$\int w\psi_k\psi_j@f$
+   * block, bordered by @f$\int w\psi_k@f$ against @f$\Phi_g@f$; the
+   * @f$\omega@f$-row data @f$\int\sigma\psi_k\,dS@f$ is read off the
+   * assembled surface-load form, so every registered surface load
+   * enters. Works with or without SetWaterLoad(); without it this
+   * reproduces RotationalFeedback exactly (the agreement is a test).
+   * The principal moments are data, not model-derived (paper §2.4).
+   * Call after construction, before the first Solve(); incompatible
+   * with the gauge-KKT saddle and with SetTidalPotential() (the
+   * centrifugal potential owns that slot's physics here).
+   */
+  void SetRotation(mfem::real_t Omega,
+                   const mfem::Vector& principal_moments);
+
+  /** @brief @f$\omega@f$ of the last Solve() (zero before; empty
+   * without SetRotation()). */
+  const mfem::Vector& AngularVelocity() const { return omega_; }
+
+  /** @brief Solve the bordered system monolithically — one MINRES on
+   * @f$[K\ B; B^T D_b]@f$ with a block-diagonal preconditioner whose
+   * border block is the preconditioner-probed Schur complement
+   * @f$|D_b - B^T P^{-1} B|@f$ (equilibrated columns, true-residual
+   * refinement) — instead of by block elimination: the per-column
+   * solves disappear at the price of an indefinite outer iteration
+   * whose cost is flat in the border count. Gated to agree with the
+   * elimination at solver grade; the elimination stays the default
+   * (doc/planning/solvers.md, "Bordered solves"). BlockMINRES/BlockCG
+   * solver types with the plain gauge, in 3-D only. */
+  void SetMonolithicBorder(bool on = true) {
+    MFEM_VERIFY(!on || dim_ == 3,
+                "SetMonolithicBorder: 3-D only (the 2-D compatibility "
+                "relocation makes the bordered system asymmetric).");
+    monolithic_border_ = on;
+  }
+
+  /** @brief @f$\psi(\omega)@f$ of the last Solve() as a coefficient
+   * (requires SetRotation()); amplitudes follow each solve. */
+  mfem::Coefficient& SolutionCentrifugalPotential();
+
   // --- solver controls ------------------------------------------------------
 
   void SetSolverType(SolverType type);
@@ -451,6 +571,15 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   void SetupSolver(mfem::OperatorHandle& A) override;
   bool SolveLinearSystem(const mfem::Vector& B, mfem::Vector& X) override;
 
+  /** @brief The system solve without the water-load border (the body of
+   * SolveLinearSystem() before SetWaterLoad()). */
+  bool SolveUnbordered(const mfem::Vector& B, mfem::Vector& X);
+  bool SolveBorderedMonolithic(const std::vector<mfem::Vector>& Bu,
+                               const std::vector<mfem::Vector>& Bphi,
+                               const mfem::DenseMatrix& Db,
+                               const mfem::Vector& r,
+                               const mfem::Vector& B_in, mfem::Vector& X);
+
  private:
   /** @brief @f$S x = A_{uu} x - C A_{\phi\phi}^{-1} C^T x@f$. */
   class SchurOperator : public mfem::Operator {
@@ -571,6 +700,66 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   mfem::Coefficient* psi_ = nullptr;
   std::unique_ptr<mfem::GridFunction> psi_gf_;
   mfem::Vector Psi_true_, tidal_u_, B_eff_;
+
+  // The water-load feedback (SetWaterLoad): the ocean weight, its
+  // derived coefficients (kept alive), the sea phi-phi boundary matrix
+  // summed onto the potential block, the Phi_g border vectors
+  // (c = int w tau' dS on each row; the compatibilised phi copy is the
+  // inner-solve rhs in 2-D), the mass-row scalars and the last solve's
+  // uniform term.
+  bool sea_enabled_ = false;
+  mfem::Coefficient* sea_w_ = nullptr;
+  mfem::Coefficient* sea_sigma_data_ = nullptr;
+  mfem::Array<int> sea_marker_;
+  std::vector<std::unique_ptr<mfem::Coefficient>> sea_coefs_;
+  std::unique_ptr<mfem::BilinearForm> sea_phiphi_form_;
+  mfem::OperatorHandle S_sea_;
+  std::unique_ptr<mfem::SumOperator> A_sea_sum_;
+  mfem::Vector sea_cu_, sea_cphi_, sea_cphi_compat_;
+  mfem::real_t sea_m_ = 0.0, sea_Sd_ = 0.0, phi_g_ = 0.0;
+  mfem::Vector sea_yu_, sea_yphi_;
+
+  // The rotational border (SetRotation): the unit centrifugal
+  // potentials, the inertia matrix, the water cross-column vectors and
+  // surface couplings (built when both features are on), the omega-row
+  // data of the current assembly, and the last solve's omega.
+  bool rot_enabled_ = false;
+  mfem::real_t rot_Omega_ = 0.0;
+  mfem::DenseMatrix rot_D_;
+  std::vector<std::unique_ptr<mfem::Coefficient>> rot_psi_;
+  std::unique_ptr<mfem::Coefficient> rot_psi_total_;
+  std::vector<mfem::Vector> rot_cpsi_u_, rot_cpsi_phi_;
+  mfem::DenseMatrix rot_Pw_;   ///< int w psi_k psi_j dS
+  mfem::Vector rot_mpsi_;     ///< int w psi_k dS
+  mfem::Vector rot_r_;        ///< -int sigma psi_k dS per assembly
+  mfem::Vector omega_;
+  // The border-column cache: the unit responses K^-1 B_j of the
+  // bordered elimination are load-independent, so across solves with an
+  // unchanged operator (viscoelastic steps at fixed effective modulus,
+  // Picard passes between refreshes) they are reused rather than
+  // re-solved — the dominant cost of the bordered solve. Valid while
+  // OperatorVersion() stands still and the demanded tolerance is no
+  // tighter than the one they were built at.
+  std::vector<mfem::Vector> border_Yu_, border_Yphi_;
+  bool monolithic_border_ = false;
+  int border_cache_version_ = -1;
+  int border_cache_nb_ = 0;
+  mfem::real_t border_cache_tol_ = 0.0;
+
+  /** @brief Rebuild the water-rotation cross data (both features on). */
+  void BuildBorderCrossData();
+  /** @brief (Re)build the water phi-phi boundary block and rewire the
+   * potential operator/solver. */
+  void BuildWaterPhiPhi();
+  /** @brief (Re)build the Phi_g border vectors and the mass-row scale. */
+  void BuildWaterBorder();
+  const mfem::Operator* sea_phiphi_base_ = nullptr;
+  /** @brief The surface-mass column of density @p s: the tau'-pairing
+   * vectors on the two rows. */
+  void BuildSurfaceMassColumn(mfem::Coefficient& s, mfem::Vector& cu,
+                              mfem::Vector& cphi);
+  /** @brief @f$\int_{\partial M} f\,dS@f$ over the water marker. */
+  mfem::real_t SurfaceIntegralOnMarker(mfem::Coefficient& f);
 
   // 2-D compatibility
   mfem::Vector ones_, L_outer_;

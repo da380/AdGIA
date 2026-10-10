@@ -15,7 +15,7 @@ import math
 
 from planetmodel.mesh3d import InterfaceSizing, PerInterface, build_offset_mesh
 
-from common import parser, report
+from common import parser, report, sizes
 
 
 def main() -> None:
@@ -28,8 +28,8 @@ def main() -> None:
     # sizing is (size on the boundary, size far away, distance over
     # which it grows).
     sizing = PerInterface({
-        "inner_circle": InterfaceSizing(0.01, 0.06, 0.3),
-        "outer_circle": InterfaceSizing(0.0175, 0.105, 0.525),
+        "inner_circle": InterfaceSizing(*sizes(args, 0.01, 0.06, 0.3)),
+        "outer_circle": InterfaceSizing(*sizes(args, 0.0175, 0.105, 0.525)),
     })
 
     result = build_offset_mesh(

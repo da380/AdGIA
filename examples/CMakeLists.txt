@@ -33,6 +33,9 @@ set(EXAMPLES
     anisotropic_elasticity      # ElasticTensorIntegrator, radial TI
     coseismic_deformation       # moment-tensor (stress-glut) point/finite-fault sources
     postseismic_deformation     # the same fault over an SLS: relaxation to the long-term limit
+    rotational_feedback         # angular-momentum border on a loaded body: omega, feedback change
+    sea_level_fingerprint       # monolithic sea-level equation: ice-melt fingerprint + NetCDF export
+    ice_age_loading             # ICE-7G deglaciation on a Maxwell planet: the surface exchange chain
 )
 
 foreach(ex IN LISTS EXAMPLES)

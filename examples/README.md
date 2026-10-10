@@ -234,6 +234,77 @@ and pausing (`-no-anim` turns the saving off).
 `./postseismic_deformation`, `./postseismic_deformation -nl 0 -tau-e 4 -tf 20`,
 `./postseismic_deformation -tgamma 0.9 -tbx 1 -tbz 2`
 
+### Sea level and rotation
+
+**`rotational_feedback`**: a degree-2 surface mass load without and with
+rotational feedback (`RotationalFeedback`): loading perturbs the inertia
+tensor, angular-momentum conservation perturbs the rotation, and the
+centrifugal potential of the perturbation feeds back on the deformation —
+a small symmetric border on the mixed problem (spin in 2-D, spin plus
+polar wander in 3-D), solved exactly by block elimination over the tidal
+machinery. Prints the angular-velocity perturbation, the feedback's
+relative effect on the displacement, and the re-evaluated
+angular-momentum-row residual; the equilibrium moments are data
+(`-C1 -C2 -C3`), not derived from the model. Shows: the displacement
+without and with feedback, and their difference.
+`./rotational_feedback`, `./rotational_feedback -Omega 0.3`,
+`./rotational_feedback -m ../data/coupled_poisson.msh -o 1`
+
+**`sea_level_fingerprint`**: the gravitationally self-consistent ocean
+response to melting an ice cap, solved monolithically — the sea-level
+equation folded into the elastic operator (`SetWaterLoad`: a symmetric
+boundary modification plus a rank-one border carrying the uniform term
+and mass conservation), no outer iteration. The problem is the sea-level
+benchmark family's (smooth polar continent, ice cap, a melt unloading
+the +x hemisphere of the cap smoothly), with every piece of the
+geometry and load an option, and `-Omega` adding the rotational
+feedback to the same bordered solve; frozen shorelines (first-order
+exact). The default mesh, `data/sea_level_fingerprint.msh`, is refined
+in a ring about this state's shoreline circle
+(`meshes/fingerprint_coastline.py`). `-earth` swaps in the real
+present-day geography — ICE-7G topography and ice sampled at the
+surface nodes by the `ice_ng_to_surface` chain (the first run prints
+the exact commands) — and melts Greenland or West Antarctica
+(`-melt-region`) through a smooth geographic window, the classic
+fingerprint maps from the same solve; run it on the coastline-refined
+ball, `-m ../data/earth_coastlines.msh`. Prints the eustatic equivalent against the ocean-mean sea-level
+change (equal when mass is conserved) and the uniform term; exports the
+fingerprint's nodal values with `WriteSurfaceField`, which in 3-D maps
+to NetCDF/cartopy through `<build>/postprocess/surface_to_netcdf`.
+Shows: the displacement, and the fingerprint, the
+ocean function and the melt load on the surface shell. `-mig` turns on
+shoreline migration (Picard on the ocean function via
+`ShorelineMigration`, the shoreline following the evolving sea level;
+off = frozen shorelines, first-order exact), printing the extra passes
+taken. 3-D only — the sea-level equation is not wired for 2-D (2-D
+elastic solves with gravity remain useful; a 2-D ocean is not).
+`./sea_level_fingerprint`, `./sea_level_fingerprint -melt 1.0 -mig`,
+`./sea_level_fingerprint -earth -m ../data/earth_coastlines.msh` (then
+the printed sampling commands, then the same with `-state`/`-ice`)
+
+**`ice_age_loading`**: the ICE-7G deglaciation on a Maxwell planet —
+the surface exchange chain end to end. Step 1 (no `-ice`) exports the
+surface node CSV; step 2 samples the real ice history at those nodes
+(`<build>/postprocess/ice_ng_to_surface`, pyslfp's downloader caching
+the data); step 3 reads the time stacks back (`IceHistory`), freezes
+the ocean function at the oldest date's flotation and steps the
+viscoelastic water-load solve through the history
+(`ExponentialTrapezoidSolver`; the grounded-ice load
+`rho_i (1 - C0) dI(t)` follows the stack's linear time interpolation).
+Prints the eustatic equivalent, ocean-mean sea level, uniform term and
+displacement norm per step; writes the history CSV (`plot_csv.py`) and
+the endpoint fingerprint for the NetCDF/cartopy map chain. The body is
+the toy homogeneous planet, so the output is qualitative — real
+geography on a model rheology; resolved runs belong to the server. An
+the build's `data/earth_coastlines.msh` — the ball refined along the
+real coastlines and the shallow shelves, one sizing field with no
+coastline isolation — suits `-m`
+out of the box, and an optional step 0 rebuilds it from a sharper or
+re-dated topography (`meshes/README.md`, "The coastline mesh").
+`./ice_age_loading`, then the two printed `ice_ng_to_surface` calls,
+then `./ice_age_loading -ice ice_age_nodes_ice.csv -state
+ice_age_nodes_state.csv`
+
 ### Fluids and interfaces
 
 **`gauged_fluid_cavity`**: an elastic body with a fluid core under a
