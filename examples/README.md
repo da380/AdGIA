@@ -300,6 +300,23 @@ shoreline migration (Picard on the ocean function via
 off = frozen shorelines, first-order exact), printing the extra passes
 taken. 3-D only — the sea-level equation is not wired for 2-D (2-D
 elastic solves with gravity remain useful; a 2-D ocean is not).
+With `-kernel` the same solve runs in its reciprocity reading
+(Al-Attar et al. 2024, `doc/Elasticity/ggad434.pdf`; gate GA1b): the
+direct load becomes a unit-mass Gaussian cap at an observation site
+(`-obs-lat`/`-obs-lon`/`-obs-width`; Boston by default) and the
+exported sea-level field IS the raw L2 sensitivity kernel of that
+site's sea-level observation with respect to the direct load — over
+the ice sheets, its sensitivity to ice melt. `-lateral` adds a smooth
+degree-2 lateral variation of the moduli, so the classic 1-D-vs-3-D
+kernel comparison is two runs;
+`<build>/earth_data/plot_fingerprint_kernel` draws the pair as
+ice-masked global maps with Greenland/Antarctica zooms through
+pyslfp's cartopy wrapper — by default the kernel plus the 3-D−1-D
+DIFFERENCE on its own scale, since the structure signature is a small
+fraction of the kernel's spread (~0.4 % at 60 % lateral moduli — the
+elastic fingerprint's weak moduli sensitivity, made quantitative);
+`--side-by-side` draws the two kernels instead (the exact chain is
+printed by the run and spelled out in the header).
 `./sea_level_fingerprint`, `./sea_level_fingerprint -melt 1.0 -mig`,
 `./sea_level_fingerprint -earth -m ../data/earth_coastlines.msh` (then
 the printed sampling commands, then the same with `-state`/`-ice`)

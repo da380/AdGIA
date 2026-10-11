@@ -56,6 +56,34 @@
 // pointwise through the ocean weight w = rho_w C0 / g; nothing is
 // projected. Every piece of the geometry and load is an option.
 //
+// KERNEL (-kernel): the reciprocity reading of the same solve
+// (Al-Attar, Syvret, Crawford, Mitrovica & Lloyd 2024,
+// doc/Elasticity/ggad434.pdf; gate GA1b of the adjoint plan). By the
+// self-adjointness of the fingerprint operator, the sensitivity kernel
+// of a sea-level observation at a point x_B with respect to the direct
+// surface load is K(x) = G(x_B, x) = G(x, x_B): ONE fingerprint solve
+// whose direct load is a unit point mass at the observation site gives
+// the whole kernel as its sea-level field. The delta function is fudged
+// by a Gaussian cap of angular width -obs-width, normalised to unit
+// mass, centred at (-obs-lat, -obs-lon) [Boston]; the melt options are
+// ignored. -lateral adds a smooth 3-D variation of the elastic moduli
+// (a generic degree-2 pattern of relative amplitude -lateral), so the
+// classic 1-D-versus-3-D kernel comparison is two runs of this mode;
+// with -earth the kernel sits on the real ocean function and is worth
+// plotting masked over the ice sheets (where it reads as the
+// sensitivity to ice melt):
+//
+//   ./sea_level_fingerprint -earth -m ../data/earth_coastlines.msh \
+//       -state fingerprint_state.csv -ice fingerprint_ice.csv -kernel
+//   ./sea_level_fingerprint -earth -m ../data/earth_coastlines.msh \
+//       -state fingerprint_state.csv -ice fingerprint_ice.csv -kernel \
+//       -lateral 0.3 -out sea_level_kernel_3d.csv
+//   <build>/earth_data/plot_fingerprint_kernel sea_level_kernel.csv \
+//       sea_level_kernel_3d.csv
+//
+// The kernels are raw L2 fields (the cap is the smoothing; no Sobolev
+// metric is applied), exported like the fingerprint.
+//
 // Output: the melt load and the sea-level change SL1 on the surface (the fingerprint: a
 // far-field rise of roughly the eustatic value, depressed — possibly
 // below zero — near the melted cap where gravitational attraction is
@@ -108,6 +136,17 @@
 //            edge smoothing in radians (sharper than the simple
 //            geometry's default suits a single sheet, e.g. 0.05).
 //   -nodes-csv     step-1 output [fingerprint_nodes.csv].
+//   -kernel / -no-kernel   reciprocity-kernel mode [off]: the direct
+//            load becomes a unit-mass Gaussian cap at the observation
+//            site and the exported sea-level field IS the observation's
+//            sensitivity kernel to the direct load.
+//   -obs-lat -obs-lon   observation site in degrees [42.36, -71.06:
+//            Boston].
+//   -obs-width     angular width (rad) of the observation cap [0.1].
+//   -lateral       relative amplitude of a smooth degree-2 lateral
+//            variation of kappa and mu [0: the 1-D model].
+//   -out     name of the exported surface CSV [sea_level_kernel.csv in
+//            kernel mode, sea_level_fingerprint.csv otherwise].
 //   -vis / -no-vis   GLVis windows on or off [on].
 //
 // The fixed-point route of pseudo-spectral codes is not repeated here;
@@ -222,6 +261,36 @@ double MeltLoad(const Vector& x) {
 
 bool g_greenland = true;
 
+// The reciprocity-kernel observation cap: a Gaussian in the angle from
+// the observation site, normalised to unit mass by the caller.
+double g_obs_lat = 42.36;   // degrees; Boston
+double g_obs_lon = -71.06;  // degrees
+double g_obs_width = 0.1;   // radians
+double ObservationCap(const Vector& x) {
+  constexpr double deg = std::numbers::pi / 180.0;
+  const double cl = std::cos(g_obs_lat * deg), sl = std::sin(g_obs_lat * deg);
+  const double cn = std::cos(g_obs_lon * deg), sn = std::sin(g_obs_lon * deg);
+  const double r = x.Norml2();
+  const double c =
+      (x[0] * cl * cn + x[1] * cl * sn + x[2] * sl) / r;
+  const double theta = std::acos(std::min(1.0, std::max(-1.0, c)));
+  return std::exp(-theta * theta / (g_obs_width * g_obs_width));
+}
+
+// The smooth lateral moduli of the 3-D comparison: a generic degree-2
+// pattern (Cartesian harmonics, well-defined at the origin) of relative
+// amplitude g_lateral; the two moduli get different patterns so no
+// accidental symmetry survives.
+double g_lateral = 0.0;
+double LateralKappa(const Vector& x) {
+  return kKappa * (1.0 + g_lateral * ((x[0] * x[0] - x[1] * x[1]) +
+                                      0.7 * x[0] * x[2]));
+}
+double LateralMu(const Vector& x) {
+  return kMu * (1.0 - g_lateral * (0.8 * (x[1] * x[1] - x[2] * x[2]) -
+                                   0.7 * x[0] * x[1]));
+}
+
 // The smooth geographic window of the melted sheet, 1 inside; edges
 // tanh-smoothed over g_melt_width radians. Loose boxes are enough:
 // within each, ICE-7G's present-day thickness is the sheet itself.
@@ -318,6 +387,8 @@ int main(int argc, char* argv[]) {
   const char* ice_csv = "";
   const char* melt_region = "greenland";
   const char* nodes_csv = "fingerprint_nodes.csv";
+  bool kernel = false;
+  const char* out_csv = "";
   bool visualization = true;
 
   OptionsParser args(argc, argv);
@@ -367,6 +438,21 @@ int main(int argc, char* argv[]) {
   args.AddOption(&melt_region, "-melt-region", "--melt-region",
                  "greenland or west-antarctica (-earth only; the simple "
                  "geometry melts the cap's +x hemisphere).");
+  args.AddOption(&kernel, "-kernel", "--kernel", "-no-kernel",
+                 "--no-kernel",
+                 "Reciprocity-kernel mode: unit-mass observation cap as "
+                 "the direct load.");
+  args.AddOption(&g_obs_lat, "-obs-lat", "--observation-latitude",
+                 "Observation latitude (degrees).");
+  args.AddOption(&g_obs_lon, "-obs-lon", "--observation-longitude",
+                 "Observation longitude (degrees).");
+  args.AddOption(&g_obs_width, "-obs-width", "--observation-width",
+                 "Angular width (radians) of the observation cap.");
+  args.AddOption(&g_lateral, "-lateral", "--lateral-amplitude",
+                 "Relative amplitude of the smooth degree-2 lateral "
+                 "variation of kappa and mu (0: the 1-D model).");
+  args.AddOption(&out_csv, "-out", "--output-csv",
+                 "Exported surface CSV (default per mode).");
   args.AddOption(&nodes_csv, "-nodes-csv", "--nodes-csv",
                  "Step-1 output: the surface node CSV (-earth only).");
   args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
@@ -456,7 +542,12 @@ int main(int argc, char* argv[]) {
   }
 
   ConstantCoefficient kappa(kKappa), mu(kMu), rho(kRho);
-  IsotropicElasticRheology rheology(dim, kappa, mu);
+  FunctionCoefficient kappa_lat(LateralKappa), mu_lat(LateralMu);
+  Coefficient& kappa_used =
+      g_lateral != 0.0 ? static_cast<Coefficient&>(kappa_lat) : kappa;
+  Coefficient& mu_used =
+      g_lateral != 0.0 ? static_cast<Coefficient&>(mu_lat) : mu;
+  IsotropicElasticRheology rheology(dim, kappa_used, mu_used);
   const double g0 = G0();
   VectorFunctionCoefficient grad_phi0(dim, [g0](const Vector& x, Vector& v) {
     v = x;
@@ -518,6 +609,20 @@ int main(int argc, char* argv[]) {
     init_ice = i0_surf.get();
     ocean_diag = c0_surf.get();
     melt_diag = sigma_surf.get();
+  }
+
+  // Kernel mode: the direct load becomes the unit-mass observation cap
+  // (reciprocity: the solved sea-level field is the observation's
+  // sensitivity kernel to the direct load); the geography's ocean
+  // weight is kept, the melt is not.
+  FunctionCoefficient cap(ObservationCap);
+  ConstantCoefficient cap_scale(1.0);
+  ProductCoefficient cap_load(cap, cap_scale);
+  if (kernel) {
+    const double cap_mass = sea.SurfaceIntegral(cap);
+    cap_scale.constant = 1.0 / cap_mass;
+    sigma_used = &cap_load;
+    melt_diag = &cap_load;
   }
 
   // With -mig the orchestrator owns the water load (its constructor
@@ -592,17 +697,36 @@ int main(int argc, char* argv[]) {
   GridFunctionCoefficient slc(&sea.SeaLevelChangeField());
   ProductCoefficient ocean_sl(*ocean_diag, slc);
   const double ocean_mean = sea.SurfaceIntegral(ocean_sl) / area;
-  if (IsRoot()) {
+  if (IsRoot() && kernel) {
+    std::cout << "\nreciprocity kernel of a sea-level observation at ("
+              << g_obs_lat << " N, " << g_obs_lon << " E), cap width "
+              << g_obs_width << " rad"
+              << (g_lateral != 0.0
+                      ? std::string(", lateral moduli amplitude ") +
+                            std::to_string(g_lateral)
+                      : std::string(", 1-D moduli"))
+              << "\n  (K(x) = dSL(obs)/dzeta(x): the sea-level field of "
+                 "one fingerprint solve\n   loaded by the unit-mass cap "
+                 "— ggad434 reciprocity; over ice sheets, scale\n   by "
+                 "rho_i for sensitivity to thickness change)\n";
+  }
+  if (IsRoot() && !kernel) {
     std::cout << "\nsea-level fingerprint ("
               << (earth ? std::string("ICE-7G, melting ") + melt_region
                         : std::string("polar cap"))
               << "; rho_w " << g_rho_w << ", rho_i " << g_rho_i
               << ", melt " << g_melt << ")\n";
+  }
+  if (IsRoot()) {
     std::cout << "  ocean area                 " << area << "\n";
-    std::cout << "  melted ice mass            " << melted_mass << "\n";
-    std::cout << "  eustatic equivalent        " << eustatic << "\n";
+    if (!kernel) {
+      std::cout << "  melted ice mass            " << melted_mass << "\n";
+      std::cout << "  eustatic equivalent        " << eustatic << "\n";
+    } else {
+      std::cout << "  cap mass (should be 1)     " << -melted_mass << "\n";
+    }
     std::cout << "  ocean-mean SL change       " << ocean_mean
-              << "   (= eustatic when mass is conserved)\n";
+              << (kernel ? "\n" : "   (= eustatic when mass is conserved)\n");
     std::cout << "  uniform term Phi_g         "
               << prob.UniformPotentialTerm() << "\n";
     if (Omega != 0.0) {
@@ -614,17 +738,27 @@ int main(int argc, char* argv[]) {
     }
   }
 
-  // The fingerprint as data: nodal CSV for the postprocess tool.
-  sea.WriteSurfaceField(sea.SeaLevelChangeField(),
-                        "sea_level_fingerprint.csv");
+  // The fingerprint (or kernel) as data: nodal CSV for the
+  // postprocess tools.
+  const std::string out_name =
+      std::string(out_csv).empty()
+          ? (kernel ? "sea_level_kernel.csv" : "sea_level_fingerprint.csv")
+          : std::string(out_csv);
+  sea.WriteSurfaceField(sea.SeaLevelChangeField(), out_name);
   if (IsRoot()) {
-    if (dim == 3) {
-      std::cout << "  wrote sea_level_fingerprint.csv — map it with\n"
-                << "    <build>/postprocess/surface_to_netcdf "
-                   "sea_level_fingerprint.csv --plot\n";
+    if (dim != 3) {
+      std::cout << "  wrote " << out_name
+                << " (x,y,value rows along the circle)\n";
+    } else if (kernel) {
+      std::cout << "  wrote " << out_name
+                << " — the figure (ice-masked maps and zooms, two models "
+                   "side by side):\n"
+                << "    <build>/earth_data/plot_fingerprint_kernel "
+                << out_name << " [<3-D run's csv>]\n";
     } else {
-      std::cout << "  wrote sea_level_fingerprint.csv (x,y,value rows "
-                   "along the circle)\n";
+      std::cout << "  wrote " << out_name << " — map it with\n"
+                << "    <build>/postprocess/surface_to_netcdf " << out_name
+                << " --plot\n";
     }
   }
 
