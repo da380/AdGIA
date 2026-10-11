@@ -8,6 +8,16 @@
 // and, on top, the distinction the inverse-problem literature often
 // blurs: the kernel is a DERIVATIVE; a GRADIENT needs a metric.
 //
+// It is the tutorial layer over the library's common adjoint structure
+// (adjoint.hpp; the design is doc/planning/adjoint_note.md): the
+// observation enters as a POINT term of an AdjointForce, the AdjointSolver
+// runs the zero-load twin problem — a static adjoint is the degenerate
+// case with no time axis, one solve per point term — and IsotropicKernel
+// accumulators deliver the directional derivatives of the verification
+// table, the display fields and the exported duals. The regression gate
+// on this configuration's table is TestAdjoint (gate GA0 of the adjoint
+// plan).
+//
 // The geometry. The physical body is the INNER layer of the two-layer
 // disc mesh alone (an elastic disc, uniform by default; -vd and -va
 // add a smooth radial and harmonic-polynomial variation of the
@@ -73,9 +83,11 @@
 //
 // The verification. For perturbation patterns chi (an inner-disc
 // indicator, a Gaussian blob, and the whole body), the predicted change
-// int K m0 chi is compared against the central finite difference of
-// fresh forward solves at m0 (1 +/- e chi); the printed table agrees to
-// a small tolerance that tightens with refinement.
+// int K m0 chi — an IsotropicKernel DIRECTION, accumulated with the
+// assembly rule of the elastic forms — is compared against the central
+// finite difference of fresh forward solves at m0 (1 +/- e chi); the
+// printed table agrees to a small tolerance that tightens with
+// refinement.
 //
 // Derivative versus gradient. The kernel K is the L2 REPRESENTATION of
 // the derivative: the dual vector j[delta m] = int K delta m identified
@@ -85,12 +97,13 @@
 // with margin while L2 and H1 do not (doc/equilibrium_figures.tex §6;
 // riesz.hpp). The example closes by applying the library's Riesz maps —
 // L2, and the Sobolev metrics of order 1 (H1-like) and 2 (H2-like) — to
-// BOTH kernels' duals. The Sobolev solves are posed on the extension
-// domain with homogeneous Dirichlet conditions on its far boundary, so
-// the metric's artificial boundary condition decays before it reaches
-// the body. Watch the point-force signature: raw/L2 is spiky at the
-// observation points, H1 is bounded but still peaked, H2 is the smooth
-// field an inversion for continuous moduli should descend along.
+// BOTH kernels' duals, assembled from the accumulators' display fields
+// transferred to the extension mesh. The Sobolev solves are posed on the
+// extension domain with homogeneous Dirichlet conditions on its far
+// boundary, so the metric's artificial boundary condition decays before
+// it reaches the body. Watch the point-force signature: raw/L2 is spiky
+// at the observation points, H1 is bounded but still peaked, H2 is the
+// smooth field an inversion for continuous moduli should descend along.
 //
 // Visualisation (GLVis; -no-vis to skip): the forward and adjoint
 // displacements, and each modulus's sensitivity in the three metrics.
@@ -102,7 +115,8 @@
 // and first-order dynamics both enter the Lagrangian; and the
 // equilibrium stress depends on the density too, non-uniquely — the
 // subtle part (after Yu, Al-Attar, Syvret & Lloyd 2025,
-// doc/Elasticity/ggae388.pdf). A later example.
+// doc/Elasticity/ggae388.pdf; the plan is doc/planning/adjoint_plan.md).
+// A later example.
 //
 // One source serves the serial and the parallel build, as throughout.
 //
@@ -210,46 +224,6 @@ void Traction(const Vector& x, Vector& t) {
   t[1] = p * x[1] / r;
 }
 
-// A pointwise kernel built from the forward and adjoint displacements:
-//   mode Kappa: - (div u)(div u+)
-//   mode Mu:    - 2 dev eps(u) : dev eps(u+)
-class KernelCoefficient : public Coefficient {
- public:
-  enum class Mode { Kappa, Mu };
-
-  KernelCoefficient(const GridFunction& u, const GridFunction& udag,
-                    Mode mode)
-      : u_(&u), udag_(&udag), mode_(mode) {}
-
-  real_t Eval(ElementTransformation& T, const IntegrationPoint& ip) override {
-    T.SetIntPoint(&ip);
-    u_->GetVectorGradient(T, Du_);
-    udag_->GetVectorGradient(T, Dv_);
-    const int d = Du_.Height();
-    real_t divu = 0.0, divv = 0.0;
-    for (int i = 0; i < d; i++) {
-      divu += Du_(i, i);
-      divv += Dv_(i, i);
-    }
-    if (mode_ == Mode::Kappa) {
-      return -divu * divv;
-    }
-    // dev eps(u) : dev eps(u+) = eps(u):eps(u+) - (div u)(div u+)/d
-    real_t ee = 0.0;
-    for (int i = 0; i < d; i++) {
-      for (int j = 0; j < d; j++) {
-        ee += 0.25 * (Du_(i, j) + Du_(j, i)) * (Dv_(i, j) + Dv_(j, i));
-      }
-    }
-    return -2.0 * (ee - divu * divv / d);
-  }
-
- private:
-  const GridFunction *u_, *udag_;
-  Mode mode_;
-  DenseMatrix Du_, Dv_;
-};
-
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -321,7 +295,7 @@ int main(int argc, char* argv[]) {
   // circle, exactly the surface tangent at the mid-point): assembled
   // once as a dual vector through a BOUNDARY integrator (so the
   // observation is exactly on the surface), it is both the measurement
-  // and the adjoint load.
+  // and the adjoint force's point term.
   auto h = VectorFunctionCoefficient(dim, [](const Vector& x, Vector& v) {
     const real_t phi = std::atan2(x[1], x[0]);
     auto window = [phi](real_t centre) {
@@ -366,7 +340,7 @@ int main(int argc, char* argv[]) {
     return J;
   };
 
-  // === The forward and adjoint solves at the base model ===
+  // === The forward solve at the base model ===
   // The base model: uniform moduli, optionally modulated by a smooth
   // two-knob parameterisation (zero by default): a radial even power
   // and the degree-2 harmonic polynomial r^2 cos(2 phi) = x^2 - y^2 —
@@ -386,53 +360,63 @@ int main(int argc, char* argv[]) {
   auto u = FieldType(&fes);
   const real_t J0 = measure(kappa0, mu0, &u);
 
-  // The adjoint: the SAME traction problem, loaded by the windowed
-  // station pair (self-adjointness in action).
+  // === The adjoint, through the common structure ===
+  // The zero-load twin of the forward problem; the observation is one
+  // POINT term of the AdjointForce (a static adjoint is the degenerate
+  // case: no time axis, one solve per point term). The IsotropicKernel
+  // accumulators carry the verification directions m0 chi, the display
+  // fields for the Riesz tail, and would export the duals of an
+  // inversion wrapper.
   auto rheology0 = IsotropicElasticRheology(dim, kappa0, mu0);
   auto zero_vec = Vector(dim);
   zero_vec = 0.0;
   auto zero_traction = VectorConstantCoefficient(zero_vec);
-  auto adjoint = LinearQuasiStaticTractionProblem(&fes, rheology0,
-                                                  zero_traction, surface);
-  adjoint.AssembleForce(0.0);
-  adjoint.AddForce(g);
-  MFEM_VERIFY(adjoint.Solve(), "adjoint solve failed");
-  auto udag = FieldType(&fes);
-  udag = adjoint.Displacement();
+  auto adjoint_problem = LinearQuasiStaticTractionProblem(&fes, rheology0,
+                                                          zero_traction,
+                                                          surface);
+  AdjointForce force;
+  force.AddObservation(0.0, g);
 
-  // === The kernels and the verification table ===
-  // (Element-by-element coefficients are the lightest route to the
-  // kernels; the alternative is mfem's discrete interpolators mapping
-  // displacement into strain-type fields, as the library does
-  // elsewhere, which pays off once kernels feed a descent loop rather
-  // than a plot.)
-  auto K_kappa = KernelCoefficient(u, udag, KernelCoefficient::Mode::Kappa);
-  auto K_mu = KernelCoefficient(u, udag, KernelCoefficient::Mode::Mu);
-
-  // int_B K m0 chi dV, by quadrature against the H1 partition of unity.
   auto sfes = SpaceType(&body, &fec);
-  auto ones = FieldType(&sfes);
-  ones = 1.0;
-  auto integral = [&](Coefficient& K, Coefficient& m0, Coefficient& chi) {
-    auto Km = ProductCoefficient(K, m0);
-    auto Kmc = ProductCoefficient(Km, chi);
-    auto lf = LinearFormType(&sfes);
-    lf.AddDomainIntegrator(new DomainLFIntegrator(Kmc));
-    lf.Assemble();
-    return GlobalSum(lf * ones);
-  };
+  auto kfec = L2_FECollection(order - 1, dim);
+  auto kfes = SpaceType(&body, &kfec);
+  auto K_kappa = IsotropicKernel(IsotropicKernel::Parameter::Kappa, sfes);
+  auto K_mu = IsotropicKernel(IsotropicKernel::Parameter::Mu, sfes);
+  K_kappa.SetField(kfes);
+  K_mu.SetField(kfes);
 
+  Coefficient* chis[] = {&chi_inner, &chi_blob, &chi_all};
+  std::vector<std::unique_ptr<ProductCoefficient>> directions;
+  for (auto* m0 : {static_cast<Coefficient*>(&kappa0),
+                   static_cast<Coefficient*>(&mu0)}) {
+    for (auto* chi : chis) {
+      directions.push_back(std::make_unique<ProductCoefficient>(*m0, *chi));
+    }
+  }
+  for (int c = 0; c < 3; c++) {
+    K_kappa.AddDirection(*directions[c]);
+    K_mu.AddDirection(*directions[3 + c]);
+  }
+
+  auto solver = AdjointSolver(adjoint_problem, u);
+  solver.SetForce(force);
+  solver.AddKernel(K_kappa);
+  solver.AddKernel(K_mu);
+  MFEM_VERIFY(solver.Run(), "adjoint solve failed");
+
+  // === The verification table ===
   struct Case {
     const char* name;
     bool is_kappa;
     Coefficient* chi;
+    int direction;
   };
-  Case cases[] = {{"kappa, inner", true, &chi_inner},
-                  {"kappa, blob", true, &chi_blob},
-                  {"kappa, all", true, &chi_all},
-                  {"mu, inner", false, &chi_inner},
-                  {"mu, blob", false, &chi_blob},
-                  {"mu, all", false, &chi_all}};
+  Case cases[] = {{"kappa, inner", true, &chi_inner, 0},
+                  {"kappa, blob", true, &chi_blob, 1},
+                  {"kappa, all", true, &chi_all, 2},
+                  {"mu, inner", false, &chi_inner, 0},
+                  {"mu, blob", false, &chi_blob, 1},
+                  {"mu, all", false, &chi_all, 2}};
 
   if (Root()) {
     std::cout << "\nJ at the base model (baseline change e.(u(x2)-u(x1))): "
@@ -455,9 +439,8 @@ int main(int argc, char* argv[]) {
     const real_t Jp = measure(*kp, *mp);
     const real_t Jm = measure(*km, *mm);
     const real_t dJ_fd = (Jp - Jm) / (2.0 * e);
-    const real_t dJ_kernel =
-        c.is_kappa ? integral(K_kappa, kappa0, *c.chi)
-                   : integral(K_mu, mu0, *c.chi);
+    const real_t dJ_kernel = c.is_kappa ? K_kappa.Directional(c.direction)
+                                        : K_mu.Directional(c.direction);
     if (Root()) {
       std::cout << "  " << std::left << std::setw(16) << c.name
                 << std::right << std::scientific << std::setprecision(6)
@@ -476,28 +459,22 @@ int main(int argc, char* argv[]) {
   // === Derivative into gradient: the Riesz maps on the buffered mesh ===
   //
   // Each modulus's derivative as a dual on a scalar H1 space over the
-  // WHOLE parent mesh (the kernel integrand lives on the body attribute
+  // WHOLE parent mesh, assembled from the accumulator's display field
+  // transferred to the parent (the kernel lives on the body attribute
   // alone; the outer layers are the extension domain), then its
   // representative in three metrics, displayed on the body.
-  auto pfes_v = SpaceType(&parent, &fec, dim);
-  auto u_parent = FieldType(&pfes_v);
-  auto udag_parent = FieldType(&pfes_v);
-  u_parent = 0.0;
-  udag_parent = 0.0;
-  SubMeshType::Transfer(u, u_parent);
-  SubMeshType::Transfer(udag, udag_parent);
-  auto K_kappa_parent = KernelCoefficient(u_parent, udag_parent,
-                                          KernelCoefficient::Mode::Kappa);
-  auto K_mu_parent = KernelCoefficient(u_parent, udag_parent,
-                                       KernelCoefficient::Mode::Mu);
+  auto pfes_s = SpaceType(&parent, &fec);
+  auto pkfes = SpaceType(&parent, &kfec);
   auto body_marker = Array<int>(parent.attributes.Max());
   body_marker = 0;
   body_marker[0] = 1;
-
-  auto pfes_s = SpaceType(&parent, &fec);
-  auto dual = [&](Coefficient& K) {
+  auto dual = [&](const GridFunction& K) {
+    auto K_parent = FieldType(&pkfes);
+    K_parent = 0.0;
+    SubMeshType::Transfer(static_cast<const FieldType&>(K), K_parent);
+    auto K_coeff = GridFunctionCoefficient(&K_parent);
     auto lf = LinearFormType(&pfes_s);
-    lf.AddDomainIntegrator(new DomainLFIntegrator(K), body_marker);
+    lf.AddDomainIntegrator(new DomainLFIntegrator(K_coeff), body_marker);
     lf.Assemble();
     Vector j(pfes_s.GetTrueVSize());
 #ifdef MFEM_USE_MPI
@@ -507,8 +484,8 @@ int main(int argc, char* argv[]) {
 #endif
     return j;
   };
-  const Vector j_kappa = dual(K_kappa_parent);
-  const Vector j_mu = dual(K_mu_parent);
+  const Vector j_kappa = dual(K_kappa.Field());
+  const Vector j_mu = dual(K_mu.Field());
 
   auto outer = ExternalBoundaryMarker(&parent);
   const real_t beta = smoothing * smoothing;
@@ -554,6 +531,8 @@ int main(int argc, char* argv[]) {
   if (visualization) {
     const std::string keys = examples::DefaultKeys(dim);
     examples::GLVisWindow("forward displacement u", keys).Send(body, u);
+    auto udag = FieldType(&fes);
+    udag = adjoint_problem.Displacement();
     examples::GLVisWindow("adjoint displacement u+ (station pair)", keys)
         .Send(body, udag);
     examples::GLVisWindow("kappa-sensitivity: L2 (the raw kernel)", keys)

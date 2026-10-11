@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -227,6 +228,18 @@ class ViscoelasticOperator : public mfem::TimeDependentOperator {
    * (m, t) cannot tell the two apart. */
   void InvalidateDisplacement() { cache_valid_ = false; }
 
+  /** @brief Hook called after every AssembleForce(t) this operator issues
+   * (the unrelaxed, implicit and exponential-trapezoid solves alike),
+   * before the branch forces: the slot for time-dependent dual loads
+   * superposed through Problem().AddForce(). The time is the one the
+   * force was assembled at — the step's target time for the implicit and
+   * trapezoid effective solves. Used by AdjointSolver for the
+   * continuous-in-time adjoint force terms; clear with nullptr. The hook
+   * must be deterministic in t, or the (m, t) displacement cache lies. */
+  void SetForceHook(std::function<void(mfem::real_t)> hook) {
+    force_hook_ = std::move(hook);
+  }
+
   /** @brief Copy the state into the output GridFunctions. */
   void SyncFields(const mfem::Vector& m);
 
@@ -342,6 +355,7 @@ class ViscoelasticOperator : public mfem::TimeDependentOperator {
   std::vector<std::unique_ptr<mfem::GridFunctionCoefficient>> beta_coef_;
   std::vector<mfem::Coefficient*> beta_ptrs_;
   std::vector<std::unique_ptr<mfem::GridFunction>> m_out_;
+  std::function<void(mfem::real_t)> force_hook_;  ///< see SetForceHook
   mutable mfem::Vector d_, d_prev_, dual_, force_, zeta_;  ///< scratch
 
   mutable Scheme scheme_ = Scheme::None;

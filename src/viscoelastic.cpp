@@ -699,6 +699,9 @@ void ViscoelasticOperator::AddCoupledForce(int k, const Vector& zeta) const {
 
 bool ViscoelasticOperator::ElasticUpdate(const Vector& m, real_t t) const {
   problem_.AssembleForce(t);
+  if (force_hook_) {
+    force_hook_(t);
+  }
   for (int k = 0; k < NumBranches(); k++) {
     ApplyBranchModulus(k, Branch(m, k), zeta_);
     AddCoupledForce(k, zeta_);
@@ -847,6 +850,9 @@ void ViscoelasticOperator::ImplicitSolve(real_t dt, const Vector& m,
   for (int pass = 0;; pass++) {
     SetEffectiveModulus(dt, Scheme::BackwardEuler);
     problem_.AssembleForce(t);
+    if (force_hook_) {
+      force_hook_(t);
+    }
     for (int b = 0; b < NumBranches(); b++) {
       Vector mb = Branch(m, b);
       const int nd = nodes_[b].Size();
@@ -949,6 +955,9 @@ void ViscoelasticOperator::ExponentialTrapezoidStep(Vector& m, real_t& t,
   for (int pass = 0;; pass++) {
     SetEffectiveModulus(dt, Scheme::ExponentialTrapezoid);
     problem_.AssembleForce(t + dt);
+    if (force_hook_) {
+      force_hook_(t + dt);
+    }
     for (int b = 0; b < NumBranches(); b++) {
       Vector mb = Branch(m_start, b);
       const Array<int>& nodes = nodes_[b];

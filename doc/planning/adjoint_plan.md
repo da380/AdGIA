@@ -1,8 +1,12 @@
 # Adjoint GIA: sensitivity kernels and the inverse-problem interface (WP8)
 
 **Status:** design REVIEWED (11 Oct 2026): David's decisions 1-6
-recorded below; Q4/Q6/Q8 open with stated defaults; ready to open
-WP8.1.
+recorded below; Q4/Q6/Q8 open with stated defaults. WP8.1 (the theory
+note and common-structure design, [`adjoint_note.md`](adjoint_note.md))
+reviewed by David 11 Oct 2026, with the constrained-SL₀ formulation
+confirmed parked. WP8.2 delivered the same day (gate GA0 and the
+measurements under the WP8.2 entry below); next = WP8.3 (rung 3,
++ self-gravity on the mixed class).
 
 ## Theory base and what already exists
 
@@ -13,6 +17,21 @@ feedbacks, on a chain (Al-Attar & Tromp 2014; Martinec et al. 2015;
 Crawford et al. 2018) that has been checked numerically at various
 stages. The referential translation is expected to be small — the
 same functional structure in the (u, ζ) variables.
+
+A second theory source (David, 11 Oct 2026):
+`doc/Elasticity/ggad434.pdf` (Al-Attar, Syvret, Crawford, Mitrovica &
+Lloyd 2024, "Reciprocity and sensitivity kernels for sea level
+fingerprints") — the adjoint method in another hat, for the ELASTIC
+fingerprint problem. Its reciprocity theorems are ready-made
+certificates for our machinery: the loading reciprocity (eq. 8; the
+discrete version is gated at rung 3 already), the sea-level
+reciprocity ∫SL†ζ dS = ∫SL ζ† dS — self-adjointness of the fingerprint
+operator ζ → SL (eqs. 15/17, §2.5) with the Green-function symmetry
+G(x,x′) = G(x′,x) (eq. 21) — and the generalized theorems including
+rotational feedbacks (§3.2). The reciprocity-with-3-D-ELASTIC-STRUCTURE
+case has NEVER been tested numerically: gating it on the water-loaded
+mixed solve with laterally heterogeneous moduli is both a WP8.4
+certificate and a publishable first (a natural example alongside it).
 
 In-repo groundwork (more than a skeleton):
 
@@ -152,6 +171,30 @@ tolerable defaults.
    whether the boundary hands over derivative components or a
    gradient is a one-line adapter.
 
+## The rheology axis (David's check, 11 Oct 2026)
+
+The ladder below is the GRAVITY axis; the rheology axis is orthogonal
+and rides every rung (worked in `adjoint_note.md`, "The rheology
+axis"). Two steps, each with its own gate:
+
+- **R1 — general linear Prony.** The adjoint evolution and the m†
+  jump are already branch-general; only the kernel layer is
+  single-branch today (the driver's guard). Deliver per-branch
+  (μ_k, η_k) kernels — relaxation-spectrum kernels — with
+  branch-marker-restricted integration; gate GA8 = an SLS/Burgers FD
+  table, serial + parallel. Slot: before the production η work of
+  WP8.4 at the latest.
+- **R2 — nonlinear laws (nonlinearity in the rheology only).** The
+  adjoint is linear with trajectory-dependent coefficients: a
+  tangent-adjoint subclass of `ViscoelasticOperator` overriding the
+  virtual `Rate`/`LocalExponentialUpdate` with nodal linearisations
+  fed from the trajectory store (m-only checkpointing survives — the
+  coefficients are functions of (m, load)); parameter kernels through
+  `RelaxationLaw::Gradient` (already implemented for the power law).
+  Gate GA9 = FD table against nonlinear forward re-runs on the
+  power-law body. Slot: after first order is gated on the ladder;
+  independent of the gravity rungs.
+
 ## The metric layer and the pygeoinf boundary
 
 David's design rule (11 Oct 2026): **don't build the inverse problem
@@ -242,21 +285,62 @@ one bordered solve. So:
   second order summarised — AND the design of the common adjoint
   structure: the adjoint force class (continuous + point-in-time
   terms, decision 2), the state/checkpoint interface, what a
-  "specialisation" owns.
+  "specialisation" owns. **Drafted:**
+  [`adjoint_note.md`](adjoint_note.md) (for review).
 - **WP8.2 Rungs 1–2 (no gravity):** librarify
   `adjoint_elasticity`/`viscoelastic_adjoint` onto the common
   structure — the static elastic adjoint and the purely viscoelastic
   (post-seismic) adjoint as library citizens with their κ/μ/η
   kernels; the existing FD tables become the regression gates. The
   examples remain as the tutorial layer on top.
+  **Status: delivered (11 Oct 2026).** `adjoint.hpp`/`adjoint.cpp`:
+  `AdjointForce` (point + continuous terms; continuous terms reach the
+  stepping through the new `ViscoelasticOperator::SetForceHook`, the
+  driver mapping reversed time back to forward), `ForwardTrajectory`
+  (m-only store with store-all and re-solve policies behind one
+  interface), `AdjointSolver` (static + quasi-static sweeps; kernels
+  accumulate during the sweep; the m† jump and the trapezoid weight
+  SPLIT at interior observation times), `IsotropicKernel` /
+  `IsotropicKernelDensity` (dimension-general component contractions;
+  directional derivatives, dual export, display field). Gate GA0:
+  both examples rewritten onto the structure reproduce their FD
+  tables DIGIT FOR DIGIT (the static example's Riesz slopes move ~1%
+  — its duals now come from the accumulated L2 field, the
+  viscoelastic pattern). `TestAdjoint` + `TestAdjointPar` (np 1/2/4)
+  gate: static κ/μ 2-D (1.1e-6 measured) and 3-D (4.1e-3, coarse),
+  viscoelastic κ/μ/η for final-time (3.3e-6), INTERIOR (3.3e-6; the
+  weight split) and CONTINUOUS observations (κ/μ 3.3e-6; η 9.8e-4 at
+  n = 32 → 2.4e-4 at n = 64, the O(dt²) quadrature floor of pairing
+  a trapezoid-sampled J against the stepper), and store-all ≡
+  re-solve at 1.1e-11 (the GA6 seed).
 - **WP8.3 Rung 3 (+ self-gravity, mixed class):** force-slot
   plumbing, the adjoint-identity gate (GA1 restricted to the
   gravitating operator), η kernel FD gate, the 1-D spectral
   cross-check (GA3).
+  **Status: delivered 11 Oct 2026 except GA3 (open).** The D_φ J slot
+  is `PotentialForceSlot` (quasi_static_problem.hpp), a capability
+  interface the mixed class implements as `AddPotentialForce` — the
+  AddForce analogue on the assembled potential load, with the 2-D
+  compatibility treatment applied to the increment; the driver
+  discovers it by capability, never by class name. `AdjointForce`
+  gains potential observations and continuous potential terms.
+  Certificates (`TestAdjoint` + the par leg, np 1/2/4): u–u and u–φ
+  reciprocity at 2e-9 (the slot's sign pinned by symmetry — no flip);
+  κ/μ/η FD gates on the gravitating Maxwell disc for BOTH a
+  displacement and a potential final-time observation: every row at
+  or below 1.6e-4 except μ-blob at 1.3e-3 (the curved-element
+  strain-map floor of the examples), threshold 5e-3. One convention
+  trap recorded for rung 5: the rotational border's ω-row data are
+  read off the RAW assembled potential load, so `AddPotentialForce`
+  increments deliberately do not feed them.
 - **WP8.4 Rungs 4–5 (+ water, + rotation; mixed as the viscosity
   workhorse):** reversed C†, ω-row data, the full-physics η kernel
   (GA2), ice kernels (quelled İ/I₀ + the raw singular derivative,
-  decision 4), SL₀; κ/μ/ρ "to look" (ρ per decision 3).
+  decision 4), SL₀; κ/μ/ρ "to look" (ρ per decision 3). Opens with the
+  **fingerprint reciprocity certificates** (ggad434: ∫SL†ζ = ∫SLζ†
+  on the water-loaded solve; rotation per its §3.2) — spherical
+  moduli first, then LATERALLY HETEROGENEOUS 3-D elastic structure,
+  the never-tested case (gate GA1b; candidate example).
 - **WP8.5 Interface kernels** (referential only, the novel leg):
   shape derivative via the mapped machinery, FD-gated against the
   perturbation family (GA5); lithospheric thickness first; the
@@ -291,14 +375,17 @@ one bordered solve. So:
 
 | gate | statement |
 |---|---|
-| GA0 | rungs 1-2 librarified: the `adjoint_elasticity`/`viscoelastic_adjoint` FD tables reproduced through the common structure (regression grade) |
-| GA1 | discrete adjoint identity through the full bordered solve (water + rotation): ⟨Lu, v⟩ = ⟨u, Lv⟩ at solver grade |
+| GA0 | rungs 1-2 librarified: the `adjoint_elasticity`/`viscoelastic_adjoint` FD tables reproduced through the common structure (regression grade) — **done 11 Oct 2026**: tables digit-identical; `TestAdjoint`(`Par`) gates them plus interior-time, continuous-in-time and store-all≡re-solve (measurements in WP8.2) |
+| GA1 | discrete adjoint identity through the full bordered solve (water + rotation): ⟨Lu, v⟩ = ⟨u, Lv⟩ at solver grade — gravitating (unbordered) part **done 11 Oct 2026**: `GravitatingReciprocity` + par twin, u–u and u–φ reciprocity at 2e-9 (the potential slot's sign certificate) |
+| GA1b | fingerprint reciprocity (ggad434 eqs. 15/17, §3.2 with rotation): ∫SL†ζ = ∫SLζ† on the water-loaded solve, spherical AND laterally heterogeneous 3-D elastic structure (the never-tested case) |
 | GA2 | FD gate on J: η kernel on the Yu configuration (spherical, water + rotation), the `viscoelastic_adjoint` table lifted to full physics |
 | GA3 | η kernel 1-D cross-check: layered sphere, kernel integrated against radial perturbations vs spectral/Love-number FD |
 | GA4 | ice kernel (quelled İ, I₀): FD against ice-history perturbations through the full migration-on forward |
 | GA5 | interface kernel vs the perturbation family's FD derivatives (the ready-made gate) |
 | GA6 | checkpointed kernels ≡ store-everything kernels (bitwise at matching schedules; certified error under compression) |
 | GA7 | pygeoinf round trip: an AdGIA-defined space + operator driving a pygeoinf optimisation on a toy inversion |
+| GA8 | multi-branch Prony kernels (R1): per-branch FD table on an SLS/Burgers body, serial + parallel |
+| GA9 | nonlinear-rheology tangent adjoint (R2): FD table against nonlinear forward re-runs on the power-law body |
 
 **See:** `doc/Elasticity/ggae388.pdf` (Yu et al. 2025);
 `examples/viscoelastic_adjoint.cpp`; `examples/adjoint_elasticity.cpp`;

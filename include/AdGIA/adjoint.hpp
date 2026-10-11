@@ -1,0 +1,353 @@
+/**
+ * @file adjoint.hpp
+ * @brief The common adjoint structure (doc/planning/adjoint_note.md): the
+ * adjoint force (continuous- and point-in-time terms), the forward
+ * trajectory store, kernel accumulators, and the adjoint driver for the
+ * static and quasi-static viscoelastic rungs.
+ */
+
+#pragma once
+
+#include <functional>
+#include <memory>
+#include <vector>
+
+#include "mfem.hpp"
+#include "AdGIA/quasi_static_problem.hpp"
+#include "AdGIA/viscoelastic.hpp"
+
+namespace AdGIA {
+
+/**
+ * @brief The adjoint force: the data of the objective functional's
+ * derivatives, carried as two kinds of terms that are handled differently
+ * (doc/planning/adjoint_note.md, "The common structure").
+ *
+ * POINT-IN-TIME terms are observations J depending on the state at one
+ * forward time t: each carries the dual h of J with respect to the
+ * displacement (the AddForce L-vector layout), and triggers, at the
+ * reversed time, one impulsive solve and the adjoint internal-variable
+ * jump. A static adjoint is the degenerate case of point terms alone.
+ *
+ * CONTINUOUS-IN-TIME terms are ordinary time-dependent dual loads: a
+ * filler that ADDS the dual at a given forward time into a buffer. The
+ * driver applies them through ViscoelasticOperator::SetForceHook() at
+ * every elastic solve of the reversed stepping, mapping the adjoint's
+ * reversed time back to forward time — callers never apply the time
+ * reversal themselves.
+ *
+ * All times are FORWARD times; the driver owns the reversal. Observation
+ * times must coincide with nodes of the forward trajectory's time grid
+ * (the driver verifies). Two slots are served: the DISPLACEMENT dual
+ * (every rung) and the POTENTIAL dual (D_phi J, for problems exposing
+ * PotentialForceSlot — the gravitating rungs); an observation touching
+ * both rows is added as two terms at the same time, which is exact by
+ * linearity. The water and rotation slots of the full dictionary are
+ * added by those rungs' specialisations.
+ */
+class AdjointForce {
+ public:
+  /** @brief A point-in-time observation at forward time @p t with dual
+   * @p dual on the displacement rows (copied; AddForce layout). */
+  void AddObservation(mfem::real_t t, const mfem::Vector& dual);
+
+  /** @brief A point-in-time observation at forward time @p t with dual
+   * @p dual on the POTENTIAL rows (copied; AddPotentialForce layout of
+   * the problem's PotentialForceSlot). */
+  void AddPotentialObservation(mfem::real_t t, const mfem::Vector& dual);
+
+  /** @brief A continuous-in-time term: @p filler(t, f) ADDS the dual at
+   * forward time @p t into @p f (already sized and initialised). */
+  void AddContinuous(std::function<void(mfem::real_t, mfem::Vector&)> filler);
+
+  /** @brief A continuous-in-time term on the potential rows. */
+  void AddContinuousPotential(
+      std::function<void(mfem::real_t, mfem::Vector&)> filler);
+
+  int NumObservations() const { return static_cast<int>(obs_.size()); }
+  /** @brief Observation times, sorted ascending. */
+  mfem::real_t ObservationTime(int i) const { return obs_[i].t; }
+  const mfem::Vector& ObservationDual(int i) const { return obs_[i].dual; }
+  /** @brief Whether observation @p i loads the potential rows. */
+  bool ObservationOnPotential(int i) const { return obs_[i].on_potential; }
+
+  bool HasContinuous() const { return !continuous_.empty(); }
+  bool HasContinuousPotential() const { return !continuous_phi_.empty(); }
+  /** @brief Adds every continuous term's dual at forward time @p t into
+   * @p f (caller sizes and zeroes). */
+  void EvalContinuous(mfem::real_t t, mfem::Vector& f) const;
+  void EvalContinuousPotential(mfem::real_t t, mfem::Vector& f) const;
+
+ private:
+  struct Observation {
+    mfem::real_t t;
+    mfem::Vector dual;
+    bool on_potential;
+  };
+  void Insert(mfem::real_t t, const mfem::Vector& dual, bool on_potential);
+
+  std::vector<Observation> obs_;  // kept sorted by time
+  std::vector<std::function<void(mfem::real_t, mfem::Vector&)>> continuous_;
+  std::vector<std::function<void(mfem::real_t, mfem::Vector&)>>
+      continuous_phi_;
+};
+
+/**
+ * @brief The forward trajectory store: the checkpoint interface of the
+ * adjoint sweep (doc/planning/adjoint_note.md, "The trajectory store").
+ *
+ * The quasi-static state is the internal-variable vector m alone — the
+ * displacement is slaved to (m, load(t)) through one elastic solve — so
+ * the store records m (and the time) per step and recovers the fields on
+ * demand. With @p keep_fields (the store-all policy of the first rungs)
+ * the displacement is memoised at Record() and no re-solves happen; without
+ * it, Displacement() re-solves through the forward operator — the seed of
+ * the revolve-style schedules, and a measured identity against the
+ * memoised path (the two differ only through the solver tolerance).
+ *
+ * Record() is called once per step of the forward run, including the
+ * initial state; it makes the forward displacement consistent via
+ * SolveElastic (free when the step already left it so). On the re-solve
+ * path the reference returned by Displacement() is the forward problem's
+ * field and is invalidated by the next Displacement() call.
+ */
+class ForwardTrajectory {
+ public:
+  explicit ForwardTrajectory(ViscoelasticOperator& op, bool keep_fields = true);
+
+  /** @brief Record the state @p m at time @p t (after the step). */
+  void Record(const mfem::Vector& m, mfem::real_t t);
+
+  /** @brief Number of recorded states (steps + 1). */
+  int Size() const { return static_cast<int>(t_.size()); }
+  mfem::real_t Time(int n) const { return t_[n]; }
+  const mfem::Vector& State(int n) const { return m_[n]; }
+
+  /** @brief The displacement slaved to State(n): memoised, or recovered by
+   * one forward solve (see the class comment for the reference's
+   * lifetime). */
+  const mfem::GridFunction& Displacement(int n);
+
+  /** @brief The strain d = D u at the internal-variable nodes for
+   * State(n), in the full internal layout. */
+  void Strain(int n, mfem::Vector& d);
+
+  bool KeepsFields() const { return keep_fields_; }
+  ViscoelasticOperator& Op() const { return op_; }
+
+ private:
+  ViscoelasticOperator& op_;
+  bool keep_fields_;
+  std::vector<mfem::real_t> t_;
+  std::vector<mfem::Vector> m_;
+  std::vector<std::unique_ptr<mfem::GridFunction>> u_;
+};
+
+/**
+ * @brief One pairing of forward and adjoint fields, as the driver hands it
+ * to the kernel accumulators. The internal-variable entries are null on
+ * the static rung; @p mdag is also null for the impulsive terms at
+ * observation times, where the adjoint factor is the purely elastic
+ * response and the internal variable is bounded.
+ */
+struct AdjointPair {
+  const mfem::GridFunction& u;        ///< forward displacement
+  const mfem::GridFunction* d;        ///< forward strain (internal space)
+  const mfem::GridFunction* m;        ///< forward internal variable
+  const mfem::GridFunction& udag;     ///< adjoint displacement
+  const mfem::GridFunction* mdag;     ///< adjoint internal variable
+};
+
+/**
+ * @brief Interface of a kernel accumulator: receives every (forward,
+ * adjoint) pairing of the sweep with its time-quadrature weight — the
+ * impulsive terms at observation times arrive with weight one and a null
+ * @p mdag — and accumulates whatever it is for (directional derivatives,
+ * a dual vector, a display field). Kernels accumulate DURING the adjoint
+ * sweep; the adjoint trajectory is never stored.
+ */
+class KernelAccumulator {
+ public:
+  virtual ~KernelAccumulator() = default;
+  virtual void AddPair(mfem::real_t w, const AdjointPair& p) = 0;
+};
+
+/**
+ * @brief The pointwise kernel density of the isotropic (kappa, mu, eta)
+ * parameterisation, for one (forward, adjoint) pairing
+ * (doc/planning/adjoint_note.md, "The kernels"):
+ *
+ *   Kappa: - div(u) div(u+)
+ *   Mu:    - 2 [ dev eps(u) : dev eps(u+) - m : dev eps(u+) - (d - m) : m+ ]
+ *   Eta:   - (2 / tau) (d - m) : m+
+ *
+ * The dev eps factors are pointwise from the displacement gradients (that
+ * is how the moduli enter the discrete elastic form); d, m and m+ are the
+ * trace-free component fields of the internal-variable space, contracted
+ * through the library component order (index.hpp) in any dimension. Null
+ * internal fields are zero: with all of them null the Mu/Kappa densities
+ * are the static elastic kernels, and with mdag null they are the
+ * impulsive parts at an observation time. The convention is the
+ * independent-(kappa, mu, eta) one: perturbing mu at fixed eta also
+ * perturbs tau = eta / mu, and the extra term is included in Mu (the
+ * paper holds mu fixed instead).
+ */
+class IsotropicKernelDensity : public mfem::Coefficient {
+ public:
+  enum class Parameter { Kappa, Mu, Eta };
+
+  /** @param tau The relaxation-time coefficient; required for Eta. */
+  explicit IsotropicKernelDensity(Parameter parameter,
+                                  mfem::Coefficient* tau = nullptr);
+
+  /** @brief The pairing to evaluate; null pointers mean zero fields. */
+  void SetPair(const mfem::GridFunction& u, const mfem::GridFunction& udag,
+               const mfem::GridFunction* d = nullptr,
+               const mfem::GridFunction* m = nullptr,
+               const mfem::GridFunction* mdag = nullptr);
+
+  mfem::real_t Eval(mfem::ElementTransformation& T,
+                    const mfem::IntegrationPoint& ip) override;
+
+  Parameter Param() const { return parameter_; }
+
+ private:
+  Parameter parameter_;
+  mfem::Coefficient* tau_;
+  const mfem::GridFunction* u_ = nullptr;
+  const mfem::GridFunction* udag_ = nullptr;
+  const mfem::GridFunction* d_ = nullptr;
+  const mfem::GridFunction* m_ = nullptr;
+  const mfem::GridFunction* mdag_ = nullptr;
+  mfem::DenseMatrix Du_, Dv_, A_, B_;
+  mfem::Vector av_, bv_;
+};
+
+/**
+ * @brief Kernel accumulator for one isotropic parameter. Three outputs,
+ * each optional:
+ *
+ * - DIRECTIONAL derivatives: AddDirection(delta) registers an absolute
+ *   model perturbation, and Directional(i) returns dJ = int K delta dV
+ *   accumulated with the sweep's quadrature (the assembly rule of the
+ *   elastic forms — the faithful pairing; global in parallel). This is
+ *   the finite-difference gate's quantity and the derivative-along-a-
+ *   direction products an inversion wrapper asks for.
+ * - The DUAL vector: with SetDualSpace, j_i = int K phi_i accumulates on
+ *   that scalar space (same mesh as the problem); Dual() is the local
+ *   assembled layout, TrueDual() the true-dof vector (the export of the
+ *   pygeoinf contract — never pre-Riesz'd here).
+ * - A display FIELD: with SetField, the L2 projection of the density
+ *   accumulated with the sweep's weights (tutorial/plot grade).
+ *
+ * @p sfes hosts the directional quadrature (a scalar space on the
+ * problem's mesh, typically of the displacement order). The Eta kernel
+ * needs @p tau and skips impulsive pairings (its integrand is bounded).
+ */
+class IsotropicKernel : public KernelAccumulator {
+ public:
+  using Parameter = IsotropicKernelDensity::Parameter;
+
+  IsotropicKernel(Parameter parameter, mfem::FiniteElementSpace& sfes,
+                  mfem::Coefficient* tau = nullptr);
+
+  /** @brief Register a perturbation direction; returns its index. */
+  int AddDirection(mfem::Coefficient& delta);
+  /** @brief dJ along direction @p i (global in parallel). */
+  mfem::real_t Directional(int i) const;
+
+  /** @brief Accumulate the dual on @p fes (same mesh as the problem),
+   * restricted to @p attr_marker when given. */
+  void SetDualSpace(mfem::FiniteElementSpace& fes,
+                    const mfem::Array<int>* attr_marker = nullptr);
+  /** @brief The accumulated dual in the assembled (local) layout. */
+  const mfem::Vector& Dual() const { return dual_; }
+  /** @brief The dual on true dofs (serial: a copy). */
+  void TrueDual(mfem::Vector& j) const;
+
+  /** @brief Accumulate a display field on the (L2) space @p fes. */
+  void SetField(mfem::FiniteElementSpace& fes);
+  const mfem::GridFunction& Field() const { return *field_; }
+
+  void AddPair(mfem::real_t w, const AdjointPair& p) override;
+
+ private:
+  mfem::real_t Integrate(mfem::Coefficient& c) const;
+
+  IsotropicKernelDensity density_;
+  mfem::FiniteElementSpace* sfes_;
+  std::vector<mfem::Coefficient*> directions_;
+  std::vector<mfem::real_t> values_;  // local partial sums
+  mfem::FiniteElementSpace* dual_fes_ = nullptr;
+  mfem::Array<int> dual_marker_;  // empty: the whole mesh
+  mfem::Vector dual_;
+  std::unique_ptr<mfem::GridFunction> field_, field_step_;
+};
+
+/**
+ * @brief The adjoint driver: runs the time-reversed adjoint problem
+ * against a recorded forward trajectory and feeds every registered
+ * kernel accumulator (doc/planning/adjoint_note.md, "The adjoint
+ * driver"). Two configurations:
+ *
+ * - STATIC (rung 1): the adjoint of a solved static problem. The adjoint
+ *   problem is the same problem with zero external load (caller-built,
+ *   sharing the space and rheology); each point term costs one solve,
+ *   whose displacement pairs with the given forward one.
+ * - QUASI-STATIC (rung 2): the adjoint evolution on a zero-external-load
+ *   twin of the forward problem, wrapped in its own ViscoelasticOperator.
+ *   The sweep walks the forward grid in reversed time: between
+ *   observations it steps with the exponential trapezoid scheme and pairs
+ *   each node's fields with the stored forward ones under trapezoid
+ *   weights; at an observation time it solves the impulsive problem
+ *   (the observation dual on the unrelaxed operator), hands the impulsive
+ *   pairing to the kernels, jumps the adjoint internal variable by
+ *   (1/tau) times the impulsive strain, and splits the node's weight
+ *   across the jump. Continuous force terms enter every elastic solve
+ *   through the operator's force hook with the time mapped back to
+ *   forward time. The driver owns the displacement-cache invalidation at
+ *   the jumps.
+ *
+ * Observation times must lie on the trajectory's grid. The adjoint
+ * problem's own load coefficients should be zero: the adjoint force
+ * carries all the loading.
+ */
+class AdjointSolver {
+ public:
+  /** @brief Static configuration: @p adjoint_problem is the zero-load
+   * twin; @p forward_displacement the solved forward field. */
+  AdjointSolver(LinearQuasiStaticProblem& adjoint_problem,
+                const mfem::GridFunction& forward_displacement);
+
+  /** @brief Quasi-static configuration: @p adjoint_op wraps the zero-load
+   * twin; @p forward is the recorded trajectory (not owned). */
+  AdjointSolver(ViscoelasticOperator& adjoint_op, ForwardTrajectory& forward);
+
+  void SetForce(const AdjointForce& force) { force_ = &force; }
+  void AddKernel(KernelAccumulator& kernel) { kernels_.push_back(&kernel); }
+
+  /** @brief Run the adjoint and accumulate the kernels; false if a solve
+   * fails. */
+  bool Run();
+
+ private:
+  bool RunStatic();
+  bool RunEvolution();
+  void Pair(mfem::real_t w, const AdjointPair& p);
+  bool ImpulseSolve(int obs, mfem::real_t s);
+  void ApplyJump(const mfem::GridFunction& udag_g, mfem::Vector& mdag);
+  /** @brief Resolve the potential slot when the force needs it (refuses
+   * on problems without one). */
+  void ResolvePotentialSlot(LinearQuasiStaticProblem& problem);
+
+  LinearQuasiStaticProblem* problem_ = nullptr;      // static configuration
+  const mfem::GridFunction* u_forward_ = nullptr;
+  ViscoelasticOperator* op_ = nullptr;               // evolution configuration
+  ForwardTrajectory* forward_ = nullptr;
+  const AdjointForce* force_ = nullptr;
+  PotentialForceSlot* phi_slot_ = nullptr;
+  std::vector<KernelAccumulator*> kernels_;
+  mfem::Vector strain_, fbuf_, fbuf_phi_;
+};
+
+}  // namespace AdGIA

@@ -306,6 +306,17 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::MakeCompatible(
   B_phi.Add(-mass / outer_length_, L_outer_);
 }
 
+void LinearQuasiStaticMixedSelfGravitatingProblem::AddPotentialForce(
+    const Vector& f) {
+  MFEM_VERIFY(f.Size() == fes_phi_->GetVSize(),
+              "AddPotentialForce: the dual must be in the L-vector layout "
+              "of the potential space.");
+  Vector ft(fes_phi_->GetTrueVSize());
+  ToTrueDofs(*fes_phi_, f, ft);
+  MakeCompatible(ft);
+  B_phi_ += ft;
+}
+
 bool LinearQuasiStaticMixedSelfGravitatingProblem::SolvePotential(const Vector& b,
                                                              Vector& x) const {
   x.SetSize(b.Size());

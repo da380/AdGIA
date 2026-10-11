@@ -108,7 +108,10 @@ and the relabelled solution pushed forward onto the deformed body.
 `./relabelled_elasticity -a 0.15 -o 3`
 
 **`adjoint_elasticity`**: first-order sensitivity kernels for static
-isotropic elasticity, and the kernel-versus-gradient distinction. The
+isotropic elasticity, and the kernel-versus-gradient distinction — the
+tutorial layer over the library's common adjoint structure
+(`adjoint.hpp`: `AdjointForce`, `AdjointSolver`, `IsotropicKernel`;
+regression-gated by `TestAdjoint`). The
 physical body is the inner layer of the two-layer disc alone (the rest
 of the mesh is the Sobolev extension buffer); the observable is the
 geodetic one, the linearised distance change between two surface
@@ -137,10 +140,12 @@ eta (Yu et al. 2025 specialised to the non-gravitating case). The
 adjoint is the same forward Maxwell machinery run in reversed time with
 zero load: the measurement's impulsive elastic response jumps the
 adjoint internal variable to `dev eps(u+_g)/tau`, which then relaxes
-freely; the kernels pair the stored forward trajectory at `t` with the
-adjoint one at `t1 - t` (store-all checkpointing — the dissipative
-forward field cannot be recovered by backward integration, the key
-practical difference from the seismological adjoint). The FD
+freely; the forward run records a `ForwardTrajectory` (store-all
+policy; the library's m-only re-solve policy is gated identical in
+`TestAdjoint`) and the `AdjointSolver` sweep pairs it with the adjoint
+fields as they are produced — the dissipative forward field cannot be
+recovered by backward integration, the key practical difference from
+the seismological adjoint. The FD
 verification table converges as O(dt^2) in `-n` down to a spatial floor
 that is O(h) in `-r` for the rows touching the viscous coupling (nodal
 mu/tau sampling; see the header). The same Riesz-map section as the

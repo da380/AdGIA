@@ -214,7 +214,7 @@ struct FluidRegion {
  * meshed they cost @f$O(\epsilon)@f$ energy and the penalty handles them.
  */
 class LinearQuasiStaticMixedSelfGravitatingProblem
-    : public LinearQuasiStaticProblemBase {
+    : public LinearQuasiStaticProblemBase, public PotentialForceSlot {
  public:
   /** BlockCG runs CG on the same projected block system as BlockMINRES:
    * admissible because the assembled symmetric system is congruent to a
@@ -292,6 +292,23 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
    * AssembleForce(). Markers refer to the SubMesh.
    */
   mfem::LinearForm& ExternalPotentialLoad() { return *b_phi_; }
+
+  /**
+   * @brief Superpose a dual vector on the potential rows
+   * (PotentialForceSlot): the AddForce() analogue, in the L-vector
+   * layout of the potential space on the PARENT mesh. Accumulates onto
+   * the assembled @f$\ell_\phi@f$ and is cleared by the next
+   * AssembleForce(); the 2-D compatibility treatment is applied to the
+   * increment as to the assembled load. NOTE: the rotational border's
+   * @f$\omega@f$-row data are read off the raw assembled load, so
+   * increments added here deliberately do not feed them (the adjoint's
+   * @f$\omega@f$-row datum is a separate input; see
+   * doc/planning/adjoint_note.md).
+   */
+  void AddPotentialForce(const mfem::Vector& f) override;
+  mfem::FiniteElementSpace& PotentialForceSpace() override {
+    return *fes_phi_;
+  }
 
   /**
    * @brief Apply a (tidal) potential @f$\psi@f$ (registered as

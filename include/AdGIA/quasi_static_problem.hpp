@@ -232,6 +232,26 @@ struct MaxwellRelaxationReport {
 };
 
 /**
+ * @brief Capability interface of problems carrying a gravitational
+ * potential block: superpose a dual load on the potential rows — the
+ * AddForce() analogue, with the same protocol (call after
+ * AssembleForce(t), which clears the increments; accumulates; the
+ * problem applies its compatibility treatment internally). The dual is
+ * in the L-vector layout of PotentialForceSpace(), i.e. a LinearForm on
+ * that space before any parallel assembly. The adjoint machinery
+ * (adjoint.hpp) discovers the slot by this interface for
+ * @f$D_\phi J@f$ observation terms; forward code may use it for any
+ * superposed potential-row dual.
+ */
+class PotentialForceSlot {
+ public:
+  virtual ~PotentialForceSlot() = default;
+  virtual void AddPotentialForce(const mfem::Vector& f) = 0;
+  /** @brief The space whose L-vector layout AddPotentialForce() takes. */
+  virtual mfem::FiniteElementSpace& PotentialForceSpace() = 0;
+};
+
+/**
  * @brief Abstract interface for linear quasi-static problems.
  *
  * Per evaluation time @f$t@f$ the protocol is

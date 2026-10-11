@@ -120,6 +120,8 @@ if(USE_MPI)
     target_link_libraries(TestRieszPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestDescentPar TestDescentPar.cpp)
     target_link_libraries(TestDescentPar PRIVATE AdGIA MPI::MPI_CXX)
+    add_executable(TestAdjointPar TestAdjointPar.cpp)
+    target_link_libraries(TestAdjointPar PRIVATE AdGIA MPI::MPI_CXX)
     foreach(np 1 2 4)
         # First, so a broken launcher fails the batch at its first test.
         add_test(NAME TestMpiWorldPar_np${np}
@@ -137,6 +139,9 @@ if(USE_MPI)
         add_test(NAME TestViscoelasticPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestViscoelasticPar>)
+        add_test(NAME TestAdjointPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestAdjointPar>)
         add_test(NAME TestMixedProblemPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestMixedProblemPar>)
@@ -243,6 +248,10 @@ gtest_discover_tests(TestElasticTensor)
 add_executable(TestViscoelastic TestViscoelastic.cpp)
 target_link_libraries(TestViscoelastic PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestViscoelastic)
+
+add_executable(TestAdjoint TestAdjoint.cpp)
+target_link_libraries(TestAdjoint PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestAdjoint)
 
 add_executable(TestSubMeshMixedBilinearForm TestSubMeshMixedBilinearForm.cpp)
 target_link_libraries(TestSubMeshMixedBilinearForm PRIVATE AdGIA gtest_main)

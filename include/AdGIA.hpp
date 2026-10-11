@@ -26,4 +26,5 @@
 #include "AdGIA/sea_level.hpp"
 #include "AdGIA/spherical_harmonics.hpp"
 #include "AdGIA/submesh.hpp"
+#include "AdGIA/adjoint.hpp"
 #include "AdGIA/viscoelastic.hpp"
