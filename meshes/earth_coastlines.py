@@ -8,7 +8,7 @@ exact at any radius and a thick shell only costs elements), with the
 mesh refined through a planetmodel Refinement (common.SeaLevelBand) on
 the grid's pre-processed shoreline field `coast_rad`: the great-circle
 distance to the coast of the near-native-resolution topography (its
-sign changes, plus the shallow shelves — postprocess/topography_grid.py
+sign changes, plus the shallow shelves — earth_data/topography_grid.py
 builds it, and its docstring says why a band on the topography's value
 cannot define the coast evenly). Elements are smallest within
 --coast-width radians of that coast AND radially near the surface,
@@ -19,8 +19,8 @@ The default grid is committed beside this script,
 ice7g_topography_lmax64.npz (ICE-7G at the present day: topography at
 lmax 64, coastline at lmax 180, shelf band 400 m), so the build makes
 this mesh like any other. For another date or band, export a new grid
-with postprocess/topography_grid.py (which needs pyslfp; see
-postprocess/README.md) and pass it with --topography — the chain in
+with earth_data/topography_grid.py (which needs pyslfp; see
+earth_data/README.md) and pass it with --topography — the chain in
 examples/ice_age_loading.cpp and meshes/README.md ("The coastline
 mesh"). What sharpens the picture is --coast-size (or --scale), at the
 usual cubic cost.
@@ -67,7 +67,7 @@ def main() -> None:
     if "coast_rad" not in data:
         raise SystemExit(
             f"{args.topography}: no coast_rad field — re-export the grid "
-            "with the current postprocess/topography_grid.py")
+            "with the current earth_data/topography_grid.py")
 
     field = SeaLevelBand(data["coast_lats"], data["coast_lons"],
                          data["coast_rad"],

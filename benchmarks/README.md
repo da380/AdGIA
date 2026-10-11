@@ -24,13 +24,24 @@ READMEs here say how to run them.
 
 ## Setting up
 
-The scripts run in the poetry environment of this directory, which is made
-once:
+The scripts run in the shared poetry environment of the repository root
+(one environment for the meshes, the benchmarks and the earth-data
+tools), which is made once:
 
 ```
-cd benchmarks
-poetry install        # planetmodel (gmsh, PyMFEM), pyslfp, matplotlib
+cd <repo>
+poetry env use python3.12   # only if your python3 is older than 3.12
+poetry install              # planetmodel (gmsh, PyMFEM), pyslfp, matplotlib, ...
 ```
+
+The project needs Python 3.12; poetry does **not** pick a newer
+interpreter by itself — on a machine whose `python3` is older it reports
+the mismatch and creates no environment, hence the `poetry env use`
+first. The environment is found when the build is configured, so on a
+build directory that existed before the environment did, run `cmake .`
+there afterwards and look for the line `Benchmarks: scripts run with
+...` — until then the launchers hold a bare `python3` and refuse to run,
+with this recipe in their message.
 
 The drivers are parallel programs, built with the library when it is
 configured with `-DUSE_MPI=ON -DBUILD_BENCHMARKS=ON`, into
@@ -42,7 +53,7 @@ and the MPI launcher of that build:
 
 | directory under `<build>/benchmarks/` | launchers |
 |---|---|
-| `.` | `campaign` |
+| `.` | `campaign`, `collect` |
 | `love_numbers/` | `run`, `plot`, `cmb_report`, `make_case` |
 | `relabelling/` | `plot` |
 | `perturbation/` | `perturbation_check`, `plot` |
@@ -130,6 +141,33 @@ the all-model sweep at h = 0.2, the uncapped `fluid_core` h-ladder, the
 family scripts; the commands are in the section "Reproducing the figures"
 of `doc/benchmarks.tex`.
 
+## Bringing server runs home
+
+`<build>/benchmarks/collect` packages a run tree as one tar.gz for
+transfer, in tiers: by default the results alone (`*.json`, `*.md`,
+`*.txt`, `*.csv`, `*.png`) — everything the collating scripts read,
+tens of MB even for a server campaign, since it scales with the number
+of runs and not with the meshes; `--figures` for the figures and
+summaries only; `--with-cases` to add the case meshes and model fields;
+`--full` for the whole tree. The archive's paths start with the tree's
+name and a manifest records the host, date and source commit, so at the
+other end it unpacks straight into a build tree and the collating
+scripts work on it unchanged:
+
+```
+# on the server
+cd <build>/benchmarks
+./collect                       # runs_campaign_<host>_<date>.tar.gz
+
+# at home
+scp <server>:<build>/benchmarks/runs_campaign_*.tar.gz .
+tar -xzf runs_campaign_*.tar.gz -C <build>/benchmarks
+```
+
+Unpacking overlays the tree onto any results already there; for repeated
+pulls from a long campaign, rsync with the same suffix filters does the
+incremental equivalent.
+
 ## Figures for talks and for the documentation
 
 `talk_figures.py` draws single-message figures (`methods.png`,
@@ -141,7 +179,7 @@ environment's Python:
 
 ```
 cd <build>/benchmarks
-poetry -P <repo>/benchmarks run python <repo>/benchmarks/talk_figures.py --out talk
+poetry -P <repo> run python <repo>/benchmarks/talk_figures.py --out talk
 ```
 
 `talk_render.py` is a ParaView render of a cap-load solve, run with

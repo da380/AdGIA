@@ -6,9 +6,11 @@
 # aspherical meshes are written through PyMFEM) is needed, with planetmodel
 # at least PLANETMODEL_MINIMUM_VERSION (1.2.3 first wrote manifest schema 5
 # and optimised the linear volume mesh before curving). MESHES_PYTHON
-# names one; otherwise the Python found by CMake is tried, and failing
-# that a virtual environment is created under the build directory and
-# planetmodel[meshing,mfem] is installed into it with pip (once).
+# names one; otherwise the root poetry environment (ADGIA_POETRY_PYTHON,
+# found by the top-level CMakeLists) is tried, then the Python found by
+# CMake, and failing those a virtual environment is created under the
+# build directory and planetmodel[meshing,mfem] is installed into it
+# with pip (once).
 
 set(MESHES_PYTHON "" CACHE FILEPATH
     "Python interpreter with planetmodel[meshing]; found or created if empty")
@@ -35,11 +37,21 @@ raise SystemExit(0 if found >= (${_minimum}) else 1)"
 endfunction()
 
 if(NOT MESHES_PYTHON)
-    find_package(Python3 3.12 COMPONENTS Interpreter REQUIRED)
-    meshes_python_works("${Python3_EXECUTABLE}" _works)
-    if(_works)
-        set(_python "${Python3_EXECUTABLE}")
-    else()
+    set(_python "")
+    if(ADGIA_POETRY_PYTHON)
+        meshes_python_works("${ADGIA_POETRY_PYTHON}" _works)
+        if(_works)
+            set(_python "${ADGIA_POETRY_PYTHON}")
+        endif()
+    endif()
+    if(NOT _python)
+        find_package(Python3 3.12 COMPONENTS Interpreter REQUIRED)
+        meshes_python_works("${Python3_EXECUTABLE}" _works)
+        if(_works)
+            set(_python "${Python3_EXECUTABLE}")
+        endif()
+    endif()
+    if(NOT _python)
         set(_venv "${CMAKE_BINARY_DIR}/meshes-venv")
         set(_python "${_venv}/bin/python")
         if(NOT EXISTS "${_python}")
