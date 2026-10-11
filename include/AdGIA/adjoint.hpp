@@ -145,17 +145,18 @@ class ForwardTrajectory {
 
 /**
  * @brief One pairing of forward and adjoint fields, as the driver hands it
- * to the kernel accumulators. The internal-variable entries are null on
- * the static rung; @p mdag is also null for the impulsive terms at
- * observation times, where the adjoint factor is the purely elastic
- * response and the internal variable is bounded.
+ * to the kernel accumulators. The internal-variable entries are
+ * PER-BRANCH (the general linear Prony series; empty on the static
+ * rung); @p mdag is also empty for the impulsive terms at observation
+ * times, where the adjoint factor is the purely elastic response and
+ * the internal variables are bounded.
  */
 struct AdjointPair {
-  const mfem::GridFunction& u;        ///< forward displacement
-  const mfem::GridFunction* d;        ///< forward strain (internal space)
-  const mfem::GridFunction* m;        ///< forward internal variable
-  const mfem::GridFunction& udag;     ///< adjoint displacement
-  const mfem::GridFunction* mdag;     ///< adjoint internal variable
+  const mfem::GridFunction& u;     ///< forward displacement
+  const mfem::GridFunction* d;     ///< forward strain (internal space)
+  std::vector<const mfem::GridFunction*> m;     ///< forward m_k per branch
+  const mfem::GridFunction& udag;  ///< adjoint displacement
+  std::vector<const mfem::GridFunction*> mdag;  ///< adjoint m+_k per branch
 };
 
 /**
@@ -173,28 +174,38 @@ class KernelAccumulator {
 };
 
 /**
- * @brief The pointwise kernel density of the isotropic (kappa, mu, eta)
- * parameterisation, for one (forward, adjoint) pairing
- * (doc/planning/adjoint_note.md, "The kernels"):
+ * @brief The pointwise kernel density of the isotropic generalised
+ * Maxwell parameterisation (kappa, mu_inf, {mu_k, eta_k}), for one
+ * (forward, adjoint) pairing and one branch
+ * (doc/planning/adjoint_note.md, "The kernels" and "The rheology axis"):
  *
- *   Kappa: - div(u) div(u+)
- *   Mu:    - 2 [ dev eps(u) : dev eps(u+) - m : dev eps(u+) - (d - m) : m+ ]
- *   Eta:   - (2 / tau) (d - m) : m+
+ *   Kappa:      - div(u) div(u+)
+ *   MuLongTerm: - 2 dev eps(u) : dev eps(u+)
+ *   Mu (branch k, at fixed eta_k):
+ *               - 2 [ dev eps(u) : dev eps(u+) - m_k : dev eps(u+)
+ *                     - (d - m_k) : m+_k ]
+ *   Eta (branch k):
+ *               - (2 / tau_k) (d - m_k) : m+_k
  *
- * The dev eps factors are pointwise from the displacement gradients (that
- * is how the moduli enter the discrete elastic form); d, m and m+ are the
- * trace-free component fields of the internal-variable space, contracted
- * through the library component order (index.hpp) in any dimension. Null
- * internal fields are zero: with all of them null the Mu/Kappa densities
- * are the static elastic kernels, and with mdag null they are the
- * impulsive parts at an observation time. The convention is the
- * independent-(kappa, mu, eta) one: perturbing mu at fixed eta also
- * perturbs tau = eta / mu, and the extra term is included in Mu (the
- * paper holds mu fixed instead).
+ * The split tracks where each parameter enters the stress
+ * sigma = kappa tr(eps) 1 + 2 mu_inf d + sum_k 2 mu_k (d - m_k):
+ * mu_inf only through the stiffness (the elastic density alone); a
+ * branch mu_k through the stiffness, its branch force and — at fixed
+ * eta_k — its relaxation time; eta_k through the evolution alone. For
+ * the classical single-branch Maxwell body (mu_inf = 0) Mu and Eta
+ * reduce to the (kappa, mu, eta) kernels of the examples.
+ *
+ * The dev eps factors are pointwise from the displacement gradients
+ * (that is how the moduli enter the discrete elastic form); d, m_k and
+ * m+_k are the trace-free component fields of the internal-variable
+ * space, contracted through the library component order (index.hpp) in
+ * any dimension. Null internal fields are zero: with all of them null
+ * the Mu/Kappa densities are the static elastic kernels, and with mdag
+ * null they are the impulsive parts at an observation time.
  */
 class IsotropicKernelDensity : public mfem::Coefficient {
  public:
-  enum class Parameter { Kappa, Mu, Eta };
+  enum class Parameter { Kappa, MuLongTerm, Mu, Eta };
 
   /** @param tau The relaxation-time coefficient; required for Eta. */
   explicit IsotropicKernelDensity(Parameter parameter,
@@ -242,14 +253,16 @@ class IsotropicKernelDensity : public mfem::Coefficient {
  *
  * @p sfes hosts the directional quadrature (a scalar space on the
  * problem's mesh, typically of the displacement order). The Eta kernel
- * needs @p tau and skips impulsive pairings (its integrand is bounded).
+ * needs @p tau (that branch's relaxation time) and skips impulsive
+ * pairings (its integrand is bounded). @p branch selects the Prony
+ * branch of the Mu and Eta kernels (Kappa and MuLongTerm ignore it).
  */
 class IsotropicKernel : public KernelAccumulator {
  public:
   using Parameter = IsotropicKernelDensity::Parameter;
 
   IsotropicKernel(Parameter parameter, mfem::FiniteElementSpace& sfes,
-                  mfem::Coefficient* tau = nullptr);
+                  mfem::Coefficient* tau = nullptr, int branch = 0);
 
   /** @brief Register a perturbation direction; returns its index. */
   int AddDirection(mfem::Coefficient& delta);
@@ -276,6 +289,7 @@ class IsotropicKernel : public KernelAccumulator {
 
   IsotropicKernelDensity density_;
   mfem::FiniteElementSpace* sfes_;
+  int branch_;
   std::vector<mfem::Coefficient*> directions_;
   std::vector<mfem::real_t> values_;  // local partial sums
   mfem::FiniteElementSpace* dual_fes_ = nullptr;

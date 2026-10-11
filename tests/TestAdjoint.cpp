@@ -749,3 +749,167 @@ TEST(Adjoint, GravitatingViscoelasticKernels) {
   gate(sweep_u, &Measured::J_u, 5e-3, "displacement observation");
   gate(sweep_phi, &Measured::J_phi, 5e-3, "potential observation");
 }
+
+// Gate GA8 (the rheology axis, R1): per-branch kernels on a two-branch
+// generalised Maxwell body with a long-term shear modulus — the
+// relaxation-spectrum kernels. The parameterisation is
+// (kappa, mu_inf, {mu_k, eta_k}) with tau_k = eta_k / mu_k; each
+// parameter's kernel is FD-gated for a final-time observation on the
+// unit-square configuration of the tests above.
+TEST(Adjoint, PronyKernels) {
+  const int dim = 2, n_el = 12, order = 2, n_steps = 64;
+  const real_t t_final = 2.0;
+  auto mesh = Mesh::MakeCartesian2D(n_el, n_el, Element::QUADRILATERAL);
+  auto fec = H1_FECollection(order, dim);
+  auto fes = FiniteElementSpace(&mesh, &fec, dim);
+  auto sfes = FiniteElementSpace(&mesh, &fec);
+  auto top = Array<int>(mesh.bdr_attributes.Max());
+  auto bottom = Array<int>(mesh.bdr_attributes.Max());
+  top = 0;
+  bottom = 0;
+  top[2] = 1;
+  bottom[0] = 1;
+  auto traction = VectorFunctionCoefficient(dim, Traction2D);
+  auto station = VectorFunctionCoefficient(dim, Station2D);
+  auto g = LinearForm(&fes);
+  g.AddBoundaryIntegrator(new VectorBoundaryLFIntegrator(station), bottom);
+  g.Assemble();
+
+  auto chi_blob = MakeBlob(dim);
+  auto chi_all = ConstantCoefficient(1.0);
+  // Base model: kappa 5.4, mu_inf 1.0, branches (mu, eta) = (1.0, 1.0)
+  // and (0.7, 0.21): tau_1 = 1, tau_2 = 0.3 — distinct spectra.
+  auto kappa0 = ConstantCoefficient(5.4);
+  auto mu_inf0 = ConstantCoefficient(1.0);
+  auto mu10 = ConstantCoefficient(1.0);
+  auto eta10 = ConstantCoefficient(1.0);
+  auto mu20 = ConstantCoefficient(0.7);
+  auto eta20 = ConstantCoefficient(0.21);
+  const real_t dt = t_final / n_steps;
+
+  // One forward run for a parameter set; returns J = g . u(t1).
+  auto run_forward = [&](Coefficient& kappa, Coefficient& mu_inf,
+                         Coefficient& mu1, Coefficient& eta1,
+                         Coefficient& mu2, Coefficient& eta2,
+                         ForwardTrajectory* keep,
+                         ViscoelasticOperator** keep_op) -> real_t {
+    auto tau1 = RatioCoefficient(eta1, mu1);
+    auto tau2 = RatioCoefficient(eta2, mu2);
+    std::vector<MaxwellBranch> branches = {{&mu1, &tau1, nullptr},
+                                           {&mu2, &tau2, nullptr}};
+    auto rheology =
+        IsotropicMaxwellRheology(dim, kappa, mu_inf, branches);
+    auto prob =
+        LinearQuasiStaticTractionProblem(&fes, rheology, traction, top);
+    auto visco = ViscoelasticOperator(prob);
+    ExponentialTrapezoidSolver ode;
+    ode.Init(visco);
+    Vector m(visco.Height());
+    m = 0.0;
+    real_t t = 0.0, dt_step = dt;
+    EXPECT_TRUE(visco.SolveElastic(m, t));
+    if (keep) {
+      keep->Record(m, t);
+    }
+    for (int n = 1; n <= n_steps; n++) {
+      ode.Step(m, t, dt_step);
+      if (keep) {
+        keep->Record(m, t);
+      }
+    }
+    EXPECT_TRUE(visco.SolveElastic(m, t));
+    (void)keep_op;
+    return g * prob.Displacement();
+  };
+
+  // The base run on PERSISTENT operators (the trajectory must outlive
+  // the sweep), plus the zero-load adjoint twin.
+  auto tau10 = RatioCoefficient(eta10, mu10);
+  auto tau20 = RatioCoefficient(eta20, mu20);
+  std::vector<MaxwellBranch> branches0 = {{&mu10, &tau10, nullptr},
+                                          {&mu20, &tau20, nullptr}};
+  auto rheology0 = IsotropicMaxwellRheology(dim, kappa0, mu_inf0, branches0);
+  auto prob_fwd =
+      LinearQuasiStaticTractionProblem(&fes, rheology0, traction, top);
+  auto visco_fwd = ViscoelasticOperator(prob_fwd);
+  auto trajectory = ForwardTrajectory(visco_fwd, true);
+  {
+    ExponentialTrapezoidSolver ode;
+    ode.Init(visco_fwd);
+    Vector m(visco_fwd.Height());
+    m = 0.0;
+    real_t t = 0.0, dt_step = dt;
+    trajectory.Record(m, t);
+    for (int n = 1; n <= n_steps; n++) {
+      ode.Step(m, t, dt_step);
+      trajectory.Record(m, t);
+    }
+  }
+  auto zero_vec = Vector(dim);
+  zero_vec = 0.0;
+  auto zero_traction = VectorConstantCoefficient(zero_vec);
+  auto prob_adj = LinearQuasiStaticTractionProblem(&fes, rheology0,
+                                                   zero_traction, top);
+  auto visco_adj = ViscoelasticOperator(prob_adj);
+
+  // The six kernels: Kappa, MuLongTerm, and per-branch Mu/Eta.
+  using P = IsotropicKernel::Parameter;
+  auto K_kappa = IsotropicKernel(P::Kappa, sfes);
+  auto K_muinf = IsotropicKernel(P::MuLongTerm, sfes);
+  auto K_mu1 = IsotropicKernel(P::Mu, sfes, nullptr, 0);
+  auto K_mu2 = IsotropicKernel(P::Mu, sfes, nullptr, 1);
+  auto K_eta1 = IsotropicKernel(P::Eta, sfes, &tau10, 0);
+  auto K_eta2 = IsotropicKernel(P::Eta, sfes, &tau20, 1);
+  IsotropicKernel* K[6] = {&K_kappa, &K_muinf, &K_mu1,
+                           &K_eta1,  &K_mu2,   &K_eta2};
+  Coefficient* m0_of[6] = {&kappa0, &mu_inf0, &mu10, &eta10, &mu20, &eta20};
+  Coefficient* chi_of[2] = {&chi_blob, &chi_all};
+  std::vector<std::unique_ptr<ProductCoefficient>> dirs;
+  for (int p = 0; p < 6; p++) {
+    for (int c = 0; c < 2; c++) {
+      dirs.push_back(
+          std::make_unique<ProductCoefficient>(*m0_of[p], *chi_of[c]));
+      K[p]->AddDirection(*dirs.back());
+    }
+  }
+
+  AdjointForce force;
+  force.AddObservation(trajectory.Time(n_steps), g);
+  auto solver = AdjointSolver(visco_adj, trajectory);
+  solver.SetForce(force);
+  for (auto* k : K) {
+    solver.AddKernel(*k);
+  }
+  ASSERT_TRUE(solver.Run());
+
+  // FD per parameter and direction.
+  const real_t eps = 1e-3;
+  const char* names[6] = {"kappa", "mu_inf", "mu_1", "eta_1", "mu_2",
+                          "eta_2"};
+  for (int p = 0; p < 6; p++) {
+    for (int c = 0; c < 2; c++) {
+      real_t fd = 0.0;
+      for (const real_t sg : {eps, -eps}) {
+        auto bk = Bump(kappa0, *chi_of[c], p == 0 ? sg : 0.0);
+        auto bmi = Bump(mu_inf0, *chi_of[c], p == 1 ? sg : 0.0);
+        auto bm1 = Bump(mu10, *chi_of[c], p == 2 ? sg : 0.0);
+        auto be1 = Bump(eta10, *chi_of[c], p == 3 ? sg : 0.0);
+        auto bm2 = Bump(mu20, *chi_of[c], p == 4 ? sg : 0.0);
+        auto be2 = Bump(eta20, *chi_of[c], p == 5 ? sg : 0.0);
+        const real_t J =
+            run_forward(*bk.value, *bmi.value, *bm1.value, *be1.value,
+                        *bm2.value, *be2.value, nullptr, nullptr);
+        fd += (sg > 0 ? J : -J);
+      }
+      fd /= 2.0 * eps;
+      // Measured at n = 64 (uniform parameters, affine quads): kappa
+      // 1.5e-6, mu_inf 1.3e-4, mu_1 6e-5, eta_1 1.5e-4, eta_2 7e-4,
+      // mu_2 5.5e-3 — every row is the O(dt^2) time floor, scaling
+      // with (dt/tau_k)^2 (the n = 32 values were exactly 4x larger),
+      // so the fast branch (tau_2 = 0.3) dominates.
+      const real_t tol = p == 4 ? 2e-2 : 3e-3;
+      EXPECT_NEAR(K[p]->Directional(c) / fd, 1.0, tol)
+          << names[p] << (c == 0 ? ", blob" : ", all");
+    }
+  }
+}

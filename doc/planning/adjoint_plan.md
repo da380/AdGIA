@@ -177,13 +177,19 @@ The ladder below is the GRAVITY axis; the rheology axis is orthogonal
 and rides every rung (worked in `adjoint_note.md`, "The rheology
 axis"). Two steps, each with its own gate:
 
-- **R1 — general linear Prony.** The adjoint evolution and the m†
-  jump are already branch-general; only the kernel layer is
-  single-branch today (the driver's guard). Deliver per-branch
-  (μ_k, η_k) kernels — relaxation-spectrum kernels — with
-  branch-marker-restricted integration; gate GA8 = an SLS/Burgers FD
-  table, serial + parallel. Slot: before the production η work of
-  WP8.4 at the latest.
+- **R1 — general linear Prony. Done 11 Oct 2026.** The pairing
+  struct and `IsotropicKernel` are branch-indexed (per-branch m_k,
+  m†_k fields from the driver), with the new `MuLongTerm` mode for
+  μ_∞ (stiffness-only density) alongside the per-branch Mu (fixed
+  η_k) and Eta kernels; the kernel split is documented in
+  adjoint.hpp against the stress form σ = κ tr(ε)1 + 2μ_∞d +
+  Σ2μ_k(d − m_k). Gate GA8 done: a two-branch body (μ_∞ = 1,
+  τ = 1 and 0.3) FD-gated for all six parameters, serial +
+  parallel; every deviation is the O(dt²) time floor scaling as
+  (dt/τ_k)² (factor-4 under n-doubling; the fast branch dominates
+  at 5.5e-3 for n = 64). Region-restricted branches remain guarded
+  out of the kernel layer (marker-restricted quadrature when the
+  composite-rheology kernels are wanted).
 - **R2 — nonlinear laws (nonlinearity in the rheology only).** The
   adjoint is linear with trajectory-dependent coefficients: a
   tangent-adjoint subclass of `ViscoelasticOperator` overriding the
@@ -377,14 +383,14 @@ one bordered solve. So:
 |---|---|
 | GA0 | rungs 1-2 librarified: the `adjoint_elasticity`/`viscoelastic_adjoint` FD tables reproduced through the common structure (regression grade) — **done 11 Oct 2026**: tables digit-identical; `TestAdjoint`(`Par`) gates them plus interior-time, continuous-in-time and store-all≡re-solve (measurements in WP8.2) |
 | GA1 | discrete adjoint identity through the full bordered solve (water + rotation): ⟨Lu, v⟩ = ⟨u, Lv⟩ at solver grade — gravitating (unbordered) part **done 11 Oct 2026**: `GravitatingReciprocity` + par twin, u–u and u–φ reciprocity at 2e-9 (the potential slot's sign certificate) |
-| GA1b | fingerprint reciprocity (ggad434 eqs. 15/17, §3.2 with rotation): ∫SL†ζ = ∫SLζ† on the water-loaded solve, spherical AND laterally heterogeneous 3-D elastic structure (the never-tested case) |
+| GA1b | fingerprint reciprocity (ggad434 eqs. 15/17, §3.2 with rotation): ∫SL†ζ = ∫SLζ† on the water-loaded solve, spherical AND laterally heterogeneous 3-D elastic structure (the never-tested case) — **done 11 Oct 2026**: `TestAdjointFingerprint`(`Par`, np 1/2/4), Gaussian melt caps on the 3-D ball; defects 2.5e-5 (spherical, → 7.6e-6 at order 2: the readout's projection gap, converging), 3.5e-5 (3-D structure — its first numerical test), 1.9e-5 (rotation + structure); the candidate EXAMPLE remains open |
 | GA2 | FD gate on J: η kernel on the Yu configuration (spherical, water + rotation), the `viscoelastic_adjoint` table lifted to full physics |
 | GA3 | η kernel 1-D cross-check: layered sphere, kernel integrated against radial perturbations vs spectral/Love-number FD |
 | GA4 | ice kernel (quelled İ, I₀): FD against ice-history perturbations through the full migration-on forward |
 | GA5 | interface kernel vs the perturbation family's FD derivatives (the ready-made gate) |
 | GA6 | checkpointed kernels ≡ store-everything kernels (bitwise at matching schedules; certified error under compression) |
 | GA7 | pygeoinf round trip: an AdGIA-defined space + operator driving a pygeoinf optimisation on a toy inversion |
-| GA8 | multi-branch Prony kernels (R1): per-branch FD table on an SLS/Burgers body, serial + parallel |
+| GA8 | multi-branch Prony kernels (R1): per-branch FD table on an SLS/Burgers body, serial + parallel — **done 11 Oct 2026**: two-branch + μ_∞ body, six parameters, all rows at the (dt/τ_k)² time floor (measurements in R1) |
 | GA9 | nonlinear-rheology tangent adjoint (R2): FD table against nonlinear forward re-runs on the power-law body |
 
 **See:** `doc/Elasticity/ggae388.pdf` (Yu et al. 2025);

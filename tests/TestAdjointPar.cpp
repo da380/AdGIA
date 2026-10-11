@@ -303,6 +303,156 @@ void GravitatingLeg() {
 
 }  // namespace
 
+
+// Gate GA8's parallel leg: the two-branch Prony kernels (blob direction,
+// the three modes the multi-branch widening added: mu_inf, and the fast
+// branch's mu_2/eta_2) against FD at n = 32; the thresholds are that
+// resolution's measured O(dt^2) floors (mu_2 2.2e-2, eta_2 2.8e-3,
+// mu_inf 5.3e-4; the serial gate documents the factor-4 convergence).
+void PronyLeg() {
+  const int dim = 2, n_el = 12, order = 2, n_steps = 32;
+  const real_t t_final = 2.0;
+  auto serial_mesh =
+      Mesh::MakeCartesian2D(n_el, n_el, Element::QUADRILATERAL);
+  auto mesh = ParMesh(MPI_COMM_WORLD, serial_mesh);
+  serial_mesh.Clear();
+  auto fec = H1_FECollection(order, dim);
+  auto fes = ParFiniteElementSpace(&mesh, &fec, dim);
+  auto sfes = ParFiniteElementSpace(&mesh, &fec);
+  auto top = Array<int>(mesh.bdr_attributes.Max());
+  auto bottom = Array<int>(mesh.bdr_attributes.Max());
+  top = 0;
+  bottom = 0;
+  top[2] = 1;
+  bottom[0] = 1;
+  auto traction = VectorFunctionCoefficient(dim, Traction2D);
+  auto station = VectorFunctionCoefficient(dim, Station2D);
+  auto g = ParLinearForm(&fes);
+  g.AddBoundaryIntegrator(new VectorBoundaryLFIntegrator(station), bottom);
+  g.Assemble();
+  auto chi_blob = FunctionCoefficient([](const Vector& x) {
+    const real_t r2 =
+        (x[0] - 0.4) * (x[0] - 0.4) + (x[1] - 0.6) * (x[1] - 0.6);
+    return std::exp(-r2 / 0.015);
+  });
+  auto kappa0 = ConstantCoefficient(5.4);
+  auto mu_inf0 = ConstantCoefficient(1.0);
+  auto mu10 = ConstantCoefficient(1.0);
+  auto eta10 = ConstantCoefficient(1.0);
+  auto mu20 = ConstantCoefficient(0.7);
+  auto eta20 = ConstantCoefficient(0.21);
+  const real_t dt = t_final / n_steps;
+
+  auto run_forward = [&](Coefficient& mu_inf, Coefficient& mu2,
+                         Coefficient& eta2, ForwardTrajectory* keep,
+                         real_t* J) {
+    auto tau1 = RatioCoefficient(eta10, mu10);
+    auto tau2 = RatioCoefficient(eta2, mu2);
+    std::vector<MaxwellBranch> branches = {{&mu10, &tau1, nullptr},
+                                           {&mu2, &tau2, nullptr}};
+    auto rheology = IsotropicMaxwellRheology(dim, kappa0, mu_inf, branches);
+    auto prob =
+        LinearQuasiStaticTractionProblem(&fes, rheology, traction, top);
+    auto visco = ViscoelasticOperator(prob);
+    ExponentialTrapezoidSolver ode;
+    ode.Init(visco);
+    Vector m(visco.Height());
+    m = 0.0;
+    real_t t = 0.0, dt_step = dt;
+    if (!visco.SolveElastic(m, t)) {
+      Check(1.0, 0.0, "prony forward solve");
+    }
+    if (keep) {
+      keep->Record(m, t);
+    }
+    for (int n = 1; n <= n_steps; n++) {
+      ode.Step(m, t, dt_step);
+      if (keep) {
+        keep->Record(m, t);
+      }
+    }
+    if (!visco.SolveElastic(m, t)) {
+      Check(1.0, 0.0, "prony forward solve");
+    }
+    *J = GlobalSum(g * prob.Displacement());
+  };
+
+  // Base run on persistent operators.
+  auto tau10 = RatioCoefficient(eta10, mu10);
+  auto tau20 = RatioCoefficient(eta20, mu20);
+  std::vector<MaxwellBranch> branches0 = {{&mu10, &tau10, nullptr},
+                                          {&mu20, &tau20, nullptr}};
+  auto rheology0 = IsotropicMaxwellRheology(dim, kappa0, mu_inf0, branches0);
+  auto prob_fwd =
+      LinearQuasiStaticTractionProblem(&fes, rheology0, traction, top);
+  auto visco_fwd = ViscoelasticOperator(prob_fwd);
+  auto trajectory = ForwardTrajectory(visco_fwd, true);
+  {
+    ExponentialTrapezoidSolver ode;
+    ode.Init(visco_fwd);
+    Vector m(visco_fwd.Height());
+    m = 0.0;
+    real_t t = 0.0, dt_step = dt;
+    trajectory.Record(m, t);
+    for (int n = 1; n <= n_steps; n++) {
+      ode.Step(m, t, dt_step);
+      trajectory.Record(m, t);
+    }
+  }
+  auto zero_vec = Vector(dim);
+  zero_vec = 0.0;
+  auto zero_traction = VectorConstantCoefficient(zero_vec);
+  auto prob_adj = LinearQuasiStaticTractionProblem(&fes, rheology0,
+                                                   zero_traction, top);
+  auto visco_adj = ViscoelasticOperator(prob_adj);
+
+  using P = IsotropicKernel::Parameter;
+  auto K_muinf = IsotropicKernel(P::MuLongTerm, sfes);
+  auto K_mu2 = IsotropicKernel(P::Mu, sfes, nullptr, 1);
+  auto K_eta2 = IsotropicKernel(P::Eta, sfes, &tau20, 1);
+  auto d_mi = ProductCoefficient(mu_inf0, chi_blob);
+  auto d_m2 = ProductCoefficient(mu20, chi_blob);
+  auto d_e2 = ProductCoefficient(eta20, chi_blob);
+  K_muinf.AddDirection(d_mi);
+  K_mu2.AddDirection(d_m2);
+  K_eta2.AddDirection(d_e2);
+
+  AdjointForce force;
+  force.AddObservation(trajectory.Time(n_steps), g);
+  auto solver = AdjointSolver(visco_adj, trajectory);
+  solver.SetForce(force);
+  solver.AddKernel(K_muinf);
+  solver.AddKernel(K_mu2);
+  solver.AddKernel(K_eta2);
+  if (!solver.Run()) {
+    Check(1.0, 0.0, "prony adjoint sweep");
+  }
+
+  const real_t eps = 1e-3;
+  struct Row {
+    IsotropicKernel* K;
+    int which;  // 0 mu_inf, 1 mu_2, 2 eta_2
+    real_t tol;
+    const char* name;
+  };
+  Row rows[] = {{&K_muinf, 0, 3e-3, "prony mu_inf, blob"},
+                {&K_mu2, 1, 5e-2, "prony mu_2, blob"},
+                {&K_eta2, 2, 1e-2, "prony eta_2, blob"}};
+  for (const auto& row : rows) {
+    real_t fd = 0.0;
+    for (const real_t sg : {eps, -eps}) {
+      auto bmi = Bump(mu_inf0, chi_blob, row.which == 0 ? sg : 0.0);
+      auto bm2 = Bump(mu20, chi_blob, row.which == 1 ? sg : 0.0);
+      auto be2 = Bump(eta20, chi_blob, row.which == 2 ? sg : 0.0);
+      real_t J = 0.0;
+      run_forward(*bmi.value, *bm2.value, *be2.value, nullptr, &J);
+      fd += (sg > 0 ? J : -J);
+    }
+    fd /= 2.0 * eps;
+    Check(std::abs(row.K->Directional(0) / fd - 1.0), row.tol, row.name);
+  }
+}
+
 int main(int argc, char* argv[]) {
   Mpi::Init(argc, argv);
   Hypre::Init();
@@ -579,6 +729,7 @@ int main(int argc, char* argv[]) {
   }
 
   GravitatingLeg();
+  PronyLeg();
 
   if (Mpi::Root()) {
     std::cout << (num_fails == 0 ? "OK" : "FAILED") << ": " << num_checks

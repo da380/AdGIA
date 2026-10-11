@@ -157,8 +157,7 @@ real_t IsotropicKernelDensity::Eval(ElementTransformation& T,
   T.SetIntPoint(&ip);
   const int dim = T.GetSpaceDim();
   if (parameter_ == Parameter::Eta) {
-    // -(2/tau) (d - m) : mdag; zero without the viscous factors (static
-    // pairings and the impulsive terms, where m+ is bounded).
+    // -(2/tau_k) (d - m_k) : mdag_k; zero without the viscous factors.
     if (!d_ || !mdag_) {
       return 0.0;
     }
@@ -182,9 +181,9 @@ real_t IsotropicKernelDensity::Eval(ElementTransformation& T,
   if (parameter_ == Parameter::Kappa) {
     return -divu * divv;
   }
-  // Mu: -2 [ dev eps(u) : dev eps(udag) - m : dev eps(udag) - (d - m) : mdag ],
-  // the dev eps factors pointwise from the displacement gradients (that is
-  // how mu enters the discrete elastic form).
+  // The elastic pairing dev eps(u) : dev eps(udag), pointwise from the
+  // displacement gradients (that is how the shear moduli enter the
+  // discrete elastic form).
   real_t ee = 0.0;
   for (int i = 0; i < dim; i++) {
     for (int j = 0; j < dim; j++) {
@@ -192,6 +191,12 @@ real_t IsotropicKernelDensity::Eval(ElementTransformation& T,
     }
   }
   const real_t dev_pair = ee - divu * divv / dim;
+  if (parameter_ == Parameter::MuLongTerm) {
+    // mu_inf enters the stiffness alone.
+    return -2.0 * dev_pair;
+  }
+  // Mu (branch k, fixed eta_k): -2 [ dev_pair - m_k : dev eps(udag)
+  //                                  - (d - m_k) : mdag_k ].
   real_t m_pair = 0.0;
   if (m_) {
     // m trace-free: m : dev eps(udag) = m : eps(udag).
@@ -221,8 +226,9 @@ real_t IsotropicKernelDensity::Eval(ElementTransformation& T,
 // --- IsotropicKernel ---------------------------------------------------------
 
 IsotropicKernel::IsotropicKernel(Parameter parameter,
-                                 FiniteElementSpace& sfes, Coefficient* tau)
-    : density_(parameter, tau), sfes_(&sfes) {}
+                                 FiniteElementSpace& sfes, Coefficient* tau,
+                                 int branch)
+    : density_(parameter, tau), sfes_(&sfes), branch_(branch) {}
 
 int IsotropicKernel::AddDirection(Coefficient& delta) {
   directions_.push_back(&delta);
@@ -276,10 +282,14 @@ real_t IsotropicKernel::Integrate(Coefficient& c) const {
 }
 
 void IsotropicKernel::AddPair(real_t w, const AdjointPair& p) {
-  if (density_.Param() == Parameter::Eta && (!p.d || !p.mdag)) {
+  const GridFunction* m =
+      branch_ < static_cast<int>(p.m.size()) ? p.m[branch_] : nullptr;
+  const GridFunction* mdag =
+      branch_ < static_cast<int>(p.mdag.size()) ? p.mdag[branch_] : nullptr;
+  if (density_.Param() == Parameter::Eta && (!p.d || !mdag)) {
     return;  // the Eta integrand is bounded: no impulsive or static part
   }
-  density_.SetPair(p.u, *&p.udag, p.d, p.m, p.mdag);
+  density_.SetPair(p.u, p.udag, p.d, m, mdag);
   for (std::size_t i = 0; i < directions_.size(); i++) {
     auto weighted = ProductCoefficient(density_, *directions_[i]);
     values_[i] += w * Integrate(weighted);
@@ -349,8 +359,8 @@ bool AdjointSolver::RunStatic() {
     if (!problem_->Solve()) {
       return false;
     }
-    Pair(1.0, AdjointPair{*u_forward_, nullptr, nullptr,
-                          problem_->Displacement(), nullptr});
+    Pair(1.0, AdjointPair{*u_forward_, nullptr, {},
+                          problem_->Displacement(), {}});
   }
   return true;
 }
@@ -399,11 +409,13 @@ bool AdjointSolver::RunEvolution() {
               "AdjointSolver: the adjoint evolution assumes a linear "
               "rheology (state-dependent laws are a different adjoint).");
   if (!kernels_.empty()) {
-    MFEM_VERIFY(op.NumBranches() == 1 &&
-                    op.NumBranchNodes(0) ==
-                        op.InternalScalarSpace().GetVSize(),
-                "AdjointSolver: kernel accumulators support a single "
-                "whole-mesh branch for now.");
+    for (int b = 0; b < op.NumBranches(); b++) {
+      MFEM_VERIFY(op.NumBranchNodes(b) ==
+                      op.InternalScalarSpace().GetVSize(),
+                  "AdjointSolver: kernel accumulators support whole-mesh "
+                  "branches for now (region-restricted branches need "
+                  "marker-restricted kernel quadrature).");
+    }
   }
 
   // Observations onto grid nodes.
@@ -446,11 +458,19 @@ bool AdjointSolver::RunEvolution() {
     });
   }
 
-  // Pairing fields: wrappers on the internal spaces, reassigned per node.
+  // Pairing fields: wrappers on the internal spaces, reassigned per node;
+  // one forward and one adjoint internal field per Prony branch.
   auto& fop = fwd.Op();
+  const int nb = op.NumBranches();
   auto d_f = detail::MakeGridFunction(&fop.InternalVariableSpace());
-  auto m_f = detail::MakeGridFunction(&fop.InternalVariableSpace());
-  auto mdag_f = detail::MakeGridFunction(&op.InternalVariableSpace());
+  std::vector<std::unique_ptr<GridFunction>> m_f(nb), mdag_f(nb);
+  std::vector<const GridFunction*> m_ptr(nb), mdag_ptr(nb);
+  for (int b = 0; b < nb; b++) {
+    m_f[b] = detail::MakeGridFunction(&fop.InternalVariableSpace());
+    mdag_f[b] = detail::MakeGridFunction(&op.InternalVariableSpace());
+    m_ptr[b] = m_f[b].get();
+    mdag_ptr[b] = mdag_f[b].get();
+  }
   auto udag_g = detail::MakeGridFunction(&prob.DisplacementSpace());
   Vector dbuf, mbuf;
 
@@ -494,8 +514,10 @@ bool AdjointSolver::RunEvolution() {
     const GridFunction& u_f = fwd.Displacement(n);
     fwd.Strain(n, dbuf);
     *d_f = dbuf;
-    fop.BranchToFull(fwd.State(n), 0, mbuf);
-    *m_f = mbuf;
+    for (int b = 0; b < nb; b++) {
+      fop.BranchToFull(fwd.State(n), b, mbuf);
+      *m_f[b] = mbuf;
+    }
     const real_t wR = n < N ? 0.5 * (fwd.Time(n + 1) - fwd.Time(n)) : 0.0;
     const real_t wL = n > 0 ? 0.5 * (fwd.Time(n) - fwd.Time(n - 1)) : 0.0;
 
@@ -503,10 +525,12 @@ bool AdjointSolver::RunEvolution() {
       if (w <= 0.0) {
         return;
       }
-      op.BranchToFull(mdag, 0, mbuf);
-      *mdag_f = mbuf;
-      Pair(w, AdjointPair{u_f, d_f.get(), m_f.get(), prob.Displacement(),
-                          mdag_f.get()});
+      for (int b = 0; b < nb; b++) {
+        op.BranchToFull(mdag, b, mbuf);
+        *mdag_f[b] = mbuf;
+      }
+      Pair(w, AdjointPair{u_f, d_f.get(), m_ptr, prob.Displacement(),
+                          mdag_ptr});
     };
 
     if (!has_obs) {
@@ -523,8 +547,8 @@ bool AdjointSolver::RunEvolution() {
       }
       *udag_g = prob.Displacement();
       // The impulsive pairing: the adjoint factor is the purely elastic
-      // response; m+ is bounded, so mdag is null here.
-      Pair(1.0, AdjointPair{u_f, d_f.get(), m_f.get(), *udag_g, nullptr});
+      // response; the m+_k are bounded, so mdag is empty here.
+      Pair(1.0, AdjointPair{u_f, d_f.get(), m_ptr, *udag_g, {}});
       ApplyJump(*udag_g, mdag);
     }
     if (!ok) {

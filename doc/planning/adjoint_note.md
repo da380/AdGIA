@@ -115,8 +115,12 @@ reciprocity (its eq. 8 — the discrete version is the rung-3 GA1
 certificate), the self-adjointness of the fingerprint operator
 ζ → SL (eqs. 15/17 with the Green-function symmetry, eq. 21), and the
 rotational generalisation (§3.2). These are ready-made certificates
-for the water rung, and the laterally-heterogeneous-structure case has
-never been tested numerically — gate GA1b and a candidate example.
+for the water rung, and the laterally-heterogeneous-structure case had
+never been tested numerically — gate GA1b, DONE 11 Oct 2026 on the 3-D
+ball with Gaussian melt caps (defects 2.5e-5 spherical / 3.5e-5 with
+3-D structure / 1.9e-5 with rotation + structure, all the readout's
+projection gap, converging with order); a quotable example of the
+3-D-structure case remains a candidate deliverable.
 
 ## The kernels, in our conventions
 
