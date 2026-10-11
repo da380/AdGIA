@@ -539,6 +539,73 @@ slipping problems, e.g. for relaxation of an aspherical body.
 
 ## Sea level
 
+### In-C++ shoreline mesh refinement (the MFEM `shaper` pattern)
+
+**Status:** core DELIVERED 11 Oct 2026 (`RefineToShoreline` in
+`mesh.hpp`/`mesh.cpp`, gated by `TestShorelineRefinement{,Par}`, shown
+in `examples/shoreline_refinement.cpp`); the gridded-flotation leg for
+real geographies stays open. Mid-run AMR is NOT wanted: David's call,
+shorelines never migrate far enough to leave a sensibly chosen band,
+so one pre-run refinement around the initial shoreline suffices — the
+`band` option is that headroom.
+
+The miniapp's mechanism is exactly a shoreline refiner: a pointwise
+`material(x)` id (here: ocean/land from the flotation of a sampled
+state), each element sampled at `sd` interior subdivisions, any
+element seeing BOTH materials marked, and
+`Mesh::GeneralRefinement(refs, -1, nc_limit)` applied iteratively —
+on SIMPLICES this is CONFORMING local refinement (no hanging nodes),
+which keeps the whole downstream stack (SubMesh, the house
+mesh-conforms-to-interfaces rule) untouched; quads/hexes would go
+non-conforming with an optional anisotropic mask. `ParMesh` supports
+the same call with rebalancing.
+
+What this buys over the current planetmodel/gmsh-side `Refinement`
+protocol (`planetmodel_coastline_sizing_plan.md`): the band follows
+the ACTUAL ocean function of the run's own state (not a canned
+coastline), the gmsh round trip disappears, and iteration depth and
+band width become run-time knobs.
+
+Delivered facts (measured, encoded in the tests): conforming tet
+bisection throughout (no hanging nodes, SubMesh machinery untouched);
+the ordering constraint — tets lose their refinement marking under
+`UniformRefinement`, so RefineToShoreline goes FIRST, straight after
+load, and uniform refinements compose after (the utility verifies
+this with the recipe in the message); snapping puts nodes on the
+sphere to machine precision (4e-16) and takes the shoreline band's
+surface-geometry error 4.1e-4 -> 2.2e-5 (two passes) -> 6.1e-6
+(three); closure cascades reach the deep interior but stay a ~1%
+share of the refined mesh; parallel marking is partition-independent
+at the global-count level (np 4 reproduces the serial pass counts).
+
+Resolution at the shoreline is settable directly:
+`ShorelineRefinementOptions::target_h` (example `-hs`) continues the
+pass loop until the marked zone's elements are at or below the target
+size, the stop exact by construction (marking tests the same measure;
+`levels` becomes a safety cap). The zone's EXTENT is the separate
+knob: the marked zone's width is settable GEOMETRICALLY
+(`ShorelineRefinementOptions::width`, radians of arc; the example's
+`-width`): elements within that angular distance of the shoreline
+are marked via a per-element gradient estimate, so the refined
+zone's extent is independent of the ocean function's coastal
+steepness. `band` (ocean-function units) remains the default
+semantics when width is unset.
+
+Open: the GRIDDED flotation coefficient for real geographies. The
+analytic-geography case needs nothing (the example's wavy continent
+plugs in as a FunctionCoefficient), but an ICE-7G/earth run must
+evaluate the flotation at ARBITRARY points while the mesh changes,
+so the nodal-CSV ingest (IceHistory, coordinate-matched) is the
+wrong source mid-refinement; a small gridded lon-lat reader (the
+`earth_data` NetCDF/npz the chain already produces) evaluated by
+bilinear interpolation closes the loop: refine in C++ first, sample
+the stacks at the FINAL node set after.
+
+**See:** `~/dev/mfem/miniapps/meshing/shaper.cpp` (230 lines; also
+`toys/mandel.cpp`/`mondrian.cpp` for the same loop on other
+material functions); `planetmodel_coastline_sizing_plan.md`;
+`Mesh::GeneralRefinement`, `ParMesh::GeneralRefinement`.
+
 ### The referential sea-level leg and the generalised rotational theory
 
 **Status:** proposal — design pass written, awaiting review

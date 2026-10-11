@@ -36,7 +36,9 @@ set(EXAMPLES
     rotational_feedback         # angular-momentum border on a loaded body: omega, feedback change
     generalised_rotation        # triaxial body: the traditional door's gauge ambiguity vs the Tisserand-pinned (M&A) door
     sea_level_fingerprint       # monolithic sea-level equation: ice-melt fingerprint + NetCDF export
-    ice_age_loading             # ICE-7G deglaciation on a Maxwell planet: the surface exchange chain
+    ice_age_loading
+    gia_kernels
+    shoreline_refinement             # ICE-7G deglaciation on a Maxwell planet: the surface exchange chain
 )
 
 foreach(ex IN LISTS EXAMPLES)

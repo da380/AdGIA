@@ -321,6 +321,53 @@ printed by the run and spelled out in the header).
 `./sea_level_fingerprint -earth -m ../data/earth_coastlines.msh` (then
 the printed sampling commands, then the same with `-state`/`-ice`)
 
+**`shoreline_refinement`**: in-C++ shoreline mesh refinement
+(`RefineToShoreline`, `mesh.hpp` — the MFEM `shaper` miniapp's pattern
+specialised to sea level). The ocean function drives conforming local
+tet bisection toward a band about the flotation threshold, with new
+nodes snapped back onto the bounding spheres; shorelines never migrate
+far enough to leave a sensibly chosen band, so this one pre-run pass
+replaces mid-run AMR. The geography is a wavy polar continent (a
+genuinely 2-D shoreline curve); after shaping, the example solves the
+elastic fingerprint of a melting polar blob on the refined mesh.
+Exports: `shoreline_h.csv` (the surface resolution map — the refined
+ring), `shoreline_sl.csv` (the fingerprint), `shoreline_refined.mesh`.
+Two separate knobs, two separate things: `-width` (radians) or
+`-band` (ocean-function units) set the refined zone's EXTENT, while
+`-hs` sets the target ELEMENT SIZE at the shoreline — passes continue
+until it is met (`-l` becomes a safety cap). A width below the current
+element size cannot show; to make the shoreline finer, set `-hs`.
+ORDERING: shoreline refinement goes FIRST, straight after load — tets
+lose their bisection marking under `UniformRefinement`, so `-r`
+composes after (the library verifies this). Maps via
+`<build>/earth_data/plot_fingerprint_kernel shoreline_h.csv --no-mask
+--global-only`. `./shoreline_refinement -no-vis`,
+`mpiexec -np 4 ./shoreline_refinement -l 3 -no-vis`
+
+**`gia_kernels`**: THE ADJOINT DEMONSTRATOR — first-order GIA
+sensitivity kernels on an idealised, well-resolved configuration,
+everything analytic (David's brief: homogeneous Maxwell planet, 1-D
+viscosity background, a smooth polar continent carrying a Gaussian ice
+blob melting linearly, a windowed point-like sea-level measure at a
+distant ocean site, present day = the final time). One forward run and
+one adjoint sweep (`adjoint.hpp`) give: the VISCOSITY kernel as a
+volume field (GLVis; `visc_kernel.mesh`/`.gf` for cutting-plane
+screenshots), lon-lat maps on depth shells, and the great-circle SLICE
+through site and blob (`visc_kernel_slice.csv`); the quelled ICE-RATE
+kernels D_İ(x, t) at chosen epochs; and, with `-taylor`, the TAYLOR
+TEST (exact J(m₀ + s δm) vs the affine adjoint prediction for a
+sub-blob mantle viscosity perturbation and an ice-rate pattern).
+Defaults are kernel-honest: order 2 (the order-1 warning applies) and
+one refinement; the whole chain runs in ~36 s serial, the Taylor sweep
+a few minutes. Maps via
+`<build>/earth_data/plot_fingerprint_kernel ... --no-mask
+--global-only` (the printed hints give exact commands).
+Parallel runs export the SAME figure set (rank 0 reloads the gathered
+kernel and samples the shells and slice), so the finer figure runs are
+one command. `./gia_kernels -no-vis`,
+`./gia_kernels -taylor 3 -no-vis`,
+`mpiexec -np 8 ./gia_kernels -r 2 -no-vis`
+
 **`ice_age_loading`**: the ICE-7G deglaciation on a Maxwell planet —
 the surface exchange chain end to end. Step 1 (no `-ice`) exports the
 surface node CSV; step 2 samples the real ice history at those nodes
@@ -345,6 +392,34 @@ then `./ice_age_loading -ice ice_age_nodes_ice.csv -state
 ice_age_nodes_state.csv`
 
 ### Fluids and interfaces
+With `-kernel` the run finishes with ONE adjoint sweep (the common
+adjoint structure, `adjoint.hpp`) giving the kernels of a present-day
+windowed sea-level observation at `-obs-lat`/`-obs-lon` (Boston by
+default): the 3-D VISCOSITY kernel as a GLVis volume field, and the
+quelled ICE-RATE kernels D_İ(x, t) of Yu et al. (2025, eq. 84) exported
+at `-nk` epochs for the ice-masked pyslfp maps
+(`<build>/earth_data/plot_fingerprint_kernel`, two epochs side by
+side) — the deglacial viscous-memory structure over the ice sheets.
+Use `-o 2`: order 1's internal variables make localised viscoelastic
+kernels unreliable (the adjoint note's order finding; the run warns).
+The I₀ kernel vanishes identically under this chain's frozen C₀.
+The ice-kernel maps are masked by the ice extent AT EACH EPOCH
+(`--ice-dates`), drawn global-only (zooms are less relevant at
+deglacial times) and headlined with the observation
+(`--obs-label`). The viscosity kernel is also exported on `-nd`
+DEPTH SHELLS (serial runs; `--no-mask --global-only` maps: the
+shallow shell concentrates around the observation and the load, the
+deep shell spreads to continental scale). `-fluid-core` runs the
+three-layer planet (inviscid outer core by the gauge-penalty
+treatment, μ = 0 there in the rheology — the Maxwell branch stays
+whole-mesh so the kernels remain valid) and `-lateral-visc` gives
+the base model a smooth 3-D viscosity: Dahlen-route forward, 1-D
+elastic and density, 3-D viscosity — the classic inversion setting.
+`-taylor <n>` runs the TAYLOR TEST: exact J(m₀ + s δm) against the
+affine prediction J₀ + s·dJ[δm] for a mantle viscosity blob and an
+ice-rate cap, written to `taylor_test.csv`/`taylor_remainder.csv`
+for `plot_csv.py` — the viscosity panel shows the genuine curvature
+(strong on the softening side), the ice panel exact linearity.
 
 **`gauged_fluid_cavity`**: an elastic body with a fluid core under a
 surface pressure, no gravity: the gauged fluid (`SetGaugedFluid`) and its

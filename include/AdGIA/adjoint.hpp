@@ -13,7 +13,9 @@
 #include <vector>
 
 #include "mfem.hpp"
+#include "AdGIA/mixed_problem.hpp"
 #include "AdGIA/quasi_static_problem.hpp"
+#include "AdGIA/sea_level.hpp"
 #include "AdGIA/viscoelastic.hpp"
 
 namespace AdGIA {
@@ -187,6 +189,12 @@ struct AdjointPair {
   std::vector<const mfem::GridFunction*> m;     ///< forward m_k per branch
   const mfem::GridFunction& udag;  ///< adjoint displacement
   std::vector<const mfem::GridFunction*> mdag;  ///< adjoint m+_k per branch
+  mfem::real_t t = 0.0;            ///< FORWARD time of the pairing
+  bool impulse = false;  ///< an observation's impulsive (weight-one) pairing
+  /** The adjoint problem whose solved state udag belongs to (its
+   * potential, uniform term and angular velocity are current for this
+   * pairing) — for accumulators reading more than the elastic fields. */
+  LinearQuasiStaticProblem* problem = nullptr;
 };
 
 /**
@@ -329,6 +337,107 @@ class IsotropicKernel : public KernelAccumulator {
 };
 
 /**
+ * @brief The sea-level (data-load) kernel accumulator: everything the
+ * ice and initial-sea-level kernels need, read off the adjoint sea
+ * level (doc/planning/adjoint_note.md, "The kernels"). From the
+ * adjoint identity, the derivative of J with respect to the DATA
+ * surface load is
+ *
+ *     delta J = -g int int delta sigma(x, t) SL1+(x, reversed t) dS dt
+ *
+ * (Yu et al. 2025, eq. 63 rearranged): the kernel of any sigma_data
+ * route is -g times the adjoint sea level, with the observation
+ * impulses' singular parts contributing atoms read from the
+ * generalized fingerprint solves. Per sweep pairing the accumulator
+ * computes SL1+ of the adjoint state (displacement, potential, uniform
+ * term and, with rotation, psi(omega+)) through SeaLevelOperator, and
+ * accumulates:
+ *
+ *  - DIRECTIONAL derivatives along registered time-aware delta-sigma
+ *    coefficients (the FD-gate quantities; an ice-history direction
+ *    delta-I enters through the load law as
+ *    delta sigma = rho_i (1 - C(t)) delta I(t) - rho_i (1 - C0)
+ *    delta I(0), etc.);
+ *  - the QUELLED ice kernels of the rate parameterisation (eq. 84),
+ *    when enabled: the I0 kernel field
+ *    D_I0(x) = rho_i g int (C(t) - C0) SL1+ dt (live only when the
+ *    ocean function moves) and the Idot stack — the per-node fields
+ *    -rho_i g (1 - C(t_n)) SL1+_n whose backward cumulative
+ *    time-integral (Finalize()) is D_Idot(x, t_n), with only finite
+ *    jumps at the observation times (the raw kernel's atoms are kept
+ *    separately: decision 4 — the raw derivative stays exportable).
+ *
+ * The accumulator is a specialisation piece of the mixed gravitating
+ * class (it reads Potential(), UniformPotentialTerm(),
+ * SolutionCentrifugalPotential()); the referential twin follows the
+ * same pattern on zeta when those rungs open.
+ */
+class SeaLevelLoadKernel : public KernelAccumulator {
+ public:
+  /**
+   * @param adjoint_problem The adjoint twin (the driver's problem).
+   * @param sea The surface layer (readout spaces).
+   * @param grad_phi0 The equilibrium gravity (g formed from it).
+   * @param g_surf The surface gravity (the -g factor of the pairing).
+   * @param rotation Read psi(omega+) into the adjoint sea level.
+   */
+  SeaLevelLoadKernel(LinearQuasiStaticMixedSelfGravitatingProblem&
+                         adjoint_problem,
+                     SeaLevelOperator& sea,
+                     mfem::VectorCoefficient& grad_phi0, mfem::real_t g_surf,
+                     bool rotation);
+
+  /** @brief Register a time-aware direction delta-sigma(x, t); returns
+   * its index. */
+  int AddDirection(mfem::Coefficient& dsigma);
+  /** @brief delta J along direction @p i (global in parallel). */
+  mfem::real_t Directional(int i) const;
+
+  /** @brief Accumulate the quelled ice kernels: @p C the (stored or
+   * prescribed) forward ocean function as a time-aware coefficient,
+   * @p C0 its initial state, @p rho_i the ice density. */
+  void EnableQuelled(mfem::Coefficient& C, mfem::Coefficient& C0,
+                     mfem::real_t rho_i);
+  /** @brief D_I0(x) (after the sweep; zero without EnableQuelled). */
+  const mfem::GridFunction& I0Kernel() const { return *i0_kernel_; }
+  /** @brief Turn the accumulated Idot stack into D_Idot(x, t_n) by the
+   * backward cumulative time integral; call once after Run(). */
+  void Finalize();
+  int NumTimes() const { return static_cast<int>(times_.size()); }
+  mfem::real_t Time(int n) const { return times_[n]; }
+  /** @brief D_Idot(x, t_n) after Finalize() (the smooth part; the
+   * observation atoms are added into every node earlier than their
+   * time, so the stack carries the finite jumps of eq. 84). */
+  const mfem::GridFunction& IdotKernel(int n) const { return *idot_[n]; }
+
+  void AddPair(mfem::real_t w, const AdjointPair& p) override;
+
+ private:
+  void ReadAdjointSeaLevel();  // into sl_ (the operator's field copy)
+
+  LinearQuasiStaticMixedSelfGravitatingProblem& problem_;
+  SeaLevelOperator& sea_;
+  mfem::VectorCoefficient& grad_phi0_;
+  mfem::real_t g_surf_;
+  bool rotation_;
+  std::vector<mfem::Coefficient*> directions_;
+  std::vector<mfem::real_t> values_;
+  mfem::Coefficient* C_ = nullptr;
+  mfem::Coefficient* C0_ = nullptr;
+  mfem::real_t rho_i_ = 0.0;
+  std::unique_ptr<mfem::GridFunction> i0_kernel_, sl_;
+  // The Idot stack: per smooth node the integrand field
+  // -rho_i g (1 - C(t_n)) SL1+_n and its time; atoms are folded in by
+  // AddPair as finite jumps. Finalize() turns it into the backward
+  // cumulative integral.
+  std::vector<mfem::real_t> times_;
+  std::vector<std::unique_ptr<mfem::GridFunction>> idot_;
+  std::vector<mfem::real_t> atoms_t_;
+  std::vector<std::unique_ptr<mfem::GridFunction>> atoms_;
+  bool finalized_ = false;
+};
+
+/**
  * @brief The adjoint driver: runs the time-reversed adjoint problem
  * against a recorded forward trajectory and feeds every registered
  * kernel accumulator (doc/planning/adjoint_note.md, "The adjoint
@@ -370,6 +479,22 @@ class AdjointSolver {
   void SetForce(const AdjointForce& force) { force_ = &force; }
   void AddKernel(KernelAccumulator& kernel) { kernels_.push_back(&kernel); }
 
+  /** @brief Synchronise time-dependent problem data with the sweep: the
+   * callback receives the FORWARD time and runs before every elastic
+   * solve of the reversed stepping (through the operator's force hook)
+   * and before every impulsive observation solve. The C† playback of a
+   * migrating/moving-ocean forward is the canonical use: set the
+   * adjoint water coefficient's time and call RefreshWaterLoad(), so
+   * the adjoint runs as the linear problem with the forward's
+   * time-dependent coefficients played back in reverse
+   * (doc/planning/adjoint_note.md, "The migrating-forward adjoint");
+   * the nonlinear tangent adjoint's trajectory feed (R2) will ride the
+   * same hook. Static adjoints ignore it.
+   */
+  void SetTimeSync(std::function<void(mfem::real_t)> sync) {
+    time_sync_ = std::move(sync);
+  }
+
   /** @brief Run the adjoint and accumulate the kernels; false if a solve
    * fails. */
   bool Run();
@@ -394,6 +519,7 @@ class AdjointSolver {
   const AdjointForce* force_ = nullptr;
   PotentialForceSlot* phi_slot_ = nullptr;
   BorderForceSlot* border_slot_ = nullptr;
+  std::function<void(mfem::real_t)> time_sync_;
   std::vector<KernelAccumulator*> kernels_;
   mfem::Vector strain_, fbuf_, fbuf_phi_;
 };

@@ -69,6 +69,27 @@
 //            history's small fields drown at looser settings].
 //   -nodes-csv   step-1 output [ice_age_nodes.csv].
 //   -csv     per-step history table [ice_age_loading.csv].
+//   -kernel / -no-kernel   adjoint sensitivity kernels [off]: after the
+//            forward run, ONE adjoint sweep (the common adjoint
+//            structure, adjoint.hpp) gives the kernels of a present-day
+//            windowed sea-level observation at (-obs-lat, -obs-lon)
+//            [Boston] with respect to (i) the mantle VISCOSITY — the
+//            3-D volume field, shown in GLVis — and (ii) the ICE
+//            HISTORY in the quelled rate parameterisation: the
+//            optimisation-ready D_Idot(x, t) surface kernels of Yu et
+//            al. (2025, eq. 84), exported at -nk epochs as
+//            ice_kernel_t*.csv for the pyslfp map chain
+//            (<build>/earth_data/plot_fingerprint_kernel, ice-masked
+//            panels, two epochs side by side). With the frozen-C0
+//            ocean of this chain the I0 kernel vanishes identically
+//            (eq. 84's (C - C0) factor) and is not exported. USE
+//            -o 2: at order 1 the internal-variable space has order
+//            zero and the localised viscoelastic kernel structure is
+//            unreliable (doc/planning/adjoint_note.md, the order
+//            finding); the run warns.
+//   -obs-lat -obs-lon   observation site, degrees [42.36, -71.06].
+//   -obs-width   angular width (rad) of the observation window [0.1].
+//   -nk      number of D_Idot epochs exported [4].
 //   -vis / -no-vis   GLVis windows [on].
 //
 // Sample runs (with mpiexec -np N in front in a parallel build):
@@ -77,13 +98,21 @@
 //    ./ice_age_loading -ice ... -state ... -tau 0.3 -n 80
 // ============================================================================
 
+#include <algorithm>
+#include <array>
 #include <cmath>
+#include <iomanip>
 #include <iostream>
 #include <memory>
 #include <numbers>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <vector>
 
 #include "mfem.hpp"
 #include "AdGIA.hpp"
+#include "AdGIA/detail/fem_factory.hpp"
 #include "visualisation.hpp"
 
 using namespace mfem;
@@ -175,6 +204,14 @@ int main(int argc, char* argv[]) {
   const char* nodes_csv = "ice_age_nodes.csv";
   const char* csv_file = "ice_age_loading.csv";
   bool visualization = true;
+  bool kernel = false;
+  double obs_lat = 42.36, obs_lon = -71.06, obs_width = 0.1;
+  int n_kernel_epochs = 4;
+  int n_depths = 3;
+  int taylor_points = 0;
+  double taylor_smax = 1.0;
+  bool fluid_core = false;
+  double lateral_visc = 0.0;
 
   OptionsParser args(argc, argv);
   args.AddOption(&mesh_file, "-m", "--mesh",
@@ -204,6 +241,39 @@ int main(int argc, char* argv[]) {
                  "Step-1 output: the surface node CSV.");
   args.AddOption(&csv_file, "-csv", "--history-csv",
                  "Per-step history table for plot_csv.py; \"\": none.");
+  args.AddOption(&kernel, "-kernel", "--kernel", "-no-kernel",
+                 "--no-kernel",
+                 "Adjoint viscosity and ice-history kernels of a "
+                 "present-day sea-level observation.");
+  args.AddOption(&obs_lat, "-obs-lat", "--observation-latitude",
+                 "Observation latitude (degrees).");
+  args.AddOption(&obs_lon, "-obs-lon", "--observation-longitude",
+                 "Observation longitude (degrees).");
+  args.AddOption(&obs_width, "-obs-width", "--observation-width",
+                 "Angular width (radians) of the observation window.");
+  args.AddOption(&n_kernel_epochs, "-nk", "--kernel-epochs",
+                 "Number of exported D_Idot epochs.");
+  args.AddOption(&n_depths, "-nd", "--kernel-depths",
+                 "Number of viscosity-kernel depth shells exported "
+                 "(serial runs).");
+  args.AddOption(&taylor_points, "-taylor", "--taylor-points",
+                 "Taylor-test points per side of s = 0 (0: off): exact "
+                 "J(m0 + s dm) against the first-order affine "
+                 "prediction, for a viscosity blob and an ice-rate "
+                 "pattern.");
+  args.AddOption(&taylor_smax, "-smax", "--taylor-smax",
+                 "Largest |s| of the Taylor test.");
+  args.AddOption(&lateral_visc, "-lateral-visc", "--lateral-viscosity",
+                 "Relative amplitude of a smooth degree-2 LATERAL "
+                 "viscosity variation of the base model (1-D elastic "
+                 "and density, 3-D viscosity — the classic GIA "
+                 "inversion setting).");
+  args.AddOption(&fluid_core, "-fluid-core", "--fluid-core",
+                 "-no-fluid-core", "--no-fluid-core",
+                 "Three-layer planet with an inviscid outer core (use "
+                 "-m ../data/elastogravity_three_layer_3d.msh): the "
+                 "gauge-penalty fluid treatment, uniform density, zero "
+                 "fluid shear in the rheology.");
   args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
                  "--no-visualization", "GLVis windows.");
   args.Parse();
@@ -225,13 +295,20 @@ int main(int argc, char* argv[]) {
 #else
   Mesh& parent = smesh;
 #endif
-  Array<int> body_marker(parent.attributes.Max());
-  body_marker = 0;
-  body_marker[0] = 1;
+  // CreateFromDomain takes a LIST of attributes (not a marker).
+  Array<int> body_attrs_list;
+  body_attrs_list.Append(1);
+  if (fluid_core) {
+    MFEM_VERIFY(parent.attributes.Max() >= 4,
+                "-fluid-core needs the three-layer mesh "
+                "(../data/elastogravity_three_layer_3d.msh)");
+    body_attrs_list.Append(2);  // outer core
+    body_attrs_list.Append(3);  // mantle
+  }
 #ifdef MFEM_USE_MPI
-  ParSubMesh body(ParSubMesh::CreateFromDomain(parent, body_marker));
+  ParSubMesh body(ParSubMesh::CreateFromDomain(parent, body_attrs_list));
 #else
-  SubMesh body(SubMesh::CreateFromDomain(parent, body_marker));
+  SubMesh body(SubMesh::CreateFromDomain(parent, body_attrs_list));
 #endif
   H1_FECollection fec(order, dim);
 #ifdef MFEM_USE_MPI
@@ -290,13 +367,50 @@ int main(int argc, char* argv[]) {
     v *= g0;
   });
 
-  // The Maxwell body with the monolithic water load.
-  ConstantCoefficient kappa(kKappa), mu(kMu), rho(kRho), tau(tau_m);
+  // The Maxwell body with the monolithic water load. With -fluid-core
+  // the shear modulus vanishes in the outer-core annulus (the Maxwell
+  // branch stays WHOLE-MESH, so the kernel layer remains valid) and
+  // the gauge-penalty fluid treatment supplies the artificial shear
+  // (the accepted production treatment; uniform density keeps
+  // grad Phi0 = g0 x exact and the core neutrally stratified).
+  constexpr double kRIcb = 0.1931, kRCmb = 0.5467;
+  ConstantCoefficient kappa(kKappa), mu_const(kMu), rho(kRho);
+  // The base viscosity: 1-D (tau_m) or, with -lateral-visc, a smooth
+  // 3-D model tau(x) = tau_m (1 + a [(x^2 - y^2) + 0.7 xz] / r^2);
+  // keep |a| < 0.5 for positivity. The kernel machinery must see the
+  // SAME tau(x) (the Eta density divides by the local tau).
+  const double lat_a = lateral_visc;
+  const double tau_m_cap = tau_m;
+  FunctionCoefficient tau([lat_a, tau_m_cap](const Vector& x) {
+    const double r2 = std::max(x * x, 1e-12);
+    const double pat = ((x[0] * x[0] - x[1] * x[1]) + 0.7 * x[0] * x[2]) / r2;
+    return tau_m_cap * (1.0 + lat_a * pat);
+  });
+  FunctionCoefficient mu_layered([kRIcb, kRCmb](const Vector& x) {
+    const double r = x.Norml2();
+    return (r > kRIcb && r < kRCmb) ? 0.0 : kMu;
+  });
+  Coefficient& mu = fluid_core ? static_cast<Coefficient&>(mu_layered)
+                               : mu_const;
+  Array<int> core_marker;
+  GaugePenaltyOptions gauge_opts;
+  auto set_fluid = [&](LinearQuasiStaticMixedSelfGravitatingProblem& p) {
+    if (!fluid_core) {
+      return;
+    }
+    p.SetFluid(core_marker, mu_const, gauge_opts);
+  };
+  if (fluid_core) {
+    core_marker.SetSize(body.attributes.Max());
+    core_marker = 0;
+    core_marker[1] = 1;  // attribute 2: the outer core
+  }
   auto rheology = IsotropicMaxwellRheology::Maxwell(dim, kappa, mu, tau);
   LinearQuasiStaticMixedSelfGravitatingProblem prob(&fes_u, &fes_phi,
                                                     rheology, rho, kG,
                                                     kDtNDegree);
   prob.SetWaterLoad(w, sigma_d, surface);
+  set_fluid(prob);
   prob.SetRelTol(rel_tol);
 
   // The surface diagnostics use the same frozen state.
@@ -357,13 +471,23 @@ int main(int argc, char* argv[]) {
     return true;
   };
 
+  std::unique_ptr<ForwardTrajectory> trajectory;
+  if (kernel || taylor_points > 0) {
+    trajectory = std::make_unique<ForwardTrajectory>(visco, true);
+  }
   if (!report()) {
     return 1;
+  }
+  if (trajectory) {
+    trajectory->Record(m, t);
   }
   for (int step = 0; step < n_steps; step++) {
     ode.Step(m, t, dt);
     if (!report()) {
       return 1;
+    }
+    if (trajectory) {
+      trajectory->Record(m, t);
     }
   }
 
@@ -374,6 +498,503 @@ int main(int argc, char* argv[]) {
               << " (plot_csv.py) and ice_age_fingerprint.csv — map it "
                  "with\n  <build>/postprocess/surface_to_netcdf "
                  "ice_age_fingerprint.csv --plot\n";
+  }
+
+  // === The adjoint kernels of a present-day observation ===
+  std::unique_ptr<FiniteElementSpace> kfes_holder, sfes_keep;
+  std::unique_ptr<GridFunction> eta_kernel_view;
+  if (kernel || taylor_points > 0) {
+    if (order < 2 && IsRoot()) {
+      std::cout << "\nWARNING: -kernel at order 1 — the internal-variable "
+                   "space has order zero\nand the localised viscoelastic "
+                   "kernel structure is unreliable; use -o 2\n(doc/"
+                   "planning/adjoint_note.md, the order finding).\n";
+    }
+    auto global_sum = [&](double v) {
+#ifdef MFEM_USE_MPI
+      double g = 0.0;
+      MPI_Allreduce(&v, &g, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+      return g;
+#else
+      return v;
+#endif
+    };
+    // The windowed observation at the site, normalised to a unit-mass
+    // window so J is the windowed-MEAN present-day sea level there:
+    // J = int (h/|h|) SL1 dS = u-dual + phi-dual + uniform/g0 (the
+    // strict three-slot pairing; no rotation in this chain).
+    constexpr double deg = std::numbers::pi / 180.0;
+    const double cl = std::cos(obs_lat * deg), sl_ = std::sin(obs_lat * deg);
+    const double cn = std::cos(obs_lon * deg), sn = std::sin(obs_lon * deg);
+    auto window = [=](const Vector& x) {
+      const double r = x.Norml2();
+      const double c =
+          (x[0] * cl * cn + x[1] * cl * sn + x[2] * sl_) / r;
+      const double th = std::acos(std::min(1.0, std::max(-1.0, c)));
+      return std::exp(-th * th / (obs_width * obs_width));
+    };
+    FunctionCoefficient h_raw(window);
+    Array<int> parent_surface(parent.bdr_attributes.Max());
+    parent_surface = 0;
+    parent_surface[0] = 1;
+    auto lf_mass = detail::MakeLinearForm(&fes_phi);
+    lf_mass->AddBoundaryIntegrator(new BoundaryLFIntegrator(h_raw),
+                                   parent_surface);
+    lf_mass->Assemble();
+    const double h_mass = global_sum(lf_mass->Sum());
+    auto h_u = VectorFunctionCoefficient(
+        dim, [window, h_mass](const Vector& x, Vector& v) {
+          v = x;
+          v *= -window(x) / (h_mass * x.Norml2());
+        });
+    auto g_u = detail::MakeLinearForm(&fes_u);
+    g_u->AddBoundaryIntegrator(new VectorBoundaryLFIntegrator(h_u), surface);
+    g_u->Assemble();
+    FunctionCoefficient h_phi([window, h_mass, g0](const Vector& x) {
+      return -window(x) / (h_mass * g0);
+    });
+    auto g_phi = detail::MakeLinearForm(&fes_phi);
+    g_phi->AddBoundaryIntegrator(new BoundaryLFIntegrator(h_phi),
+                                 parent_surface);
+    g_phi->Assemble();
+    AdjointForce force;
+    AdjointLoad load;
+    load.u = g_u.get();
+    load.phi = g_phi.get();
+    load.uniform = 1.0 / g0;
+    force.AddObservation(trajectory->Time(trajectory->Size() - 1), load);
+    // The strict observation value at the base model (prob still holds
+    // the endpoint state): the Taylor test's J(0) and a diagnostic.
+    const double J0 = global_sum(*g_u * prob.Displacement()) +
+                      global_sum(*g_phi * prob.Potential()) +
+                      prob.UniformPotentialTerm() / g0;
+
+    // The zero-data adjoint twin on the same frozen-C0 water operator.
+    IceAgeWeight w_adj(c0, g0);
+    ConstantCoefficient zero_sigma(0.0);
+    LinearQuasiStaticMixedSelfGravitatingProblem prob_adj(
+        &fes_u, &fes_phi, rheology, rho, kG, kDtNDegree);
+    prob_adj.SetWaterLoad(w_adj, zero_sigma, surface);
+    set_fluid(prob_adj);
+    prob_adj.SetRelTol(rel_tol);
+    ViscoelasticOperator visco_adj(prob_adj);
+
+    // The kernels: viscosity (volume field) and the quelled ice rate.
+    H1_FECollection sfec(order, dim);
+    auto sfes_s = detail::MakeFESpace(fes_u, &sfec);
+    IsotropicKernel K_eta(IsotropicKernel::Parameter::Eta, *sfes_s, &tau);
+    L2_FECollection kfec(order > 1 ? order - 1 : 0, dim);
+    kfes_holder = detail::MakeFESpace(fes_u, &kfec);
+    K_eta.SetField(*kfes_holder);
+    SeaLevelLoadKernel K_ice(prob_adj, sea, grad_phi0, g0, false);
+    // Flotation is a plain evaluator; wrap it as a Coefficient. With
+    // the chain's frozen C the two arguments coincide and the I0
+    // kernel vanishes identically.
+    struct FlotationCoefficient : Coefficient {
+      Flotation f;
+      explicit FlotationCoefficient(const Flotation& f0) : f(f0) {}
+      real_t Eval(ElementTransformation& T,
+                  const IntegrationPoint& ip) override {
+        return f.Eval(T, ip);
+      }
+    };
+    FlotationCoefficient C_frozen(c0), C0_frozen(c0);
+    K_ice.EnableQuelled(C_frozen, C0_frozen, rho_i);
+
+    // The Taylor-test perturbation patterns: a viscosity blob under
+    // Hudson Bay (volume) and a Greenland ice-rate cap (surface);
+    // their kernel directionals give the affine predictions.
+    constexpr double degT = std::numbers::pi / 180.0;
+    auto blob_fun = [degT](const Vector& x) {
+      const double cl = std::cos(60.0 * degT), slat = std::sin(60.0 * degT);
+      const double cn = std::cos(-85.0 * degT), sn = std::sin(-85.0 * degT);
+      Vector c(3);
+      c[0] = 0.7 * cl * cn;
+      c[1] = 0.7 * cl * sn;
+      c[2] = 0.7 * slat;
+      Vector d(x);
+      d -= c;
+      return std::exp(-(d * d) / (0.35 * 0.35));
+    };
+    FunctionCoefficient blob_v(blob_fun);
+    // delta eta = eta(x) blob (a multiplicative perturbation of the —
+    // possibly 3-D — base viscosity eta = mu tau(x)).
+    ProductCoefficient eta_base(kMu, tau);
+    ProductCoefficient d_eta(eta_base, blob_v);
+    const int i_eta_dir = K_eta.AddDirection(d_eta);
+    auto cap_i = [degT](const Vector& x) {
+      const double cl = std::cos(72.0 * degT), slat = std::sin(72.0 * degT);
+      const double cn = std::cos(-40.0 * degT), sn = std::sin(-40.0 * degT);
+      const double r = x.Norml2();
+      const double c =
+          (x[0] * cl * cn + x[1] * cl * sn + x[2] * slat) / r;
+      const double th = std::acos(std::min(1.0, std::max(-1.0, c)));
+      return std::exp(-th * th / (0.15 * 0.15));
+    };
+    // delta I(x, t) = cap_i (t - t_start): a unit ice-RATE pattern;
+    // the load direction rho_i (1 - C0) cap_i (t - t_start).
+    const double t_start = ice.Time(0);
+    struct IceRateDir : Coefficient {
+      Flotation c0;
+      std::function<double(const Vector&)> cap;
+      double t0;
+      IceRateDir(const Flotation& f, std::function<double(const Vector&)> c,
+                 double ts)
+          : c0(f), cap(std::move(c)), t0(ts) {}
+      real_t Eval(ElementTransformation& T,
+                  const IntegrationPoint& ip) override {
+        Vector x;
+        T.Transform(ip, x);
+        return c0.rho_i * (1.0 - c0.Eval(T, ip)) * cap(x) *
+               (GetTime() - t0);
+      }
+    };
+    IceRateDir d_ice(c0, cap_i, t_start);
+    const int i_ice_dir = K_ice.AddDirection(d_ice);
+
+    AdjointSolver solver(visco_adj, *trajectory);
+    solver.SetForce(force);
+    solver.AddKernel(K_eta);
+    solver.AddKernel(K_ice);
+    if (!solver.Run()) {
+      if (IsRoot()) {
+        std::cout << "adjoint sweep failed\n";
+      }
+      return 1;
+    }
+    K_ice.Finalize();
+
+    // Exports: D_Idot(x, t) at -nk epochs, and the viscosity kernel
+    // sampled on -nd depth shells (serial runs), for the pyslfp maps.
+    std::vector<std::string> shell_names;
+    if (kernel) {
+      int world = 1;
+#ifdef MFEM_USE_MPI
+      world = Mpi::WorldSize();
+#endif
+      if (world == 1 && n_depths > 0) {
+        // Surface node directions, then the kernel field located at
+        // r_k times each direction (mantle shells only with a fluid
+        // core: the eta kernel is a solid-region object).
+        Mesh& smesh_s = sea.SurfaceMesh();
+        FiniteElementSpace vfes_s(&smesh_s, sea.SurfaceSpace().FEColl(),
+                                  3);
+        GridFunction xyz(&vfes_s);
+        VectorFunctionCoefficient idc(
+            3, [](const Vector& x, Vector& v) { v = x; });
+        xyz.ProjectCoefficient(idc);
+        const int nd_s = sea.SurfaceSpace().GetVSize();
+        const double r_lo = fluid_core ? 0.60 : 0.45;
+        const double r_hi = 0.95;
+        for (int k = 0; k < n_depths; k++) {
+          const double rk =
+              n_depths == 1
+                  ? r_hi
+                  : r_lo + (r_hi - r_lo) * k / (n_depths - 1.0);
+          DenseMatrix pts(3, nd_s);
+          for (int i = 0; i < nd_s; i++) {
+            Vector dir(3);
+            dir[0] = xyz[i];
+            dir[1] = xyz[i + nd_s];
+            dir[2] = xyz[i + 2 * nd_s];
+            dir /= dir.Norml2();
+            for (int c = 0; c < 3; c++) {
+              pts(c, i) = rk * dir[c];
+            }
+          }
+          Array<int> elems;
+          Array<IntegrationPoint> ips;
+          body.FindPoints(pts, elems, ips);
+          GridFunction shell(&sea.SurfaceSpace());
+          shell = 0.0;
+          for (int i = 0; i < nd_s; i++) {
+            if (elems[i] >= 0) {
+              shell[i] = K_eta.Field().GetValue(elems[i], ips[i]);
+            }
+          }
+          std::ostringstream name;
+          name << "visc_kernel_r" << std::fixed << std::setprecision(2)
+               << rk << ".csv";
+          sea.WriteSurfaceField(shell, name.str());
+          shell_names.push_back(name.str());
+        }
+        // The depth SLICE: the kernel on the great-circle plane
+        // through the observation site, r in [CMB, 1] by the angle
+        // from the site's direction — the radius-resolved companion
+        // of the shells.
+        {
+          const double cl = std::cos(obs_lat * deg),
+                       slat = std::sin(obs_lat * deg);
+          const double cn = std::cos(obs_lon * deg),
+                       sn = std::sin(obs_lon * deg);
+          Vector e1(3), ez(3), e2(3);
+          e1[0] = cl * cn;
+          e1[1] = cl * sn;
+          e1[2] = slat;
+          ez = 0.0;
+          ez[2] = 1.0;
+          // e2: the in-plane northward companion of e1.
+          const double z1 = ez * e1;
+          e2 = ez;
+          e2.Add(-z1, e1);
+          e2 /= e2.Norml2();
+          const int na = 181, nr = 36;
+          const double r_in = fluid_core ? kRCmb + 1e-3 : 0.05;
+          DenseMatrix pts(3, na * nr);
+          for (int ia = 0; ia < na; ia++) {
+            const double alpha = -std::numbers::pi +
+                                 2.0 * std::numbers::pi * ia / (na - 1);
+            for (int ir = 0; ir < nr; ir++) {
+              const double rr =
+                  r_in + (0.995 - r_in) * ir / (nr - 1.0);
+              const int col = ia * nr + ir;
+              for (int c = 0; c < 3; c++) {
+                pts(c, col) = rr * (std::cos(alpha) * e1[c] +
+                                    std::sin(alpha) * e2[c]);
+              }
+            }
+          }
+          Array<int> elems;
+          Array<IntegrationPoint> ips;
+          body.FindPoints(pts, elems, ips);
+          std::ofstream slice("visc_kernel_slice.csv");
+          slice << "alpha_deg,r,value\n";
+          slice.precision(16);
+          for (int ia = 0; ia < na; ia++) {
+            const double alpha_deg =
+                -180.0 + 360.0 * ia / (na - 1);
+            for (int ir = 0; ir < nr; ir++) {
+              const double rr =
+                  r_in + (0.995 - r_in) * ir / (nr - 1.0);
+              const int col = ia * nr + ir;
+              const double v =
+                  elems[col] >= 0
+                      ? K_eta.Field().GetValue(elems[col], ips[col])
+                      : 0.0;
+              slice << alpha_deg << "," << rr << "," << v << "\n";
+            }
+          }
+          shell_names.push_back("visc_kernel_slice.csv");
+        }
+        // (serial branch continues below; the parallel save is after
+        // the serial-only block)
+      } else if (IsRoot() && n_depths > 0) {
+        std::cout << "(viscosity-kernel depth shells are exported by "
+                     "serial runs only)\n";
+      }
+      // The kernel as mesh + .gf for GLVis cutting planes and offline
+      // slicing, serial AND parallel (gathered to one file):
+      //   glvis -m visc_kernel.mesh -g visc_kernel.gf
+      {
+#ifdef MFEM_USE_MPI
+        std::ofstream mf(IsRoot() ? "visc_kernel.mesh" : "/dev/null");
+        mf.precision(16);
+        body.PrintAsOne(mf);
+        std::ofstream gf(IsRoot() ? "visc_kernel.gf" : "/dev/null");
+        gf.precision(16);
+        static_cast<const ParGridFunction&>(K_eta.Field()).SaveAsOne(gf);
+#else
+        std::ofstream mf("visc_kernel.mesh");
+        mf.precision(16);
+        body.Print(mf);
+        std::ofstream gf("visc_kernel.gf");
+        gf.precision(16);
+        K_eta.Field().Save(gf);
+#endif
+      }
+    }
+    const int nt = K_ice.NumTimes();
+    std::vector<std::string> names;
+    if (kernel) {
+    for (int k = 0; k < n_kernel_epochs; k++) {
+      const int idx =
+          nt <= 1 ? 0
+                  : (k * (nt - 1)) / std::max(1, n_kernel_epochs - 1);
+      std::ostringstream name;
+      name << "ice_kernel_t" << std::fixed << std::setprecision(2)
+           << K_ice.Time(idx) << ".csv";
+      sea.WriteSurfaceField(K_ice.IdotKernel(idx), name.str());
+      names.push_back(name.str());
+    }
+    }
+    if (kernel && IsRoot()) {
+      std::cout << "\nadjoint kernels of the present-day windowed "
+                   "sea-level observation at ("
+                << obs_lat << " N, " << obs_lon << " E):\n"
+                << "  viscosity kernel: GLVis volume window (with -vis); "
+                   "order caveat above applies\n"
+                << "  quelled ice-rate kernels D_Idot(x, t) written at "
+                << names.size() << " epochs:";
+      for (const auto& n : names) {
+        std::cout << " " << n;
+      }
+      // Arrival order is DESCENDING forward time: names.front() is the
+      // present (atom-only, near-empty), names.back() the oldest epoch.
+      // Mask each epoch by the ice EXTENT AT THAT TIME (--ice-dates,
+      // ka BP: under the standard chain date = t_end - t).
+      const double t_end_stack = K_ice.Time(0);
+      const int mid = static_cast<int>(names.size()) / 2;
+      const double d_old = t_end_stack - K_ice.Time(nt - 1);
+      const double d_mid =
+          t_end_stack -
+          K_ice.Time(mid * (nt - 1) /
+                     std::max(1, static_cast<int>(names.size()) - 1));
+      std::cout << "\n  map them, each epoch masked by ITS OWN ice "
+                   "extent (global maps: the\n  zooms are less relevant "
+                   "at deglacial times), e.g.\n"
+                << "    <build>/earth_data/plot_fingerprint_kernel "
+                << names.back() << " " << names[mid]
+                << " \\\n        --ice-dates " << d_old << " " << d_mid
+                << " --titles \"oldest epoch\" \"mid-deglaciation\" "
+                   "\\\n        --global-only --side-by-side "
+                   "--obs-label \"sensitivity of the\n        "
+                   "present-day sea-level observation at ("
+                << obs_lat << " N, " << obs_lon << " E)\" "
+                   "\\\n        --out ice_kernels.png\n"
+                << "  (the I0 kernel vanishes identically with this "
+                   "chain's frozen C0)\n";
+      if (!shell_names.empty()) {
+        std::cout << "  viscosity-kernel depth shells:";
+        for (const auto& n : shell_names) {
+          std::cout << " " << n;
+        }
+        std::cout << "\n    <build>/earth_data/plot_fingerprint_kernel "
+                  << shell_names.front() << " "
+                  << shell_names[shell_names.size() - 2]
+                  << " \\\n        --no-mask --global-only "
+                     "--side-by-side --titles \"r = deep\" "
+                     "\"r = shallow\" --out visc_kernels.png\n"
+                  << "    depth slices: glvis -m visc_kernel.mesh -g "
+                     "visc_kernel.gf (cutting planes;\n    "
+                     "visc_kernel_slice.csv holds the Boston "
+                     "great-circle slice as data)\n";
+      }
+    }
+    // === The Taylor test: exact J(m0 + s dm) against the affine
+    // prediction J0 + s dJ[dm], for the viscosity blob and the
+    // ice-rate cap ===
+    if (taylor_points > 0) {
+      const double D_v = K_eta.Directional(i_eta_dir);
+      const double D_i = K_ice.Directional(i_ice_dir);
+      IceAgeLoad sigma_base(c0, ice.Change());
+      struct PerturbedIce : Coefficient {
+        IceAgeLoad& base;
+        IceRateDir& dir;
+        double s;
+        PerturbedIce(IceAgeLoad& b, IceRateDir& d, double sv)
+            : base(b), dir(d), s(sv) {}
+        void SetTime(real_t t) override {
+          Coefficient::SetTime(t);
+          base.SetTime(t);
+          dir.SetTime(t);
+        }
+        real_t Eval(ElementTransformation& T,
+                    const IntegrationPoint& ip) override {
+          return base.Eval(T, ip) + s * dir.Eval(T, ip);
+        }
+      };
+      auto run_J = [&](Coefficient& tau_run, Coefficient& sigma_run) {
+        IceAgeWeight w_run(c0, g0);
+        auto rh = IsotropicMaxwellRheology::Maxwell(dim, kappa, mu,
+                                                    tau_run);
+        LinearQuasiStaticMixedSelfGravitatingProblem p(
+            &fes_u, &fes_phi, rh, rho, kG, kDtNDegree);
+        p.SetWaterLoad(w_run, sigma_run, surface);
+        set_fluid(p);
+        p.SetRelTol(rel_tol);
+        ViscoelasticOperator v(p);
+        ExponentialTrapezoidSolver o;
+        o.Init(v);
+        Vector mm(v.Height());
+        mm = 0.0;
+        double tt = ice.Time(0);
+        double dts = dt;
+        if (!v.SolveElastic(mm, tt)) {
+          return std::numeric_limits<double>::quiet_NaN();
+        }
+        for (int st = 0; st < n_steps; st++) {
+          o.Step(mm, tt, dts);
+        }
+        if (!v.SolveElastic(mm, tt)) {
+          return std::numeric_limits<double>::quiet_NaN();
+        }
+        return global_sum(*g_u * p.Displacement()) +
+               global_sum(*g_phi * p.Potential()) +
+               p.UniformPotentialTerm() / g0;
+      };
+      CsvTable tcurv("taylor_test.csv",
+                     {"s", "J_visc", "J_visc_affine", "J_ice",
+                      "J_ice_affine"});
+      tcurv.Meta("title",
+                 "Taylor test: exact vs first-order affine prediction")
+          .Meta("xlabel", "perturbation amplitude s")
+          .Meta("y", "J_visc,J_visc_affine|J_ice,J_ice_affine")
+          .Meta("ylabel", "J (viscosity blob)|J (ice-rate cap)");
+      CsvTable trem("taylor_remainder.csv",
+                    {"s", "R_visc", "R_ice", "ref_s2"});
+      trem.Meta("title", "Taylor remainders |J - affine| (slope-2 line "
+                         "for reference)")
+          .Meta("xlabel", "s")
+          .Meta("logx", "true")
+          .Meta("y", "R_visc,R_ice,ref_s2")
+          .Meta("logy", "true");
+      std::vector<std::array<double, 5>> rows;
+      for (int j = -taylor_points; j <= taylor_points; j++) {
+        const double sv = taylor_smax * j / taylor_points;
+        double Jv = J0, Ji = J0;
+        if (j != 0) {
+          // Viscosity: eta(x) -> eta0 (1 + s blob), i.e. tau scales at
+          // fixed mu; the affine slope is the eta kernel's directional.
+          const double tau_m_loc = tau_m;
+          const double lat_loc = lat_a;
+          FunctionCoefficient tau_run(
+              [blob_fun, sv, tau_m_loc, lat_loc](const Vector& x) {
+                const double r2 = std::max(x * x, 1e-12);
+                const double pat =
+                    ((x[0] * x[0] - x[1] * x[1]) + 0.7 * x[0] * x[2]) / r2;
+                return tau_m_loc * (1.0 + lat_loc * pat) *
+                       (1.0 + sv * blob_fun(x));
+              });
+          Jv = run_J(tau_run, sigma_d);
+          // Ice: the history gains s times the unit-rate cap.
+          PerturbedIce sig_run(sigma_base, d_ice, sv);
+          Ji = run_J(tau, sig_run);
+        }
+        rows.push_back({sv, Jv, J0 + sv * D_v, Ji, J0 + sv * D_i});
+        if (IsRoot()) {
+          std::cout << "  taylor s = " << sv << "  J_visc " << Jv
+                    << " (affine " << J0 + sv * D_v << ")  J_ice " << Ji
+                    << " (affine " << J0 + sv * D_i << ")\n";
+        }
+      }
+      for (auto& r : rows) {
+        tcurv.Row({r[0], r[1], r[2], r[3], r[4]});
+      }
+      // Remainders with a slope-2 reference through the outermost
+      // viscosity remainder.
+      const double Rv_max =
+          std::abs(rows.back()[1] - rows.back()[2]);
+      const double cref =
+          Rv_max > 0.0 ? Rv_max / (taylor_smax * taylor_smax) : 1.0;
+      for (auto& r : rows) {
+        if (r[0] <= 0.0) {
+          continue;
+        }
+        trem.Row({r[0], std::abs(r[1] - r[2]), std::abs(r[3] - r[4]),
+                  cref * r[0] * r[0]});
+      }
+      if (IsRoot()) {
+        std::cout << "  Taylor test written to taylor_test.csv and "
+                     "taylor_remainder.csv (plot_csv.py)\n";
+      }
+    }
+
+    if (visualization) {
+      eta_kernel_view = detail::MakeGridFunction(kfes_holder.get());
+      *eta_kernel_view = K_eta.Field();
+      GLVisWindow wk("viscosity kernel (volume)", DefaultKeys(dim));
+      wk.Send(body, *eta_kernel_view);
+    }
   }
 
   if (visualization) {

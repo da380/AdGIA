@@ -1,9 +1,154 @@
 
 #include "AdGIA/mesh.hpp"
 
+#include <algorithm>
+#include <cmath>
+#include <limits>
 #include <optional>
 
 namespace AdGIA {
+
+namespace {
+
+// Projects nodes lying within the relative capture window of a listed
+// radius back onto that sphere (about the origin). Acts on the nodes grid
+// function when the mesh is curved and on the vertices otherwise; the
+// projection is pointwise and deterministic, so shared parallel nodes
+// stay consistent without communication.
+void SnapToSpheres(mfem::Mesh& mesh, const ShorelineRefinementOptions& opt) {
+  if (opt.snap_radii.empty()) {
+    return;
+  }
+  auto snap = [&opt](mfem::real_t* x, int sdim) {
+    mfem::real_t r2 = 0.0;
+    for (int c = 0; c < sdim; c++) {
+      r2 += x[c] * x[c];
+    }
+    const mfem::real_t r = std::sqrt(r2);
+    if (r == 0.0) {
+      return;
+    }
+    for (const auto R : opt.snap_radii) {
+      if (std::abs(r - R) < opt.snap_tol * R) {
+        const mfem::real_t s = R / r;
+        for (int c = 0; c < sdim; c++) {
+          x[c] *= s;
+        }
+        return;
+      }
+    }
+  };
+  const int sdim = mesh.SpaceDimension();
+  if (mfem::GridFunction* nodes = mesh.GetNodes()) {
+    // Nodes are stored byNODES or byVDIM; go through the dof points.
+    const mfem::FiniteElementSpace& nfes = *nodes->FESpace();
+    const int nd = nfes.GetNDofs();
+    mfem::Vector p(sdim);
+    for (int i = 0; i < nd; i++) {
+      for (int c = 0; c < sdim; c++) {
+        p[c] = (*nodes)(nfes.DofToVDof(i, c));
+      }
+      snap(p.GetData(), sdim);
+      for (int c = 0; c < sdim; c++) {
+        (*nodes)(nfes.DofToVDof(i, c)) = p[c];
+      }
+    }
+  } else {
+    for (int i = 0; i < mesh.GetNV(); i++) {
+      snap(mesh.GetVertex(i), sdim);
+    }
+  }
+}
+
+}  // namespace
+
+int RefineToShoreline(mfem::Mesh& mesh, mfem::Coefficient& ocean,
+                      const ShorelineRefinementOptions& options) {
+  // Conforming tet bisection needs refinement-marked tets. Meshes are
+  // marked at load (Mesh(file, 1, 1)) but UniformRefinement clears the
+  // flags, so shoreline refinement goes FIRST and uniform refinements
+  // after; fail here with the recipe rather than deep inside MFEM.
+  if (mesh.Dimension() == 3 && mesh.GetNE() > 0 &&
+      mesh.GetElement(0)->GetType() == mfem::Element::TETRAHEDRON) {
+    MFEM_VERIFY(
+        static_cast<mfem::Tetrahedron*>(mesh.GetElement(0))
+                ->GetRefinementFlag() != 0,
+        "RefineToShoreline: tets are not marked for refinement; call it "
+        "straight after loading the mesh, before UniformRefinement");
+  }
+  const mfem::real_t lo = options.threshold - options.band;
+  const mfem::real_t hi = options.threshold + options.band;
+  int total = 0;
+  for (int pass = 0; pass < options.levels; pass++) {
+    mfem::Array<mfem::Refinement> refs;
+    mfem::Vector pt;
+    for (int i = 0; i < mesh.GetNE(); i++) {
+      const mfem::Geometry::Type geom = mesh.GetElementBaseGeometry(i);
+      mfem::ElementTransformation* T = mesh.GetElementTransformation(i);
+      const mfem::IntegrationRule& ir =
+          mfem::GlobGeometryRefiner.Refine(geom, options.subdivisions, 1)
+              ->RefPts;
+      mfem::real_t cmin = std::numeric_limits<mfem::real_t>::max();
+      mfem::real_t cmax = std::numeric_limits<mfem::real_t>::lowest();
+      for (int j = 0; j < ir.GetNPoints(); j++) {
+        const mfem::IntegrationPoint& ip = ir.IntPoint(j);
+        T->Transform(ip, pt);
+        const mfem::real_t r = pt.Norml2();
+        if (r < options.r_min || r > options.r_max) {
+          continue;
+        }
+        T->SetIntPoint(&ip);
+        const mfem::real_t c = ocean.Eval(*T, ip);
+        cmin = std::min(cmin, c);
+        cmax = std::max(cmax, c);
+      }
+      // Marked when the element's sampled range meets the band about the
+      // flotation threshold (cmin > cmax means no sample in the window);
+      // with a geometric width, when the element straddles the threshold
+      // or its estimated angular distance to the shoreline is below it.
+      bool mark = false;
+      if (cmin <= cmax) {
+        if (options.width > 0.0) {
+          if (cmin <= options.threshold && options.threshold <= cmax) {
+            mark = true;
+          } else if (cmax > cmin) {
+            mfem::Vector centre;
+            mesh.GetElementCenter(i, centre);
+            const mfem::real_t rc = std::max(centre.Norml2(), options.r_min);
+            const mfem::real_t ang = mesh.GetElementSize(i) / rc;
+            const mfem::real_t gap =
+                std::min(std::abs(cmin - options.threshold),
+                         std::abs(cmax - options.threshold));
+            mark = gap * ang / (cmax - cmin) <= options.width;
+          }
+        } else {
+          mark = cmax >= lo && cmin <= hi;
+        }
+      }
+      if (mark && options.target_h > 0.0 &&
+          mesh.GetElementSize(i) <= options.target_h) {
+        mark = false;
+      }
+      if (mark) {
+        refs.Append(mfem::Refinement(i));
+      }
+    }
+    int refined = refs.Size();
+#ifdef MFEM_USE_MPI
+    if (auto* pmesh = dynamic_cast<mfem::ParMesh*>(&mesh)) {
+      MPI_Allreduce(MPI_IN_PLACE, &refined, 1, MPI_INT, MPI_SUM,
+                    pmesh->GetComm());
+    }
+#endif
+    if (refined == 0) {
+      break;
+    }
+    mesh.GeneralRefinement(refs, -1, 0);
+    SnapToSpheres(mesh, options);
+    total += refined;
+  }
+  return total;
+}
 
 mfem::Array<int> ExternalBoundaryMarker(mfem::Mesh* mesh) {
   auto bdr_marker = mfem::Array<int>(mesh->bdr_attributes.Max());

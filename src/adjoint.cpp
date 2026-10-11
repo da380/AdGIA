@@ -330,6 +330,129 @@ void IsotropicKernel::AddPair(real_t w, const AdjointPair& p) {
   }
 }
 
+// --- SeaLevelLoadKernel ------------------------------------------------------
+
+SeaLevelLoadKernel::SeaLevelLoadKernel(
+    LinearQuasiStaticMixedSelfGravitatingProblem& adjoint_problem,
+    SeaLevelOperator& sea, VectorCoefficient& grad_phi0, real_t g_surf,
+    bool rotation)
+    : problem_(adjoint_problem),
+      sea_(sea),
+      grad_phi0_(grad_phi0),
+      g_surf_(g_surf),
+      rotation_(rotation) {
+  sl_ = detail::MakeGridFunction(&sea_.SurfaceSpace());
+}
+
+int SeaLevelLoadKernel::AddDirection(Coefficient& dsigma) {
+  directions_.push_back(&dsigma);
+  values_.push_back(0.0);
+  return static_cast<int>(directions_.size()) - 1;
+}
+
+real_t SeaLevelLoadKernel::Directional(int i) const {
+  return values_[i];  // SurfaceIntegral is already global
+}
+
+void SeaLevelLoadKernel::EnableQuelled(Coefficient& C, Coefficient& C0,
+                                       real_t rho_i) {
+  C_ = &C;
+  C0_ = &C0;
+  rho_i_ = rho_i;
+  i0_kernel_ = detail::MakeGridFunction(&sea_.SurfaceSpace());
+  *i0_kernel_ = 0.0;
+}
+
+void SeaLevelLoadKernel::ReadAdjointSeaLevel() {
+  Coefficient* psi =
+      rotation_ ? &problem_.SolutionCentrifugalPotential() : nullptr;
+  sea_.SeaLevelChangeFrom(problem_.Displacement(), grad_phi0_,
+                          problem_.Potential(),
+                          problem_.UniformPotentialTerm(), psi);
+  *sl_ = sea_.SeaLevelChangeField();
+}
+
+void SeaLevelLoadKernel::AddPair(real_t w, const AdjointPair& p) {
+  MFEM_VERIFY(!finalized_, "SeaLevelLoadKernel: already finalized.");
+  ReadAdjointSeaLevel();
+  GridFunctionCoefficient slc(sl_.get());
+
+  // Directional pairings: delta J = +g int dsigma(t) SL1+ dS in the
+  // LIBRARY's load/readout conventions (the FD gate fixed the sign;
+  // the paper's eq. 63 carries -g in its own conventions), the
+  // impulses with weight one (the fingerprint solves' singular parts).
+  for (std::size_t i = 0; i < directions_.size(); i++) {
+    directions_[i]->SetTime(p.t);
+    ProductCoefficient ds_sl(*directions_[i], slc);
+    values_[i] += w * g_surf_ * sea_.SurfaceIntegral(ds_sl);
+  }
+
+  if (!C_) {
+    return;
+  }
+  C_->SetTime(p.t);
+  // D_I0 += -w rho_i g (C(t) - C0) SL1+ (eq. 84's second kernel in the
+  // library's sign conventions; zero with a frozen ocean function).
+  {
+    SumCoefficient dC(*C_, *C0_, 1.0, -1.0);
+    ProductCoefficient dC_sl(dC, slc);
+    GridFunction tmp(&sea_.SurfaceSpace());
+    tmp.ProjectCoefficient(dC_sl);
+    i0_kernel_->Add(-w * rho_i_ * g_surf_, tmp);
+  }
+  // The Idot stack: per node the integrand +rho_i g (1 - C(t)) SL1+
+  // (library signs); an impulsive pairing is an ATOM — a finite jump
+  // of D_Idot — folded into the node's field with weight one.
+  {
+    SumCoefficient oneC(1.0, *C_, 1.0, -1.0);
+    ProductCoefficient i_sl(oneC, slc);
+    GridFunction tmp(&sea_.SurfaceSpace());
+    tmp.ProjectCoefficient(i_sl);
+    tmp *= rho_i_ * g_surf_;
+    if (p.impulse) {
+      atoms_t_.push_back(p.t);
+      atoms_.push_back(std::make_unique<GridFunction>(tmp));
+      return;
+    }
+    if (!times_.empty() && times_.back() == p.t) {
+      *idot_[times_.size() - 1] = tmp;  // the node's latest smooth value
+    } else {
+      times_.push_back(p.t);
+      idot_.push_back(std::make_unique<GridFunction>(tmp));
+    }
+  }
+}
+
+void SeaLevelLoadKernel::Finalize() {
+  if (finalized_ || !C_) {
+    finalized_ = true;
+    return;
+  }
+  // idot_[n] currently holds the integrand f(t_n); arrival order is
+  // DESCENDING forward time. Replace it by the backward cumulative
+  // trapezoid D(t_n) = int_{t_n}^{t_1} f ds, plus every atom at or
+  // after t_n.
+  const int K = static_cast<int>(times_.size());
+  GridFunction cum(&sea_.SurfaceSpace());
+  cum = 0.0;
+  std::unique_ptr<GridFunction> prev;
+  for (int k = 0; k < K; k++) {
+    if (prev) {
+      const real_t dt = times_[k - 1] - times_[k];
+      cum.Add(0.5 * dt, *prev);
+      cum.Add(0.5 * dt, *idot_[k]);
+    }
+    prev = std::make_unique<GridFunction>(*idot_[k]);
+    *idot_[k] = cum;
+    for (std::size_t a = 0; a < atoms_.size(); a++) {
+      if (atoms_t_[a] >= times_[k]) {
+        idot_[k]->Add(1.0, *atoms_[a]);
+      }
+    }
+  }
+  finalized_ = true;
+}
+
 // --- AdjointSolver -----------------------------------------------------------
 
 AdjointSolver::AdjointSolver(LinearQuasiStaticProblem& adjoint_problem,
@@ -400,7 +523,8 @@ bool AdjointSolver::RunStatic() {
       return false;
     }
     Pair(1.0, AdjointPair{*u_forward_, nullptr, {},
-                          problem_->Displacement(), {}});
+                          problem_->Displacement(), {},
+                          force_->ObservationTime(i), true, problem_});
   }
   return true;
 }
@@ -408,10 +532,15 @@ bool AdjointSolver::RunStatic() {
 bool AdjointSolver::ImpulseSolve(int obs, real_t s) {
   // The impulsive (singular) response: the observation dual on the
   // unrelaxed elastic operator alone — no branch forces, and no
-  // continuous loads (they are bounded and carry no delta part).
+  // continuous loads (they are bounded and carry no delta part). The
+  // time sync runs first so the operator carries this time's
+  // coefficients (the playback's fingerprint solve).
   op_->UseUnrelaxedOperator();
   auto& prob = op_->Problem();
   prob.AssembleForce(s);
+  if (time_sync_) {
+    time_sync_(forward_->Time(forward_->Size() - 1) - s);
+  }
   ApplyObservation(obs);
   return prob.Solve();
 }
@@ -473,12 +602,18 @@ bool AdjointSolver::RunEvolution() {
     node_obs[best].push_back(i);
   }
 
-  // Continuous terms through the force hook, reversed time mapped back.
+  // Continuous terms and the time sync through the force hook,
+  // reversed time mapped back (the sync runs FIRST, so refreshed
+  // operators see this time's coefficients before any dual lands).
   ResolveSlots(prob);
   const bool has_continuous =
       force_->HasContinuous() || force_->HasContinuousPotential();
-  if (has_continuous) {
+  const bool hook_needed = has_continuous || bool(time_sync_);
+  if (hook_needed) {
     op.SetForceHook([this, t1, &prob](real_t s) {
+      if (time_sync_) {
+        time_sync_(t1 - s);
+      }
       if (force_->HasContinuous()) {
         fbuf_.SetSize(prob.DisplacementSpace().GetVSize());
         fbuf_ = 0.0;
@@ -566,7 +701,7 @@ bool AdjointSolver::RunEvolution() {
         *mdag_f[b] = mbuf;
       }
       Pair(w, AdjointPair{u_f, d_f.get(), m_ptr, prob.Displacement(),
-                          mdag_ptr});
+                          mdag_ptr, fwd.Time(n), false, &prob});
     };
 
     if (!has_obs) {
@@ -583,8 +718,11 @@ bool AdjointSolver::RunEvolution() {
       }
       *udag_g = prob.Displacement();
       // The impulsive pairing: the adjoint factor is the purely elastic
-      // response; the m+_k are bounded, so mdag is empty here.
-      Pair(1.0, AdjointPair{u_f, d_f.get(), m_ptr, *udag_g, {}});
+      // response; the m+_k are bounded, so mdag is empty here. The
+      // problem's state is the impulse solve's (the generalized
+      // fingerprint fields), which the sea-level accumulators read.
+      Pair(1.0, AdjointPair{u_f, d_f.get(), m_ptr, *udag_g, {},
+                            fwd.Time(n), true, &prob});
       ApplyJump(*udag_g, mdag);
     }
     if (!ok) {
@@ -601,7 +739,7 @@ bool AdjointSolver::RunEvolution() {
     pair_state(wL);
   }
 
-  if (has_continuous) {
+  if (hook_needed) {
     op.SetForceHook(nullptr);
   }
   return ok;

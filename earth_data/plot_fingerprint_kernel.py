@@ -43,14 +43,14 @@ import surface_to_netcdf as s2n  # noqa: E402  (sibling script as module)
 
 
 def ice_mask(lats: np.ndarray, lons: np.ndarray, version: str, lmax: int,
-             threshold: float) -> np.ndarray:
-    """Present-day ice thickness > threshold on the (lat, lon) grid."""
+             threshold: float, date: float = 0.0) -> np.ndarray:
+    """Ice thickness > threshold at `date` (ka BP) on the grid."""
     from scipy.interpolate import RegularGridInterpolator
 
     from pyslfp.ice import IceNG
 
     model = IceNG(version=version)
-    ice, _ = model.get_ice_thickness_and_topography(0.0, lmax)
+    ice, _ = model.get_ice_thickness_and_topography(date, lmax)
     glats = np.asarray(ice.lats())
     glons = np.asarray(ice.lons())
     data = np.asarray(ice.data)
@@ -92,6 +92,23 @@ def main() -> None:
     p.add_argument("--side-by-side", action="store_true",
                    help="two kernels on one scale instead of kernel + "
                         "difference")
+    p.add_argument("--ice-dates", nargs="+", type=float, default=None,
+                   help="mask each column by the ICE-7G extent at this "
+                        "date (ka BP), one per CSV [present for all] — "
+                        "ice-history kernels should be masked by the "
+                        "sheet AT THAT EPOCH")
+    p.add_argument("--global-only", action="store_true",
+                   help="global maps only (no Greenland/Antarctica zoom "
+                        "rows) — the right layout for deglacial-time "
+                        "ice kernels and for viscosity-kernel depth "
+                        "shells")
+    p.add_argument("--cbar-label", default=None,
+                   help="colourbar label [dSL(obs)/dzeta, with the mask "
+                        "state appended]")
+    p.add_argument("--obs-label", default=None,
+                   help="figure headline naming the observation, e.g. "
+                        "'sensitivity of present-day sea level at "
+                        "Boston'")
     args = p.parse_args()
     if len(args.csv) > 2:
         raise SystemExit("at most two kernels (1-D and 3-D)")
@@ -117,15 +134,23 @@ def main() -> None:
         lats, lons, field = s2n.grid(xyz, values, args.nlat, args.nlon)
         fields.append(field)
 
+    # One mask per column: ice-history kernels are masked by the sheet
+    # at their own epoch (--ice-dates), a difference column by the
+    # FIRST epoch's extent.
+    dates = args.ice_dates or [0.0] * len(args.csv)
+    if len(dates) == 1:
+        dates = dates * len(args.csv)
     if args.no_mask:
-        mask = np.ones((args.nlat, args.nlon), dtype=bool)
+        masks = [np.ones((args.nlat, args.nlon), dtype=bool)
+                 for _ in args.csv]
     else:
-        mask = ice_mask(lats, lons, args.version, args.ice_lmax,
-                        args.ice_threshold)
+        masks = [ice_mask(lats, lons, args.version, args.ice_lmax,
+                          args.ice_threshold, d) for d in dates]
 
     if difference:
         fields = [fields[0], fields[1] - fields[0]]
-    masked = [np.where(mask, f, np.nan) for f in fields]
+        masks = [masks[0], masks[0]]
+    masked = [np.where(mk, f, np.nan) for mk, f in zip(masks, fields)]
 
     # Per-column colour scales, robust over the masked values. The
     # kernel sits on the mass-conservation plateau -1/(rho_w A), so
@@ -148,10 +173,14 @@ def main() -> None:
         joint = np.concatenate([m[np.isfinite(m)] for m in masked])
         scales = [limits(joint[None, :], False)] * len(masked)
 
-    # Panels: per model a global map plus Greenland and Antarctica zooms.
+    # Panels: per model a global map plus Greenland and Antarctica zooms
+    # (--global-only: the top row alone).
     ncols = len(fields)
-    fig = plt.figure(figsize=(7.2 * ncols, 12.0), layout="constrained")
-    gs = fig.add_gridspec(3, ncols, height_ratios=[1.6, 1.0, 1.0])
+    nrows = 1 if args.global_only else 3
+    fig = plt.figure(figsize=(7.2 * ncols, 4.4 if args.global_only else 12.0),
+                     layout="constrained")
+    gs = fig.add_gridspec(nrows, ncols,
+                          height_ratios=[1.6, 1.0, 1.0][:nrows])
     pc = ccrs.PlateCarree()
 
     def panel(ax, field, vmin, vmax, zoom=None):
@@ -171,6 +200,9 @@ def main() -> None:
         panel(ax, field, vmin, vmax)
         ax.set_global()
         ax.set_title(title)
+        col_axes[c] = [ax]
+        if args.global_only:
+            continue
         axg = fig.add_subplot(gs[1, c], projection=pc)
         panel(axg, field, vmin, vmax, zoom=[-75.0, -10.0, 58.0, 85.0])
         axg.set_title("Greenland")
@@ -180,9 +212,12 @@ def main() -> None:
         axa.set_title("Antarctica")
         col_axes[c] = [ax, axg, axa]
 
-    labels = (["dSL(obs) / dzeta  (L2 kernel, ice-masked)",
-               "kernel difference"] if difference else
-              ["dSL(obs) / dzeta  (L2 kernel, ice-masked)"] * ncols)
+
+    base_label = args.cbar_label or (
+        "dSL(obs) / dzeta  (L2 kernel, "
+        + ("unmasked)" if args.no_mask else "ice-masked)"))
+    labels = ([base_label, "kernel difference"] if difference else
+              [base_label] * ncols)
     done = set()
     for c, ((vmin, vmax), label) in enumerate(zip(scales, labels)):
         key = (vmin, vmax)
@@ -196,6 +231,8 @@ def main() -> None:
         fig.colorbar(sm, ax=axes, orientation="horizontal",
                      shrink=0.7 if difference else 0.5, pad=0.02,
                      label=label)
+    if args.obs_label:
+        fig.suptitle(args.obs_label, fontsize=14)
     fig.savefig(args.out, dpi=200)
     print(f"{args.out}: {ncols} column(s)"
           f"{' (kernel + difference)' if difference else ''}, "

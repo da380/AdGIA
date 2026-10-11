@@ -474,6 +474,16 @@ The structure, for implementation:
   gated at GA2), per David: standard for modern mm/cm amplitudes,
   not for deglacial work.
 
+Implemented 11 Oct 2026: `AdjointSolver::SetTimeSync` (the playback
+callback, forward time, fired before every reversed-stepping solve
+and every impulse solve), with the same force-hook pattern on the
+forward operator as the stepping/migration interleave. Gated with a
+prescribed moving ocean against sharp FD, frozen-C control 11×
+worse (`PlaybackKernels`; measurements in the plan). The remaining
+migrating-forward piece is the per-step recording of the Picard-
+converged C and the δC terms' smallness assessment on a real
+deglacial configuration.
+
 ## WP8.2 implementation findings (11 Oct 2026)
 
 - **Interior observation times** split the node's trapezoid weight

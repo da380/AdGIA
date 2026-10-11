@@ -38,8 +38,12 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <cmath>
+#include <functional>
+#include <limits>
 #include <memory>
+#include <vector>
 
 #include "AdGIA.hpp"
 #include "MixedProblemTestCommon.hpp"
@@ -82,6 +86,25 @@ double MuLateral(const Vector& x) {
   return self_grav_test::kMu *
          (1.0 - 0.25 * (x[1] * x[1] - x[2] * x[2]) + 0.2 * x[0] * x[1]);
 }
+
+// A mixed problem whose water weight is a prescribed time-aware
+// coefficient; Sync(t) refreshes the water blocks at a new time (the
+// stepping/migration interleave and the adjoint playback alike).
+struct MovingProblem {
+  FunctionCoefficient w;  // the (x, t) form reads its own stored time
+  std::unique_ptr<LinearQuasiStaticMixedSelfGravitatingProblem> prob;
+  real_t last = std::numeric_limits<real_t>::quiet_NaN();
+  explicit MovingProblem(std::function<real_t(const Vector&, real_t)> wf)
+      : w(std::move(wf)) {}
+  void Sync(real_t t) {
+    if (t == last) {
+      return;
+    }
+    w.SetTime(t);
+    prob->RefreshWaterLoad();
+    last = t;
+  }
+};
 
 // m0 (1 + s chi), owned (as in TestAdjoint.cpp).
 struct Bumped {
@@ -471,4 +494,395 @@ TEST(AdjointFingerprint, FullPhysicsKernels) {
   // border rows (its functional reads the uniform term and omega) —
   // the gate on BorderForceSlot's sign and scale.
   gate(sweep_sl, &Measured::J_sl, "full-physics SL observation");
+}
+
+// The C† playback gate (WP8.4's migrating-forward backbone, David's
+// norm: migration is standard in deglacial work): a forward whose
+// ocean function is PRESCRIBED and MOVING, C(x, t), so the problem is
+// exactly linear with time-dependent coefficients and the FD side is
+// sharp (no shoreline-feedback floor — the solution-fed Picard forward
+// adds only the theory-small delta-C terms on top of this machinery).
+// The forward steps with the force hook refreshing the water blocks at
+// every assembly (the viscoelastic-migration interleave mechanism);
+// the adjoint plays the SAME coefficients back in reversed time
+// through AdjointSolver::SetTimeSync. A FROZEN-C adjoint on the same
+// forward is the discriminating control: it must be visibly wrong.
+TEST(AdjointFingerprint, PlaybackKernels) {
+  const int order = 2, n_steps = 12;
+  const real_t t1 = 1.5;  // Maxwell times
+  const real_t kOm_ = kOmega;
+  Fixture f(order);
+  auto kappa0 = ConstantCoefficient(self_grav_test::kKappa);
+  auto mu0 = ConstantCoefficient(self_grav_test::kMu);
+  auto eta0 = ConstantCoefficient(self_grav_test::kMu);  // tau = 1
+  auto tau0 = RatioCoefficient(eta0, mu0);
+  const real_t g0 =
+      4.0 * M_PI * self_grav_test::kG * self_grav_test::kRho / 3.0;
+
+  // The prescribed moving ocean: a smooth cap boundary sweeping north
+  // over the run. The weight amplitude is CRANKED far above the
+  // physical kRhoW: this is a machinery gate, and at weak water
+  // feedback the frozen-C control cannot discriminate (measured: at
+  // kRhoW = 0.02 the frozen adjoint's eta-all error is 5.5e-4 —
+  // barely above the playback's own 3.6e-4 — because the moving
+  // blocks hardly couple into dJ/d eta).
+  const real_t w_amp = 0.5;
+  auto ocean_weight = [g0, t1, w_amp](const Vector& x, real_t t) {
+    const real_t r = x.Norml2();
+    const real_t z0 = -0.1 + 0.5 * (t / t1);
+    const real_t c = 0.5 * (1.0 + std::tanh((z0 - x[2] / r) / 0.15));
+    return w_amp * c / g0;
+  };
+  auto sigma_data = FunctionCoefficient([](const Vector& x) {
+    const real_t r = x.Norml2();
+    const real_t c = x[2] / r;
+    return 0.02 * (3.0 * c * c - 0.5 + 0.5 * x[0] * x[2] / (r * r));
+  });
+  auto zero_data = ConstantCoefficient(0.0);
+
+  auto n1 = UnitDir(0.3, 0.5, 0.81);
+  auto h_u = VectorFunctionCoefficient(3, [n1](const Vector& x, Vector& v) {
+    const real_t w = MeltCap(x, n1);
+    v = x;
+    v *= w / x.Norml2();
+  });
+  auto g_u = LinearForm(f.fes_u.get());
+  g_u.AddBoundaryIntegrator(new VectorBoundaryLFIntegrator(h_u), f.surface);
+  g_u.Assemble();
+
+  const real_t dt = t1 / n_steps;
+  auto make_moving = [&](const Rheology& rheology, Coefficient& data,
+                         std::function<real_t(const Vector&, real_t)> wfun) {
+    auto mp = std::make_unique<MovingProblem>(std::move(wfun));
+    mp->prob = std::make_unique<LinearQuasiStaticMixedSelfGravitatingProblem>(
+        f.fes_u.get(), f.fes_phi.get(), rheology, f.rho,
+        self_grav_test::kG, self_grav_test::kDtNDegree);
+    mp->prob->SetWaterLoad(mp->w, data, f.surface);
+    mp->prob->SetRotation(kOm_, f.moments);
+    mp->prob->SetRelTol(1e-11);
+    return mp;
+  };
+
+  auto run_forward = [&](Coefficient& kappa, Coefficient& mu,
+                         Coefficient& eta) {
+    auto tau = RatioCoefficient(eta, mu);
+    auto rheology = IsotropicMaxwellRheology::Maxwell(3, kappa, mu, tau);
+    auto mp = make_moving(rheology, sigma_data, ocean_weight);
+    auto visco = ViscoelasticOperator(*mp->prob);
+    visco.SetForceHook([&](real_t t) { mp->Sync(t); });
+    ExponentialTrapezoidSolver ode;
+    ode.Init(visco);
+    Vector m(visco.Height());
+    m = 0.0;
+    real_t t = 0.0, dt_step = dt;
+    EXPECT_TRUE(visco.SolveElastic(m, t));
+    for (int n = 1; n <= n_steps; n++) {
+      ode.Step(m, t, dt_step);
+    }
+    EXPECT_TRUE(visco.SolveElastic(m, t));
+    return static_cast<real_t>(g_u * mp->prob->Displacement());
+  };
+
+  // Base run on persistent operators, recording the trajectory.
+  auto rheology0 = IsotropicMaxwellRheology::Maxwell(3, kappa0, mu0, tau0);
+  auto mp_fwd = make_moving(rheology0, sigma_data, ocean_weight);
+  auto visco_fwd = ViscoelasticOperator(*mp_fwd->prob);
+  visco_fwd.SetForceHook([&](real_t t) { mp_fwd->Sync(t); });
+  auto trajectory = ForwardTrajectory(visco_fwd, true);
+  {
+    ExponentialTrapezoidSolver ode;
+    ode.Init(visco_fwd);
+    Vector m(visco_fwd.Height());
+    m = 0.0;
+    real_t t = 0.0, dt_step = dt;
+    trajectory.Record(m, t);
+    for (int n = 1; n <= n_steps; n++) {
+      ode.Step(m, t, dt_step);
+      trajectory.Record(m, t);
+    }
+  }
+
+  auto chi_blob3 = FunctionCoefficient([](const Vector& x) {
+    const real_t dx = x[0] - 0.3, dy = x[1] - 0.35, dz = x[2] - 0.4;
+    return std::exp(-(dx * dx + dy * dy + dz * dz) / 0.03);
+  });
+  auto chi_all = ConstantCoefficient(1.0);
+  FiniteElementSpace sfes(f.body.get(), f.fec.get());
+  std::vector<ProductCoefficient> dirs;
+  dirs.emplace_back(eta0, chi_blob3);
+  dirs.emplace_back(eta0, chi_all);
+  dirs.emplace_back(mu0, chi_blob3);
+
+  // One adjoint sweep on a given twin, with or without the playback.
+  auto sweep_ratios = [&](MovingProblem& mp_adj, bool playback,
+                          std::array<real_t, 3>& out,
+                          const std::array<real_t, 3>& fd) {
+    auto visco_adj = ViscoelasticOperator(*mp_adj.prob);
+    auto K_eta = IsotropicKernel(IsotropicKernel::Parameter::Eta, sfes,
+                                 &tau0);
+    auto K_mu = IsotropicKernel(IsotropicKernel::Parameter::Mu, sfes);
+    K_eta.AddDirection(dirs[0]);
+    K_eta.AddDirection(dirs[1]);
+    K_mu.AddDirection(dirs[2]);
+    AdjointForce force;
+    force.AddObservation(trajectory.Time(n_steps), g_u);
+    auto solver = AdjointSolver(visco_adj, trajectory);
+    solver.SetForce(force);
+    solver.AddKernel(K_eta);
+    solver.AddKernel(K_mu);
+    if (playback) {
+      solver.SetTimeSync([&](real_t t_fwd) { mp_adj.Sync(t_fwd); });
+    }
+    EXPECT_TRUE(solver.Run());
+    out = {K_eta.Directional(0) / fd[0], K_eta.Directional(1) / fd[1],
+           K_mu.Directional(0) / fd[2]};
+  };
+
+  // FD per direction.
+  const real_t eps = 1e-3;
+  std::array<real_t, 3> fd{};
+  Coefficient* chi_of[3] = {&chi_blob3, &chi_all, &chi_blob3};
+  for (int d = 0; d < 3; d++) {
+    real_t two = 0.0;
+    for (const real_t sg : {eps, -eps}) {
+      auto bm = Bump(mu0, *chi_of[d], d == 2 ? sg : 0.0);
+      auto be = Bump(eta0, *chi_of[d], d == 2 ? 0.0 : sg);
+      two += (sg > 0 ? 1.0 : -1.0) *
+             run_forward(kappa0, *bm.value, *be.value);
+    }
+    fd[d] = two / (2.0 * eps);
+  }
+
+  // The playback sweep, against the frozen-C control (the SAME moving
+  // weight evaluated at its construction-time default, never synced).
+  auto mp_adj = make_moving(rheology0, zero_data, ocean_weight);
+  std::array<real_t, 3> played{}, frozen{};
+  sweep_ratios(*mp_adj, true, played, fd);
+  auto mp_frozen = make_moving(rheology0, zero_data, ocean_weight);
+  sweep_ratios(*mp_frozen, false, frozen, fd);
+
+  // Thresholds encode measurements: played eta rows 0.9617 (blob,
+  // the spatial floor) / 0.99951 (all) and mu blob 1.152 — the
+  // full-physics gate's grades — while the frozen control's eta-all
+  // sits at 0.9944: eleven times the playback's deviation, and above
+  // an absolute 3e-3 floor the played row never approaches.
+  EXPECT_NEAR(played[0], 1.0, 1.5e-1) << "playback eta blob";
+  EXPECT_NEAR(played[1], 1.0, 1e-3) << "playback eta all";
+  EXPECT_NEAR(played[2], 1.0, 3e-1) << "playback mu blob";
+  EXPECT_GT(std::abs(frozen[1] - 1.0),
+            5.0 * std::max(std::abs(played[1] - 1.0), 1e-4))
+      << "the frozen-C control must be visibly wrong (eta all)";
+  EXPECT_GT(std::abs(frozen[1] - 1.0), 3e-3)
+      << "the frozen-C control's absolute error floor";
+}
+
+// Gate GA4: the ice kernels on the moving-ocean configuration — the
+// universal data-load pairing delta J = -g int int dsigma SL1+ dS dt
+// (SeaLevelLoadKernel), FD-gated for an ice-RATE direction and an
+// INITIAL-THICKNESS direction through the frozen-C0 load law
+// sigma_d = rho_i [(1 - C(t)) I(t) - (1 - C0) I0] with
+// I = I0 + Idot t, on the prescribed moving ocean (so FD is sharp and
+// the I0 kernel is live: with a frozen ocean D_I0 vanishes
+// identically). The quelled (Idot, I0) kernels of eq. 84 are
+// accumulated as fields and checked for consistency against the
+// directional route (the same data through projection instead of
+// quadrature — interpolation grade; the Idot stack's time integral
+// carries the O(dt) endpoint bookkeeping of its trapezoid).
+TEST(AdjointFingerprint, IceKernels) {
+  const int order = 2, n_steps = 12;
+  const real_t t1 = 1.5;
+  const real_t kOm_ = kOmega;
+  const real_t rho_i = 0.045;
+  Fixture f(order);
+  auto kappa0 = ConstantCoefficient(self_grav_test::kKappa);
+  auto mu0 = ConstantCoefficient(self_grav_test::kMu);
+  auto eta0 = ConstantCoefficient(self_grav_test::kMu);
+  auto tau0 = RatioCoefficient(eta0, mu0);
+  const real_t g0 =
+      4.0 * M_PI * self_grav_test::kG * self_grav_test::kRho / 3.0;
+  auto grad_phi0 = f.GradPhi0();
+
+  // The prescribed moving ocean (fraction and weight).
+  const real_t w_amp = 0.5;
+  auto c_fun = [t1](const Vector& x, real_t t) {
+    const real_t r = x.Norml2();
+    const real_t z0 = -0.1 + 0.5 * (t / t1);
+    return 0.5 * (1.0 + std::tanh((z0 - x[2] / r) / 0.15));
+  };
+  auto ocean_weight = [c_fun, g0, w_amp](const Vector& x, real_t t) {
+    return w_amp * c_fun(x, t) / g0;
+  };
+  auto C_t = FunctionCoefficient(c_fun);
+  auto C0 = FunctionCoefficient(
+      [c_fun](const Vector& x) { return c_fun(x, 0.0); });
+
+  // The ice history: a cap I0 melting at a constant rate.
+  auto n_a = UnitDir(0.2, 0.75, 0.63);
+  auto I0_pat = [n_a](const Vector& x) { return 2.0 * MeltCap(x, n_a); };
+  auto Idot_pat = [n_a](const Vector& x) {
+    return -0.8 * MeltCap(x, n_a);
+  };
+  // sigma_d(x, t; eps0, epsi) with the perturbation patterns chi0, chii
+  // bumped by eps0 and epsi.
+  auto n_b = UnitDir(-0.3, 0.6, 0.74);
+  auto n_c = UnitDir(0.55, -0.2, 0.81);
+  auto chi_i = [n_b](const Vector& x) { return MeltCap(x, n_b); };
+  auto chi_0 = [n_c](const Vector& x) { return MeltCap(x, n_c); };
+  auto make_sigma = [&](real_t eps0, real_t epsi) {
+    return FunctionCoefficient(
+        [=](const Vector& x, real_t t) {
+          const real_t I0 = I0_pat(x) + eps0 * chi_0(x);
+          const real_t I = I0 + (Idot_pat(x) + epsi * chi_i(x)) * t;
+          const real_t c = c_fun(x, t), c0 = c_fun(x, 0.0);
+          return rho_i * ((1.0 - c) * I - (1.0 - c0) * I0);
+        });
+  };
+  auto sigma0 = make_sigma(0.0, 0.0);
+  auto zero_data = ConstantCoefficient(0.0);
+
+  // The kernel directions: the load-law derivatives along chi.
+  auto dsigma_i = FunctionCoefficient([&](const Vector& x, real_t t) {
+    return rho_i * (1.0 - c_fun(x, t)) * chi_i(x) * t;
+  });
+  auto dsigma_0 = FunctionCoefficient([&](const Vector& x, real_t t) {
+    return rho_i * (c_fun(x, 0.0) - c_fun(x, t)) * chi_0(x);
+  });
+
+  auto n1 = UnitDir(0.3, 0.5, 0.81);
+  auto h_u = VectorFunctionCoefficient(3, [n1](const Vector& x, Vector& v) {
+    const real_t w = MeltCap(x, n1);
+    v = x;
+    v *= w / x.Norml2();
+  });
+  auto g_u = LinearForm(f.fes_u.get());
+  g_u.AddBoundaryIntegrator(new VectorBoundaryLFIntegrator(h_u), f.surface);
+  g_u.Assemble();
+
+  const real_t dt = t1 / n_steps;
+  auto make_moving = [&](Coefficient& data) {
+    auto mp = std::make_unique<MovingProblem>(ocean_weight);
+    auto rheology =
+        IsotropicMaxwellRheology::Maxwell(3, kappa0, mu0, tau0);
+    // rheology must outlive the problem: build per call, keep together.
+    struct Owned : MovingProblem {
+      IsotropicMaxwellRheology rh;
+      Owned(std::function<real_t(const Vector&, real_t)> wf,
+            IsotropicMaxwellRheology r)
+          : MovingProblem(std::move(wf)), rh(std::move(r)) {}
+    };
+    auto op = std::make_unique<Owned>(ocean_weight, std::move(rheology));
+    op->prob = std::make_unique<LinearQuasiStaticMixedSelfGravitatingProblem>(
+        f.fes_u.get(), f.fes_phi.get(), op->rh, f.rho, self_grav_test::kG,
+        self_grav_test::kDtNDegree);
+    op->prob->SetWaterLoad(op->w, data, f.surface);
+    op->prob->SetRotation(kOm_, f.moments);
+    op->prob->SetRelTol(1e-11);
+    return op;
+  };
+
+  auto run_forward = [&](Coefficient& data) {
+    auto mp = make_moving(data);
+    auto visco = ViscoelasticOperator(*mp->prob);
+    visco.SetForceHook([&](real_t t) { mp->Sync(t); });
+    ExponentialTrapezoidSolver ode;
+    ode.Init(visco);
+    Vector m(visco.Height());
+    m = 0.0;
+    real_t t = 0.0, dt_step = dt;
+    EXPECT_TRUE(visco.SolveElastic(m, t));
+    for (int n = 1; n <= n_steps; n++) {
+      ode.Step(m, t, dt_step);
+    }
+    EXPECT_TRUE(visco.SolveElastic(m, t));
+    return static_cast<real_t>(g_u * mp->prob->Displacement());
+  };
+
+  // The base forward on persistent operators.
+  auto mp_fwd = make_moving(sigma0);
+  auto visco_fwd = ViscoelasticOperator(*mp_fwd->prob);
+  visco_fwd.SetForceHook([&](real_t t) { mp_fwd->Sync(t); });
+  auto trajectory = ForwardTrajectory(visco_fwd, true);
+  {
+    ExponentialTrapezoidSolver ode;
+    ode.Init(visco_fwd);
+    Vector m(visco_fwd.Height());
+    m = 0.0;
+    real_t t = 0.0, dt_step = dt;
+    trajectory.Record(m, t);
+    for (int n = 1; n <= n_steps; n++) {
+      ode.Step(m, t, dt_step);
+      trajectory.Record(m, t);
+    }
+  }
+
+  // The adjoint with the playback and the sea-level load kernel.
+  auto mp_adj = make_moving(zero_data);
+  auto visco_adj = ViscoelasticOperator(*mp_adj->prob);
+  SeaLevelOperator sea(*f.fes_u, f.surface);
+  auto K = SeaLevelLoadKernel(*mp_adj->prob, sea, grad_phi0, g0, true);
+  K.AddDirection(dsigma_i);
+  K.AddDirection(dsigma_0);
+  K.EnableQuelled(C_t, C0, rho_i);
+  AdjointForce force;
+  force.AddObservation(trajectory.Time(n_steps), g_u);
+  auto solver = AdjointSolver(visco_adj, trajectory);
+  solver.SetForce(force);
+  solver.AddKernel(K);
+  solver.SetTimeSync([&](real_t t_fwd) { mp_adj->Sync(t_fwd); });
+  ASSERT_TRUE(solver.Run());
+  K.Finalize();
+
+  // FD along the two ice directions.
+  const real_t eps = 1e-2;  // the load is linear in (I0, Idot): exact
+  real_t fd_i = 0.0, fd_0 = 0.0;
+  for (const real_t sg : {eps, -eps}) {
+    auto sp = make_sigma(0.0, sg);
+    fd_i += (sg > 0 ? 1.0 : -1.0) * run_forward(sp);
+    auto s0 = make_sigma(sg, 0.0);
+    fd_0 += (sg > 0 ? 1.0 : -1.0) * run_forward(s0);
+  }
+  fd_i /= 2.0 * eps;
+  fd_0 /= 2.0 * eps;
+
+  // Thresholds encode measurements: both directionals at 1.2-1.9e-2 of
+  // FD — the adjoint-SL readout's route grade on this coarse ball (the
+  // FD side is exact, the load being linear in (I0, Idot)).
+  EXPECT_NEAR(K.Directional(0) / fd_i, 1.0, 5e-2) << "ice-rate direction";
+  EXPECT_NEAR(K.Directional(1) / fd_0, 1.0, 5e-2)
+      << "initial-thickness direction";
+
+  // Quelled-field consistency: the same data through the field routes.
+  // D_I0 against the initial-thickness directional (projection vs
+  // quadrature: interpolation grade).
+  {
+    auto chi0_c = FunctionCoefficient(chi_0);
+    GridFunctionCoefficient i0c(&K.I0Kernel());
+    ProductCoefficient pc(chi0_c, i0c);
+    const real_t via_field = sea.SurfaceIntegral(pc);
+    // Projection (nodal) vs quadrature of the moving-front-weighted
+    // product: measured 7e-2 on the coarse ball.
+    EXPECT_NEAR(via_field / K.Directional(1), 1.0, 1.5e-1)
+        << "I0 kernel field vs directional";
+  }
+  // The Idot stack's time integral against the ice-rate directional
+  // (adds the stack trapezoid's O(dt) endpoint bookkeeping).
+  {
+    GridFunction time_int(&sea.SurfaceSpace());
+    time_int = 0.0;
+    const int K_n = K.NumTimes();
+    for (int n = 0; n < K_n; n++) {
+      const real_t tn = K.Time(n);
+      const real_t tp = n > 0 ? K.Time(n - 1) : tn;
+      const real_t tm = n + 1 < K_n ? K.Time(n + 1) : tn;
+      const real_t w = 0.5 * ((tp - tn) + (tn - tm));
+      time_int.Add(w, K.IdotKernel(n));
+    }
+    auto chii_c = FunctionCoefficient(chi_i);
+    GridFunctionCoefficient tic(&time_int);
+    ProductCoefficient pc(chii_c, tic);
+    const real_t via_stack = sea.SurfaceIntegral(pc);
+    // Measured 3.3e-4 (the stack trapezoid's endpoint bookkeeping).
+    EXPECT_NEAR(via_stack / K.Directional(0), 1.0, 5e-3)
+        << "Idot stack time-integral vs directional";
+  }
 }

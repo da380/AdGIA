@@ -110,6 +110,8 @@ if(USE_MPI)
     target_link_libraries(TestShorelineMigrationPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestSeaLevelViscoelasticPar TestSeaLevelViscoelasticPar.cpp)
     target_link_libraries(TestSeaLevelViscoelasticPar PRIVATE AdGIA MPI::MPI_CXX)
+    add_executable(TestShorelineRefinementPar TestShorelineRefinementPar.cpp)
+    target_link_libraries(TestShorelineRefinementPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestMonolithicBorderPar TestMonolithicBorderPar.cpp)
     target_link_libraries(TestMonolithicBorderPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestSphericalHarmonicsPar TestSphericalHarmonicsPar.cpp)
@@ -192,6 +194,9 @@ if(USE_MPI)
         add_test(NAME TestShorelineMigrationPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestShorelineMigrationPar>)
+        add_test(NAME TestShorelineRefinementPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestShorelineRefinementPar>)
         add_test(NAME TestSeaLevelViscoelasticPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestSeaLevelViscoelasticPar>)
@@ -265,6 +270,10 @@ gtest_discover_tests(TestAdjointFingerprint)
 add_executable(TestAdjointLove TestAdjointLove.cpp)
 target_link_libraries(TestAdjointLove PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestAdjointLove)
+
+add_executable(TestShorelineRefinement TestShorelineRefinement.cpp)
+target_link_libraries(TestShorelineRefinement PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestShorelineRefinement)
 
 add_executable(TestSubMeshMixedBilinearForm TestSubMeshMixedBilinearForm.cpp)
 target_link_libraries(TestSubMeshMixedBilinearForm PRIVATE AdGIA gtest_main)
