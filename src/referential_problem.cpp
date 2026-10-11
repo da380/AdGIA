@@ -1761,9 +1761,9 @@ LinearQuasiStaticReferentialSelfGravitatingProblem::ModelInertiaTensor() {
 
 void LinearQuasiStaticReferentialSelfGravitatingProblem::SetTisserandGauge(
     bool on) {
-  if (on && !rot_gauge_M_.Ptr()) {
-    rot_gauge_form_ = AssembleMassOperator(rho_, rot_gauge_M_);
-  }
+  // The metric is assembled lazily in SetupSolver, after all fluid
+  // configuration: on a fluid model the gauge restricts to the solid
+  // attributes (the mantle Tisserand frame).
   if (on != tisserand_gauge_) {
     tisserand_gauge_ = on;
     operator_dirty_ = true;  // the solver is rebuilt with the gauge
@@ -2013,11 +2013,13 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::AssembleForce(real_t t)
     injection_->Mult(*b_zeta_, bL);
     ToTrueDofs(*fes_zeta_, bL, B_zeta_);
   }
-  MakeCompatible(B_zeta_);
   if (rot_enabled_) {
-    // The omega-row data -int sigma psi_k dS, read off the raw
+    // The omega-row data -int sigma psi_k dS, read off the RAW
     // surface-load form (B_zeta_ holds -int sigma chi for every
-    // registered surface load; the mixed class's convention).
+    // registered surface load), before the compatibility projection —
+    // the mixed class's convention. (MakeCompatible is a 2-D no-op and
+    // the rotation border is 3-D only, so the order is convention, not
+    // correctness; it matters if a 3-D compatibility fix ever appears.)
     auto psig = detail::MakeGridFunction(fes_zeta_);
     Vector Psi(fes_zeta_->GetTrueVSize());
     for (int k = 0; k < static_cast<int>(rot_psi_.size()); k++) {
@@ -2026,6 +2028,7 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::AssembleForce(real_t t)
       rot_r_[k] = Dot(B_zeta_, Psi);
     }
   }
+  MakeCompatible(B_zeta_);
   if (sea_enabled_) {
     // The mass-row data int sigma_data dS at this time, along the
     // border's assembly route. NO Jacobian factor here: sigma is per
@@ -2165,7 +2168,27 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetupSolver(OperatorHan
     // The Tisserand representative: the mapped-rotation basis with the
     // rho-weighted mass metric pins int rho~ phi_e x u = 0 (and the
     // momentum partner); the zeta partners have zero M-norm and keep
-    // the Euclidean gauge, as SetGauge prescribes.
+    // the Euclidean gauge, as SetGauge prescribes. On a model with
+    // fluid regions the whole-body condition is relabelling-gauge-
+    // dependent (a fluid core's rigid swirls are FRLs carrying
+    // momentum), so the metric restricts to the SOLID attributes — the
+    // mantle Tisserand frame of Earth-rotation theory; the omega-row
+    // integrals stay whole-body, being exactly FRL-invariant
+    // (doc/planning/generalised_rotation_note.md, "The fluid-core
+    // wrinkle"). Assembled here, after all fluid configuration.
+    if (HasGaugedFluid() || HasMaxwellFluid()) {
+      const Array<int>& fm = fluid_op_.Marker();
+      rot_gauge_marker_.SetSize(fm.Size());
+      for (int i = 0; i < fm.Size(); i++) {
+        rot_gauge_marker_[i] = fm[i] ? 0 : 1;
+      }
+      rot_gauge_rho_ = std::make_unique<RestrictedCoefficient>(
+          *rho_, rot_gauge_marker_);
+      rot_gauge_form_ = AssembleMassOperator(rot_gauge_rho_.get(),
+                                             rot_gauge_M_);
+    } else {
+      rot_gauge_form_ = AssembleMassOperator(rho_, rot_gauge_M_);
+    }
     rot_gauge_block_ = std::make_unique<BlockOperator>(offsets_);
     rot_gauge_block_->SetBlock(0, 0, rot_gauge_M_.Ptr());
     projected_->SetGauge(rot_gauge_block_.get());

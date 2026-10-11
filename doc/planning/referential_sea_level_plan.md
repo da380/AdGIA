@@ -173,6 +173,17 @@ rebuilding `u·∇Φ₀ + φ` from pieces.
   the traditional row's eq-(20) violation is demonstrated (ω shifts
   under a rigid-motion re-gauge of u) while the generalised ω is
   invariant — an invariance certificate, no external reference needed.
+  **Status: delivered through G8d + G8c phase 1** (11 Oct 2026; the
+  note's gates table has the measurements): the generalised door
+  (`SetRotation(Omega)` = model inertia + Tisserand gauge, the
+  input-inertia option = `SetRotation(Omega, moments)` +
+  `SetTisserandGauge(true)`), `TestGeneralisedRotation` +
+  `GeneralisedRotationDoor` + `ConservationCertificate` (+ the
+  `water+generalised` parallel-twin case), and the demonstration
+  example `examples/generalised_rotation.cpp` (decision 3's
+  deliverable). Open: the fluid-core door's gauge (the note's
+  "fluid-core wrinkle" — a design question for review) and the
+  Mitrovica & Wahr viscoelastic numerical check.
 
 ## Gates (each phase separately gated, the house ladder)
 

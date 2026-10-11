@@ -206,6 +206,9 @@ survives, derived rather than assumed:
   with I⁽⁰⁾ replaced by I_obs the pair (u, ω) is still unique. The
   input-inertia generalised door therefore *strictly dominates* the
   traditional theory: same data requirements, no gauge pathology.
+  Concretely it is `SetRotation(Omega, moments)` +
+  `SetTisserandGauge(true)` — no third API; the model-inertia
+  degeneracy refusal points here.
 - **Exactness does not.** Conservation-based certificates (δ(IΩ) = 0
   re-integrated at the solution) degrade at O(|I_obs − I_model|): the
   option reintroduces a two-model split, confined to the dense border
@@ -217,14 +220,72 @@ survives, derived rather than assumed:
   backgrounds with surface water", including the observed-sea-level
   density inverse), after which nothing is imposed.
 
+## The fluid-core wrinkle (G8c, worked to its design question)
+
+A fluid relabelling (FRL) of a fluid region F is v with div(ρv) = 0 in
+F and v·n̂ = 0 on ∂F: unobservable, so every physical reading must be
+invariant under u → u + v. Two computations pin what G8c can and
+cannot certify:
+
+- **The ω-row IS FRL-invariant.** ∫_F ρ v·∇ψ' dV =
+  ∮_∂F ρψ' v·n̂ dS − ∫_F ψ' div(ρv) dV = 0, exactly, for every
+  admissible v. The inertia-perturbation data are safe on any fluid
+  representative — this part of G8c is a quadrature identity, gated in
+  `TestGeneralisedRotation` (`FluidRelabellingCertificate`).
+
+- **The relative angular momentum is NOT.** For ρv = curl W with W
+  compactly supported in F, ∫_F ρ x×v dV = 2∫_F W dV ≠ 0; and on a
+  spherical fluid core with radial ρ the core's rigid swirls v = b×x
+  are themselves FRLs (∇ρ ∥ x ⊥ b×x; v·n̂ = 0 on the sphere) carrying
+  h = I_F·b. So the WHOLE-BODY Tisserand condition ∫ρ x×u = 0 is
+  ill-defined on a gauged-fluid model: its core contribution is pure
+  gauge. (The degree-1 FRL non-removability seen in the slip
+  benchmarks is the same freedom in different clothes.)
+
+**The resolution (David, 11 Oct 2026): fix via the mantle.** The
+rigid representative is pinned by the SOLID-region Tisserand
+condition — the mantle frame of Earth-rotation theory:
+`SetTisserandGauge` keeps the global rigid basis but assembles its
+metric as the ρ̃-mass restricted to the solid attributes whenever a
+fluid treatment is configured (lazily, at solver setup, so the
+SetFluid/SetRotation call order is free). The ω-row integrals stay
+whole-body — the invariance identity above is exactly what licenses
+that: the fluid displacements enter only through a reading the
+relabelling cannot touch, so no separate Eulerian fluid-row assembly
+is needed. Gated (`FluidCoreMantleTisserand` + the par twin's
+`fluid-core mantle-frame` case): on the two-layer fluid-core ball with
+the input-moments door composed with the gauged core, the mantle
+momentum vanishes at the gauged solution (7.1e-9 of the mantle trace;
+the ungauged twin is 333× larger) and ω is invariant across fluid
+representatives (ε 1e-2 vs 3e-3: 3.1e-7 relative — the refined
+penalty debiases and the rows are relabelling-invariant). The
+traditional border with fluid cores was never affected (its row is
+the invariant integral; its gauge pathology is the solid one G8b
+demonstrates).
+
+Why this is a frame choice and not a physics change (discussed and
+settled 11 Oct 2026): the "core follows the mantle on secular
+timescales" physics lives in the balance itself — D and the ω-row
+data are WHOLE-BODY integrals, and dropping ω̇ is precisely the
+assumption of one shared rigid rotation. The mantle restriction only
+decides how the computed displacement splits into frame + deformation,
+declining to let the core's relabelling-undefined ∫ρx×u vote on that
+split; every physical reading was already independent of it. A core
+that never follows (mantle-only moments C_m in the denominators) would
+be a different physical model — the rapid-wobble regime, full M&A
+eq. (224) territory, outside the secular door by construction. The
+same reasoning covers the Maxwell-relaxation treatment: its core
+displacement is solve-determinate but artificial-path-dependent, so
+its momentum is a representative's, not physics.
+
 ## What WP7.6 gates
 
-| gate | statement |
-|---|---|
-| G8a | spherical model, input inertia: generalised ≡ traditional border (route grade) |
-| G8b | triaxial solid model (mapped machinery): ω invariant under a rigid re-gauge of u; the traditional row's shift equals the closed form D⁻¹[ad_b, I]Ω (the quotable demonstration) |
-| G8c | gauged-fluid configuration: inertia integrals invariant under the fluid-gauge representative (FRL certificate) |
-| G8d | self-consistent configuration: δ(IΩ) = 0 re-integrated at the solution (conservation certificate; reported, not gated, under input inertia) |
+| gate | statement | status |
+|---|---|---|
+| G8a | spherical model, input inertia: generalised ≡ traditional border (route grade) | subsumed: the plumbing identity (`GeneralisedRotationDoor` (i)) is bitwise, and the spherical control runs in the example |
+| G8b | triaxial solid model: ω invariant under a rigid re-gauge of u; the traditional row's shift equals the closed form D⁻¹[ad_b, I]Ω (the quotable demonstration) | done — `TestGeneralisedRotation` (closed form 1e-10, solve-level shift O(1) of ω, pinning 4.7e-8, re-pin invariance) + `examples/generalised_rotation.cpp` (the gauge-sweep figure: traditional ≡ closed form, pinned at 1e-14, spherical control three orders down; ω_gen = ω_trad − D⁻¹[ad_bf,I]Ω at 1.2e-5) |
+| G8c | gauged-fluid configuration: inertia integrals invariant under the fluid-gauge representative (FRL certificate) | done — the row invariance is exact and gated as a quadrature identity; the momentum is NOT invariant, so the gauge pins the MANTLE frame (David's decision; the fluid-core section above), gated at solve level: mantle momentum 7.1e-9 of trace vs 333× ungauged, ω across fluid representatives 3.1e-7 |
+| G8d | self-consistent configuration: the secular balance (D ω)_k + ∫ρu·∇ψ_k + ∫σψ_k = 0 re-integrated at the solution, σ the TOTAL load including the water response (conservation certificate; reported, not gated, under input inertia) | done — `ConservationCertificate`, two tiers: STRICT via test-side reassembly on the library's pairing convention (8.0e-8 data load, 4.9e-6 composed water) and ROUTE against the exact ψ (3.1e-3 / 9.8e-4: the assembled data integrate σ against the interpolant with the forms' rules; D and the volume row agree at 1e-8); parallel twin case `water+generalised`, serial ≡ parallel at 1e-5, Tisserand 4.0e-5 at o1 → 1e-7-grade at o2 |
 
 ## To verify in implementation
 
@@ -245,9 +306,14 @@ survives, derived rather than assumed:
 - Whether the translations' momentum condition needs the same
   treatment in practice (loads with net force are excluded by the
   existing machinery; expected inert). Open.
-- G8c (the FRL-invariance certificate on a gauged-fluid
-  configuration) and the solution-level G8d re-integration on the
-  generalised door. Open — the next implementation chunk.
+- ~~The solution-level G8d re-integration~~ — done (the gates table).
+  One convention finding along the way: the referential ω-row data are
+  now read off the RAW surface-load form before the compatibility
+  projection, matching the mixed class (a 2-D no-op today, so
+  convention rather than bug).
+- ~~G8c beyond phase 1~~ — resolved via the mantle frame (David's
+  decision, the fluid-core section above); no Eulerian fluid-row
+  assembly needed, the whole-body row being relabelling-invariant.
 
 **See:** `referential_sea_level_plan.md` (phases, decisions);
 `include/AdGIA/null_space.hpp` (`SetGauge`);

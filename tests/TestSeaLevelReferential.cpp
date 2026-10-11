@@ -622,6 +622,181 @@ TEST(SeaLevelReferential, GeneralisedRotationDoor) {
   EXPECT_GT(std::abs(moments[2] - moments[0]), 1e-2 * trace / 3.0);
 }
 
+TEST(SeaLevelReferential, ConservationCertificate) {
+  // G8d (generalised_rotation_note.md, "What WP7.6 gates"): the
+  // secular balance re-integrated at the solution through the
+  // certificate's own route — exact psi_k (not the interpolant), the
+  // instrument's own quadrature, moments integrated independently of
+  // ModelInertiaTensor():
+  //   (D omega)_k + int rho u.grad psi_k dV + int sigma psi_k dS = 0,
+  // D = diag(C3-C1, C3-C2, -C3) from the quadrature moments and sigma
+  // the TOTAL surface load. Leg 1: the generalised door with a data
+  // load. Leg 2: water composed — sigma includes the solution's water
+  // response w (Phi_g - zeta - psi(omega)), so the certificate
+  // re-integrates every border coupling (m^psi, Pw) as physics. The
+  // self-consistent configuration only: under input inertia the
+  // balance holds with I_obs in D but the conservation reading
+  // degrades at O(|I_obs - I_model|) (the note's input-inertia
+  // section), so there it is reported, not gated.
+  const int order = 2;
+  RefCase c(order);
+  // Polynomial triaxiality (r^2-weighted degree-2 patterns): the /r^2
+  // forms are direction-dependent at the origin and cost the two
+  // quadrature routes ~3e-3 of agreement; the certificate wants the
+  // routes to differ only at rule grade.
+  FunctionCoefficient rho_tri([](const Vector& x) {
+    const double r2 = x * x;
+    return kRho * (1.0 + 0.1 * (3.0 * x[2] * x[2] - r2) +
+                   0.05 * (x[0] * x[0] - x[1] * x[1]));
+  });
+  auto referential = [&] {
+    auto p =
+        std::make_unique<LinearQuasiStaticReferentialSelfGravitatingProblem>(
+            c.fes_u.get(), c.fes_scalar.get(), *c.r_rheology, rho_tri, kG,
+            kDtNDegree);
+    p->SetPrescribedVacuumExtension(*c.fes_buffer, *c.E);
+    p->SetRelTol(1e-12);
+    return p;
+  };
+  FunctionCoefficient sigma_data([](const Vector& x) {
+    const double r2 = x * x;
+    return Degree2(x) + 2.0 * x[0] * x[2] / r2 + 0.5;
+  });
+  const double Omega = 0.1;
+
+  // Exact psi_k (centrifugal.hpp conventions).
+  std::vector<FunctionCoefficient> psi;
+  psi.emplace_back(
+      [Omega](const Vector& x) { return Omega * x[0] * x[2]; });
+  psi.emplace_back(
+      [Omega](const Vector& x) { return Omega * x[1] * x[2]; });
+  psi.emplace_back([Omega](const Vector& x) {
+    return -Omega * (x[0] * x[0] + x[1] * x[1]);
+  });
+
+  // Volume quadrature over the body.
+  Mesh* body = c.body.get();
+  auto volume_quad = [&](auto&& f) {
+    Vector x(3);
+    for (int e = 0; e < body->GetNE(); e++) {
+      auto* T = body->GetElementTransformation(e);
+      const auto& ir =
+          IntRules.Get(body->GetElementGeometry(e), 2 * order + 4);
+      for (int q = 0; q < ir.GetNPoints(); q++) {
+        const auto& ip = ir.IntPoint(q);
+        T->SetIntPoint(&ip);
+        T->Transform(ip, x);
+        f(x, *T, ip, ip.weight * T->Weight());
+      }
+    }
+  };
+
+  // The moments, by the certificate's own quadrature.
+  DenseMatrix I0q(3);
+  I0q = 0.0;
+  volume_quad([&](const Vector& x, ElementTransformation& T,
+                  const IntegrationPoint& ip, double w) {
+    const double rw = w * rho_tri.Eval(T, ip);
+    const double r2 = x * x;
+    for (int i = 0; i < 3; i++) {
+      for (int j = 0; j < 3; j++) {
+        I0q(i, j) += rw * ((i == j ? r2 : 0.0) - x[i] * x[j]);
+      }
+    }
+  });
+  Vector moments(3);
+  for (int k = 0; k < 3; k++) {
+    moments[k] = I0q(k, k);
+  }
+  const DenseMatrix Dq = InertiaMatrix(moments);
+
+  // int rho u . grad psi_k dV at the solution.
+  auto row_u = [&](const GridFunction& u) {
+    VectorGridFunctionCoefficient uc(const_cast<GridFunction*>(&u));
+    Vector r(3), uv(3);
+    r = 0.0;
+    volume_quad([&](const Vector& x, ElementTransformation& T,
+                    const IntegrationPoint& ip, double w) {
+      uc.Eval(uv, T, ip);
+      const double rw = w * rho_tri.Eval(T, ip);
+      r[0] += rw * Omega * (uv[0] * x[2] + uv[2] * x[0]);
+      r[1] += rw * Omega * (uv[1] * x[2] + uv[2] * x[1]);
+      r[2] += rw * Omega * (-2.0 * (uv[0] * x[0] + uv[1] * x[1]));
+    });
+    return r;
+  };
+
+  // Two tiers. STRICT: every piece reassembled on the test's side, with
+  // the surface row through the library's pairing convention (the data
+  // form dotted with the interpolated psi) — certifies D, the rows, the
+  // elimination algebra and the gauge at solver-plus-reassembly grade.
+  // ROUTE: the surface row against the EXACT psi at the instrument's
+  // quadrature — the pairing convention integrates sigma against the
+  // interpolant with the form's rule, and the two routes agree only at
+  // rule grade (measured: 5.8e-4 absolute on 0.19, dominated by the
+  // psi_3 row; the volume row and the moments agree at 1e-8).
+  auto certify = [&](LinearQuasiStaticReferentialSelfGravitatingProblem& p,
+                     Coefficient& sigma_total, double tol_strict,
+                     double tol_route, const char* label) {
+    Vector rs_form(3), rs_exact(3);
+    for (int k = 0; k < 3; k++) {
+      H1_FECollection sfec(order, 3);
+      FiniteElementSpace sfes(c.body.get(), &sfec);
+      LinearForm lf(&sfes);
+      lf.AddBoundaryIntegrator(new BoundaryLFIntegrator(sigma_total),
+                               c.surface);
+      lf.Assemble();
+      GridFunction psig(&sfes);
+      psig.ProjectCoefficient(psi[k]);
+      rs_form[k] = lf(psig);
+      ProductCoefficient sp(sigma_total, psi[k]);
+      rs_exact[k] = c.SurfaceIntegral(sp);
+    }
+    Vector Dw(3);
+    Dq.Mult(p.AngularVelocity(), Dw);
+    const Vector ru = row_u(p.Displacement());
+    const double scale =
+        std::max({Dw.Norml2(), ru.Norml2(), rs_exact.Norml2()});
+    EXPECT_GT(scale, 1e-8);  // the balance is genuinely active
+    Vector res(Dw);
+    res += ru;
+    res += rs_form;
+    EXPECT_LT(res.Norml2(), tol_strict * scale) << label << " strict";
+    res = Dw;
+    res += ru;
+    res += rs_exact;
+    EXPECT_LT(res.Norml2(), tol_route * scale) << label << " route";
+  };
+
+  // Leg 1: the generalised door with a data load.
+  {
+    auto p = referential();
+    p->SetRotation(Omega);  // the model-inertia door
+    p->SetSurfaceLoad(sigma_data, c.surface);
+    p->AssembleForce(0.0);
+    ASSERT_TRUE(p->Solve());
+    certify(*p, sigma_data, 3e-7, 6e-3, "data load");  // measured 8.0e-8 / 3.1e-3
+  }
+
+  // Leg 2: water composed; sigma is the total load including the
+  // solution's water response.
+  {
+    auto p = referential();
+    p->SetWaterLoad(*c.w, sigma_data, c.surface);
+    p->SetRotation(Omega);
+    p->AssembleForce(0.0);
+    ASSERT_TRUE(p->Solve());
+    GridFunctionCoefficient zc(
+        const_cast<GridFunction*>(&p->PotentialOnBody()));
+    SumCoefficient zpsi(zc, p->SolutionCentrifugalPotential());
+    ConstantCoefficient phig(p->UniformPotentialTerm());
+    SumCoefficient inner(phig, zpsi, 1.0, -1.0);
+    ProductCoefficient sigma_w(*c.w, inner);
+    SumCoefficient sigma_total(sigma_data, sigma_w);
+    // The composed reassembly carries the water cross data through\n    // the body-space form while the library pairs them on the\n    // shadow route: strict degrades to reassembly grade.\n    certify(*p, sigma_total, 1.5e-5, 3e-3, "composed water");  // measured 4.9e-6 / 9.8e-4
+  }
+}
+
 INSTANTIATE_TEST_SUITE_P(SeaLevelReferential, SeaLevelReferentialTest,
                          testing::Values(1, 2));
 

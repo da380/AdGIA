@@ -2296,9 +2296,42 @@ model's inertia tensor is isotropic (their eq.~20, \S2.4): the
 referential variables make the pathology of the traditional theory
 visible as the one feedback term that escapes the collapse. The
 generalised (Tisserand-frame) theory of Maitra \& Al-Attar
-\cite{MaitraAlAttar2024} replaces that row; its reduction to bordered
-form is the referential leg's phase~B
-(\code{doc/planning/referential\_sea\_level\_plan.md}).
+\cite{MaitraAlAttar2024} replaces that row; its bordered form follows.
+
+\paragraph{The generalised rotational door.} The secular limit of the
+Maitra--Al-Attar linearised Euler equation, taken with $\bm{\Omega}$ along
+a principal axis of the model's equilibrium inertia tensor
+$I^{(0)}$, reproduces the traditional row \emph{verbatim} with
+$D = \operatorname{diag}(C_3-C_1,\, C_3-C_2,\, -C_3)$ built from the \emph{model's
+own} principal moments — the wander denominators come from the frame
+term $\mathrm{ad}_\Omega(I^{(0)}-\lambda)$, not from bare conservation
+— and with the displacement pinned by the Tisserand condition
+$\int_M \tilde\rho\,\varphi_e\times\vu\dV = 0$ (the derivation:
+\code{doc/planning/generalised\_rotation\_note.md}, ``The secular
+reduction''). The implementation is therefore three deltas on the
+traditional border: \code{SetRotation(Omega)} assembles
+$I^{(0)} = \int\tilde\rho\,(|\varphi_e|^2\mathbf{1} -
+\varphi_e\otimes\varphi_e)\dV$ by quadrature, verifies the
+principal-axis condition, refuses a wander-degenerate (near-spherical)
+model, and enables the Tisserand gauge: the mass-weighted
+representative of the rigid null space, whose mapped-rotation basis
+pins exactly the condition above; the solve's tail preserves that
+representative rather than re-projecting Euclidean. The ensemble makes
+$\omega$ invariant under rigid re-gauges of $\vu$ on \emph{any} model
+— the invariance the traditional theory has only at isotropic inertia
+— at the cost of requiring a figure-realistic model. On a simplified
+(near-spherical) model the \emph{input-inertia option},
+\code{SetRotation(Omega, moments)} $+$ \code{SetTisserandGauge(true)},
+keeps the gauge-borne uniqueness while taking $D$ as data; the
+conservation certificates then degrade at $O(|I_{\mathrm{obs}} -
+I_{\mathrm{model}}|)$ and are reported, not gated. On a model with
+fluid regions the whole-body Tisserand condition is itself
+relabelling-gauge-dependent (a fluid core's rigid swirls are
+relabellings and carry angular momentum), so there the gauge metric
+restricts to the \emph{solid} attributes — the mantle frame of
+Earth-rotation theory — while the row integrals, being exactly
+relabelling-invariant, stay whole-body (the note, ``The fluid-core
+wrinkle'').
 
 %==========================================================================
 \section{The slipping-interface problem}

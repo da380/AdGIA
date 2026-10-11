@@ -96,7 +96,6 @@ struct Instrument {
     return h;
   }
 
- private:
   template <class F>
   void Quad(F&& f, VectorCoefficient* u = nullptr) {
     Vector x(3), uv(3);
@@ -277,6 +276,234 @@ TEST(GeneralisedRotation, GaugeShiftMatchesClosedForm) {
   // agreeing at solver-plus-route grade.
   EXPECT_LT(d23.Norml2(), 1e-3 * std::max(r3.Norml2(), 1e-12));
   EXPECT_LT(d21.Norml2(), 1e-3 * std::max(r1.Norml2(), 1e-12));
+}
+
+TEST(GeneralisedRotation, FluidRelabellingCertificate) {
+  // G8c phase 1 (generalised_rotation_note.md, "The fluid-core
+  // wrinkle"): on the two-layer ball's fluid core with its radial
+  // density, (a) a compactly-supported fluid relabelling rho v = curl W
+  // leaves the omega row invariant (the row of v vanishes) while
+  // carrying relative angular momentum 2 int W dV — so the whole-body
+  // Tisserand condition is gauge-dependent on fluid-core models; (b)
+  // the core's rigid swirls are themselves relabellings, with zero row
+  // (the core's inertia is isotropic at geometry grade) and momentum
+  // I_core b. Quadrature identities: no solve.
+  const int order = 2;
+  Mesh parent(TwoLayerMeshFile(3).c_str(), 1, 1);
+  Array<int> core_attr({1});
+  SubMesh core(SubMesh::CreateFromDomain(parent, core_attr));
+  FunctionCoefficient rho_f(FluidDensity);
+  const double Omega = 0.1;
+  Vector W3(3);
+  W3 = 0.0;
+  W3[2] = Omega;
+  Instrument fl{&core, &rho_f, order};
+
+  // (a) rho v = curl(q(r) c), q = (1 - (r/R0)^2)^3 inside r < R0,
+  // compactly supported in the open core.
+  const double R0 = 0.9 * kRCmb;
+  Vector cdir(3);
+  cdir[0] = 0.3;
+  cdir[1] = 0.5;
+  cdir[2] = -0.2;
+  auto q = [R0](double r) {
+    const double s = 1.0 - (r / R0) * (r / R0);
+    return s > 0.0 ? s * s * s : 0.0;
+  };
+  auto dq = [R0](double r) {
+    const double s = 1.0 - (r / R0) * (r / R0);
+    return s > 0.0 ? -6.0 * r / (R0 * R0) * s * s : 0.0;
+  };
+  // v = curl(W)/rho = (q'(r)/r) (x cross c) / rho.
+  VectorFunctionCoefficient v_frl(3, [&](const Vector& x, Vector& v) {
+    const double r = x.Norml2();
+    const double a =
+        r > 0.0 ? dq(r) / (r * FluidDensity(x)) : 0.0;
+    v.SetSize(3);
+    v[0] = a * (x[1] * cdir[2] - x[2] * cdir[1]);
+    v[1] = a * (x[2] * cdir[0] - x[0] * cdir[2]);
+    v[2] = a * (x[0] * cdir[1] - x[1] * cdir[0]);
+  });
+  const Vector row_v = fl.Row(v_frl, Omega);
+  const Vector h_v = fl.AngularMomentum(v_frl);
+  // The momentum identity h = 2 int W dV = 2 c int q dV, by the same
+  // quadrature.
+  double qint = 0.0;
+  {
+    ConstantCoefficient one(1.0);
+    Instrument unit{&core, &one, order};
+    unit.Quad([&](const Vector& x, const Vector&, double w) {
+      qint += w * q(x.Norml2());
+    });
+  }
+  Vector h_pred(cdir);
+  h_pred *= 2.0 * qint;
+  const double scale = h_pred.Norml2();  // the O(1) rigid scale of v
+  ASSERT_GT(scale, 1e-6);
+  {
+    Vector d(h_v);
+    d -= h_pred;
+    // Both identities hold through integration by parts, so the two
+    // quadratures' errors do not cancel: the grade is the 2*order+4
+    // rule on the C^2 bump (measured 6.4e-5 and 1.0e-5 of the scales).
+    EXPECT_LT(d.Norml2(), 2e-4 * scale) << "momentum identity";
+    // The row of the relabelling vanishes against the O(1) momentum it
+    // carries: the omega data are gauge-safe, the Tisserand condition
+    // is not — four orders between the two is the certificate.
+    EXPECT_LT(row_v.Norml2(), 5e-5 * Omega * scale) << "row invariance";
+  }
+
+  // (b) The core swirl b x x: a relabelling of the radial-density
+  // spherical core, zero row at the faceted core's isotropy grade,
+  // momentum I_core b exactly.
+  Vector b(3);
+  b[0] = 0.4;
+  b[1] = -0.3;
+  b[2] = 0.2;
+  VectorFunctionCoefficient bx(3, [&b](const Vector& x, Vector& v) {
+    v.SetSize(3);
+    v[0] = b[1] * x[2] - b[2] * x[1];
+    v[1] = b[2] * x[0] - b[0] * x[2];
+    v[2] = b[0] * x[1] - b[1] * x[0];
+  });
+  const DenseMatrix I_core = fl.Inertia();
+  Vector Ib(3);
+  I_core.Mult(b, Ib);
+  const Vector row_s = fl.Row(bx, Omega);
+  const Vector h_s = fl.AngularMomentum(bx);
+  {
+    Vector d(h_s);
+    d -= Ib;
+    EXPECT_LT(d.Norml2(), 1e-10 * Ib.Norml2()) << "swirl momentum";
+    // row(b x x) = -[ad_b, I_core] W: zero at the discrete core's
+    // isotropy grade (measured ~2e-5 of the O(1) scale |I b| Omega).
+    EXPECT_LT(row_s.Norml2(), 1e-4 * Omega * Ib.Norml2())
+        << "swirl row (isotropy grade)";
+  }
+}
+
+TEST(GeneralisedRotation, FluidCoreMantleTisserand) {
+  // G8c phase 2 (generalised_rotation_note.md, "The fluid-core
+  // wrinkle"; David's decision: fix via the mantle): on a fluid-core
+  // model the Tisserand gauge restricts its metric to the SOLID
+  // attributes — the mantle frame — because the core's relative
+  // angular momentum is pure relabelling gauge. The generalised door
+  // here is the input-moments form (the radial model's own moments are
+  // rightly degenerate): SetRotation(Omega, moments) +
+  // SetTisserandGauge(true), composed with the gauged fluid core.
+  // Certificates: (i) the mantle momentum int_mantle rho x cross u dV
+  // vanishes at the gauged solution and is ACTIVE (the ungauged twin's
+  // is orders larger); (ii) omega is stable when the fluid
+  // representative changes (a different gauge penalty epsilon), at the
+  // penalty-bias grade.
+  const int order = 1, dim = 3;
+  const double r_cmb = kRCmb;
+  Mesh parent(TwoLayerMeshFile(dim).c_str(), 1, 1);
+  Array<int> body_attr({1, 2}), buffer_attr({3});
+  SubMesh body(SubMesh::CreateFromDomain(parent, body_attr));
+  SubMesh buffer(SubMesh::CreateFromDomain(parent, buffer_attr));
+  H1_FECollection fec(order, dim);
+  FiniteElementSpace fes_u(&body, &fec, dim), fes_zeta(&parent, &fec);
+  FiniteElementSpace fes_buffer(&buffer, &fec, dim);
+  Vector bb_min, bb_max;
+  parent.GetBoundingBox(bb_min, bb_max);
+  const double r_out = bb_max.Normlinf();
+
+  Array<int> fluid_marker(body.attributes.Max());
+  fluid_marker = 0;
+  fluid_marker[0] = 1;
+  Array<int> surface(body.bdr_attributes.Max());
+  surface = 0;
+  surface[body.bdr_attributes.Max() - 1] = 1;
+
+  // The canned two-layer densities (MixedProblemTestCommon), radially.
+  auto fluid_rho = [](double r) {
+    return 1.2 - 0.1 * (r - kRIcb) / (kRCmb - kRIcb);
+  };
+  RadialHydrostaticBackground bg(
+      dim,
+      [r_cmb, fluid_rho](double r) {
+        return r < r_cmb ? fluid_rho(r) : 1.0;
+      },
+      [](double) { return kKappa; },
+      [r_cmb](double r) { return r < r_cmb ? 0.0 : kMu; }, kG, 1.0);
+  ConstantCoefficient mu_gauge(kKappa);
+  FunctionCoefficient sigma([](const Vector& x) {
+    const double r2 = x * x;
+    const double c2 = x[2] * x[2] / r2;
+    return 0.02 * (3.0 * c2 - 1.0 + 2.0 * x[0] * x[2] / r2 + 0.5);
+  });
+  const double Omega = 0.1;
+  Vector moments(3);
+  moments[0] = 1.2;
+  moments[1] = 1.3;
+  moments[2] = 2.0;
+  auto E = NewRadialVacuumExtension(fes_u, fes_buffer, 1.0, r_out);
+
+  auto solve = [&](double eps, bool gauged) {
+    auto p =
+        std::make_unique<LinearQuasiStaticReferentialSelfGravitatingProblem>(
+            &fes_u, &fes_zeta, bg.Rheology(), bg.Density(), kG, kDtNDegree);
+    p->SetPrescribedVacuumExtension(fes_buffer, *E);
+    p->SetFluid(fluid_marker, mu_gauge, GaugePenaltyOptions{eps, 3});
+    p->SetSurfaceLoad(sigma, surface);
+    p->SetRotation(Omega, moments);
+    p->SetTisserandGauge(gauged);
+    p->SetRelTol(1e-11);
+    p->AssembleForce(0.0);
+    EXPECT_TRUE(p->Solve());
+    return p;
+  };
+
+  // Mantle-restricted momentum and inertia by quadrature (attribute 2).
+  auto mantle_h = [&](const GridFunction& u, double& trace) {
+    VectorGridFunctionCoefficient uc(const_cast<GridFunction*>(&u));
+    Vector h(3), x(3), uv(3);
+    h = 0.0;
+    trace = 0.0;
+    for (int e = 0; e < body.GetNE(); e++) {
+      if (body.GetAttribute(e) != 2) {
+        continue;
+      }
+      auto* T = body.GetElementTransformation(e);
+      const auto& ir =
+          IntRules.Get(body.GetElementGeometry(e), 2 * order + 4);
+      for (int q = 0; q < ir.GetNPoints(); q++) {
+        const auto& ip = ir.IntPoint(q);
+        T->SetIntPoint(&ip);
+        T->Transform(ip, x);
+        uc.Eval(uv, *T, ip);
+        const double w = ip.weight * T->Weight();  // mantle rho = 1
+        h[0] += w * (x[1] * uv[2] - x[2] * uv[1]);
+        h[1] += w * (x[2] * uv[0] - x[0] * uv[2]);
+        h[2] += w * (x[0] * uv[1] - x[1] * uv[0]);
+        trace += w * 2.0 * (x * x);
+      }
+    }
+    return h;
+  };
+
+  auto p_g = solve(1e-2, true);
+  auto p_u = solve(1e-2, false);
+  double tr_m = 0.0;
+  const Vector h_g = mantle_h(p_g->Displacement(), tr_m);
+  double tr_dummy = 0.0;
+  const Vector h_u = mantle_h(p_u->Displacement(), tr_dummy);
+  // (i) The mantle frame is pinned (measured 7.1e-9 at o1: the mantle
+  // density is constant, so the restricted metric is assembled
+  // exactly), and the pinning is active (the ungauged twin measured
+  // 333x larger).
+  EXPECT_LT(h_g.Norml2(), 5e-8 * tr_m);
+  EXPECT_GT(h_u.Norml2(), 1e2 * std::max(h_g.Norml2(), 1e-14 * tr_m));
+
+  // (ii) omega across fluid representatives (eps 1e-2 vs 3e-3): stable
+  // at the penalty-bias grade of the refined gauge penalty.
+  auto p_g2 = solve(3e-3, true);
+  Vector dw(p_g->AngularVelocity());
+  dw -= p_g2->AngularVelocity();
+  // Measured 3.1e-7: the rows are relabelling-invariant and the
+  // refined penalty debiases, so omega barely feels the representative.
+  EXPECT_LT(dw.Norml2(), 3e-6 * p_g->AngularVelocity().Norml2());
 }
 
 }  // namespace

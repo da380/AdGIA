@@ -502,7 +502,14 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
    * (zero @f$\tilde\rho@f$-weighted momentum and angular momentum):
    * the mass-weighted gauge on the block solver. Enabled by the
    * model-inertia SetRotation(); available separately so the
-   * input-moments door can carry it too. */
+   * input-moments door can carry it too. On a model with fluid
+   * regions the condition restricts to the SOLID attributes — the
+   * mantle Tisserand frame — because a fluid region's relative
+   * angular momentum is pure relabelling gauge, while the
+   * @f$\omega@f$-row integrals are relabelling-invariant and stay
+   * whole-body (doc/planning/generalised_rotation_note.md, "The
+   * fluid-core wrinkle"). The metric is assembled at solver setup,
+   * after all SetFluid() configuration. */
   void SetTisserandGauge(bool on);
 
   /**
@@ -772,6 +779,11 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
   mfem::OperatorHandle rot_gauge_M_;
   std::unique_ptr<mfem::BilinearForm> rot_gauge_form_;
   std::unique_ptr<mfem::BlockOperator> rot_gauge_block_;
+  // Solid-attribute restriction of the gauge metric on fluid models
+  // (the mantle Tisserand frame); the coefficient references the
+  // marker, so both persist together.
+  mfem::Array<int> rot_gauge_marker_;
+  std::unique_ptr<mfem::RestrictedCoefficient> rot_gauge_rho_;
 
   // 2-D compatibility (as in the Eulerian class)
   mfem::Vector ones_, L_outer_;

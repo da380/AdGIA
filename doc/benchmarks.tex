@@ -1374,6 +1374,24 @@ forms are therefore not certified covariant.
 \caption{The identity per case, read from the campaign's identity logs.}
 \end{figure}
 
+\paragraph{The water and surface-moving legs (WP7.4).} Two flags extend
+the identity to the referential sea-level machinery. With \code{-water}
+both sides carry the bordered water solve (\code{SetWaterLoad}; the
+$\zeta\zeta$ collapse of \code{doc/quasi\_static\_models.tex}) and
+$\Phi_g$ joins the pass criterion: measured $4.9\times10^{-7}$ ($\vu$)
+and $4.8\times10^{-10}$ ($\Phi_g$) at $A=0.02$. With
+\code{-map-surface} (solid and welded cases) the relabelling is the
+radial \code{SurfaceMovingRelabelling} — identity at the DtN sphere but
+\emph{not} at the body surface — so the mapped side's ocean weight and
+data composition carry the Nanson factor $J_\Sigma$ and the
+area-convention bookkeeping ($\sigma$ per referential area: the
+feedback operator carries $J_\Sigma$, the data rows do not) is
+exercised for real: measured $8.0\times10^{-9}$ plain and
+$9.7\times10^{-9}$/$1.3\times10^{-12}$ ($\vu$/$\Phi_g$) with water. The
+leg caught two genuine defects on first contact: the boundary-element
+branch of \code{GridFunctionDiffeomorphism::EvalGradient} and a
+double-counted $J_\Sigma$ on the mass-row data.
+
 \subsection{Leg C: an aspherical reference body (\code{aspherical\_reference})}
 \label{sec:legC}
 
@@ -1439,6 +1457,15 @@ the map, against the shape amplitude (0 is the spherical mesh with the
 same connectivity), by degree. Stars: elements halved.}
 \label{fig:aspherical}
 \end{figure}
+
+\paragraph{The water leg (gate G7b).} With \code{-water} the driver runs
+one bordered water solve on the genuinely aspherical body — a regime no
+spherical reference reaches — and certifies it \emph{internally}: the
+monolithic solution against the \code{IteredZeta} fixed point
+($4.5\times10^{-8}$), the mass-conservation row re-integrated at the
+solution (machine precision), and $\Phi_g$ consistency. The run exits
+with the certificates' pass/fail status, so it serves as a standalone
+gate as well as a campaign stage.
 
 %=============================================================================
 \section{The perturbation family}

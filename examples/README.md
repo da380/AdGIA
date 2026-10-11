@@ -250,6 +250,23 @@ without and with feedback, and their difference.
 `./rotational_feedback`, `./rotational_feedback -Omega 0.3`,
 `./rotational_feedback -m ../data/coupled_poisson.msh -o 1`
 
+**`generalised_rotation`**: the generalised (Maitra & Al-Attar)
+rotational theory beside the traditional one on a triaxial body
+(`doc/planning/generalised_rotation_note.md`) — the referential class's
+two doors. The traditional omega depends on the arbitrary rigid
+representative of the displacement: the gauge sweep measures the shift
+under re-gauges u → u + b×x, matches it against the closed form
+D⁻¹[ad_b, I]Ω (exact), and shows the Tisserand-pinned row flat at
+machine precision, with a spherical control where the model's inertia
+is isotropic and the ambiguity vanishes. The generalised door
+(`SetRotation(Omega)`: the model's own inertia + the Tisserand gauge)
+removes the arbitrariness, and its omega equals the traditional one
+corrected by the closed-form gauge term of its representative — one
+formula connects the theories. Writes the sweep as a CSV curve
+(`-csv`, plot with `plot_csv.py`); shows the triaxial density and the
+generalised solution. 3-D only.
+`./generalised_rotation`, `./generalised_rotation -ez 0.2 -et 0.1`
+
 **`sea_level_fingerprint`**: the gravitationally self-consistent ocean
 response to melting an ice cap, solved monolithically — the sea-level
 equation folded into the elastic operator (`SetWaterLoad`: a symmetric
