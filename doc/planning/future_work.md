@@ -4,6 +4,70 @@
 
 ## Nonlinear problems
 
+### Fully nonlinear forward models
+
+**Status:** parked — a commitment of the original funding proposal
+(recorded 11 Oct 2026), not immediate work.
+
+The proposal's plan included full geometrically nonlinear forward
+models — nonlinearity in the *deformation*, not just the viscoelastic
+constitutive relation — on the working assumption that the effect is
+small but perhaps not nothing over a glacial cycle. The magnitude
+case (context added 11 Oct 2026): background strains are only
+1e-4..1e-3 near ice margins, but reported simulations find realistic
+*static* topography has a measurable effect on GIA (pers. comm. to
+David), and GIA itself produces topography of comparable
+substance — hundreds of metres to a kilometre of deflection under
+the ice sheets and forebulges — over a cycle. Linear theory
+evaluates loads, ocean geometry and gravity on a reference the cycle
+itself deflects; that self-generated-topography feedback, plus
+prestress advection at the margins and the degree-2/rotation
+feedback over repeated cycles, is the concrete mechanism for "not
+nothing". The route is the fully referential framework with general
+strain-energy functions, and it is shorter than it looks, because
+the linear referential class is already the Newton method of this
+problem:
+
+- **Newton structure for free.** The class's (C, S_e) pair about
+  φ_e *is* the consistent tangent of a general W(F) at a running
+  configuration (C the second derivative, S_e's geometric term the
+  `GeometricStiffnessIntegrator`); the nonlinear solve is the
+  residual with the first Piola–Kirchhoff P(F) plus Newton on the
+  existing operator. Referential mass conservation is exact, the
+  mapped-Laplacian gravity coefficients a_e = J F⁻¹F⁻ᵀ exist for
+  fixed maps (the extension: the map becomes the running
+  configuration), surface loads already carry Nanson factors, and
+  the gauge/null-space handling per Newton step is solved.
+- **No boundary awkwardness.** The domain and its boundary are the
+  FIXED reference body: evolving topography is carried by the
+  solution (the image of the reference surface under the motion),
+  not the mesh — no ALE, no remeshing, no free-boundary tracking.
+  The free surface is the natural condition on a fixed boundary,
+  and deformed-surface loads are referential loads with Nanson
+  factors, the conventions the sea-level work installed and
+  gate-certified. The nonlinearity is confined to the constitutive
+  relation and the configuration-dependence of the Poisson
+  operator.
+- **The genuinely new piece:** finite-strain viscoelasticity
+  (multiplicative decomposition on the internal-variable regions) —
+  the only part without a present-day skeleton.
+- **Synergies:** (i) the equilibrium-figures rungs 2–3 are
+  themselves nonlinear static gravitating solves — the figure
+  builder and this solver are one solver with two hats; (ii) M&A's
+  exact (un-linearised) Tisserand framework is the nonlinear
+  rotation theory, pre-written; (iii) the charter's second-order
+  adjoints need the same second-variation machinery a Newton
+  forward solver exercises.
+- **First deliverable when opened:** the error bar on the linear
+  theory — quantify the nonlinear correction over a glacial cycle.
+
+**See:** `doc/gravitating_elasticity.md`;
+`generalised_rotation_note.md`; "Equilibrium backgrounds with
+surface water" above.
+
+The two subsections below — the nonlinear slip map and the buffer
+motion — are component problems of this programme.
+
 ### Nonlinear slip map and the mortar route
 
 **Status:** future work; not implemented. The linearised slip is
@@ -65,11 +129,11 @@ serial and parallel.
 
 ### Nonlinear elasticity
 
-**Status:** future work.
-
-The problem interface carries "Linear" in its class names to leave room
-for nonlinear elastic problems; in the referential formulation φ_e is the
-slot a Newton iterate would occupy. Not started.
+**Status:** folded into "Fully nonlinear forward models" above, which
+carries the proposal context, the Newton-structure argument and the
+synergies; the class-naming hook stands — the interface carries
+"Linear" in its names to leave room, and in the referential
+formulation φ_e is the slot a Newton iterate would occupy.
 
 **See:** `doc/quasi_static_models.tex`, "Naming and the problem-class
 grid"; `doc/gravitating_elasticity.md` (preamble).
@@ -541,8 +605,26 @@ The ladder of applications, as sketched:
    and supersedes the Mitrovica & Wahr-style plastering of the
    traditional theory.
 
+**The Mitrovica & Wahr requirement, read as a specification (agreed
+11 Oct 2026):** their rotational-stability corrections relocate here
+rather than evaporate. For the viscoelastic generalised door to
+stabilise polar wander correctly, the background must carry the
+Earth's NON-HYDROSTATIC excess flattening, supported by the
+equilibrium stress field — not by the rheology the GIA loads feel —
+so that it does not relax on loading timescales. Rungs 2 and 4 are
+where that structure is built (the moments-of-inertia constraint in
+rung 4 is exactly the excess-flattening datum). The matching
+validation is an *emergence test*, not a theory input: the M&A door
+run on a spherical model with input moments including the excess
+should reproduce the corrected Mitrovica et al. (2005) stability
+behaviour, and degrade to the classical over-wandering when the
+excess is removed (the W&M numerical check of
+`generalised_rotation_note.md`).
+
 **See:** `equilibrium_figures.md`; `equilibrium_shape_plan.md`;
-`sea_level_plan.md`; `referential_sea_level_plan.md`.
+`sea_level_plan.md`; `referential_sea_level_plan.md`;
+`generalised_rotation_note.md` (the input-inertia section);
+`doc/Elasticity/annurev-earth-040610-133404.pdf`.
 
 ### Ice-age production runs
 
