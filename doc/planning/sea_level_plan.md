@@ -131,7 +131,7 @@ degree-0 content.
   borrowed wholesale (nothing native, raw NetCDF never copied); the
   exchange format is `WriteSurfaceField`'s nodal CSV, read back by
   `ReadSurfaceField`/`IceHistory` and produced by
-  `postprocess/ice_ng_to_surface.py`.
+  `earth_data/ice_ng_to_surface.py`.
 - **Mesh refinement at shorelines:** a planetmodel (≥ 1.2.4) Refinement
   field sized by |topography| — shorelines and shallow shelves refine
   together, no coastline isolation (`planetmodel_coastline_sizing_plan.md`).
@@ -140,7 +140,7 @@ degree-0 content.
 
 - **WP1** — the surface layer: `SeaLevelOperator` (boundary SubMesh of
   the exterior surface, trace restriction, SL₁ postprocessing, nodal
-  CSV export/ingest) and `postprocess/surface_to_netcdf.py`. Tests:
+  CSV export/ingest) and `earth_data/surface_to_netcdf.py`. Tests:
   `TestSeaLevel(+Par)`.
 - **WP2** — rotational feedback on prescribed loading:
   `RotationalFeedback` (cached unit responses over the tidal

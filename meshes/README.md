@@ -40,15 +40,16 @@ and the tests on them cheap. Any script also runs by hand — to make a
 higher-resolution version of its mesh, or a variant through its own
 options. Every script takes `--scale`, a factor on all
 its element sizes (smaller is finer), beside its own options (`-h`
-lists them). Each runs in this directory's poetry environment, made
-once:
+lists them). Each runs in the shared poetry environment of the
+repository root (one environment for the meshes, the benchmarks and the
+earth-data tools; see INSTALL.md), made once:
 
 ```
-cd meshes
-poetry install                       # planetmodel[meshing,mfem]>=1.2.3: numpy, scipy, gmsh, PyMFEM
-poetry run python unit_disc.py -h    # any one script; -h lists its options
-poetry run python make_all.py --out /some/dir
-poetry run python layered_earth.py --all --scale 0.5 --out ../<build>/data
+cd <repo>
+poetry install                       # planetmodel[meshing,mfem]>=1.2.3 among others
+poetry run python meshes/unit_disc.py -h    # any one script; -h lists its options
+poetry run python meshes/make_all.py --out /some/dir
+poetry run python meshes/layered_earth.py --all --scale 0.5 --out <build>/data
 ```
 
 The last writes half-size (so roughly 4x in 2-D, 8x in 3-D) versions of
@@ -60,10 +61,10 @@ full set. `equilibrium_bodies.py` and `aspherical_body.py` also take
 `--name`, a suffix on the file names, for keeping several versions side
 by side.
 
-From any other directory, `poetry -P meshes run python
+From any other directory, `poetry -P <repo> run python
 meshes/<script>.py ...` does the same (`-P` names the poetry project and
 leaves the working directory alone, so relative paths and outputs
-resolve where you are; `-C` would change into `meshes/` and break both).
+resolve where you are; `-C` would change into the project and break both).
 If the build created a `meshes-venv` (see above), its
 `<build>/meshes-venv/bin/python` runs the scripts directly too.
 
@@ -106,7 +107,7 @@ directory and the command line (`--out DIR`, `--verbose`).
 ## The coastline mesh
 
 `earth_coastlines.py` refines the ball along the real shorelines. The
-shoreline is pre-processed at export: `postprocess/topography_grid.py`
+shoreline is pre-processed at export: `earth_data/topography_grid.py`
 writes, beside the truncated topography, a `coast_rad` field — the
 great-circle distance to the coast of the near-native-resolution
 topography (its sign changes, plus the ocean within `--band` metres of
@@ -130,15 +131,15 @@ anywhere in the loop. Examples take it with
 `-m ../data/earth_coastlines.msh`.
 
 For another date, shelf band or truncation, regenerate the grid with
-`postprocess/topography_grid.py` (pyslfp; the one-time setup is in
-`postprocess/README.md`) and point the script at it:
+`earth_data/topography_grid.py` (pyslfp; the one-time setup is in
+`earth_data/README.md`) and point the script at it:
 
 ```
-cd <build>/postprocess
+cd <build>/earth_data
 ./topography_grid --date 21 --plot       # writes topography.npz + a map here
 cd <source>
-poetry -P meshes run python meshes/earth_coastlines.py \
-    --topography <build>/postprocess/topography.npz --out <build>/data
+poetry -P <repo> run python meshes/earth_coastlines.py \
+    --topography <build>/earth_data/topography.npz --out <build>/data
 ```
 
 The committed default grid is regenerated the same way, with

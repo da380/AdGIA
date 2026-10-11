@@ -37,7 +37,7 @@ cd build/examples && ./love_numbers
 ```
 
 `INSTALL.md` has the parallel build, every option, and the Python
-pieces (mesh generation, benchmarks, post-processing).
+pieces (mesh generation, benchmarks, earth-data tools).
 
 ## Library contents
 
@@ -93,7 +93,7 @@ includes them all), are
   shoreline migration (`ShorelineMigration`), the surface layer
   (`SeaLevelOperator`: surface fields, sea-level postprocessing, the
   nodal CSV exchange format) and ice-history loading (`IceHistory`,
-  fed by the pyslfp-backed scripts in `postprocess/`);
+  fed by the pyslfp-backed scripts in `earth_data/`);
 - the mapping (relabelling) layer (`mappings.hpp`): diffeomorphisms of the
   reference domain (identity, analytic, radial, tapered, grid-function),
   their interpolation, mapped meshes, and pull-back and Nanson coefficients;
@@ -141,7 +141,7 @@ tree are of two kinds.
 | `examples/README.md` | how to run the examples, and what each one does |
 | `meshes/README.md` | mesh generation, the files written and the attribute conventions |
 | `benchmarks/README.md` | the benchmark families: comparisons with independent reference solutions |
-| `postprocess/README.md` | the Python post-processing and data-ingest tools (maps, NetCDF, ice-ng sampling, topography grids) |
+| `earth_data/README.md` | the earth-data tools: real-Earth datasets in, maps out (maps, NetCDF, ice-ng sampling, topography grids) |
 
 **Planning** — open issues and future work, not a description of the code:
 `doc/planning/`, indexed by its `README.md` (`open_issues.md`, `solvers.md`,
@@ -192,7 +192,7 @@ build directory and installs `planetmodel[meshing,mfem]>=1.2.3` into it (about
 generating meshes, most of it on the 3-D ones; later builds regenerate a mesh
 only when its script changes.
 
-The scripts also run by hand, through the poetry project in `meshes/`:
+The scripts also run by hand, through the poetry project of the repository root:
 the generated meshes are deliberately coarse, and every script takes
 `--scale` for a higher-resolution version — written over the canned mesh
 in the build's `data/` or kept beside it (`meshes/README.md`, "By

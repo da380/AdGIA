@@ -270,7 +270,7 @@ fingerprint maps from the same solve; run it on the coastline-refined
 ball, `-m ../data/earth_coastlines.msh`. Prints the eustatic equivalent against the ocean-mean sea-level
 change (equal when mass is conserved) and the uniform term; exports the
 fingerprint's nodal values with `WriteSurfaceField`, which in 3-D maps
-to NetCDF/cartopy through `<build>/postprocess/surface_to_netcdf`.
+to NetCDF/cartopy through `<build>/earth_data/surface_to_netcdf`.
 Shows: the displacement, and the fingerprint, the
 ocean function and the melt load on the surface shell. `-mig` turns on
 shoreline migration (Picard on the ocean function via
@@ -285,7 +285,7 @@ the printed sampling commands, then the same with `-state`/`-ice`)
 **`ice_age_loading`**: the ICE-7G deglaciation on a Maxwell planet —
 the surface exchange chain end to end. Step 1 (no `-ice`) exports the
 surface node CSV; step 2 samples the real ice history at those nodes
-(`<build>/postprocess/ice_ng_to_surface`, pyslfp's downloader caching
+(`<build>/earth_data/ice_ng_to_surface`, pyslfp's downloader caching
 the data); step 3 reads the time stacks back (`IceHistory`), freezes
 the ocean function at the oldest date's flotation and steps the
 viscoelastic water-load solve through the history

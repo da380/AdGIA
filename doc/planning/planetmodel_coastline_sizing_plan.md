@@ -33,7 +33,7 @@ scale check are all threaded.
   pass instead of 2, and the migration-effect delta drops 4× —
   shoreline-quadrature noise removed.
 - **Real geography** — no coastline isolation at all: size by the sea
-  level itself. `postprocess/topography_grid.py` exports the
+  level itself. `earth_data/topography_grid.py` exports the
   lmax-truncated ICE-NG topography (truncation is what smooths the
   shorelines to a mesh-followable resolution), and
   `meshes/earth_coastlines.py` wraps it as a `Refinement` field with

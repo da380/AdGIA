@@ -45,27 +45,37 @@ known to work — the full test suite passes on both.
    works on a workstation too.
 4. **MPI** (optional), for the parallel build: the same MPI that hypre and
    MFEM were built with, for the compiler and for `mpiexec`.
-5. **Python 3.12 or later** (examples and tests only). The gmsh meshes the
-   examples and tests read are generated at build time by the scripts in
-   `meshes/`, which need a Python that can import `planetmodel.mesh3d`, with
-   planetmodel 1.2.3 or later, and `mfem.ser` (PyMFEM, used to write the
-   aspherical meshes) — i.e. the package `planetmodel[meshing,mfem]>=1.2.3`.
-   If the Python that CMake finds does not qualify, a virtual environment
-   `meshes-venv` is created under the build directory and the package
-   installed there with pip. Pass `-DMESHES_PYTHON=<python>` to use an
-   environment of your own, or `-DGENERATE_MESHES=OFF` to skip generation.
-   See `meshes/README.md`.
-6. **Benchmarks** (optional, MPI builds only): the benchmark scripts need a
-   Python with planetmodel, pyslfp and matplotlib, normally the poetry
-   environment of `benchmarks/` (`poetry install` there). See
-   `benchmarks/README.md`.
-7. **Post-processing** (optional): the tools in `postprocess/` (NetCDF
-   export, maps, ice-model ingest, topography grids) run through
-   launchers in `<build>/postprocess` with the poetry environment of
-   `postprocess/` (`poetry install` there; a build configured before the
-   environment existed is configured again to pick it up). See
-   `postprocess/README.md`.
-8. **Doxygen** (optional), for the API documentation.
+5. **Python 3.12 or later** (examples, tests, benchmarks and earth-data
+   tools only). All of the Python tooling — the mesh generation in
+   `meshes/`, the benchmark scripts in `benchmarks/` (MPI builds only)
+   and the earth-data tools in `earth_data/` — shares **one**
+   environment, the poetry project of the repository root, made once:
+
+   ```bash
+   cd <repo>
+   poetry env use python3.12   # only if your python3 is older than 3.12
+   poetry install              # planetmodel (gmsh, PyMFEM), pyslfp,
+                               # matplotlib, netCDF4, ...
+   ```
+
+   Poetry needs a Python ≥ 3.12 and does not pick one up by itself: on a
+   machine whose `python3` is older, the `poetry env use` line is needed
+   first — without it `poetry install` reports the mismatch and creates
+   nothing. The configure step finds the environment (the line
+   `Python tooling: the poetry environment ...`), so a build directory
+   configured before the environment existed is configured again
+   (`cmake .` there) to pick it up; until then the benchmark and
+   earth-data launchers refuse to run, with this recipe in their message.
+   `-DMESHES_PYTHON`, `-DBENCHMARKS_PYTHON` and `-DEARTH_DATA_PYTHON`
+   each override the shared environment with one of your own.
+
+   Mesh generation alone does not need poetry: without the environment, a
+   qualifying Python that CMake finds is used, and failing that a virtual
+   environment `meshes-venv` is created under the build directory and
+   `planetmodel[meshing,mfem]>=1.2.3` installed there with pip
+   (`-DGENERATE_MESHES=OFF` skips generation). See `meshes/README.md`,
+   `benchmarks/README.md` and `earth_data/README.md`.
+6. **Doxygen** (optional), for the API documentation.
 
 ## Configure
 
@@ -106,11 +116,11 @@ takes effect only on a fresh build directory.
 | `BUILD_EXAMPLES` | `OFF` | build the programs in `examples/` |
 | `BUILD_TESTS` | `OFF` | build the test suite in `tests/` (googletest is fetched at configure time) |
 | `BUILD_BENCHMARKS` | `OFF` | build the benchmark drivers and the launchers of their scripts into `<build>/benchmarks`; needs `USE_MPI` (skipped with a message otherwise) |
-| `BENCHMARKS_PYTHON` | the poetry environment of `benchmarks/` | the Python interpreter the benchmark launchers use; falls back to `python3`, with a warning, when neither is available |
-| `POSTPROCESS_PYTHON` | the poetry environment of `postprocess/` | the Python interpreter the post-processing launchers use; falls back to `python3`, with a message, when neither is available |
+| `BENCHMARKS_PYTHON` | the root poetry environment | the Python interpreter the benchmark launchers use; falls back to `python3`, with a warning, when neither is available |
+| `EARTH_DATA_PYTHON` | the root poetry environment | the Python interpreter the earth-data launchers use; falls back to `python3`, with a message, when neither is available |
 | `BUILD_DOCS` | `OFF` | generate the Doxygen documentation (HTML in `<build>/doc/html`) as part of the build |
 | `GENERATE_MESHES` | on with examples or tests | generate the gmsh meshes into `<build>/data` |
-| `MESHES_PYTHON` | found or created | the Python interpreter used for mesh generation |
+| `MESHES_PYTHON` | the root poetry environment, else found or created | the Python interpreter used for mesh generation |
 | `MESHES_SCALE` | `1` | factor on every generated mesh's element sizes (smaller is finer); changing it regenerates the whole set |
 
 The usual CMake variables (`CMAKE_BUILD_TYPE`, `CMAKE_INSTALL_PREFIX`)

@@ -71,7 +71,26 @@ endif()
 # Add in the source files. 
 add_subdirectory(src)
 
-# Optionally build examples. 
+# The Python tooling — mesh generation (meshes/), the benchmark scripts
+# (benchmarks/) and the earth-data tools (earth_data/) — shares one
+# poetry environment, the project of the repository root (pyproject.toml
+# here; `poetry install` once, see INSTALL.md). It is looked for once
+# here and is the default for MESHES_PYTHON, BENCHMARKS_PYTHON and
+# EARTH_DATA_PYTHON, each of which still overrides it individually.
+set(ADGIA_POETRY_PYTHON "")
+find_program(POETRY_EXECUTABLE poetry)
+if(POETRY_EXECUTABLE)
+    execute_process(
+        COMMAND "${POETRY_EXECUTABLE}" -C "${CMAKE_SOURCE_DIR}" env info -p
+        OUTPUT_VARIABLE _venv OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET RESULT_VARIABLE _result)
+    if(_result EQUAL 0 AND EXISTS "${_venv}/bin/python")
+        set(ADGIA_POETRY_PYTHON "${_venv}/bin/python")
+        message(STATUS "Python tooling: the poetry environment ${_venv}")
+    endif()
+endif()
+
+# Optionally build examples.
 option(BUILD_EXAMPLES "Build the example programs" OFF)
 if(BUILD_EXAMPLES)
     add_subdirectory(examples)
@@ -83,8 +102,8 @@ if(BUILD_BENCHMARKS)
     add_subdirectory(benchmarks)
 endif()
 
-# Post-processing launchers (Python; scripts stay in source, run in build).
-add_subdirectory(postprocess)
+# Earth-data launchers (Python; scripts stay in source, run in build).
+add_subdirectory(earth_data)
 
 # Optionally build tests
 option(BUILD_TESTS "Build the test programs" OFF)

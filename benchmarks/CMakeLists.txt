@@ -7,8 +7,8 @@
 # tree with the Python environment, the drivers and the MPI launcher of this
 # build, so that a benchmark is run from the build tree and writes there
 # (see README.md here). BENCHMARKS_PYTHON names a Python with planetmodel,
-# pyslfp and matplotlib; when empty, the poetry environment of this
-# directory is looked for.
+# pyslfp and matplotlib; when empty, the root poetry environment
+# (ADGIA_POETRY_PYTHON, found by the top-level CMakeLists) is used.
 
 if(NOT USE_MPI)
     message(STATUS "Benchmarks: skipped (they need USE_MPI)")
@@ -16,31 +16,22 @@ if(NOT USE_MPI)
 endif()
 
 set(BENCHMARKS_PYTHON "" CACHE FILEPATH
-    "Python interpreter with planetmodel, pyslfp and matplotlib; the poetry environment of benchmarks/ if empty")
+    "Python interpreter with planetmodel, pyslfp and matplotlib; the root poetry environment if empty")
 if(NOT BENCHMARKS_PYTHON)
-    find_program(POETRY_EXECUTABLE poetry)
-    if(POETRY_EXECUTABLE)
-        execute_process(
-            COMMAND "${POETRY_EXECUTABLE}" -C "${CMAKE_CURRENT_SOURCE_DIR}"
-                    env info -p
-            OUTPUT_VARIABLE _venv OUTPUT_STRIP_TRAILING_WHITESPACE
-            ERROR_QUIET RESULT_VARIABLE _result)
-        if(_result EQUAL 0 AND EXISTS "${_venv}/bin/python")
-            set(BENCHMARKS_PYTHON "${_venv}/bin/python" CACHE FILEPATH
-                "Python interpreter with planetmodel, pyslfp and matplotlib; the poetry environment of benchmarks/ if empty"
-                FORCE)
-        endif()
-    endif()
+    set(BENCHMARKS_PYTHON "${ADGIA_POETRY_PYTHON}")
 endif()
+set(BENCHMARKS_PYTHON_FALLBACK 0)
 if(BENCHMARKS_PYTHON)
     message(STATUS "Benchmarks: scripts run with ${BENCHMARKS_PYTHON}")
 else()
     message(WARNING
         "Benchmarks: no Python environment found for the scripts. Run "
-        "`poetry install` in ${CMAKE_CURRENT_SOURCE_DIR} and configure again, "
-        "or pass -DBENCHMARKS_PYTHON=<python>; the launchers fall back on "
-        "`python3`.")
+        "`poetry install` at the repository root (with "
+        "`poetry env use python3.12` first if your python3 is older) and "
+        "configure again, or pass -DBENCHMARKS_PYTHON=<python>; the "
+        "launchers fall back on `python3` and refuse to run until then.")
     set(BENCHMARKS_PYTHON "python3")
+    set(BENCHMARKS_PYTHON_FALLBACK 1)
 endif()
 
 # The benchmarks are organised by family, one sub-folder each with its
@@ -146,3 +137,4 @@ benchmark_launcher(viscoelastic/sphere viscoelastic/sphere study
 # --- The master script ------------------------------------------------------
 
 benchmark_launcher(. . campaign ${BENCHMARK_LAUNCHER_ARGUMENTS})
+benchmark_launcher(. . collect)

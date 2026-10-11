@@ -1,32 +1,36 @@
-# Post-processing
+# Earth data
 
-Python tools for AdGIA outputs, a poetry project in the style of
-`meshes/` and `benchmarks/`.
+Python tools that exchange surface fields between real-Earth datasets
+and AdGIA: pyslfp's ICE-NG ice histories and topography in, gridded
+NetCDF and maps out. The scripts live here and run from the build tree,
+in the style of `meshes/` and `benchmarks/`; more datasets will join
+them as the need arises (tomographic models for conversion into
+viscosity, say).
 
 ## Running
 
-The build puts a launcher for each script in `<build>/postprocess/`
+The build puts a launcher for each script in `<build>/earth_data/`
 (`surface_to_netcdf`, `ice_ng_to_surface`, `topography_grid`): each
 starts the script of the source tree with the Python found at
-configuration — the poetry environment of this directory, or the one
-`POSTPROCESS_PYTHON` names. The environment is made once, and a build
-configured before it existed is configured again so the launchers pick
-it up:
+configuration — the shared poetry environment of the repository root, or
+the one `EARTH_DATA_PYTHON` names. The environment is made once (see
+INSTALL.md, "The Python environment"), and a build configured before it
+existed is configured again so the launchers pick it up:
 
 ```
-cd postprocess
-poetry install              # numpy, scipy, matplotlib, netCDF4, pyslfp
+cd <repo>
+poetry env use python3.12   # only if your python3 is older than 3.12
+poetry install
 cd <build> && cmake .       # regenerates the launchers
-./postprocess/topography_grid --lmax 24
+./earth_data/topography_grid --lmax 24
 ```
 
 `--extras maps` on the install adds cartopy and pyshtools for the map
 figures. When no environment is found at configuration the launchers
-fall back on `python3`, which fails at the first pyslfp import
-(`ModuleNotFoundError: No module named 'pyslfp'`) — that error means
-the two commands above. A script writes where it is started (or to
-`-o`), so run the launchers from the build tree; every script's `-h`
-and docstring give its options, defaults and a sample run.
+fall back on `python3` and refuse to run, with this recipe in their
+message. A script writes where it is started (or to `-o`), so run the
+launchers from the build tree; every script's `-h` and docstring give
+its options, defaults and a sample run.
 
 - `surface_to_netcdf.py` — grids the nodal surface-field CSV written by
   `SeaLevelOperator::WriteSurfaceField` (sea level, ice, any surface

@@ -762,13 +762,13 @@ the jump, as the box benchmark driver does.
   `<build>/doc/html`.
 - `meshes/make_all.py` omits `disc_with_wide_buffer.py` and
   `aspherical_body.py --all`.
-- `postprocess/pyproject.toml` gained `pyslfp (>=2.2.0)` (the ice-ng
-  export and the topography grid); `postprocess/poetry.lock` has not
-  been regenerated, and the postprocess poetry environment is not yet
-  installed (the launchers fall back to `python3`).
+- ~~the postprocess poetry environment~~ resolved 11 Oct 2026: the three
+  poetry projects merged into one at the repository root (pyproject.toml
+  there; `postprocess/` renamed `earth_data/`), and launchers configured
+  without the environment now refuse to run with the fix in their
+  message.
 
-**See:** `CMakeLists.txt`; `meshes/make_all.py`; `meshes/README.md`;
-`postprocess/pyproject.toml`.
+**See:** `CMakeLists.txt`; `meshes/make_all.py`; `meshes/README.md`.
 
 ### Code questions from the library comment pass
 
