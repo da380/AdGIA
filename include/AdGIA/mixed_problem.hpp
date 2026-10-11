@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "mfem.hpp"
+#include "AdGIA/bordered.hpp"
 #include "AdGIA/coefficient.hpp"
 #include "AdGIA/poisson.hpp"
 #include "AdGIA/quasi_static_problem.hpp"
@@ -733,18 +734,14 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   mfem::Vector rot_mpsi_;     ///< int w psi_k dS
   mfem::Vector rot_r_;        ///< -int sigma psi_k dS per assembly
   mfem::Vector omega_;
-  // The border-column cache: the unit responses K^-1 B_j of the
-  // bordered elimination are load-independent, so across solves with an
-  // unchanged operator (viscoelastic steps at fixed effective modulus,
-  // Picard passes between refreshes) they are reused rather than
-  // re-solved — the dominant cost of the bordered solve. Valid while
-  // OperatorVersion() stands still and the demanded tolerance is no
-  // tighter than the one they were built at.
-  std::vector<mfem::Vector> border_Yu_, border_Yphi_;
+  // The shared elimination engine (bordered.hpp): it owns the
+  // border-column cache — the unit responses K^-1 B_j are
+  // load-independent, so across solves with an unchanged operator
+  // (viscoelastic steps at fixed effective modulus, Picard passes
+  // between refreshes) they are reused rather than re-solved, the
+  // dominant cost of the bordered solve.
+  std::unique_ptr<BorderedElimination> border_elim_;
   bool monolithic_border_ = false;
-  int border_cache_version_ = -1;
-  int border_cache_nb_ = 0;
-  mfem::real_t border_cache_tol_ = 0.0;
 
   /** @brief Rebuild the water-rotation cross data (both features on). */
   void BuildBorderCrossData();

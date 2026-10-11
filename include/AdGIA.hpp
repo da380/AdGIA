@@ -3,6 +3,7 @@
 #include "mfem.hpp"
 #include "AdGIA/background.hpp"
 #include "AdGIA/bilininteg.hpp"
+#include "AdGIA/bordered.hpp"
 #include "AdGIA/coefficient.hpp"
 #include "AdGIA/descent.hpp"
 #include "AdGIA/elastic_tensor.hpp"

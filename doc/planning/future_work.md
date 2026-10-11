@@ -477,7 +477,9 @@ slipping problems, e.g. for relaxation of an aspherical body.
 
 ### The referential sea-level leg and the generalised rotational theory
 
-**Status:** proposal (the plan's WP7).
+**Status:** proposal — design pass written, awaiting review
+([`referential_sea_level_plan.md`](referential_sea_level_plan.md):
+phases, gates and the open design questions).
 
 Port the sea-level boundary terms to the referential class, where the
 combination `u·∇Φ + φ` is the referential potential ζ and the water
@@ -492,7 +494,8 @@ variables"); `doc/Elasticity/ggae092.pdf`.
 
 ### Equilibrium backgrounds with surface water
 
-**Status:** parked (the foundational caveat).
+**Status:** parked (the foundational caveat); scope sketched (David,
+11 Oct 2026).
 
 All sea-level theory to date computes forces that belong to a rotating
 model with oceans on a non-rotating model without them — the reference
@@ -502,7 +505,44 @@ backgrounds extended to carry surface water, and the generalised
 rotational theory is the matching perturbation framework — both on the
 referential leg.
 
-**See:** `equilibrium_figures.md`; `sea_level_plan.md`.
+The ladder of applications, as sketched:
+
+1. **Done (stage 1):** given a fluid–solid body and its density,
+   compute an equilibrium stress state hydrostatic in the fluid core
+   by density updates there.
+2. **Later:** the full shape-and-density optimisation for hydrostatic
+   equilibrium figures (`equilibrium_shape_plan.md`).
+3. **The ocean as a surface load:** for a fluid–solid planet with a
+   solid surface, find equilibrium stresses and fluid density
+   compatible with an ocean modelled as a *surface load* — 3-D oceans
+   are not needed for the applications in view and would be too hard
+   to mesh. Forward version: place the initial load through a choice
+   of equipotential and iterate until it still sits on an
+   equipotential of the full potential including its own mass (the
+   same fixed-point shape as the sea-level machinery; the
+   which-equipotential datum is one scalar, like the ocean-mass
+   datum). The which-equipotential and disconnected-basin questions
+   are open and interesting (each disconnected basin can sit on its
+   own level unless the connectivity says otherwise — the
+   ocean-function machinery, per component).
+4. **The realistic inverse:** the surface topography is known and the
+   mean sea level is *observed* — but it will not lie on an
+   equipotential of a given earth model. Tweak the density structure
+   *minimally* so that the observed sea level is the model's sea
+   level, with the observed moments of inertia as constraints. The
+   problem is non-unique — the result is not the true density — but it
+   gives *an* answer, which is a start on consistent density models,
+   and the misfit is linear in the density perturbation through the
+   Poisson operator, so the stage-1 descent/Gauss–Newton machinery
+   applies. A model produced this way is also exactly the
+   properly-known reference structure that makes the generalised
+   rotational theory applicable with nothing imposed (the
+   inertia-data question of `referential_sea_level_plan.md`, WP7.5),
+   and supersedes the Mitrovica & Wahr-style plastering of the
+   traditional theory.
+
+**See:** `equilibrium_figures.md`; `equilibrium_shape_plan.md`;
+`sea_level_plan.md`; `referential_sea_level_plan.md`.
 
 ### Ice-age production runs
 

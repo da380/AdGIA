@@ -162,6 +162,20 @@ class SeaLevelOperator {
                           const mfem::GridFunction& phi, mfem::real_t phi_g,
                           mfem::Coefficient* psi = nullptr);
 
+  /**
+   * @brief The referential form of the above: the combination
+   * @f$u\cdot\nabla\Phi_0 + \phi@f$ IS the referential potential
+   * @f$\zeta^1@f$, so @f$SL_1 = (-(\zeta^1+\psi) + \Phi_g)/g@f$ with
+   * @p zeta the problem's body potential
+   * (LinearQuasiStaticReferentialSelfGravitatingProblem::PotentialOnBody)
+   * and @f$g = |\nabla\Phi_0|@f$ as before (quasi_static_models.tex,
+   * the referential sea-level subsection).
+   */
+  void SeaLevelChangeFrom(const mfem::GridFunction& zeta,
+                          mfem::VectorCoefficient& grad_phi0,
+                          mfem::real_t phi_g,
+                          mfem::Coefficient* psi = nullptr);
+
   // --- integrals ------------------------------------------------------------
 
   /**

@@ -256,6 +256,34 @@ void SeaLevelOperator::SeaLevelChangeFrom(const GridFunction& u,
   }
 }
 
+void SeaLevelOperator::SeaLevelChangeFrom(const GridFunction& zeta,
+                                          VectorCoefficient& grad_phi0,
+                                          real_t phi_g, Coefficient* psi) {
+  // The referential combination: tau = zeta^1 directly.
+  auto zs = detail::MakeGridFunction(sfes_.get());
+  Restrict(zeta, *zs);
+  auto g = detail::MakeGridFunction(sfes_.get());
+  {
+    InnerProductCoefficient gg(grad_phi0, grad_phi0);
+    PowerCoefficient gmag(gg, 0.5);
+    BodyScratch().ProjectCoefficient(gmag);
+    Restrict(BodyScratch(), *g);
+  }
+  std::unique_ptr<GridFunction> psis;
+  if (psi) {
+    psis = detail::MakeGridFunction(sfes_.get());
+    psis->ProjectCoefficient(*psi);
+  }
+  for (int i = 0; i < sl1_->Size(); i++) {
+    const real_t gi = (*g)[i];
+    MFEM_VERIFY(gi > 0.0,
+                "SeaLevelOperator::SeaLevelChangeFrom: |grad Phi0| "
+                "vanishes on the surface.");
+    (*sl1_)[i] =
+        (-((*zs)[i] + (psis ? (*psis)[i] : 0.0)) + phi_g) / gi;
+  }
+}
+
 SeaLevelOperator::SeaLevelChangeInfo SeaLevelOperator::SeaLevelChange(
     const GridFunction& u, VectorCoefficient& grad_phi0,
     const GridFunction& phi, Coefficient* psi, real_t water_mass_change) {

@@ -50,6 +50,50 @@ class CentrifugalPotential : public mfem::Coefficient {
   mfem::Vector w_;
 };
 
+/**
+ * @brief @f$\nabla\psi@f$ of CentrifugalPotential, analytically: in 3-D
+ * @f$\nabla\psi = \Omega(\omega_1 x_3 - 2\omega_3 x_1,\;
+ * \omega_2 x_3 - 2\omega_3 x_2,\; \omega_1 x_1 + \omega_2 x_2)@f$, in
+ * 2-D @f$-2\Omega\,\omega_1 x@f$. The referential classes' rotation
+ * machinery assembles its volume loads from this (their tidal door
+ * takes the physical gradient as analytic data).
+ */
+class CentrifugalPotentialGradient : public mfem::VectorCoefficient {
+ public:
+  CentrifugalPotentialGradient(int dim, mfem::real_t Omega)
+      : mfem::VectorCoefficient(dim),
+        dim_(dim),
+        Omega_(Omega),
+        w_(dim == 2 ? 1 : 3) {
+    w_ = 0.0;
+  }
+  void SetAmplitudes(const mfem::Vector& w) { w_ = w; }
+  void SetUnit(int k) {
+    w_ = 0.0;
+    w_[k] = 1.0;
+  }
+
+  void Eval(mfem::Vector& V, mfem::ElementTransformation& T,
+            const mfem::IntegrationPoint& ip) override {
+    mfem::Vector x;
+    T.Transform(ip, x);
+    V.SetSize(dim_);
+    if (dim_ == 2) {
+      V = x;
+      V *= -2.0 * Omega_ * w_[0];
+      return;
+    }
+    V[0] = Omega_ * (w_[0] * x[2] - 2.0 * w_[2] * x[0]);
+    V[1] = Omega_ * (w_[1] * x[2] - 2.0 * w_[2] * x[1]);
+    V[2] = Omega_ * (w_[0] * x[0] + w_[1] * x[1]);
+  }
+
+ private:
+  int dim_;
+  mfem::real_t Omega_;
+  mfem::Vector w_;
+};
+
 /** @brief The inertia matrix of the traditional theory (Yu et al. 2025,
  * eq. 16): @f$\mathrm{diag}(C_3-C_1, C_3-C_2, -C_3)@f$ in 3-D, the spin
  * row @f$-C_3@f$ alone in 2-D. The moments are data, not derived from

@@ -15,6 +15,8 @@
 
 #include "mfem.hpp"
 #include "AdGIA/bilininteg.hpp"
+#include "AdGIA/bordered.hpp"
+#include "AdGIA/centrifugal.hpp"
 #include "AdGIA/mappings.hpp"
 #include "AdGIA/null_space.hpp"
 #include "AdGIA/poisson.hpp"
@@ -406,6 +408,72 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
   void SetTidalLoad(mfem::VectorCoefficient& grad_psi);
 
   /**
+   * @brief The monolithic sea-level solve, referential form: in the
+   * referential variables the water feedback collapses to a single
+   * boundary mass @f$-\int w\,\zeta'\zeta\,J_\Sigma\,dS@f$ on the
+   * @f$\zeta\zeta@f$ block (doc/quasi_static_models.tex,
+   * \S the referential sea-level terms), plus the rank-one
+   * @f$\Phi_g@f$ border with the mass-conservation row; the border is
+   * eliminated by the shared engine (bordered.hpp). 3-D only.
+   *
+   * @param ocean_weight @f$w = \rho_w \tilde C/\tilde g@f$ on the
+   * surface, pointwise (never projected); must outlive the problem.
+   * @param sigma_data The data load (ice and initial-state terms), per
+   * referential area; registered time-dependent through the ordinary
+   * surface-load slot.
+   * @param surface_marker Boundary attributes of the outer surface,
+   * sized as in SetSurfaceLoad().
+   * @param surface_jacobian Optional @f$J_\Sigma =
+   * J_e|F_e^{-T}\hat n|@f$ of the equilibrium mapping on the surface;
+   * null for mappings that are the identity at the surface (every
+   * current model). The feedback operator and the border carry it; the
+   * data loads are per referential area and do not.
+   */
+  void SetWaterLoad(mfem::Coefficient& ocean_weight,
+                    mfem::Coefficient& sigma_data,
+                    const mfem::Array<int>& surface_marker,
+                    mfem::Coefficient* surface_jacobian = nullptr);
+
+  /** @brief Rebuild the water pieces that depend on the CURRENT values
+   * of the ocean-weight coefficient (the @f$\zeta\zeta@f$ boundary
+   * mass, the @f$\Phi_g@f$ border): shoreline migration's hook, as on
+   * the mixed class. */
+  void RefreshWaterLoad();
+
+  /** @brief @f$\Phi_g@f$, the uniform potential term of the last
+   * bordered Solve() (mass conservation). */
+  mfem::real_t UniformPotentialTerm() const { return phi_g_; }
+
+  /**
+   * @brief The TRADITIONAL rotational-feedback border, referential
+   * form — the phase-A gate instrument of
+   * doc/planning/referential_sea_level_plan.md (decision 2): valid
+   * where the traditional theory is (the elastic model's inertia
+   * tensor isotropic, i.e. spherical models; the paper's eq. 20 —
+   * see doc/planning/generalised_rotation_note.md for the failure in
+   * closed form and the generalised theory that replaces this).
+   * The @f$\omega@f$ columns are the centrifugal volume loads
+   * @f$\int\tilde\rho\,\nabla\psi_k\cdot v\,dV@f$ (analytic gradients
+   * at @f$\varphi_e = \mathrm{id}@f$; the mapped composition is the
+   * generalised leg's business), the water cross data collapse to the
+   * @f$\zeta@f$ row, and the elimination runs on the shared engine.
+   * 3-D only; composable with SetWaterLoad().
+   *
+   * @param Omega The equilibrium rotation rate (about @f$e_3@f$).
+   * @param principal_moments The OBSERVED principal moments
+   * @f$(C_1, C_2, C_3)@f$ — data, not model-derived (paper §2.4).
+   */
+  void SetRotation(mfem::real_t Omega,
+                   const mfem::Vector& principal_moments);
+
+  /** @brief @f$\omega@f$ of the last bordered Solve(). */
+  const mfem::Vector& AngularVelocity() const { return omega_; }
+
+  /** @brief @f$\psi(\omega)@f$ at the last solve's amplitudes
+   * (CentrifugalPotential), for the sea-level postprocessing. */
+  mfem::Coefficient& SolutionCentrifugalPotential();
+
+  /**
    * @brief Ball-wide mode: regularise the pure-gauge vacuum-extension
    * field with the harmonic penalty @f$\epsilon\mu_g\int \nabla u :
    * \nabla v@f$ on the marked (buffer) attributes, through the fluid
@@ -540,6 +608,9 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
  protected:
   void SetupSolver(mfem::OperatorHandle& A) override;
   bool SolveLinearSystem(const mfem::Vector& B, mfem::Vector& X) override;
+  /** @brief The plain block solve (the pre-water SolveLinearSystem
+   * body); the bordered wrap and its column solves call it. */
+  bool SolveUnbordered(const mfem::Vector& B, mfem::Vector& X);
 
  protected:
   // Protected (not private) so that the slip-interface subclass can reuse
@@ -626,6 +697,42 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
   mfem::Vector B_zeta_;
   std::list<mfem::Array<int>> load_markers_;
   std::vector<std::unique_ptr<mfem::Coefficient>> load_coefs_;
+
+  // The sea-level terms (SetWaterLoad; quasi_static_models.tex, the
+  // referential sea-level subsection): the zeta-zeta boundary mass,
+  // summed onto the potential block, and the Phi_g border eliminated
+  // by the shared engine.
+  bool sea_enabled_ = false;
+  mfem::Coefficient* sea_w_ = nullptr;
+  mfem::Coefficient* sea_sigma_data_ = nullptr;
+  mfem::Coefficient* sea_jac_ = nullptr;
+  mfem::Array<int> sea_marker_;
+  std::unique_ptr<mfem::BilinearForm> sea_zz_form_;
+  mfem::OperatorHandle S_sea_;
+  std::unique_ptr<mfem::SumOperator> A_zeta_sea_;
+  std::vector<std::unique_ptr<mfem::Coefficient>> sea_coefs_;
+  mfem::Vector sea_czeta_;
+  mfem::real_t sea_m_ = 0.0, sea_Sd_ = 0.0, phi_g_ = 0.0;
+  std::unique_ptr<BorderedElimination> border_elim_;
+  void BuildWaterZetaMass();
+  void BuildWaterBorder();
+
+  // The traditional rotation border (SetRotation; the phase-A
+  // instrument): unit centrifugal potentials and their analytic
+  // gradients, the u-row columns, the water cross data on the zeta
+  // row, the omega-row data read off the raw surface loads.
+  bool rot_enabled_ = false;
+  mfem::real_t rot_Omega_ = 0.0;
+  mfem::DenseMatrix rot_D_;
+  std::vector<std::unique_ptr<mfem::Coefficient>> rot_psi_;
+  std::vector<std::unique_ptr<mfem::VectorCoefficient>> rot_grad_psi_;
+  std::vector<mfem::Vector> rot_tcol_;       // u columns (+rho grad psi_k)
+  std::vector<mfem::Vector> rot_cpsi_zeta_;  // water psi columns (zeta row)
+  mfem::Vector rot_mpsi_, rot_r_, omega_;
+  mfem::DenseMatrix rot_Pw_;
+  std::unique_ptr<mfem::Coefficient> rot_psi_total_;
+  void BuildRotationColumns();
+  void BuildRotationCrossData();
 
   // 2-D compatibility (as in the Eulerian class)
   mfem::Vector ones_, L_outer_;

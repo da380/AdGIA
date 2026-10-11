@@ -20,7 +20,7 @@
 
 % --- notation ---------------------------------------------------------------
 \newcommand{\R}{\mathbb{R}}
-\newcommand{\eps}{\varepsilon}
+\newcommand{\eps}{\mathbf{a}repsilon}
 \newcommand{\dS}{\,\mathrm{d}S}
 \newcommand{\dV}{\,\mathrm{d}V}
 \newcommand{\tr}{\operatorname{tr}}
@@ -2242,6 +2242,63 @@ solution at discretisation level, improving with order. (iv) Relabelled
 welded-gauged solver identity: the relabelled and unrelabelled problems
 give the same solution to solver tolerance (of order $10^{-7}$), which
 holds only because the penalty is covariant.
+
+\subsection{The sea-level terms: the \texorpdfstring{$\zeta\zeta$}{zeta-zeta} collapse}
+\label{sec:ref-sea}
+
+The sea-level machinery of \S\ref{sec:mixed-sea} ports to this class in
+a form that is simpler, not more complicated, because the change of
+variables \eqref{eq:zetaphi} is exactly the combination the water
+feedback is built from: $\tau = \vu\cdot\grad\Phi_0 + \phi = \zeta^1$ at
+the surface. The mixed class's four trace blocks
+($uu$/$u\phi$/$\phi u$/$\phi\phi$) collapse to a single boundary mass on
+the $\zeta\zeta$ block,
+\begin{equation}
+  -\int_{\partial M} \frac{\rho_w\tilde C}{\tilde g}\,
+    \zeta^1\,\chi\; J_\Sigma\dS,
+  \label{eq:zetazeta-water}
+\end{equation}
+the same fact that makes the surface mass load a potential-row load
+alone (\S\ref{sec:referential}, Loads). The conventions: the integral
+is the physical-surface form pulled back, so $J_\Sigma =
+J_e|F_e^{-T}\vn|$ is the equilibrium mapping's surface Jacobian
+($\sigma$ is per \emph{referential} area, so the data loads carry no
+factor while the feedback operator does); $\tilde g = |F_e^{-T}
+\grad\zeta^0|$ is the referential surface gravity; $\tilde C =
+C\circ\varphi_e$ is pointwise, never projected. For every current model
+the equilibrium mapping is the identity at the surface and
+\eqref{eq:zetazeta-water} is entry-for-entry the mixed term; the factors
+are carried for the mapped gates. The condensed system is otherwise the
+one of \S\ref{sec:mixed-sea}: the rank-one $\Phi_g$ border with the
+(referential) mass-conservation row, the rotation border with its
+columns through the tidal door (the centrifugal $r^2$ part is not an
+interior harmonic, so its gradient enters as analytic data composed
+with $\varphi_e$), the data loads on the ordinary surface-load slot,
+and $SL_1 = (-\zeta^1 - \psi + \Phi_g)/\tilde g$ as pure
+postprocessing. Both classes drive the same bordered-elimination
+engine (\code{bordered.hpp}): the base solve, one cached solve per
+border column, and the dense reduction.
+
+\paragraph{Rigid modes and the two feedbacks.} Under a linearised rigid
+motion $\vu \to \vu + \mathbf{a} + \vb\times\vx$ the Eulerian potential shifts,
+$\phi \to \phi - (\mathbf{a} + \vb\times\vx)\cdot\grad\Phi_0$, and
+\eqref{eq:zetaphi} makes $\zeta^1$ \emph{invariant}: the referential
+null space is $(\mathbf{a} + \vb\times\vx,\,0)$, rigid modes have no potential
+partners (\S\ref{sec:referential}). Two consequences fall out of the
+variables themselves. First, the water feedback
+\eqref{eq:zetazeta-water} and the $\Phi_g$ border are rigid-inert, so
+the projected solver and the sea-level terms coexist without
+interaction. Second, the traditional rotation row (Yu et al.\
+\cite{Yu2025} eq.~15) couples to $\vu$ \emph{not} through $\zeta^1$ —
+$\int_M \rho\,\vu\cdot\grad\psi'\dV$ is a volume term with no
+$\zeta$-representation — and is therefore rigid-sensitive unless the
+model's inertia tensor is isotropic (their eq.~20, \S2.4): the
+referential variables make the pathology of the traditional theory
+visible as the one feedback term that escapes the collapse. The
+generalised (Tisserand-frame) theory of Maitra \& Al-Attar
+\cite{MaitraAlAttar2024} replaces that row; its reduction to bordered
+form is the referential leg's phase~B
+(\code{doc/planning/referential\_sea\_level\_plan.md}).
 
 %==========================================================================
 \section{The slipping-interface problem}

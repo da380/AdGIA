@@ -1559,53 +1559,46 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveLinearSystem(
     return SolveBorderedMonolithic(Bu, Bphi, Db, r, B_in, X);
   }
 
-  // Base solve, then one solve per border column — the columns are
-  // load-independent, so they are cached across solves with an
-  // unchanged operator (the viscoelastic stepping economy) and only
-  // re-solved when the operator changed or a tighter tolerance is
-  // demanded than they were built at.
+  // Base solve, then the shared elimination engine: one solve per
+  // border column, cached across solves with an unchanged operator
+  // (the viscoelastic stepping economy) and only re-solved when the
+  // operator changed or a tighter tolerance is demanded than they were
+  // built at. The column solve swaps the raw potential-row data in
+  // (psi masked, compatibility fix applied) — the class-side
+  // conventions live in this callback, the algebra in the engine.
   bool ok = SolveUnbordered(B_in, X);
-  Vector phi0(Phi_true_);
-  const bool cached = border_cache_version_ == OperatorVersion() &&
-                      border_cache_nb_ == nb &&
-                      RelTol() >= border_cache_tol_;
-  if (!cached) {
-    Vector Bphi_save(B_phi_);
-    Coefficient* psi_save = psi_;
-    psi_ = nullptr;
-    border_Yu_.assign(nb, Vector());
-    border_Yphi_.assign(nb, Vector());
-    for (int j = 0; j < nb; j++) {
-      Vector col(Bphi[j]);
-      MakeCompatible(col);
-      B_phi_ = col;
-      border_Yu_[j].SetSize(X.Size());
-      border_Yu_[j] = 0.0;
-      ok = SolveUnbordered(Bu[j], border_Yu_[j]) && ok;
-      border_Yphi_[j] = Phi_true_;
-    }
-    B_phi_ = Bphi_save;
-    psi_ = psi_save;
-    border_cache_version_ = OperatorVersion();
-    border_cache_nb_ = nb;
-    border_cache_tol_ = RelTol();
+  if (!border_elim_) {
+    border_elim_ = std::make_unique<BorderedElimination>(
+        2,
+        [this](const BorderedElimination::State& rhs,
+               BorderedElimination::State& xs) {
+          Vector Bphi_save(B_phi_);
+          Coefficient* psi_save = psi_;
+          psi_ = nullptr;
+          Vector col(rhs[1]);
+          MakeCompatible(col);
+          B_phi_ = col;
+          xs[0].SetSize(rhs[0].Size());
+          xs[0] = 0.0;
+          const bool converged = SolveUnbordered(rhs[0], xs[0]);
+          xs[1] = Phi_true_;
+          B_phi_ = Bphi_save;
+          psi_ = psi_save;
+          return converged;
+        },
+        [this](const Vector& a, const Vector& b) { return Dot(a, b); });
   }
-  const std::vector<Vector>& Yu = border_Yu_;
-  const std::vector<Vector>& Yphi = border_Yphi_;
-
-  // (Db - B^T Y) y = r - B^T x0.
-  DenseMatrix S(nb);
-  Vector rhs(nb), y(nb);
-  for (int i = 0; i < nb; i++) {
-    rhs[i] = r[i] - (Dot(Bu[i], X) + Dot(Bphi[i], phi0));
-    for (int j = 0; j < nb; j++) {
-      S(i, j) = Db(i, j) - (Dot(Bu[i], Yu[j]) + Dot(Bphi[i], Yphi[j]));
-    }
+  std::vector<BorderedElimination::State> columns(nb);
+  for (int j = 0; j < nb; j++) {
+    columns[j] = {Bu[j], Bphi[j]};
   }
-  DenseMatrixInverse Sinv(S);
-  Sinv.Mult(rhs, y);
+  BorderedElimination::State xs = {X, Phi_true_};
+  Vector y;
   // (With the sea border alone this is the WP3 Sherman-Morrison,
   // Phi_g = (c.x0 - Sd)/(m + c.y), entry for entry.)
+  ok = border_elim_->Eliminate(columns, Db, r, OperatorVersion(), RelTol(),
+                               xs, y) &&
+       ok;
   phi_g_ = sea_enabled_ ? y[0] : 0.0;
   for (int k = 0; k < nw; k++) {
     omega_[k] = y[ns + k];
@@ -1614,11 +1607,8 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveLinearSystem(
     static_cast<CentrifugalPotential*>(rot_psi_total_.get())
         ->SetAmplitudes(omega_);
   }
-  for (int j = 0; j < nb; j++) {
-    X.Add(-y[j], Yu[j]);
-    phi0.Add(-y[j], Yphi[j]);
-  }
-  Phi_true_ = phi0;
+  X = xs[0];
+  Phi_true_ = xs[1];
   // The column solves distributed their own potentials; redistribute
   // the combined one (the WP3 lesson).
   DistributePotential(Phi_true_);

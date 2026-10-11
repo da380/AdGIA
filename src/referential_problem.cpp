@@ -1588,6 +1588,214 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetTidalLoad(
   tidal_coefs_.push_back(std::move(load));
 }
 
+void LinearQuasiStaticReferentialSelfGravitatingProblem::SetWaterLoad(
+    Coefficient& ocean_weight, Coefficient& sigma_data,
+    const Array<int>& surface_marker, Coefficient* surface_jacobian) {
+  MFEM_VERIFY(!sea_enabled_, "SetWaterLoad: already set.");
+  MFEM_VERIFY(dim_ == 3,
+              "SetWaterLoad: the sea-level equation is 3-D only (a 2-D "
+              "ocean is not supported, and the 2-D compatibility "
+              "relocation would make the bordered system asymmetric).");
+  sea_enabled_ = true;
+  sea_w_ = &ocean_weight;
+  sea_sigma_data_ = &sigma_data;
+  sea_marker_ = surface_marker;
+  sea_jac_ = surface_jacobian;
+  BuildWaterZetaMass();
+  BuildWaterBorder();
+  // The data load goes through the ordinary surface-load slot; its
+  // surface integral (the mass-row data) is refreshed per
+  // AssembleForce.
+  SetSurfaceLoad(sigma_data, surface_marker);
+  operator_dirty_ = true;
+}
+
+void LinearQuasiStaticReferentialSelfGravitatingProblem::BuildWaterZetaMass() {
+  // -int w zeta chi [J_Sigma] dS on the parent mesh's surface boundary
+  // elements (their attributes are inherited, so the caller's marker —
+  // at the displacement mesh's size — lists the right attributes).
+  Array<int> parent_marker(fes_zeta_->GetMesh()->bdr_attributes.Max());
+  parent_marker = 0;
+  for (int a = 1; a <= sea_marker_.Size(); a++) {
+    if (sea_marker_[a - 1]) {
+      MFEM_VERIFY(a <= parent_marker.Size(),
+                  "SetWaterLoad: surface attribute missing on the "
+                  "parent mesh.");
+      parent_marker[a - 1] = 1;
+    }
+  }
+  sea_coefs_.clear();
+  auto minus_w = std::make_unique<ProductCoefficient>(-1.0, *sea_w_);
+  Coefficient* mass_coef = minus_w.get();
+  sea_coefs_.push_back(std::move(minus_w));
+  if (sea_jac_) {
+    auto mwj = std::make_unique<ProductCoefficient>(*sea_coefs_.back(),
+                                                    *sea_jac_);
+    mass_coef = mwj.get();
+    sea_coefs_.push_back(std::move(mwj));
+  }
+  sea_zz_form_ = detail::MakeBilinearForm(fes_zeta_);
+  sea_zz_form_->AddBoundaryIntegrator(new MassIntegrator(*mass_coef),
+                                      parent_marker);
+  sea_zz_form_->Assemble();
+  Array<int> empty;
+  sea_zz_form_->FormSystemMatrix(empty, S_sea_);
+  A_zeta_sea_ = std::make_unique<SumOperator>(const_cast<Operator*>(A_zeta_),
+                                              1.0, S_sea_.Ptr(), 1.0, false,
+                                              false);
+}
+
+void LinearQuasiStaticReferentialSelfGravitatingProblem::BuildWaterBorder() {
+  // The Phi_g border c = int w chi [J_Sigma] dS on the zeta row,
+  // assembled like the loads (on the body shadow space and injected,
+  // unless ball-wide), and m = int w [J_Sigma] dS = c . 1. There is no
+  // u column: the zeta-zeta collapse (quasi_static_models.tex, the
+  // referential sea-level subsection).
+  Coefficient* w = sea_w_;
+  std::unique_ptr<Coefficient> wj;
+  if (sea_jac_) {
+    wj = std::make_unique<ProductCoefficient>(*sea_w_, *sea_jac_);
+    w = wj.get();
+  }
+  auto lf =
+      detail::MakeLinearForm(ball_wide_ ? fes_zeta_ : shadow_zeta_.get());
+  lf->AddBoundaryIntegrator(new BoundaryLFIntegrator(*w), sea_marker_);
+  lf->Assemble();
+  if (ball_wide_) {
+    ToTrueDofs(*fes_zeta_, *lf, sea_czeta_);
+  } else {
+    Vector bL(fes_zeta_->GetVSize());
+    injection_->Mult(*lf, bL);
+    ToTrueDofs(*fes_zeta_, bL, sea_czeta_);
+  }
+  auto ones = detail::MakeGridFunction(fes_zeta_);
+  *ones = 1.0;
+  Vector Ones;
+  ones->GetTrueDofs(Ones);
+  sea_m_ = Dot(sea_czeta_, Ones);
+  MFEM_VERIFY(sea_m_ > 0.0, "SetWaterLoad: the ocean has zero area.");
+}
+
+void LinearQuasiStaticReferentialSelfGravitatingProblem::RefreshWaterLoad() {
+  MFEM_VERIFY(sea_enabled_, "RefreshWaterLoad: SetWaterLoad first.");
+  BuildWaterZetaMass();
+  BuildWaterBorder();
+  BuildRotationCrossData();
+  operator_dirty_ = true;
+}
+
+void LinearQuasiStaticReferentialSelfGravitatingProblem::SetRotation(
+    real_t Omega, const Vector& principal_moments) {
+  MFEM_VERIFY(!rot_enabled_, "SetRotation: already set.");
+  MFEM_VERIFY(dim_ == 3,
+              "SetRotation: the referential rotation border is 3-D only.");
+  rot_enabled_ = true;
+  rot_Omega_ = Omega;
+  const int nw = 3;
+  MFEM_VERIFY(principal_moments.Size() == nw,
+              "SetRotation: 3 principal moments expected.");
+  rot_D_ = InertiaMatrix(principal_moments);
+  for (int k = 0; k < nw; k++) {
+    auto psi = std::make_unique<CentrifugalPotential>(dim_, Omega);
+    psi->SetUnit(k);
+    rot_psi_.push_back(std::move(psi));
+    auto g = std::make_unique<CentrifugalPotentialGradient>(dim_, Omega);
+    g->SetUnit(k);
+    rot_grad_psi_.push_back(std::move(g));
+  }
+  omega_.SetSize(nw);
+  omega_ = 0.0;
+  rot_r_.SetSize(nw);
+  rot_r_ = 0.0;
+  {
+    auto total = std::make_unique<CentrifugalPotential>(dim_, Omega);
+    total->SetZero();
+    rot_psi_total_ = std::move(total);
+  }
+  BuildRotationColumns();
+  BuildRotationCrossData();
+  operator_dirty_ = true;
+}
+
+Coefficient& LinearQuasiStaticReferentialSelfGravitatingProblem::
+    SolutionCentrifugalPotential() {
+  MFEM_VERIFY(rot_enabled_,
+              "SolutionCentrifugalPotential: SetRotation first.");
+  return *rot_psi_total_;
+}
+
+void LinearQuasiStaticReferentialSelfGravitatingProblem::BuildRotationColumns() {
+  // The u-row omega columns +int rho grad(psi_k) . v dV: minus the
+  // centrifugal LOAD (the tidal door's -rho grad psi), matching the
+  // mixed class's column convention entry for entry. The gradients are
+  // analytic at phi_e = id (the instrument's regime; the header note).
+  const int nw = static_cast<int>(rot_grad_psi_.size());
+  rot_tcol_.assign(nw, Vector());
+  for (int k = 0; k < nw; k++) {
+    ScalarVectorProductCoefficient rgp(*rho_, *rot_grad_psi_[k]);
+    auto lf = detail::MakeLinearForm(fes_);
+    lf->AddDomainIntegrator(new VectorDomainLFIntegrator(rgp));
+    lf->Assemble();
+    ToTrueDofs(*fes_, *lf, rot_tcol_[k]);
+  }
+}
+
+void LinearQuasiStaticReferentialSelfGravitatingProblem::BuildRotationCrossData() {
+  // The water-rotation cross data, when both features are on: the
+  // zeta-row columns c^psi_k = int w psi_k chi [J_Sigma] dS,
+  // m^psi_k = int w psi_k [J_Sigma] dS and Pw_kj = int w psi_k psi_j
+  // [J_Sigma] dS — psi through its interpolant (the WP4 convention,
+  // kept so that the border stays symmetric). Everything collapses to
+  // the zeta row: there is no u part to these columns.
+  if (!sea_enabled_ || !rot_enabled_) {
+    return;
+  }
+  const int nw = static_cast<int>(rot_psi_.size());
+  rot_cpsi_zeta_.assign(nw, Vector());
+  rot_mpsi_.SetSize(nw);
+  rot_Pw_.SetSize(nw);
+  FiniteElementSpace* sfes = ball_wide_ ? fes_zeta_ : shadow_zeta_.get();
+  std::vector<std::unique_ptr<GridFunction>> psig(nw);
+  std::vector<std::unique_ptr<GridFunctionCoefficient>> psii(nw);
+  for (int k = 0; k < nw; k++) {
+    psig[k] = detail::MakeGridFunction(sfes);
+    psig[k]->ProjectCoefficient(*rot_psi_[k]);
+    psii[k] = std::make_unique<GridFunctionCoefficient>(psig[k].get());
+  }
+  auto ones = detail::MakeGridFunction(fes_zeta_);
+  *ones = 1.0;
+  Vector Ones;
+  ones->GetTrueDofs(Ones);
+  auto psi_parent = detail::MakeGridFunction(fes_zeta_);
+  Vector Psi(fes_zeta_->GetTrueVSize());
+  for (int k = 0; k < nw; k++) {
+    ProductCoefficient wpsi(*sea_w_, *psii[k]);
+    Coefficient* wc = &wpsi;
+    std::unique_ptr<Coefficient> wj;
+    if (sea_jac_) {
+      wj = std::make_unique<ProductCoefficient>(wpsi, *sea_jac_);
+      wc = wj.get();
+    }
+    auto lf = detail::MakeLinearForm(sfes);
+    lf->AddBoundaryIntegrator(new BoundaryLFIntegrator(*wc), sea_marker_);
+    lf->Assemble();
+    if (ball_wide_) {
+      ToTrueDofs(*fes_zeta_, *lf, rot_cpsi_zeta_[k]);
+    } else {
+      Vector bL(fes_zeta_->GetVSize());
+      injection_->Mult(*lf, bL);
+      ToTrueDofs(*fes_zeta_, bL, rot_cpsi_zeta_[k]);
+    }
+    rot_mpsi_[k] = Dot(rot_cpsi_zeta_[k], Ones);
+  }
+  for (int k = 0; k < nw; k++) {
+    for (int j = 0; j <= k; j++) {
+      psi_parent->ProjectCoefficient(*rot_psi_[j]);
+      psi_parent->GetTrueDofs(Psi);
+      rot_Pw_(k, j) = rot_Pw_(j, k) = Dot(rot_cpsi_zeta_[k], Psi);
+    }
+  }
+}
 
 void LinearQuasiStaticReferentialSelfGravitatingProblem::SetPrescribedVacuumExtension(
     FiniteElementSpace& fes_buffer, const SparseMatrix& E) {
@@ -1726,6 +1934,45 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::AssembleForce(real_t t)
     ToTrueDofs(*fes_zeta_, bL, B_zeta_);
   }
   MakeCompatible(B_zeta_);
+  if (rot_enabled_) {
+    // The omega-row data -int sigma psi_k dS, read off the raw
+    // surface-load form (B_zeta_ holds -int sigma chi for every
+    // registered surface load; the mixed class's convention).
+    auto psig = detail::MakeGridFunction(fes_zeta_);
+    Vector Psi(fes_zeta_->GetTrueVSize());
+    for (int k = 0; k < static_cast<int>(rot_psi_.size()); k++) {
+      psig->ProjectCoefficient(*rot_psi_[k]);
+      psig->GetTrueDofs(Psi);
+      rot_r_[k] = Dot(B_zeta_, Psi);
+    }
+  }
+  if (sea_enabled_) {
+    // The mass-row data int sigma_data [J_Sigma] dS at this time,
+    // along the border's assembly route.
+    Coefficient* s = sea_sigma_data_;
+    std::unique_ptr<Coefficient> sj;
+    if (sea_jac_) {
+      sj = std::make_unique<ProductCoefficient>(*sea_sigma_data_, *sea_jac_);
+      s = sj.get();
+    }
+    auto lf =
+        detail::MakeLinearForm(ball_wide_ ? fes_zeta_ : shadow_zeta_.get());
+    lf->AddBoundaryIntegrator(new BoundaryLFIntegrator(*s), sea_marker_);
+    lf->Assemble();
+    Vector Sd;
+    if (ball_wide_) {
+      ToTrueDofs(*fes_zeta_, *lf, Sd);
+    } else {
+      Vector bL(fes_zeta_->GetVSize());
+      injection_->Mult(*lf, bL);
+      ToTrueDofs(*fes_zeta_, bL, Sd);
+    }
+    auto ones = detail::MakeGridFunction(fes_zeta_);
+    *ones = 1.0;
+    Vector Ones;
+    ones->GetTrueDofs(Ones);
+    sea_Sd_ = Dot(Sd, Ones);
+  }
 }
 
 void LinearQuasiStaticReferentialSelfGravitatingProblem::RegisterFields(DataCollection& dc) {
@@ -1802,7 +2049,13 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetupSolver(OperatorHan
   block_op_->SetBlock(0, 0, A_uu);
   block_op_->SetBlock(0, 1, const_cast<Operator*>(C_op_));
   block_op_->SetBlock(1, 0, const_cast<Operator*>(Ct_op_));
-  block_op_->SetBlock(1, 1, const_cast<Operator*>(A_zeta_));
+  // With the water load the zeta block carries the (negative) surface
+  // mass; the preconditioner stays on the base block (the water term is
+  // a small boundary perturbation).
+  block_op_->SetBlock(1, 1,
+                      sea_enabled_
+                          ? static_cast<Operator*>(A_zeta_sea_.get())
+                          : const_cast<Operator*>(A_zeta_));
 
   block_prec_ = std::make_unique<BlockDiagonalPreconditioner>(offsets_);
   block_prec_->SetDiagonalBlock(0, prec_.get());
@@ -1840,6 +2093,93 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetupSolver(OperatorHan
 }
 
 bool LinearQuasiStaticReferentialSelfGravitatingProblem::SolveLinearSystem(const Vector& B,
+                                                            Vector& X) {
+  if (!sea_enabled_ && !rot_enabled_) {
+    return SolveUnbordered(B, X);
+  }
+  // The bordered solve, referential form (quasi_static_models.tex, the
+  // referential sea-level subsection): the Phi_g column (0, c_zeta) —
+  // the zeta-zeta collapse leaves no u component — and the omega
+  // columns (t_k, -c^psi_k) with t_k the centrifugal volume loads;
+  // dense block [[-m, m^psi], [m^psi, D - Pw]]; eliminated by the
+  // shared engine with its version-keyed column cache.
+  const int ns = sea_enabled_ ? 1 : 0;
+  const int nw = rot_enabled_ ? static_cast<int>(rot_psi_.size()) : 0;
+  const int nb = ns + nw;
+  bool ok = SolveUnbordered(B, X);
+  if (!border_elim_) {
+    border_elim_ = std::make_unique<BorderedElimination>(
+        2,
+        [this](const BorderedElimination::State& rhs,
+               BorderedElimination::State& xs) {
+          Vector Bz_save(B_zeta_);
+          B_zeta_ = rhs[1];
+          xs[0].SetSize(rhs[0].Size());
+          xs[0] = 0.0;
+          const bool converged = SolveUnbordered(rhs[0], xs[0]);
+          xs[1] = Zeta_true_;
+          B_zeta_ = Bz_save;
+          return converged;
+        },
+        [this](const Vector& a, const Vector& b) { return Dot(a, b); });
+  }
+  Vector zero_u(X.Size());
+  zero_u = 0.0;
+  Vector zero_z(fes_zeta_->GetTrueVSize());
+  zero_z = 0.0;
+  std::vector<BorderedElimination::State> columns(nb);
+  if (sea_enabled_) {
+    columns[0] = {zero_u, sea_czeta_};
+  }
+  for (int k = 0; k < nw; k++) {
+    Vector cz(zero_z);
+    if (sea_enabled_) {
+      cz -= rot_cpsi_zeta_[k];
+    }
+    columns[ns + k] = {rot_tcol_[k], cz};
+  }
+  DenseMatrix Db(nb);
+  Db = 0.0;
+  Vector r(nb);
+  r = 0.0;
+  if (sea_enabled_) {
+    Db(0, 0) = -sea_m_;
+    r[0] = sea_Sd_;
+  }
+  for (int k = 0; k < nw; k++) {
+    r[ns + k] = rot_r_[k];
+    for (int j = 0; j < nw; j++) {
+      Db(ns + k, ns + j) = rot_D_(k, j);
+      if (sea_enabled_) {
+        Db(ns + k, ns + j) -= rot_Pw_(k, j);
+      }
+    }
+    if (sea_enabled_) {
+      Db(0, ns + k) = Db(ns + k, 0) = rot_mpsi_[k];
+    }
+  }
+  BorderedElimination::State xs = {X, Zeta_true_};
+  Vector y;
+  ok = border_elim_->Eliminate(columns, Db, r, OperatorVersion(), RelTol(),
+                               xs, y) &&
+       ok;
+  phi_g_ = sea_enabled_ ? y[0] : 0.0;
+  for (int k = 0; k < nw; k++) {
+    omega_[k] = y[ns + k];
+  }
+  if (rot_enabled_) {
+    static_cast<CentrifugalPotential*>(rot_psi_total_.get())
+        ->SetAmplitudes(omega_);
+  }
+  X = xs[0];
+  Zeta_true_ = xs[1];
+  // The column solves distributed their own potentials; redistribute
+  // the combined one.
+  DistributePotential(Zeta_true_);
+  return ok;
+}
+
+bool LinearQuasiStaticReferentialSelfGravitatingProblem::SolveUnbordered(const Vector& B,
                                                             Vector& X) {
   B_block_->GetBlock(0) = B;
   B_block_->GetBlock(1) = B_zeta_;
