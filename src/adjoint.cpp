@@ -64,19 +64,39 @@ real_t FrobeniusDot(const DenseMatrix& A, const DenseMatrix& B) {
 
 // --- AdjointForce ------------------------------------------------------------
 
-void AdjointForce::Insert(real_t t, const Vector& dual, bool on_potential) {
+void AdjointForce::Insert(real_t t, Observation&& o) {
+  o.t = t;
   auto it = std::upper_bound(
       obs_.begin(), obs_.end(), t,
       [](real_t a, const Observation& b) { return a < b.t; });
-  obs_.insert(it, Observation{t, Vector(dual), on_potential});
+  obs_.insert(it, std::move(o));
 }
 
 void AdjointForce::AddObservation(real_t t, const Vector& dual) {
-  Insert(t, dual, false);
+  Observation o;
+  o.du = dual;
+  Insert(t, std::move(o));
 }
 
 void AdjointForce::AddPotentialObservation(real_t t, const Vector& dual) {
-  Insert(t, dual, true);
+  Observation o;
+  o.dphi = dual;
+  Insert(t, std::move(o));
+}
+
+void AdjointForce::AddObservation(real_t t, const AdjointLoad& load) {
+  Observation o;
+  if (load.u) {
+    o.du = *load.u;
+  }
+  if (load.phi) {
+    o.dphi = *load.phi;
+  }
+  o.uniform = load.uniform;
+  if (load.omega) {
+    o.omega = *load.omega;
+  }
+  Insert(t, std::move(o));
 }
 
 void AdjointForce::AddContinuous(
@@ -331,31 +351,51 @@ void AdjointSolver::Pair(real_t w, const AdjointPair& p) {
   }
 }
 
-void AdjointSolver::ResolvePotentialSlot(LinearQuasiStaticProblem& problem) {
-  bool needs = force_->HasContinuousPotential();
-  for (int i = 0; i < force_->NumObservations() && !needs; i++) {
-    needs = force_->ObservationOnPotential(i);
+void AdjointSolver::ResolveSlots(LinearQuasiStaticProblem& problem) {
+  bool needs_phi = force_->HasContinuousPotential();
+  bool needs_border = false;
+  for (int i = 0; i < force_->NumObservations(); i++) {
+    needs_phi = needs_phi || force_->ObservationOnPotential(i);
+    needs_border = needs_border || force_->ObservationOnBorder(i);
   }
-  if (!needs) {
-    return;
+  if (needs_phi) {
+    phi_slot_ = dynamic_cast<PotentialForceSlot*>(&problem);
+    MFEM_VERIFY(phi_slot_,
+                "AdjointSolver: the force carries potential-row terms but "
+                "the problem exposes no PotentialForceSlot.");
   }
-  phi_slot_ = dynamic_cast<PotentialForceSlot*>(&problem);
-  MFEM_VERIFY(phi_slot_,
-              "AdjointSolver: the force carries potential-row terms but the "
-              "problem exposes no PotentialForceSlot.");
+  if (needs_border) {
+    border_slot_ = dynamic_cast<BorderForceSlot*>(&problem);
+    MFEM_VERIFY(border_slot_,
+                "AdjointSolver: the force carries border-row terms but the "
+                "problem exposes no BorderForceSlot.");
+  }
+}
+
+void AdjointSolver::ApplyObservation(int obs) {
+  auto& prob = problem_ ? *problem_ : op_->Problem();
+  const Vector& du = force_->ObservationDualU(obs);
+  if (du.Size() > 0) {
+    prob.AddForce(du);
+  }
+  const Vector& dphi = force_->ObservationDualPhi(obs);
+  if (dphi.Size() > 0) {
+    phi_slot_->AddPotentialForce(dphi);
+  }
+  if (force_->ObservationOnBorder(obs)) {
+    const Vector& om = force_->ObservationOmega(obs);
+    border_slot_->AddBorderForce(force_->ObservationUniform(obs),
+                                 om.Size() > 0 ? &om : nullptr);
+  }
 }
 
 bool AdjointSolver::RunStatic() {
   MFEM_VERIFY(!force_->HasContinuous() && !force_->HasContinuousPotential(),
               "AdjointSolver: a static adjoint takes point terms only.");
-  ResolvePotentialSlot(*problem_);
+  ResolveSlots(*problem_);
   for (int i = 0; i < force_->NumObservations(); i++) {
     problem_->AssembleForce(force_->ObservationTime(i));
-    if (force_->ObservationOnPotential(i)) {
-      phi_slot_->AddPotentialForce(force_->ObservationDual(i));
-    } else {
-      problem_->AddForce(force_->ObservationDual(i));
-    }
+    ApplyObservation(i);
     if (!problem_->Solve()) {
       return false;
     }
@@ -372,11 +412,7 @@ bool AdjointSolver::ImpulseSolve(int obs, real_t s) {
   op_->UseUnrelaxedOperator();
   auto& prob = op_->Problem();
   prob.AssembleForce(s);
-  if (force_->ObservationOnPotential(obs)) {
-    phi_slot_->AddPotentialForce(force_->ObservationDual(obs));
-  } else {
-    prob.AddForce(force_->ObservationDual(obs));
-  }
+  ApplyObservation(obs);
   return prob.Solve();
 }
 
@@ -438,7 +474,7 @@ bool AdjointSolver::RunEvolution() {
   }
 
   // Continuous terms through the force hook, reversed time mapped back.
-  ResolvePotentialSlot(prob);
+  ResolveSlots(prob);
   const bool has_continuous =
       force_->HasContinuous() || force_->HasContinuousPotential();
   if (has_continuous) {

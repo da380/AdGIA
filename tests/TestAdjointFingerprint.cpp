@@ -240,6 +240,7 @@ TEST(AdjointFingerprint, RotationWithStructureReciprocity) {
 TEST(AdjointFingerprint, FullPhysicsKernels) {
   const int order = 2, n_steps = 12;
   const real_t t1 = 1.5;  // Maxwell times
+  const real_t kOm_ = kOmega;
   Fixture f(order);
   auto kappa0 = ConstantCoefficient(self_grav_test::kKappa);
   auto mu0 = ConstantCoefficient(self_grav_test::kMu);
@@ -279,19 +280,58 @@ TEST(AdjointFingerprint, FullPhysicsKernels) {
   g_phi.Assemble();
 
   const real_t dt = t1 / n_steps;
-  constexpr real_t kOm = kOmega;
   auto make_problem = [&](const Rheology& rheology, Coefficient& data) {
     auto p = std::make_unique<LinearQuasiStaticMixedSelfGravitatingProblem>(
         f.fes_u.get(), f.fes_phi.get(), rheology, f.rho,
         self_grav_test::kG, self_grav_test::kDtNDegree);
     p->SetWaterLoad(*f.w, data, f.surface);
-    p->SetRotation(kOm, f.moments);
+    p->SetRotation(kOm_, f.moments);
     p->SetRelTol(1e-11);
     return p;
   };
 
+  // The SL observation J = int h SL1 dS, as the STRICT four-part dual
+  // pairing of the solution components (SL1 = -(u.grad Phi0 + phi +
+  // psi(omega))/g + Phi_g/g with g = g0 on the unit surface): the
+  // discrete functional whose exact adjoint the slots build. h is a
+  // third cap window.
+  const real_t g0 = 4.0 * M_PI * self_grav_test::kG * self_grav_test::kRho /
+                    3.0;
+  auto n3 = UnitDir(0.1, -0.6, 0.79);
+  auto h_sl = FunctionCoefficient(
+      [n3](const Vector& x) { return MeltCap(x, n3); });
+  auto h_sl_u = VectorFunctionCoefficient(
+      3, [n3, g0](const Vector& x, Vector& v) {
+        // -(1/g) h grad Phi0 = -h g0 x / g0 = -h x on the unit surface.
+        v = x;
+        v *= -MeltCap(x, n3);
+      });
+  auto g_sl_u = LinearForm(f.fes_u.get());
+  g_sl_u.AddBoundaryIntegrator(new VectorBoundaryLFIntegrator(h_sl_u),
+                               f.surface);
+  g_sl_u.Assemble();
+  auto h_sl_phi = ProductCoefficient(-1.0 / g0, h_sl);
+  auto g_sl_phi = LinearForm(f.fes_phi.get());
+  g_sl_phi.AddBoundaryIntegrator(new BoundaryLFIntegrator(h_sl_phi),
+                                 parent_surface);
+  g_sl_phi.Assemble();
+  const real_t sl_uniform = -g_sl_phi.Sum();  // +(1/g0) int h dS
+  Vector sl_omega(3);
+  {
+    for (int k = 0; k < 3; k++) {
+      CentrifugalPotential psi_k(3, kOm_);
+      psi_k.SetUnit(k);
+      ProductCoefficient hpsi(h_sl, psi_k);
+      LinearForm lf(f.fes_phi.get());
+      lf.AddBoundaryIntegrator(new BoundaryLFIntegrator(hpsi),
+                               parent_surface);
+      lf.Assemble();
+      sl_omega[k] = -lf.Sum() / g0;
+    }
+  }
+
   struct Measured {
-    real_t J_u = 0.0, J_phi = 0.0;
+    real_t J_u = 0.0, J_phi = 0.0, J_sl = 0.0;
   };
   auto run_forward = [&](Coefficient& kappa, Coefficient& mu,
                          Coefficient& eta) {
@@ -312,6 +352,9 @@ TEST(AdjointFingerprint, FullPhysicsKernels) {
     Measured out;
     out.J_u = g_u * prob->Displacement();
     out.J_phi = g_phi * prob->Potential();
+    out.J_sl = g_sl_u * prob->Displacement() + g_sl_phi * prob->Potential() +
+               sl_uniform * prob->UniformPotentialTerm() +
+               sl_omega * prob->AngularVelocity();
     return out;
   };
 
@@ -369,8 +412,18 @@ TEST(AdjointFingerprint, FullPhysicsKernels) {
   force_u.AddObservation(trajectory.Time(n_steps), g_u);
   AdjointForce force_phi;
   force_phi.AddPotentialObservation(trajectory.Time(n_steps), g_phi);
+  AdjointForce force_sl;
+  {
+    AdjointLoad load;
+    load.u = &g_sl_u;
+    load.phi = &g_sl_phi;
+    load.uniform = sl_uniform;
+    load.omega = &sl_omega;
+    force_sl.AddObservation(trajectory.Time(n_steps), load);
+  }
   auto sweep_u = make_sweep(force_u);
   auto sweep_phi = make_sweep(force_phi);
+  auto sweep_sl = make_sweep(force_sl);
 
   // FD: one rerun per sign and direction, both functionals sampled.
   const real_t eps = 1e-3;
@@ -388,11 +441,14 @@ TEST(AdjointFingerprint, FullPhysicsKernels) {
     }
     fd[d].J_u = (plus.J_u - minus.J_u) / (2.0 * eps);
     fd[d].J_phi = (plus.J_phi - minus.J_phi) / (2.0 * eps);
+    fd[d].J_sl = (plus.J_sl - minus.J_sl) / (2.0 * eps);
   }
 
   // Thresholds encode measurements at order 2, n = 12. The
-  // body-integrated eta rows are the structural gates: 8e-5 (u) and
-  // 9e-7 (phi) — the phi row is ALSO the certificate that
+  // body-integrated eta rows are the structural gates: 8e-5 (u),
+  // 9e-7 (phi) and 1.6e-5 (SL, the FOUR-SLOT dual including the
+  // border rows — BorderForceSlot's sign and scale certificate) — the
+  // phi row is ALSO the certificate that
   // AddPotentialForce loads only the potential block (feeding the
   // border rows as if the dual were a surface load measured 10 %
   // here; the bordered system's symmetry carries the eq.-58
@@ -411,4 +467,8 @@ TEST(AdjointFingerprint, FullPhysicsKernels) {
   };
   gate(sweep_u, &Measured::J_u, "full-physics u observation");
   gate(sweep_phi, &Measured::J_phi, "full-physics phi observation");
+  // The SL observation exercises ALL FOUR slots at once, including the
+  // border rows (its functional reads the uniform term and omega) —
+  // the gate on BorderForceSlot's sign and scale.
+  gate(sweep_sl, &Measured::J_sl, "full-physics SL observation");
 }

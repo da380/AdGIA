@@ -410,11 +410,18 @@ reduction is already in the examples' lambdas).
   deliberately do not feed them — the adjoint's ω-row datum is the
   separate T D_ω J input, but any future term that SHOULD pair with
   ψ_k must not arrive through the slot.
-- ~~The prescribed-C playback~~ — dissolved at rung 4 (11 Oct 2026):
-  with FROZEN shorelines (the first-order-exact production path) C is
-  constant, so C† = C₀ and no playback machinery arises; the
-  reversed-C playback belongs to the migrating (second-order) forward
-  only, if ever.
+- The prescribed-C playback — briefly thought dissolved (frozen
+  shorelines give C† = C₀), but David's correction (11 Oct 2026)
+  restores it to the critical path: **shoreline migration is the norm
+  in deglacial sea-level work** (second-order formally, not
+  negligible at deglacial amplitudes; only mm/cm modern studies may
+  freeze C), so the migrating forward is the production
+  configuration, frozen-C the option. The adjoint over a migrating
+  forward is linear with time-dependent coefficients: store the
+  forward ocean-function history and play it back reversed through
+  the water machinery — confirm `RefreshWaterLoad`/the frozen-C
+  operator path can be driven per reversed step by a stored C(t)
+  without re-deriving C from the adjoint state.
 - ~~The fingerprint solve's mass row under impulsive loading~~ — and
   the whole eq.-58 question — resolved at rung 4 by the FD gate, the
   other way round from the note's first guess: the DISCRETE bordered
@@ -438,6 +445,34 @@ reduction is already in the examples' lambdas).
   *backward* cumulative integral, cheapest accumulated as a running
   sum during the sweep — confirm the jump bookkeeping at observation
   times).
+
+## The migrating-forward adjoint: the C† playback (design sketch)
+
+Per David (11 Oct 2026), migration is the production configuration,
+so the adjoint over a migrating forward is WP8.4's remaining backbone.
+The structure, for implementation:
+
+- **Store the ocean function with the trajectory.** The migrating
+  forward (`ShorelineMigration`'s Picard) converges C at each step;
+  the trajectory store gains a per-step surface-field record of the
+  converged ocean function (or equivalently the ocean weight w =
+  ρ_w C/g) alongside m. This does not disturb the m-only slaving
+  argument: (m, load(t), C(t)) determines everything, and C(t) is
+  data-sized (one surface scalar per step).
+- **The adjoint operator is time-dependent.** w enters the SYMMETRIC
+  boundary blocks folded into the operator, so the adjoint solve at
+  reversed time s must carry w(t₁ − s): the water blocks and border
+  columns need a per-step refresh path (the analogue of the effective-
+  modulus reassembly the steppers already do — the reassembly cadence
+  exists; the water-block update rides it). The adjoint stays LINEAR:
+  C is played back, never re-derived from the adjoint state.
+- **Jumps and kernels inherit the stored history.** The fingerprint
+  solve at an observation time uses that time's operator; the ice
+  kernels' (1 − C(t)) and (C(t) − C₀) factors read the stored fields —
+  with migration on, the D_I₀ term is live.
+- **Frozen-C remains the option** (one C for all t; the machinery
+  gated at GA2), per David: standard for modern mm/cm amplitudes,
+  not for deglacial work.
 
 ## WP8.2 implementation findings (11 Oct 2026)
 

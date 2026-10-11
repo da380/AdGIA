@@ -329,6 +329,28 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::AddPotentialForce(
   B_phi_ += ft;
 }
 
+void LinearQuasiStaticMixedSelfGravitatingProblem::AddBorderForce(
+    real_t uniform_row, const Vector* omega_rows) {
+  if (uniform_row != 0.0) {
+    MFEM_VERIFY(sea_enabled_,
+                "AddBorderForce: a uniform-term datum needs the water "
+                "border (SetWaterLoad).");
+    border_r0_add_ += uniform_row;
+  }
+  if (omega_rows) {
+    MFEM_VERIFY(rot_enabled_,
+                "AddBorderForce: omega-row data need the rotational "
+                "border (SetRotation).");
+    MFEM_VERIFY(omega_rows->Size() == rot_r_.Size(),
+                "AddBorderForce: omega data sized to the border width.");
+    if (border_rot_add_.Size() != rot_r_.Size()) {
+      border_rot_add_.SetSize(rot_r_.Size());
+      border_rot_add_ = 0.0;
+    }
+    border_rot_add_ += *omega_rows;
+  }
+}
+
 bool LinearQuasiStaticMixedSelfGravitatingProblem::SolvePotential(const Vector& b,
                                                              Vector& x) const {
   x.SetSize(b.Size());
@@ -953,6 +975,10 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::AssembleTidalLoad() {
 
 void LinearQuasiStaticMixedSelfGravitatingProblem::AssembleForce(real_t t) {
   LinearQuasiStaticProblemBase::AssembleForce(t);
+  border_r0_add_ = 0.0;
+  if (border_rot_add_.Size() > 0) {
+    border_rot_add_ = 0.0;
+  }
   b_phi_->Assemble();
   Vector bL(fes_phi_->GetVSize());
   injection_->Mult(*b_phi_, bL);
@@ -1557,11 +1583,14 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveLinearSystem(
   r = 0.0;
   if (sea_enabled_) {
     Db(0, 0) = -sea_m_;
-    r[0] = sea_Sd_;
+    r[0] = sea_Sd_ + border_r0_add_;
   }
   if (rot_enabled_) {
     for (int k = 0; k < nw; k++) {
       r[ns + k] = rot_r_[k];
+      if (border_rot_add_.Size() == nw) {
+        r[ns + k] += border_rot_add_[k];
+      }
       for (int j = 0; j < nw; j++) {
         Db(ns + k, ns + j) =
             rot_D_(k, j) + TidalTidalCoupling(*rot_psi_[k], *rot_psi_[j]);

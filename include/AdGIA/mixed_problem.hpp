@@ -214,7 +214,9 @@ struct FluidRegion {
  * meshed they cost @f$O(\epsilon)@f$ energy and the penalty handles them.
  */
 class LinearQuasiStaticMixedSelfGravitatingProblem
-    : public LinearQuasiStaticProblemBase, public PotentialForceSlot {
+    : public LinearQuasiStaticProblemBase,
+      public PotentialForceSlot,
+      public BorderForceSlot {
  public:
   /** BlockCG runs CG on the same projected block system as BlockMINRES:
    * admissible because the assembled symmetric system is congruent to a
@@ -314,6 +316,17 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   mfem::FiniteElementSpace& PotentialForceSpace() override {
     return *fes_phi_;
   }
+
+  /**
+   * @brief Superpose data on the border rows (BorderForceSlot): the
+   * duals of the uniform-term and angular-velocity solution
+   * components, for adjoint loads of observations that read them
+   * (e.g. sea level, SL1 = -(u.grad Phi0 + phi + psi(omega))/g +
+   * Phi_g/g). Accumulates; cleared by AssembleForce(). Requires the
+   * respective border to be enabled.
+   */
+  void AddBorderForce(mfem::real_t uniform_row,
+                      const mfem::Vector* omega_rows) override;
 
   /**
    * @brief Apply a (tidal) potential @f$\psi@f$ (registered as
@@ -740,6 +753,8 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   std::unique_ptr<mfem::SumOperator> A_sea_sum_;
   mfem::Vector sea_cu_, sea_cphi_, sea_cphi_compat_;
   mfem::real_t sea_m_ = 0.0, sea_Sd_ = 0.0, phi_g_ = 0.0;
+  mfem::real_t border_r0_add_ = 0.0;   ///< AddBorderForce, uniform row
+  mfem::Vector border_rot_add_;        ///< AddBorderForce, omega rows
   mfem::Vector sea_yu_, sea_yphi_;
 
   // The rotational border (SetRotation): the unit centrifugal

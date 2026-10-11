@@ -45,6 +45,22 @@ namespace AdGIA {
  * linearity. The water and rotation slots of the full dictionary are
  * added by those rungs' specialisations.
  */
+/**
+ * @brief The slot data of one observation's dual: any subset of the
+ * displacement rows (AddForce layout), the potential rows
+ * (PotentialForceSlot layout), and the border rows — the uniform-term
+ * and angular-velocity components (BorderForceSlot). A sea-level
+ * observation J = int h SL1 dS populates all four:
+ * u = -(1/g) h grad(Phi0) dual, phi = -(1/g) h dual,
+ * uniform = (1/g) int h dS, omega_k = -(1/g) int h psi_k dS.
+ */
+struct AdjointLoad {
+  const mfem::Vector* u = nullptr;
+  const mfem::Vector* phi = nullptr;
+  mfem::real_t uniform = 0.0;
+  const mfem::Vector* omega = nullptr;
+};
+
 class AdjointForce {
  public:
   /** @brief A point-in-time observation at forward time @p t with dual
@@ -55,6 +71,10 @@ class AdjointForce {
    * @p dual on the POTENTIAL rows (copied; AddPotentialForce layout of
    * the problem's PotentialForceSlot). */
   void AddPotentialObservation(mfem::real_t t, const mfem::Vector& dual);
+
+  /** @brief A point-in-time observation at forward time @p t loading
+   * any subset of the slots (all data copied). */
+  void AddObservation(mfem::real_t t, const AdjointLoad& load);
 
   /** @brief A continuous-in-time term: @p filler(t, f) ADDS the dual at
    * forward time @p t into @p f (already sized and initialised). */
@@ -67,9 +87,19 @@ class AdjointForce {
   int NumObservations() const { return static_cast<int>(obs_.size()); }
   /** @brief Observation times, sorted ascending. */
   mfem::real_t ObservationTime(int i) const { return obs_[i].t; }
-  const mfem::Vector& ObservationDual(int i) const { return obs_[i].dual; }
-  /** @brief Whether observation @p i loads the potential rows. */
-  bool ObservationOnPotential(int i) const { return obs_[i].on_potential; }
+  /** @brief Slot data of observation @p i (empty vectors: slot unused). */
+  const mfem::Vector& ObservationDualU(int i) const { return obs_[i].du; }
+  const mfem::Vector& ObservationDualPhi(int i) const { return obs_[i].dphi; }
+  mfem::real_t ObservationUniform(int i) const { return obs_[i].uniform; }
+  const mfem::Vector& ObservationOmega(int i) const { return obs_[i].omega; }
+  /** @brief Whether observation @p i touches the potential rows. */
+  bool ObservationOnPotential(int i) const {
+    return obs_[i].dphi.Size() > 0;
+  }
+  /** @brief Whether observation @p i touches the border rows. */
+  bool ObservationOnBorder(int i) const {
+    return obs_[i].uniform != 0.0 || obs_[i].omega.Size() > 0;
+  }
 
   bool HasContinuous() const { return !continuous_.empty(); }
   bool HasContinuousPotential() const { return !continuous_phi_.empty(); }
@@ -81,10 +111,10 @@ class AdjointForce {
  private:
   struct Observation {
     mfem::real_t t;
-    mfem::Vector dual;
-    bool on_potential;
+    mfem::Vector du, dphi, omega;  // empty: slot unused
+    mfem::real_t uniform = 0.0;
   };
-  void Insert(mfem::real_t t, const mfem::Vector& dual, bool on_potential);
+  void Insert(mfem::real_t t, Observation&& o);
 
   std::vector<Observation> obs_;  // kept sorted by time
   std::vector<std::function<void(mfem::real_t, mfem::Vector&)>> continuous_;
@@ -350,9 +380,12 @@ class AdjointSolver {
   void Pair(mfem::real_t w, const AdjointPair& p);
   bool ImpulseSolve(int obs, mfem::real_t s);
   void ApplyJump(const mfem::GridFunction& udag_g, mfem::Vector& mdag);
-  /** @brief Resolve the potential slot when the force needs it (refuses
-   * on problems without one). */
-  void ResolvePotentialSlot(LinearQuasiStaticProblem& problem);
+  /** @brief Resolve the potential and border slots the force needs
+   * (refuses on problems without them). */
+  void ResolveSlots(LinearQuasiStaticProblem& problem);
+  /** @brief Apply observation @p obs's slot data to the assembled
+   * problem. */
+  void ApplyObservation(int obs);
 
   LinearQuasiStaticProblem* problem_ = nullptr;      // static configuration
   const mfem::GridFunction* u_forward_ = nullptr;
@@ -360,6 +393,7 @@ class AdjointSolver {
   ForwardTrajectory* forward_ = nullptr;
   const AdjointForce* force_ = nullptr;
   PotentialForceSlot* phi_slot_ = nullptr;
+  BorderForceSlot* border_slot_ = nullptr;
   std::vector<KernelAccumulator*> kernels_;
   mfem::Vector strain_, fbuf_, fbuf_phi_;
 };

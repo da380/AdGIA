@@ -252,6 +252,28 @@ class PotentialForceSlot {
 };
 
 /**
+ * @brief Capability interface of problems whose bordered solve carries
+ * the uniform potential term and/or the angular-velocity components as
+ * border unknowns: superpose data on the corresponding border ROWS of
+ * the right-hand side — the duals of those solution components, with
+ * the AddForce() protocol (call after AssembleForce(t), which clears
+ * the increments; accumulates). The bordered system is symmetric, so
+ * an observation functional touching the uniform term or omega loads
+ * exactly these rows in its adjoint (adjoint.hpp uses this for
+ * sea-level observations, whose functional reads both).
+ */
+class BorderForceSlot {
+ public:
+  virtual ~BorderForceSlot() = default;
+  /** @param uniform_row Datum on the uniform-term (mass) row; ignored
+   * as zero when the water border is off.
+   * @param omega_rows Data on the angular-velocity rows (sized to the
+   * rotation border's width), or null. */
+  virtual void AddBorderForce(mfem::real_t uniform_row,
+                              const mfem::Vector* omega_rows) = 0;
+};
+
+/**
  * @brief Abstract interface for linear quasi-static problems.
  *
  * Per evaluation time @f$t@f$ the protocol is
