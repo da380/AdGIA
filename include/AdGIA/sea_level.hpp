@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -16,6 +17,8 @@
 #include "AdGIA/mixed_problem.hpp"
 
 namespace AdGIA {
+
+class LinearQuasiStaticReferentialSelfGravitatingProblem;
 
 /**
  * @brief Surface fields and sea-level postprocessing on the body's
@@ -352,6 +355,18 @@ class ShorelineMigration {
                      mfem::real_t rho_ice,
                      const mfem::Array<int>& surface_marker,
                      Options options);
+
+  /** @brief As above, driving the referential class: the state
+   * update's @f$\tau@f$ is @f$\zeta^1@f$ directly (the ζζ collapse;
+   * quasi_static_models.tex, the referential sea-level subsection) —
+   * the one structural difference between the classes here. */
+  ShorelineMigration(
+      LinearQuasiStaticReferentialSelfGravitatingProblem& problem,
+      mfem::VectorCoefficient& grad_phi0,
+      mfem::Coefficient& initial_sea_level, mfem::Coefficient& initial_ice,
+      mfem::Coefficient& ice_change, mfem::real_t rho_water,
+      mfem::real_t rho_ice, const mfem::Array<int>& surface_marker,
+      Options options);
   ~ShorelineMigration();
 
   /** @brief Solve at time @p t: the frozen-C pass, then Picard on the
@@ -378,7 +393,24 @@ class ShorelineMigration {
    * previous one (the guard's re-measure against the same baseline). */
   void UpdateState(bool replace = false);
 
-  LinearQuasiStaticMixedSelfGravitatingProblem& problem_;
+  // The problem, through its base plus the class-specific closures
+  // bound by the constructors (the bordered.hpp pattern): water
+  // refresh, the border scalars/fields, and the tau route are all the
+  // classes differ by here.
+  LinearQuasiStaticProblemBase& base_;
+  std::function<void()> refresh_;
+  std::function<mfem::real_t()> phi_g_;
+  std::function<int()> last_outer_;
+  std::function<mfem::Coefficient*()> rot_psi_;  // null without rotation
+  std::function<const mfem::GridFunction&()> potential_on_body_;
+  bool referential_ = false;
+  /** @brief The shared constructor tail (state, spaces, parallelism);
+   * @p potential_fes is the parent-mesh scalar space. */
+  void Init(mfem::VectorCoefficient& grad_phi0,
+            mfem::Coefficient& initial_sea_level,
+            mfem::Coefficient& initial_ice, mfem::Coefficient& ice_change,
+            mfem::real_t rho_water, mfem::real_t rho_ice,
+            mfem::FiniteElementSpace& potential_fes);
   Options options_;
   mfem::Array<int> marker_;
   std::unique_ptr<detail::MigratingOceanState> state_;

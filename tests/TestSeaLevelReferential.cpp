@@ -436,6 +436,107 @@ TEST(SeaLevelReferential, RotationMatchesMixed) {
   EXPECT_LT(u_comp[1], 0.7 * u_comp[0]);
 }
 
+// --- Shoreline migration on the referential class ---------------------------
+// The migrating state of TestShorelineMigration.cpp (polar continent,
+// polar cap, half the cap melting), at its densities.
+constexpr double kMigRhoW = 0.05;
+constexpr double kMigRhoI = 0.045;
+
+double Colat(const Vector& x) {
+  const double r = x.Norml2();
+  const double c = x[2] / r;
+  return std::acos(std::min(1.0, std::max(-1.0, c)));
+}
+
+double SL0(const Vector& x) {
+  const double t = Colat(x) / 0.7;
+  return 1.0 - 3.0 * std::exp(-0.5 * std::pow(t, 6));
+}
+
+double Ice0(const Vector& x) {
+  const double t = Colat(x) / 0.35;
+  return 4.0 * std::exp(-0.5 * t * t);
+}
+
+double Fraction0(const Vector& x) {
+  const double q = kMigRhoW * SL0(x) - kMigRhoI * Ice0(x);
+  return 0.5 * (1.0 + std::tanh(q / 5e-3));
+}
+
+TEST(SeaLevelReferential, ShorelineMigrationMatchesMixed) {
+  // WP7.3: the shared orchestrator drives the referential class.
+  // (a) The off-switch reduces to the direct frozen-C referential
+  // water solve (the C = C0 reduction of the load law), tight.
+  // (b) The migrating referential run agrees with the migrating mixed
+  // run at the classes' common-discretisation grade.
+  const int order = 1;
+  RefCase c(order);
+  auto grad_phi0 =
+      VectorFunctionCoefficient(3, [](const Vector& x, Vector& v) {
+        v = x;
+        v *= G0();
+      });
+  FunctionCoefficient sl0(SL0), ice0(Ice0);
+  FunctionCoefficient dice([](const Vector& x) { return -0.5 * Ice0(x); });
+
+  auto run = [&](auto& problem, int max_iterations, double shore) {
+    ShorelineMigration::Options opt;
+    opt.max_iterations = max_iterations;
+    opt.tol = 1e-6;
+    opt.shore = shore;
+    opt.inexact = 0.0;
+    ShorelineMigration mig(problem, grad_phi0, sl0, ice0, dice, kMigRhoW,
+                           kMigRhoI, c.surface, opt);
+    EXPECT_TRUE(mig.Solve(0.0));
+    return mig.Iterations();
+  };
+
+  // (a) Off-switch == direct frozen-C referential solve.
+  {
+    auto p = c.Referential();
+    const int its = run(*p, 0, 5e-3);
+    EXPECT_EQ(its, 0);
+    FunctionCoefficient w0([](const Vector& x) {
+      return kMigRhoW * Fraction0(x) / (G0() * x.Norml2());
+    });
+    FunctionCoefficient sd0([](const Vector& x) {
+      return kMigRhoI * (1.0 - Fraction0(x)) * (-0.5 * Ice0(x));
+    });
+    auto q = c.Referential();
+    q->SetWaterLoad(w0, sd0, c.surface);
+    q->AssembleForce(0.0);
+    ASSERT_TRUE(q->Solve());
+    GridFunction du(p->Displacement());
+    du -= q->Displacement();
+    EXPECT_LT(L2Norm(du), 1e-9 * (L2Norm(q->Displacement()) + 1e-30));
+    EXPECT_NEAR(p->UniformPotentialTerm(), q->UniformPotentialTerm(),
+                1e-10);
+  }
+
+  // (b) Migrating referential == migrating mixed: the classes'
+  // common-discretisation agreement, improving with order (the weak
+  // migrating state makes the o1 difference percent-grade, like the
+  // other cross-class gates' first rungs).
+  std::vector<double> u_diff;
+  for (int o : {1, 2}) {
+    RefCase cb(o);
+    auto pr = cb.Referential();
+    run(*pr, 12, 5e-2);
+    auto pm = cb.Mixed();
+    run(*pm, 12, 5e-2);
+    GridFunction du(pr->Displacement());
+    du -= pm->Displacement();
+    u_diff.push_back(L2Norm(du) / (L2Norm(pm->Displacement()) + 1e-30));
+    if (o == 2) {
+      EXPECT_NEAR(
+          pr->UniformPotentialTerm(), pm->UniformPotentialTerm(),
+          6e-2 * std::max(1.0, std::abs(pm->UniformPotentialTerm())));
+    }
+  }
+  EXPECT_LT(u_diff[1], 6e-2);
+  EXPECT_LT(u_diff[1], 0.7 * u_diff[0]);
+}
+
 INSTANTIATE_TEST_SUITE_P(SeaLevelReferential, SeaLevelReferentialTest,
                          testing::Values(1, 2));
 

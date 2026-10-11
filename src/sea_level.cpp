@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "AdGIA/detail/fem_factory.hpp"
+#include "AdGIA/referential_problem.hpp"
 
 namespace AdGIA {
 
@@ -714,30 +715,80 @@ ShorelineMigration::ShorelineMigration(
     VectorCoefficient& grad_phi0, Coefficient& initial_sea_level,
     Coefficient& initial_ice, Coefficient& ice_change, real_t rho_water,
     real_t rho_ice, const Array<int>& surface_marker, Options options)
-    : problem_(problem),
+    : base_(problem),
+      refresh_([&problem] { problem.RefreshWaterLoad(); }),
+      phi_g_([&problem] { return problem.UniformPotentialTerm(); }),
+      last_outer_([&problem] { return problem.LastOuterIterations(); }),
+      rot_psi_([&problem]() -> Coefficient* {
+        return problem.AngularVelocity().Size() > 0
+                   ? &problem.SolutionCentrifugalPotential()
+                   : nullptr;
+      }),
+      potential_on_body_(
+          [&problem]() -> const GridFunction& {
+            return problem.PotentialOnBody();
+          }),
+      referential_(false),
       options_(options),
       marker_(surface_marker),
       grad_phi0_(&grad_phi0) {
+  Init(grad_phi0, initial_sea_level, initial_ice, ice_change, rho_water,
+       rho_ice,
+       *const_cast<GridFunction&>(problem.Potential()).FESpace());
+  problem.SetWaterLoad(*weight_, *data_, surface_marker);
+}
+
+ShorelineMigration::ShorelineMigration(
+    LinearQuasiStaticReferentialSelfGravitatingProblem& problem,
+    VectorCoefficient& grad_phi0, Coefficient& initial_sea_level,
+    Coefficient& initial_ice, Coefficient& ice_change, real_t rho_water,
+    real_t rho_ice, const Array<int>& surface_marker, Options options)
+    : base_(problem),
+      refresh_([&problem] { problem.RefreshWaterLoad(); }),
+      phi_g_([&problem] { return problem.UniformPotentialTerm(); }),
+      last_outer_([&problem] { return problem.LastOuterIterations(); }),
+      rot_psi_([&problem]() -> Coefficient* {
+        return problem.AngularVelocity().Size() > 0
+                   ? &problem.SolutionCentrifugalPotential()
+                   : nullptr;
+      }),
+      potential_on_body_(
+          [&problem]() -> const GridFunction& {
+            return problem.PotentialOnBody();
+          }),
+      referential_(true),
+      options_(options),
+      marker_(surface_marker),
+      grad_phi0_(&grad_phi0) {
+  Init(grad_phi0, initial_sea_level, initial_ice, ice_change, rho_water,
+       rho_ice,
+       *const_cast<GridFunction&>(problem.Potential()).FESpace());
+  problem.SetWaterLoad(*weight_, *data_, surface_marker);
+}
+
+void ShorelineMigration::Init(VectorCoefficient& grad_phi0,
+                              Coefficient& initial_sea_level,
+                              Coefficient& initial_ice,
+                              Coefficient& ice_change, real_t rho_water,
+                              real_t rho_ice,
+                              FiniteElementSpace& potential_fes) {
   state_ = std::make_unique<detail::MigratingOceanState>(
       grad_phi0, initial_sea_level, initial_ice, ice_change, rho_water,
-      rho_ice, options.shore);
+      rho_ice, options_.shore);
   weight_ = std::make_unique<detail::StateCoefficient>(
       *state_, detail::StateCoefficient::Kind::Weight);
   data_ = std::make_unique<detail::StateCoefficient>(
       *state_, detail::StateCoefficient::Kind::Data);
   frac_coef_ = std::make_unique<detail::StateCoefficient>(
       *state_, detail::StateCoefficient::Kind::Fraction);
-  problem_.SetWaterLoad(*weight_, *data_, surface_marker);
 
-  FiniteElementSpace& fes = problem_.DisplacementSpace();
+  FiniteElementSpace& fes = base_.DisplacementSpace();
   const int dim = fes.GetMesh()->Dimension();
   sfec_ = std::make_unique<H1_FECollection>(fes.GetMaxElementOrder(), dim);
   sfes_ = detail::MakeFESpace(fes, sfec_.get());
   // A matching scalar space on the parent mesh (the potential's), for
   // the up-transferred state.
-  pfes_ = detail::MakeFESpace(
-      *const_cast<GridFunction&>(problem_.Potential()).FESpace(),
-      sfec_.get());
+  pfes_ = detail::MakeFESpace(potential_fes, sfec_.get());
   parallel_ = detail::IsParallel(fes);
 #ifdef MFEM_USE_MPI
   if (parallel_) {
@@ -784,25 +835,31 @@ real_t ShorelineMigration::ShorelineChange() {
 }
 
 void ShorelineMigration::UpdateState(bool replace) {
-  // Nodal SL1 = (-(u.grad Phi0 + phi + psi) + Phi_g)/g on the body
-  // scalar space, then transferred up to the parent, so the state is
-  // evaluable wherever the water blocks assemble.
+  // Nodal SL1 = (-(tau + psi) + Phi_g)/g on the body scalar space,
+  // then transferred up to the parent, so the state is evaluable
+  // wherever the water blocks assemble. tau = u.grad Phi0 + phi on the
+  // mixed class; on the referential class it is zeta^1 directly.
   auto tau = detail::MakeGridFunction(sfes_.get());
-  {
-    VectorGridFunctionCoefficient uc(&problem_.Displacement());
-    InnerProductCoefficient ug(uc, *grad_phi0_);
-    tau->ProjectCoefficient(ug);
-  }
-  auto phi = detail::MakeGridFunction(sfes_.get());
-  {
+  if (referential_) {
+    GridFunctionCoefficient zc(
+        const_cast<GridFunction*>(&potential_on_body_()));
+    tau->ProjectCoefficient(zc);
+  } else {
+    {
+      VectorGridFunctionCoefficient uc(&base_.Displacement());
+      InnerProductCoefficient ug(uc, *grad_phi0_);
+      tau->ProjectCoefficient(ug);
+    }
+    auto phi = detail::MakeGridFunction(sfes_.get());
     GridFunctionCoefficient pc(
-        const_cast<GridFunction*>(&problem_.PotentialOnBody()));
+        const_cast<GridFunction*>(&potential_on_body_()));
     phi->ProjectCoefficient(pc);
+    *tau += *phi;
   }
   std::unique_ptr<GridFunction> psi;
-  if (problem_.AngularVelocity().Size() > 0) {
+  if (Coefficient* psi_coef = rot_psi_()) {
     psi = detail::MakeGridFunction(sfes_.get());
-    psi->ProjectCoefficient(problem_.SolutionCentrifugalPotential());
+    psi->ProjectCoefficient(*psi_coef);
   }
   auto g = detail::MakeGridFunction(sfes_.get());
   {
@@ -811,11 +868,10 @@ void ShorelineMigration::UpdateState(bool replace) {
     g->ProjectCoefficient(gmag);
   }
   auto body = detail::MakeGridFunction(sfes_.get());
-  const real_t phi_g = problem_.UniformPotentialTerm();
+  const real_t phi_g = phi_g_();
   for (int i = 0; i < body->Size(); i++) {
-    (*body)[i] = (-((*tau)[i] + (*phi)[i] + (psi ? (*psi)[i] : 0.0)) +
-                  phi_g) /
-                 (*g)[i];
+    (*body)[i] =
+        (-((*tau)[i] + (psi ? (*psi)[i] : 0.0)) + phi_g) / (*g)[i];
   }
   auto parent = detail::MakeGridFunction(pfes_.get());
   *parent = 0.0;
@@ -835,17 +891,17 @@ bool ShorelineMigration::Solve(real_t t) {
   iterations_ = 0;
   last_change_ = 0.0;
   outer_its_total_ = 0;
-  const real_t base = problem_.RelTol();
+  const real_t base = base_.RelTol();
   const bool loose = options_.inexact > 0.0 && options_.max_iterations > 0;
   auto solve_at = [&](real_t tol) {
-    problem_.SetRelTol(tol);
-    problem_.AssembleForce(t);
-    const bool ok = problem_.Solve();
-    outer_its_total_ += problem_.LastOuterIterations();
+    base_.SetRelTol(tol);
+    base_.AssembleForce(t);
+    const bool ok = base_.Solve();
+    outer_its_total_ += last_outer_();
     return ok;
   };
   auto finish = [&](bool ok) {
-    problem_.SetRelTol(base);
+    base_.SetRelTol(base);
     return ok;
   };
   auto root = [&]() {
@@ -861,7 +917,7 @@ bool ShorelineMigration::Solve(real_t t) {
   auto trace = [&](const char* what, real_t value) {
     if (options_.verbose && root()) {
       mfem::out << "shoreline migration: " << what << " " << value
-                << ", Phi_g " << problem_.UniformPotentialTerm() << "\n";
+                << ", Phi_g " << phi_g_() << "\n";
     }
   };
 
@@ -910,7 +966,7 @@ bool ShorelineMigration::Solve(real_t t) {
       break;
     }
     prev_change = last_change_;
-    problem_.RefreshWaterLoad();
+    refresh_();
     const real_t tol =
         loose && !inexact_abandoned
             ? std::min(std::max(options_.inexact * last_change_, base),
@@ -925,7 +981,7 @@ bool ShorelineMigration::Solve(real_t t) {
     // The polish: one full-tolerance solve whose operator carries the
     // final ocean function (the loose passes solved with the previous
     // pass's shoreline; warm-started, so it is cheap).
-    problem_.RefreshWaterLoad();
+    refresh_();
     if (!solve_at(base)) {
       return finish(false);
     }

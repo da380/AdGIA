@@ -345,6 +345,10 @@ def main() -> None:
     p = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--method", default="dahlen",
+                   choices=["dahlen", "referential"],
+                   help="the problem class of the solve (the referential "
+                        "leg is WP7 phase A; outputs are tagged _ref)")
     p.add_argument("--model", default="homogeneous",
                    help="model name from common/models.py")
     p.add_argument("--h", type=float, default=0.4, help="element size")
@@ -467,7 +471,7 @@ def main() -> None:
     base_cmd = [args.mpiexec or "mpiexec", "-np", str(args.np),
                 str(programs / "sea_level_benchmark"),
                 "-c", str(case / "case.json"), "-o", str(args.order),
-                "-method", "dahlen",
+                "-method", args.method,
                 "-rhow", f"{rho_w_case}", "-rhoi", f"{rho_i_case}"] + \
         state_args + ["-shore", f"{shore}"]
 
@@ -519,7 +523,9 @@ def main() -> None:
         timings(args, case, solve, rot_args)
         return
 
-    tag = (f"o{args.order}" + ("_rot" if args.rot else "") +
+    tag = (f"o{args.order}" +
+           ("_ref" if args.method == "referential" else "") +
+           ("_rot" if args.rot else "") +
            (f"_{args.melt_region.replace('-', '_')}" if args.earth else ""))
     slcsv, sljson = solve(tag, rot_args if args.rot else [])
     if args.nonlinear:

@@ -8,6 +8,15 @@ rotational border on both sides (rung 2), `--nonlinear` adds shoreline
 migration against pyslfp's nonlinear solver (rung 3), and `--timings`
 times the solve across the feature axis instead of comparing.
 
+`--method referential` runs the same comparison on the welded
+referential class (the WP7 leg: the ζζ collapse,
+`doc/planning/referential_sea_level_plan.md`), outputs tagged `_ref`
+beside the Eulerian ones. Measured at the toy resolution (homogeneous,
+h 0.4, order 2, lmax 16): ocean-RMS relative difference 1.2 % against
+pyslfp, next to the Dahlen leg's 1.1 % at the same settings — the same
+grade, the per-degree split differing as two discretisations at the
+spectral floor do. `-feedback picard`/`monolithic` stay mixed-only.
+
 `--earth` keeps the comparison but swaps the analytic state for the
 real present-day geography: the ICE-7G sea level and ice at `--lmax`,
 a small melt of Greenland or West Antarctica (`--melt-region`, the
