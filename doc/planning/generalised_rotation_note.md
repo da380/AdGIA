@@ -107,6 +107,61 @@ plastering is unnecessary *provided the model's figure is realistic*
 condition before ω is ever computed, so ω is manifestly re-gauge
 invariant — the G8 invariance certificate.
 
+## The secular reduction, worked (WP7.6's opening derivation)
+
+Two identities pin the quasi-static form of eq. (224) completely.
+
+**The δI identity.** For ψ' = −(Ω×x)·(ω'×x), expanding the gradient
+and using the triple product twice,
+
+    ∫ ρ u·∇ψ' dV = −ω'·δI(u)·Ω,
+    δI(u)_ij = ∫ ρ (2(x·u)δ_ij − x_i u_j − x_j u_i) dV,
+
+and likewise ∫σψ' dS = −ω'·δI(σ)·Ω with
+δI(σ)_ij = ∫σ(|x|²δ_ij − x_i x_j) dS: δI(u) + δI(σ) is exactly the
+linearised inertia perturbation I⁽¹⁾. The traditional row (paper
+eq. 15) therefore reads **D·ω = I⁽¹⁾(u,σ)·Ω** — the ω-row data our
+WP2/WP4 machinery assembles through the ψ pairing *is* the inertia
+perturbation, no separate assembly needed.
+
+**The secular limit of eq. (224).** Take Ω = Ω e₃ along a principal
+axis of I⁽⁰⁾ = diag(C₁, C₂, C₃) (the equilibrium Euler equation
+requires I⁽⁰⁾Ω ∥ Ω, and λ = C₃ is the multiplier). Dropping ω̇ and
+∂ₜI⁽¹⁾, eq. (224) becomes
+Ω×[(I⁽⁰⁾ − C₃·1)ω] + Ω×[I⁽¹⁾Ω] = 0 for the equatorial components,
+and the axial component integrates to conservation. Componentwise:
+
+    (C₃ − C₁) ω₁ = Ω I⁽¹⁾₁₃,
+    (C₃ − C₂) ω₂ = Ω I⁽¹⁾₂₃,
+    −C₃ ω₃      = Ω I⁽¹⁾₃₃.
+
+**This is exactly the paper's eq. (15) with D = diag(C₃−C₁, C₃−C₂,
+−C₃)** — the (C₃−C₁) wander denominators come from the frame term
+ad_Ω(I⁽⁰⁾−λ), not from bare conservation (naive δ(IΩ) = 0 would give
+C₁ in place of C₃−C₁ and is *not* the right secular statement; the
+note's earlier shorthand "δ(IΩ) = 0 resolved for ω" stands corrected
+by this derivation).
+
+**The consequence for the implementation.** The generalised
+quasi-static door is the traditional border machinery *verbatim*,
+with exactly three deltas:
+
+1. **D is built from the model's own principal moments** (assembled
+   I⁽⁰⁾, referentially ∫ρ̃(|φ_e|²δ − φ_e⊗φ_e) dV), or from input
+   reference moments (the input-inertia option) — same
+   `InertiaMatrix` structure either way;
+2. **u is pinned by the Tisserand gauge** (the mass-weighted gauge,
+   below), which makes I⁽¹⁾(u)·Ω — and hence ω — rigid-unambiguous on
+   any model;
+3. **Ω must lie along a principal axis of I⁽⁰⁾** (an equilibrium
+   consistency condition the door verifies; off-principal equilibria
+   are not steady and are out of scope).
+
+Gate G8a is thereby trivialised (input moments + the gauge reproduce
+the traditional border identically on models where eq. 20 holds), and
+the substantive gates are the gauge-invariance demonstration (G8b)
+and the certificates (G8c, G8d).
+
 ## Reduction to our variables
 
 The key structural fact: **the discrete Tisserand condition already
@@ -173,16 +228,26 @@ survives, derived rather than assumed:
 
 ## To verify in implementation
 
-- That the mass-weighted gauge's basis and metric realise exactly
-  ∫ρ̃ (φ_e×u) = 0 under a non-identity equilibrium mapping (the F4
-  door was built at φ_e = id).
+- ~~The F4 metric under a non-identity mapping~~ — resolved by
+  inspection: the referential null basis is the *mapped* rotations
+  (b×φ_e), so the ρ̃-mass metric with that basis pins exactly
+  ∫ρ̃ φ_e×u dV = 0; nothing needed beyond the wiring.
+- ~~The gauge's survival through the solve~~ — found and fixed: the
+  referential solve's tail re-projected u with the Euclidean
+  projector, silently overwriting the gauge representative (measured:
+  |h| stuck at 7.7e-3 either way; after the fix 4.7e-8 gauged). The
+  tail now skips the Euclidean clean-up when the Tisserand gauge is
+  on.
 - The quasi-static secular reduction of eq. (224) against the
   time-stepping layer (what the viscoelastic stepper holds fixed per
-  step; the Wahr & Mitrovica comparison belongs here as a *numerical*
-  check, not as theory input).
+  step; the Mitrovica & Wahr comparison belongs here as a *numerical*
+  check, not as theory input). Open.
 - Whether the translations' momentum condition needs the same
   treatment in practice (loads with net force are excluded by the
-  existing machinery; expected inert).
+  existing machinery; expected inert). Open.
+- G8c (the FRL-invariance certificate on a gauged-fluid
+  configuration) and the solution-level G8d re-integration on the
+  generalised door. Open — the next implementation chunk.
 
 **See:** `referential_sea_level_plan.md` (phases, decisions);
 `include/AdGIA/null_space.hpp` (`SetGauge`);

@@ -474,6 +474,38 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
   mfem::Coefficient& SolutionCentrifugalPotential();
 
   /**
+   * @brief The GENERALISED rotational door (phase B of
+   * doc/planning/referential_sea_level_plan.md; the derivation is
+   * doc/planning/generalised_rotation_note.md, "The secular
+   * reduction"): the secular limit of the Maitra & Al-Attar linearised
+   * Euler equation reduces, for @f$\Omega@f$ along a principal axis of
+   * the model's inertia tensor, to the traditional row with D built
+   * from the MODEL'S own principal moments and the displacement pinned
+   * by the Tisserand gauge — the mapped-rotation null basis makes the
+   * mass-weighted representative exactly
+   * @f$\int\tilde\rho\,\varphi_e\times u\,dV = 0@f$. This overload
+   * assembles ModelInertiaTensor(), verifies the principal-axis and
+   * non-degeneracy conditions (a near-spherical model has no finite
+   * wander response of its own — use the input-moments overload, the
+   * inertia-data option, whose uniqueness the gauge supplies equally),
+   * enables SetTisserandGauge() and dispatches to the same border.
+   */
+  void SetRotation(mfem::real_t Omega);
+
+  /** @brief The model's inertia tensor
+   * @f$\int\tilde\rho\,(|\varphi_e|^2\mathbf 1 -
+   * \varphi_e\otimes\varphi_e)\,dV@f$ over the displacement mesh
+   * (3-D). */
+  mfem::DenseMatrix ModelInertiaTensor();
+
+  /** @brief Pin the rigid representative by the Tisserand condition
+   * (zero @f$\tilde\rho@f$-weighted momentum and angular momentum):
+   * the mass-weighted gauge on the block solver. Enabled by the
+   * model-inertia SetRotation(); available separately so the
+   * input-moments door can carry it too. */
+  void SetTisserandGauge(bool on);
+
+  /**
    * @brief Ball-wide mode: regularise the pure-gauge vacuum-extension
    * field with the harmonic penalty @f$\epsilon\mu_g\int \nabla u :
    * \nabla v@f$ on the marked (buffer) attributes, through the fluid
@@ -733,6 +765,13 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
   std::unique_ptr<mfem::Coefficient> rot_psi_total_;
   void BuildRotationColumns();
   void BuildRotationCrossData();
+
+  // The Tisserand gauge (the generalised door): the rho-weighted
+  // vector mass, block-embedded for the solver's gauge representative.
+  bool tisserand_gauge_ = false;
+  mfem::OperatorHandle rot_gauge_M_;
+  std::unique_ptr<mfem::BilinearForm> rot_gauge_form_;
+  std::unique_ptr<mfem::BlockOperator> rot_gauge_block_;
 
   // 2-D compatibility (as in the Eulerian class)
   mfem::Vector ones_, L_outer_;

@@ -292,6 +292,10 @@ add_executable(TestSeaLevelReferential TestSeaLevelReferential.cpp)
 target_link_libraries(TestSeaLevelReferential PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestSeaLevelReferential)
 
+add_executable(TestGeneralisedRotation TestGeneralisedRotation.cpp)
+target_link_libraries(TestGeneralisedRotation PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestGeneralisedRotation)
+
 add_executable(TestSeaLevelRotation TestSeaLevelRotation.cpp)
 target_link_libraries(TestSeaLevelRotation PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestSeaLevelRotation)

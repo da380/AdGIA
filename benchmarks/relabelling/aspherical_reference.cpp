@@ -255,6 +255,13 @@ int main(int argc, char* argv[]) {
   args.AddOption(&lmin, "-lmin", "--min-degree", "Lowest degree.");
   args.AddOption(&lmax, "-lmax", "--max-degree", "Highest degree.");
   args.AddOption(&rel_tol, "-rt", "--rel-tol", "Solver tolerance.");
+  bool water = false;
+  args.AddOption(&water, "-water", "--water", "-no-water", "--no-water",
+                 "Leg G7b of doc/planning/referential_sea_level_plan.md: "
+                 "one WATER solve on the aspherical body in place of the "
+                 "degree sweep, gated by internal certificates alone "
+                 "(monolithic == fixed point, the mass row, Phi_g) — no "
+                 "spherical reference enters.");
   args.Parse();
   if (!args.Good()) {
     if (root) args.PrintUsage(std::cout);
@@ -396,6 +403,129 @@ int main(int argc, char* argv[]) {
                                        bb_max.Normlinf());
   problem.SetPrescribedVacuumExtension(fes_b, *Evac);
   problem.SetRelTol(rel_tol);
+
+  if (water) {
+    // G7b: the water solve on the genuinely aspherical body, certified
+    // internally. The physical weight and data compose with phi_e; the
+    // data load carries the Nanson factor (sigma per referential
+    // area), the feedback operator takes it as surface_jacobian.
+    Array<int> marker(body.bdr_attributes.Max());
+    marker = 0;
+    marker[0] = 1;
+    auto w_f = [](const Vector& x) {
+      const double r2 = x * x;
+      return 0.02 * (1.0 + 0.3 * x[2] * x[2] / r2);
+    };
+    auto s_f = [](const Vector& x) {
+      const double r2 = x * x;
+      const double c2 = x[2] * x[2] / r2;
+      return 0.02 * (2.0 * c2 - 1.0) + 0.01 * x[0] * x[1] / r2 + 0.01;
+    };
+    TransformedFunctionCoefficient w_comp(xi, w_f);
+    TransformedFunctionCoefficient s_comp(xi, s_f);
+    NansonAreaCoefficient nanson(xi);
+    ProductCoefficient sigma_ref(s_comp, nanson);
+    ProductCoefficient w_jac(w_comp, nanson);
+
+    // Monolithic.
+    problem.SetWaterLoad(w_comp, sigma_ref, marker, &nanson);
+    problem.AssembleForce(0.0);
+    MFEM_VERIFY(problem.Solve(), "the water solve failed");
+    const real_t phi_g = problem.UniformPotentialTerm();
+
+    // Surface integrals over the body's referential surface.
+    H1_FECollection sfec(order, dim);
+    ParFiniteElementSpace sfes(&body, &sfec);
+    auto surf_int = [&](Coefficient& f) {
+      ParLinearForm lf(&sfes);
+      lf.AddBoundaryIntegrator(new BoundaryLFIntegrator(f), marker);
+      lf.Assemble();
+      real_t v = lf.Sum();
+      MPI_Allreduce(MPI_IN_PLACE, &v, 1, MPITypeMap<real_t>::mpi_type,
+                    MPI_SUM, MPI_COMM_WORLD);
+      return v;
+    };
+    const real_t m = surf_int(w_jac);
+    const real_t Sd = surf_int(sigma_ref);
+
+    // The mass certificate at the monolithic solution (route grade).
+    GridFunctionCoefficient zc(
+        const_cast<GridFunction*>(&problem.PotentialOnBody()));
+    ProductCoefficient wz(w_jac, zc);
+    const real_t total = Sd - surf_int(wz) + phi_g * m;
+
+    // The fixed point on a fresh problem: sigma_w = w (c - zeta) J,
+    // the uniform from mass conservation each pass.
+    struct IteredZeta : public Coefficient {
+      Coefficient *w, *J;
+      std::unique_ptr<GridFunction> zeta;
+      real_t c = 0.0;
+      real_t Eval(ElementTransformation& T,
+                  const IntegrationPoint& ip) override {
+        if (!zeta) {
+          return 0.0;
+        }
+        return w->Eval(T, ip) * (c - zeta->GetValue(T, ip)) *
+               J->Eval(T, ip);
+      }
+    } itered;
+    itered.w = &w_comp;
+    itered.J = &nanson;
+    LinearQuasiStaticReferentialSelfGravitatingProblem fp(
+        &fes_u, &fes_zeta, rheology, rho_tilde, G, dtn_degree);
+    fp.SetPrescribedVacuumExtension(fes_b, *Evac);
+    fp.SetRelTol(rel_tol);
+    fp.SetSurfaceLoad(sigma_ref, marker);
+    fp.SetSurfaceLoad(itered, marker);
+    real_t uniform = 0.0;
+    for (int it = 0; it < 20; it++) {
+      fp.AssembleForce(0.0);
+      MFEM_VERIFY(fp.Solve(), "the fixed-point solve failed");
+      GridFunctionCoefficient zfp(
+          const_cast<GridFunction*>(&fp.PotentialOnBody()));
+      ProductCoefficient wzfp(w_jac, zfp);
+      uniform = (surf_int(wzfp) - Sd) / m;
+      itered.zeta =
+          std::make_unique<GridFunction>(fp.PotentialOnBody());
+      itered.c = uniform;
+    }
+    GridFunction du(problem.Displacement());
+    du -= fp.Displacement();
+    // Relative difference of the displacements (true-dof norm: a
+    // same-space comparison).
+    Vector dut, ut;
+    du.GetTrueDofs(dut);
+    const_cast<GridFunction&>(problem.Displacement()).GetTrueDofs(ut);
+    real_t nd = InnerProduct(fes_u.GetComm(), dut, dut);
+    real_t nu = InnerProduct(fes_u.GetComm(), ut, ut);
+    const real_t du_rel = std::sqrt(nd / std::max(nu, real_t(1e-300)));
+
+    const real_t dg_rel =
+        std::abs(uniform - phi_g) / std::max(std::abs(phi_g), real_t(1e-12));
+    const bool pass = du_rel < 1e-3 && dg_rel < 5e-4 &&
+                      std::abs(total) < 5e-4 * std::abs(Sd) &&
+                      std::abs(phi_g) > 1e-8;
+    if (root) {
+      std::cout << "\naspherical water certificates (eps " << eps
+                << ", beta " << beta << ", order " << order << "):\n"
+                << "  Phi_g (monolithic)        " << phi_g << "\n"
+                << "  fixed point vs monolithic " << dg_rel
+                << "  (uniform " << uniform << ")\n"
+                << "  |du| / |u|                " << du_rel << "\n"
+                << "  mass certificate          " << total
+                << "  (scale " << Sd << ")\n"
+                << (pass ? "  CERTIFICATES HOLD\n" : "  FAILURE\n");
+      std::ofstream os(out_file);
+      os << "{\n  \"water\": true,\n  \"phi_g\": " << Num(phi_g)
+         << ",\n  \"uniform_fixed_point\": " << Num(uniform)
+         << ",\n  \"du_rel\": " << Num(du_rel)
+         << ",\n  \"mass_certificate\": " << Num(total)
+         << ",\n  \"pass\": " << (pass ? "true" : "false") << "\n}\n";
+    }
+    int ok = pass ? 0 : 1;
+    MPI_Bcast(&ok, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    return ok;
+  }
 
   // The load: the physical harmonic on the surface, pulled back with
   // its Nanson area factor (the direction is preserved by the radial

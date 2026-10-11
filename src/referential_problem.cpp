@@ -1724,6 +1724,86 @@ Coefficient& LinearQuasiStaticReferentialSelfGravitatingProblem::
   return *rot_psi_total_;
 }
 
+DenseMatrix
+LinearQuasiStaticReferentialSelfGravitatingProblem::ModelInertiaTensor() {
+  MFEM_VERIFY(dim_ == 3, "ModelInertiaTensor: 3-D only.");
+  auto& map = *ref_rheology_->EquilibriumMapping();
+  DenseMatrix I(3);
+  I = 0.0;
+  Mesh* mesh = fes_->GetMesh();
+  Vector x(dim_);
+  const int order = fes_->GetMaxElementOrder();
+  for (int e = 0; e < mesh->GetNE(); e++) {
+    auto* T = mesh->GetElementTransformation(e);
+    const auto& ir = IntRules.Get(mesh->GetElementGeometry(e),
+                                  2 * order + 4);
+    for (int q = 0; q < ir.GetNPoints(); q++) {
+      const auto& ip = ir.IntPoint(q);
+      T->SetIntPoint(&ip);
+      map.Eval(x, *T, ip);
+      const real_t w = ip.weight * T->Weight() * rho_->Eval(*T, ip);
+      const real_t r2 = x * x;
+      for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 3; j++) {
+          I(i, j) += w * ((i == j ? r2 : 0.0) - x[i] * x[j]);
+        }
+      }
+    }
+  }
+#ifdef MFEM_USE_MPI
+  if (pfes_) {
+    MPI_Allreduce(MPI_IN_PLACE, I.Data(), 9, MPITypeMap<real_t>::mpi_type,
+                  MPI_SUM, pfes_->GetComm());
+  }
+#endif
+  return I;
+}
+
+void LinearQuasiStaticReferentialSelfGravitatingProblem::SetTisserandGauge(
+    bool on) {
+  if (on && !rot_gauge_M_.Ptr()) {
+    rot_gauge_form_ = AssembleMassOperator(rho_, rot_gauge_M_);
+  }
+  if (on != tisserand_gauge_) {
+    tisserand_gauge_ = on;
+    operator_dirty_ = true;  // the solver is rebuilt with the gauge
+  }
+}
+
+void LinearQuasiStaticReferentialSelfGravitatingProblem::SetRotation(
+    real_t Omega) {
+  MFEM_VERIFY(dim_ == 3,
+              "SetRotation: the referential rotation border is 3-D only.");
+  const DenseMatrix I0 = ModelInertiaTensor();
+  const real_t scale = (I0(0, 0) + I0(1, 1) + I0(2, 2)) / 3.0;
+  real_t offdiag = 0.0;
+  for (int i = 0; i < 3; i++) {
+    for (int j = i + 1; j < 3; j++) {
+      offdiag = std::max(offdiag, std::abs(I0(i, j)));
+    }
+  }
+  MFEM_VERIFY(offdiag <= 1e-2 * scale,
+              "SetRotation (model inertia): Omega must lie along a "
+              "principal axis of the model's inertia tensor (equilibrium "
+              "consistency; off-diagonal "
+                  << offdiag << " against the scale " << scale << ").");
+  Vector moments(3);
+  moments[0] = I0(0, 0);
+  moments[1] = I0(1, 1);
+  moments[2] = I0(2, 2);
+  MFEM_VERIFY(
+      std::abs(moments[2] - moments[0]) > 1e-3 * scale &&
+          std::abs(moments[2] - moments[1]) > 1e-3 * scale,
+      "SetRotation (model inertia): the model's wander response is "
+      "near-degenerate (C3 - C1 ~ 0): a near-spherical model has no "
+      "finite polar wander of its own. Supply observed moments through "
+      "SetRotation(Omega, moments) — the input-inertia option, whose "
+      "uniqueness the Tisserand gauge supplies equally "
+      "(doc/planning/generalised_rotation_note.md).");
+  SetTisserandGauge(true);
+  SetRotation(Omega, moments);
+}
+
 void LinearQuasiStaticReferentialSelfGravitatingProblem::BuildRotationColumns() {
   // The u-row omega columns +int rho grad(psi_k) . v dV: minus the
   // centrifugal LOAD (the tidal door's -rho grad psi), matching the
@@ -1947,17 +2027,14 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::AssembleForce(real_t t)
     }
   }
   if (sea_enabled_) {
-    // The mass-row data int sigma_data [J_Sigma] dS at this time,
-    // along the border's assembly route.
-    Coefficient* s = sea_sigma_data_;
-    std::unique_ptr<Coefficient> sj;
-    if (sea_jac_) {
-      sj = std::make_unique<ProductCoefficient>(*sea_sigma_data_, *sea_jac_);
-      s = sj.get();
-    }
+    // The mass-row data int sigma_data dS at this time, along the
+    // border's assembly route. NO Jacobian factor here: sigma is per
+    // REFERENTIAL area (the SetWaterLoad convention — the feedback
+    // operator carries J_Sigma, the data loads do not).
     auto lf =
         detail::MakeLinearForm(ball_wide_ ? fes_zeta_ : shadow_zeta_.get());
-    lf->AddBoundaryIntegrator(new BoundaryLFIntegrator(*s), sea_marker_);
+    lf->AddBoundaryIntegrator(new BoundaryLFIntegrator(*sea_sigma_data_),
+                              sea_marker_);
     lf->Assemble();
     Vector Sd;
     if (ball_wide_) {
@@ -2084,6 +2161,15 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetupSolver(OperatorHan
   projected_ = std::make_unique<ProjectedSolver>(*projector_block_);
   projected_->SetSolver(*minres_);
   projected_->iterative_mode = true;
+  if (tisserand_gauge_) {
+    // The Tisserand representative: the mapped-rotation basis with the
+    // rho-weighted mass metric pins int rho~ phi_e x u = 0 (and the
+    // momentum partner); the zeta partners have zero M-norm and keep
+    // the Euclidean gauge, as SetGauge prescribes.
+    rot_gauge_block_ = std::make_unique<BlockOperator>(offsets_);
+    rot_gauge_block_->SetBlock(0, 0, rot_gauge_M_.Ptr());
+    projected_->SetGauge(rot_gauge_block_.get());
+  }
 
   if (!X_block_ || X_block_->Size() != offsets_.Last()) {
     X_block_ = std::make_unique<BlockVector>(offsets_);
@@ -2202,7 +2288,12 @@ bool LinearQuasiStaticReferentialSelfGravitatingProblem::SolveUnbordered(const V
     }
     NoteIterations(outer_its_);
     X = X_block_->GetBlock(0);
-    projector_u_->Project(X);
+    if (!tisserand_gauge_) {
+      // Clean the rigid drift Euclidean-wise. With the Tisserand gauge
+      // the block solver already chose the mass-weighted representative
+      // (SetupSolver); a Euclidean re-projection would overwrite it.
+      projector_u_->Project(X);
+    }
     Zeta_true_ = X_block_->GetBlock(1);
   }
   DistributePotential(Zeta_true_);

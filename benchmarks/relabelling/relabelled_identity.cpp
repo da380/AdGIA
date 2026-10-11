@@ -96,6 +96,13 @@ double SurfaceLoad(const Vector& x) {
   return 0.02 * (2.0 * c * c - 1.0) + 0.01 * x[0] * x[1] / (r * r);
 }
 
+// A smooth positive ocean weight for the -water leg (as above, any
+// smooth data will do).
+double WaterWeight(const Vector& x) {
+  const double r2 = x * x;
+  return 0.02 * (1.0 + 0.3 * x[x.Size() - 1] * x[x.Size() - 1] / r2);
+}
+
 // One side of the identity: everything a solve needs, built on one
 // ParMesh with one mapping.
 struct Side {
@@ -124,6 +131,12 @@ struct Side {
   std::unique_ptr<ReferentialElasticRheology> rheology;
   std::unique_ptr<PWConstCoefficient> pi_c;
   std::unique_ptr<HypreParMatrix> Evac;
+  // The -water / -map-surface data (header note): the Nanson factor and
+  // the composed coefficients of the mapped side.
+  std::unique_ptr<NansonAreaCoefficient> nanson;
+  std::unique_ptr<TransformedFunctionCoefficient> sigma_comp, w_comp;
+  std::unique_ptr<ProductCoefficient> sigma_nanson;
+  std::unique_ptr<FunctionCoefficient> w_plain;
   std::unique_ptr<LinearQuasiStaticReferentialSelfGravitatingProblem> problem;
 
   // On a SubMesh, the transplant of a parent field.
@@ -150,6 +163,8 @@ int main(int argc, char* argv[]) {
   double amplitude = 0.02;
   double rel_tol = 1e-11;
   int dtn_degree = 8;
+  bool water = false;
+  bool map_surface = false;
 
   OptionsParser args(argc, argv);
   args.AddOption(&manifest_file, "-c", "--case", "Manifest of the case.");
@@ -157,9 +172,21 @@ int main(int argc, char* argv[]) {
                  "referential (welded) or slip_broken.");
   args.AddOption(&order, "-o", "--order", "Finite element order.");
   args.AddOption(&amplitude, "-map", "--map-amplitude",
-                 "Amplitude of the interior relabelling.");
+                 "Amplitude of the relabelling.");
   args.AddOption(&rel_tol, "-rt", "--rel-tol", "Solver tolerance.");
   args.AddOption(&dtn_degree, "-deg", "--dtn-degree", "DtN degree.");
+  args.AddOption(&water, "-water", "--water", "-no-water", "--no-water",
+                 "Replace the plain surface load by the water feedback "
+                 "(SetWaterLoad) on both sides — the WP7.4 gate "
+                 "(doc/planning/referential_sea_level_plan.md): the "
+                 "bordered water solve joins the identity. Welded only.");
+  args.AddOption(&map_surface, "-map-surface", "--map-surface",
+                 "-no-map-surface", "--no-map-surface",
+                 "A SURFACE-MOVING radial relabelling in place of the "
+                 "interface-fixing interior one: the leg that exercises "
+                 "the referential-area conventions (the Nanson J_Sigma "
+                 "and the composed data) on the surface loads and the "
+                 "water terms. Solid models and the welded method only.");
   args.Parse();
   if (!args.Good()) {
     if (root) args.PrintUsage(std::cout);
@@ -169,6 +196,11 @@ int main(int argc, char* argv[]) {
   MFEM_VERIFY(m == "referential" || m == "slip_broken",
               "-method must be referential or slip_broken.");
   const bool slip = m == "slip_broken";
+  MFEM_VERIFY(!(water && slip),
+              "-water: the water feedback lives on the welded class.");
+  MFEM_VERIFY(!(map_surface && slip),
+              "-map-surface: welded only (the slipping interface fixes "
+              "its interfaces by design).");
 
   const MeshManifest manifest(manifest_file);
   if (root) manifest.Print(std::cout);
@@ -185,7 +217,12 @@ int main(int argc, char* argv[]) {
     }
     boundaries.push_back(layer.r_outer);
   }
-  auto xi_analytic = InteriorRelabelling(dim, boundaries, amplitude);
+  Vector bb0_min, bb0_max;
+  serial.GetBoundingBox(bb0_min, bb0_max);
+  auto xi_analytic =
+      map_surface
+          ? SurfaceMovingRelabelling(dim, bb0_max.Normlinf(), amplitude)
+          : InteriorRelabelling(dim, boundaries, amplitude);
   Mesh mapped_serial = MappedMesh(serial, xi_analytic);
   std::unique_ptr<int[]> partitioning(
       serial.GeneratePartitioning(Mpi::WorldSize()));
@@ -199,6 +236,9 @@ int main(int argc, char* argv[]) {
 
   const Array<int> solid_attributes = manifest.SolidAttributes();
   const Array<int> fluid_attributes = manifest.FluidAttributes();
+  MFEM_VERIFY(!map_surface || fluid_attributes.Size() == 0,
+              "-map-surface: solid models only (the map moves interior "
+              "interfaces too).");
   Array<int> buffer_attributes, outer_attributes(solid_attributes);
   for (int a = 1; a <= serial.attributes.Max(); a++) {
     if (solid_attributes.Find(a) < 0 && fluid_attributes.Find(a) < 0) {
@@ -385,7 +425,38 @@ int main(int argc, char* argv[]) {
     }
     side->problem->SetPrescribedVacuumExtension(*side->fes_buffer,
                                                 *shared_E);
-    side->problem->SetSurfaceLoad(sigma, surface_marker);
+    // The surface data: with a SURFACE-MOVING relabelling the mapped
+    // side's physical load and weight compose with the map and carry
+    // the Nanson factor J_Sigma (sigma and the water operator are per
+    // referential area: quasi_static_models.tex, the referential
+    // sea-level subsection); the interior relabelling fixes the
+    // surface, so there the sides share the plain data.
+    Coefficient* sigma_use = &sigma;
+    Coefficient* w_use = nullptr;
+    Coefficient* jac_use = nullptr;
+    if (mapped_side && map_surface) {
+      side->nanson = std::make_unique<NansonAreaCoefficient>(*side->xi);
+      jac_use = side->nanson.get();
+      side->sigma_comp = std::make_unique<TransformedFunctionCoefficient>(
+          *side->xi, SurfaceLoad);
+      side->sigma_nanson = std::make_unique<ProductCoefficient>(
+          *side->sigma_comp, *side->nanson);
+      sigma_use = side->sigma_nanson.get();
+      if (water) {
+        side->w_comp = std::make_unique<TransformedFunctionCoefficient>(
+            *side->xi, WaterWeight);
+        w_use = side->w_comp.get();
+      }
+    } else if (water) {
+      side->w_plain = std::make_unique<FunctionCoefficient>(WaterWeight);
+      w_use = side->w_plain.get();
+    }
+    if (water) {
+      side->problem->SetWaterLoad(*w_use, *sigma_use, surface_marker,
+                                  jac_use);
+    } else {
+      side->problem->SetSurfaceLoad(*sigma_use, surface_marker);
+    }
     side->problem->SetRelTol(rel_tol);
     side->problem->AssembleForce(0.0);
     return side;
@@ -642,12 +713,28 @@ int main(int argc, char* argv[]) {
   // (TestSlipInterface, InterfaceKernelsFaceShearCovariance; the old
   // P_T F^{-1} slot broke this identity at 1.2e-2).
   const bool strict = true;
-  const bool pass = okA && okB && (!strict || (du < 1e-5 && dz < 1e-5));
+  // With water, the uniform term joins the identity (the border is
+  // part of the solve).
+  const real_t dg =
+      water ? std::abs(A->problem->UniformPotentialTerm() -
+                       B->problem->UniformPotentialTerm()) /
+                  std::max(std::abs(B->problem->UniformPotentialTerm()),
+                           real_t{1e-12})
+            : 0.0;
+  const bool pass = okA && okB &&
+                    (!strict || (du < 1e-5 && dz < 1e-5 && dg < 1e-4));
   if (root) {
     std::cout << "\nrelabelled identity (" << m << ", order " << order
-              << ", amplitude " << amplitude << "):\n  converged "
+              << ", amplitude " << amplitude
+              << (water ? ", water" : "")
+              << (map_surface ? ", surface-moving" : "")
+              << "):\n  converged "
               << (okA && okB ? "yes" : "NO") << "\n  |u_A - u_B| / |u_B|  "
               << du << "\n  |z_A - z_B| / |z_B|  " << dz << "\n";
+    if (water) {
+      std::cout << "  |g_A - g_B| / |g_B|  " << dg << "  (Phi_g "
+                << B->problem->UniformPotentialTerm() << ")\n";
+    }
     for (int a = 0; a < n_attr; a++) {
       if (attr_sums[2 * a + 1] <= 0.0) {
         continue;

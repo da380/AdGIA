@@ -537,6 +537,91 @@ TEST(SeaLevelReferential, ShorelineMigrationMatchesMixed) {
   EXPECT_LT(u_diff[1], 0.7 * u_diff[0]);
 }
 
+TEST(SeaLevelReferential, GeneralisedRotationDoor) {
+  // Phase B, the generalised door (generalised_rotation_note.md, "The
+  // secular reduction"): SetRotation(Omega) on a model with a mildly
+  // triaxial density — (i) it is the input-moments border at the
+  // model's own assembled moments (plumbing identity), (ii) the
+  // Tisserand gauge pins the representative: the solution carries no
+  // rho-weighted relative angular momentum, against the O(trace I)
+  // rigid scale. (The small triaxiality keeps the inconsistency of the
+  // spherical hydrostatic background subdominant while the wander
+  // moments stay far from the degeneracy floor.)
+  const int order = 2;
+  RefCase c(order);
+  FunctionCoefficient rho_tri([](const Vector& x) {
+    const double r2 = x * x;
+    return kRho * (1.0 + 0.1 * (3.0 * x[2] * x[2] / r2 - 1.0) +
+                   0.05 * (x[0] * x[0] - x[1] * x[1]) / r2);
+  });
+  auto referential = [&] {
+    auto p =
+        std::make_unique<LinearQuasiStaticReferentialSelfGravitatingProblem>(
+            c.fes_u.get(), c.fes_scalar.get(), *c.r_rheology, rho_tri, kG,
+            kDtNDegree);
+    p->SetPrescribedVacuumExtension(*c.fes_buffer, *c.E);
+    p->SetRelTol(1e-12);
+    return p;
+  };
+  FunctionCoefficient sigma_data([](const Vector& x) {
+    const double r2 = x * x;
+    return Degree2(x) + 2.0 * x[0] * x[2] / r2 + 0.5;
+  });
+  const double Omega = 0.1;
+
+  auto p = referential();
+  p->SetRotation(Omega);  // the model-inertia door
+  p->SetSurfaceLoad(sigma_data, c.surface);
+  p->AssembleForce(0.0);
+  ASSERT_TRUE(p->Solve());
+
+  // (i) The input-moments door at the model's own moments, with the
+  // gauge, is the same solve.
+  const DenseMatrix I0 = p->ModelInertiaTensor();
+  Vector moments(3);
+  moments[0] = I0(0, 0);
+  moments[1] = I0(1, 1);
+  moments[2] = I0(2, 2);
+  auto q = referential();
+  q->SetTisserandGauge(true);
+  q->SetRotation(Omega, moments);
+  q->SetSurfaceLoad(sigma_data, c.surface);
+  q->AssembleForce(0.0);
+  ASSERT_TRUE(q->Solve());
+  Vector dw(p->AngularVelocity());
+  dw -= q->AngularVelocity();
+  EXPECT_LT(dw.Norml2(), 1e-12);
+
+  // (ii) The Tisserand certificate: int rho x cross u dV at the
+  // solution, against the rigid scale trace(I0).
+  Vector h(3);
+  h = 0.0;
+  {
+    Mesh* body = c.fes_u->GetMesh();
+    Vector x(3), uv(3);
+    VectorGridFunctionCoefficient uc(&p->Displacement());
+    for (int e = 0; e < body->GetNE(); e++) {
+      auto* T = body->GetElementTransformation(e);
+      const auto& ir =
+          IntRules.Get(body->GetElementGeometry(e), 2 * order + 4);
+      for (int qp = 0; qp < ir.GetNPoints(); qp++) {
+        const auto& ip = ir.IntPoint(qp);
+        T->SetIntPoint(&ip);
+        T->Transform(ip, x);
+        uc.Eval(uv, *T, ip);
+        const double w = ip.weight * T->Weight() * rho_tri.Eval(*T, ip);
+        h[0] += w * (x[1] * uv[2] - x[2] * uv[1]);
+        h[1] += w * (x[2] * uv[0] - x[0] * uv[2]);
+        h[2] += w * (x[0] * uv[1] - x[1] * uv[0]);
+      }
+    }
+  }
+  const double trace = I0(0, 0) + I0(1, 1) + I0(2, 2);
+  EXPECT_LT(h.Norml2(), 1e-7 * trace);
+  // The wander moments are genuinely non-degenerate on this model.
+  EXPECT_GT(std::abs(moments[2] - moments[0]), 1e-2 * trace / 3.0);
+}
+
 INSTANTIATE_TEST_SUITE_P(SeaLevelReferential, SeaLevelReferentialTest,
                          testing::Values(1, 2));
 

@@ -268,6 +268,55 @@ class MultiMeshDiffeomorphism : public Diffeomorphism {
   std::vector<std::unique_ptr<GridFunctionDiffeomorphism>> maps_;
 };
 
+// A SURFACE-MOVING radial relabelling y = (1 + A q(r)) x with
+// q = (1 - (r/R)^2)^2 inside r < R and zero (with zero derivative) at
+// and beyond R: identity at the DtN sphere, as the referential class
+// requires, but NOT at the body surface — the leg that exercises the
+// water terms' referential-area conventions (the Nanson factor
+// J_Sigma and the composed coefficients; SetWaterLoad's
+// surface_jacobian argument). Solid models only: interior interfaces
+// move with it.
+inline CallableDiffeomorphism SurfaceMovingRelabelling(int dim, real_t R,
+                                                       real_t amplitude) {
+  auto q = [R](real_t r) {
+    if (r >= R) {
+      return real_t{0};
+    }
+    const real_t s = 1.0 - (r / R) * (r / R);
+    return s * s;
+  };
+  auto dq = [R](real_t r) {
+    if (r >= R) {
+      return real_t{0};
+    }
+    const real_t s = 1.0 - (r / R) * (r / R);
+    return -4.0 * s * r / (R * R);
+  };
+  return CallableDiffeomorphism(
+      dim,
+      [amplitude, q](const Vector& x, Vector& y) {
+        y = x;
+        y *= 1.0 + amplitude * q(x.Norml2());
+      },
+      [dim, amplitude, q, dq](const Vector& x, DenseMatrix& F) {
+        const real_t r = x.Norml2();
+        F.SetSize(dim);
+        F = 0.0;
+        const real_t f = 1.0 + amplitude * q(r);
+        for (int i = 0; i < dim; i++) {
+          F(i, i) = f;
+        }
+        if (r > 0.0) {
+          const real_t df = amplitude * dq(r) / r;
+          for (int i = 0; i < dim; i++) {
+            for (int j = 0; j < dim; j++) {
+              F(i, j) += df * x(i) * x(j);
+            }
+          }
+        }
+      });
+}
+
 // The interior relabelling (header note): identity, with identity
 // gradient, on every layer boundary and on and outside the surface.
 inline CallableDiffeomorphism InteriorRelabelling(

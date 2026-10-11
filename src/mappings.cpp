@@ -248,6 +248,32 @@ void GridFunctionDiffeomorphism::Eval(Vector& V, ElementTransformation& T,
 void GridFunctionDiffeomorphism::EvalGradient(DenseMatrix& F,
                                               ElementTransformation& T,
                                               const IntegrationPoint& ip) {
+  if (T.ElementType == ElementTransformation::BDR_ELEMENT) {
+    // The deformation gradient is a volume quantity: evaluate it on the
+    // adjacent element at the image of the boundary point (the Nanson
+    // coefficients evaluate maps on boundary elements; mfem's
+    // GetVectorGradient needs a square Jacobian). The idiom is
+    // GridFunction::GetVectorValue's boundary branch: boundary elements
+    // and boundary faces may be oriented differently, so the point goes
+    // through TransformBdrElementToFace.
+    // The face route works for INTERNAL boundary elements too (an
+    // interface carried as boundary elements, the house convention),
+    // where GetBdrFaceTransformations would return null; the factor is
+    // side-independent for a continuous map, so element 1 serves.
+    Mesh* mesh = h_->FESpace()->GetMesh();
+    int f, o;
+    mesh->GetBdrElementFace(T.ElementNo, &f, &o);
+    FaceElementTransformations* fet = mesh->GetFaceElementTransformations(f);
+    MFEM_VERIFY(fet != nullptr,
+                "GridFunctionDiffeomorphism: no face transformation for "
+                "the boundary element.");
+    const IntegrationPoint fip =
+        Mesh::TransformBdrElementToFace(fet->GetGeometryType(), o, ip);
+    fet->SetAllIntPoints(&fip);
+    ElementTransformation& T1 = fet->GetElement1Transformation();
+    EvalGradient(F, T1, T1.GetIntPoint());
+    return;
+  }
   T.SetIntPoint(&ip);
   F.SetSize(vdim);
   h_->GetVectorGradient(T, F);
