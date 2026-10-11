@@ -323,7 +323,8 @@ one bordered solve. So:
   plumbing, the adjoint-identity gate (GA1 restricted to the
   gravitating operator), η kernel FD gate, the 1-D spectral
   cross-check (GA3).
-  **Status: delivered 11 Oct 2026 except GA3 (open).** The D_φ J slot
+  **Status: delivered 11 Oct 2026 (GA3 included — see the gates
+  table; closed-form grade 0.37 %).** The D_φ J slot
   is `PotentialForceSlot` (quasi_static_problem.hpp), a capability
   interface the mixed class implements as `AddPotentialForce` — the
   AddForce analogue on the assembled potential load, with the 2-D
@@ -384,8 +385,8 @@ one bordered solve. So:
 | GA0 | rungs 1-2 librarified: the `adjoint_elasticity`/`viscoelastic_adjoint` FD tables reproduced through the common structure (regression grade) — **done 11 Oct 2026**: tables digit-identical; `TestAdjoint`(`Par`) gates them plus interior-time, continuous-in-time and store-all≡re-solve (measurements in WP8.2) |
 | GA1 | discrete adjoint identity through the full bordered solve (water + rotation): ⟨Lu, v⟩ = ⟨u, Lv⟩ at solver grade — gravitating (unbordered) part **done 11 Oct 2026**: `GravitatingReciprocity` + par twin, u–u and u–φ reciprocity at 2e-9 (the potential slot's sign certificate) |
 | GA1b | fingerprint reciprocity (ggad434 eqs. 15/17, §3.2 with rotation): ∫SL†ζ = ∫SLζ† on the water-loaded solve, spherical AND laterally heterogeneous 3-D elastic structure (the never-tested case) — **done 11 Oct 2026**: `TestAdjointFingerprint`(`Par`, np 1/2/4), Gaussian melt caps on the 3-D ball; defects 2.5e-5 (spherical, → 7.6e-6 at order 2: the readout's projection gap, converging), 3.5e-5 (3-D structure — its first numerical test), 1.9e-5 (rotation + structure); the EXAMPLE is `sea_level_fingerprint -kernel` + `earth_data/plot_fingerprint_kernel` (Boston kernel, 1-D vs `-lateral` 3-D, ice-masked pyslfp maps with Greenland/Antarctica zooms; delivered 11 Oct 2026 per David's figure spec) |
-| GA2 | FD gate on J: η kernel on the Yu configuration (spherical, water + rotation), the `viscoelastic_adjoint` table lifted to full physics |
-| GA3 | η kernel 1-D cross-check: layered sphere, kernel integrated against radial perturbations vs spectral/Love-number FD |
+| GA2 | FD gate on J: η kernel on the Yu configuration (spherical, water + rotation) — **done 11 Oct 2026** (`FullPhysicsKernels`): Maxwell + water + rotation (frozen C, so C† = C₀ and no playback machinery arises), displacement AND potential observations; body-integrated η rows at 8e-5 / 9e-7, blob rows at the coarse ball's spatial floor (order 1 is unusable: internal order zero sign-flips μ-blob; order 2 restores it). The φ row doubles as the certificate that `AddPotentialForce` loads ONLY the potential block: the bordered system's symmetry carries Yu eq. 58's mass-like bookkeeping through the border columns automatically, and feeding `sea_Sd_`/`rot_r_` as if the dual were a surface load DOUBLE-COUNTS (measured 10 %, then removed). Ice/SL₀ kernels remain under WP8.4 |
+| GA3 | η kernel 1-D cross-check vs the Love-number route — **done 11 Oct 2026**, and sharper than planned: against the CLOSED FORM (Wu & Peltier + correspondence), not FD. `TestAdjointLove`: on the homogeneous Maxwell sphere, dJ/dη of a (2,0) observation has the analytic form J(t₁)·f′_η(t₁)/f(t₁) with every normalisation carried by the measured J(t₁); the adjoint kernel agrees to **0.37 %** at order 3 (structure sanity 4e-4; order 2 is unusable — sanity 5 % and the derivative amplifies it to 17 %, the Love example's order caveat seen through the adjoint). Radial-profile leg vs FD at 1.1e-3 (the radial-inversion pairing pattern). No new library code, so no parallel twin: the parallel paths are gated at rung 3 and GA8 |
 | GA4 | ice kernel (quelled İ, I₀): FD against ice-history perturbations through the full migration-on forward |
 | GA5 | interface kernel vs the perturbation family's FD derivatives (the ready-made gate) |
 | GA6 | checkpointed kernels ≡ store-everything kernels (bitwise at matching schedules; certified error under compression) |

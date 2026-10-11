@@ -262,6 +262,10 @@ add_executable(TestAdjointFingerprint TestAdjointFingerprint.cpp)
 target_link_libraries(TestAdjointFingerprint PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestAdjointFingerprint)
 
+add_executable(TestAdjointLove TestAdjointLove.cpp)
+target_link_libraries(TestAdjointLove PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestAdjointLove)
+
 add_executable(TestSubMeshMixedBilinearForm TestSubMeshMixedBilinearForm.cpp)
 target_link_libraries(TestSubMeshMixedBilinearForm PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestSubMeshMixedBilinearForm)

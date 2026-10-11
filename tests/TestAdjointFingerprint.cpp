@@ -83,6 +83,18 @@ double MuLateral(const Vector& x) {
          (1.0 - 0.25 * (x[1] * x[1] - x[2] * x[2]) + 0.2 * x[0] * x[1]);
 }
 
+// m0 (1 + s chi), owned (as in TestAdjoint.cpp).
+struct Bumped {
+  std::unique_ptr<SumCoefficient> one_plus;
+  std::unique_ptr<ProductCoefficient> value;
+};
+Bumped Bump(Coefficient& m0, Coefficient& chi, real_t s) {
+  Bumped b;
+  b.one_plus = std::make_unique<SumCoefficient>(1.0, chi, 1.0, s);
+  b.value = std::make_unique<ProductCoefficient>(m0, *b.one_plus);
+  return b;
+}
+
 struct Fixture {
   std::unique_ptr<Mesh> parent;
   std::unique_ptr<SubMesh> body;
@@ -215,4 +227,188 @@ TEST(AdjointFingerprint, RotationWithStructureReciprocity) {
   auto rheology = IsotropicElasticRheology(3, kappa, mu);
   // Measured 1.9e-5 — the generalized theorem at the same grade.
   EXPECT_LT(ReciprocityDefect(f, rheology, true), 1e-4);
+}
+
+// Gate GA2: the full-physics kernels — Maxwell viscoelasticity with the
+// water border AND the rotational border in the solve (frozen
+// shorelines, so C-dagger = C0 and no ocean-function playback arises;
+// the production first-order path) — FD-gated for a final-time
+// DISPLACEMENT observation and a final-time POTENTIAL observation. The
+// potential observation is the gate on AddPotentialForce's mass-like
+// border bookkeeping (Yu eq. 58): the datum's omega-row pairings and
+// mass-row integral must be fed, or the kernels break against FD.
+TEST(AdjointFingerprint, FullPhysicsKernels) {
+  const int order = 2, n_steps = 12;
+  const real_t t1 = 1.5;  // Maxwell times
+  Fixture f(order);
+  auto kappa0 = ConstantCoefficient(self_grav_test::kKappa);
+  auto mu0 = ConstantCoefficient(self_grav_test::kMu);
+  auto eta0 = ConstantCoefficient(self_grav_test::kMu);  // tau = 1
+  auto tau0 = RatioCoefficient(eta0, mu0);
+  auto grad_phi0 = f.GradPhi0();
+
+  // A held surface mass load with a mean part (the uniform term works)
+  // and non-zonal structure.
+  auto sigma_data = FunctionCoefficient([](const Vector& x) {
+    const real_t r = x.Norml2();
+    const real_t c = x[2] / r;
+    return 0.02 * (3.0 * c * c - 0.5 + 0.5 * x[0] * x[2] / (r * r));
+  });
+  auto zero_data = ConstantCoefficient(0.0);
+
+  // Observation duals: cap-windowed radial displacement at n1 (body
+  // surface) and a potential window at n2 (parent surface).
+  auto n1 = UnitDir(0.3, 0.5, 0.81);
+  auto n2 = UnitDir(-0.7, 0.25, 0.55);
+  auto h_u = VectorFunctionCoefficient(3, [n1](const Vector& x, Vector& v) {
+    const real_t w = MeltCap(x, n1);
+    v = x;
+    v *= w / x.Norml2();
+  });
+  auto g_u = LinearForm(f.fes_u.get());
+  g_u.AddBoundaryIntegrator(new VectorBoundaryLFIntegrator(h_u), f.surface);
+  g_u.Assemble();
+  auto h_phi = FunctionCoefficient(
+      [n2](const Vector& x) { return MeltCap(x, n2); });
+  Array<int> parent_surface(f.parent->bdr_attributes.Max());
+  parent_surface = 0;
+  parent_surface[0] = 1;
+  auto g_phi = LinearForm(f.fes_phi.get());
+  g_phi.AddBoundaryIntegrator(new BoundaryLFIntegrator(h_phi),
+                              parent_surface);
+  g_phi.Assemble();
+
+  const real_t dt = t1 / n_steps;
+  constexpr real_t kOm = kOmega;
+  auto make_problem = [&](const Rheology& rheology, Coefficient& data) {
+    auto p = std::make_unique<LinearQuasiStaticMixedSelfGravitatingProblem>(
+        f.fes_u.get(), f.fes_phi.get(), rheology, f.rho,
+        self_grav_test::kG, self_grav_test::kDtNDegree);
+    p->SetWaterLoad(*f.w, data, f.surface);
+    p->SetRotation(kOm, f.moments);
+    p->SetRelTol(1e-11);
+    return p;
+  };
+
+  struct Measured {
+    real_t J_u = 0.0, J_phi = 0.0;
+  };
+  auto run_forward = [&](Coefficient& kappa, Coefficient& mu,
+                         Coefficient& eta) {
+    auto tau = RatioCoefficient(eta, mu);
+    auto rheology = IsotropicMaxwellRheology::Maxwell(3, kappa, mu, tau);
+    auto prob = make_problem(rheology, sigma_data);
+    auto visco = ViscoelasticOperator(*prob);
+    ExponentialTrapezoidSolver ode;
+    ode.Init(visco);
+    Vector m(visco.Height());
+    m = 0.0;
+    real_t t = 0.0, dt_step = dt;
+    EXPECT_TRUE(visco.SolveElastic(m, t));
+    for (int n = 1; n <= n_steps; n++) {
+      ode.Step(m, t, dt_step);
+    }
+    EXPECT_TRUE(visco.SolveElastic(m, t));
+    Measured out;
+    out.J_u = g_u * prob->Displacement();
+    out.J_phi = g_phi * prob->Potential();
+    return out;
+  };
+
+  // The base run on persistent operators.
+  auto rheology0 = IsotropicMaxwellRheology::Maxwell(3, kappa0, mu0, tau0);
+  auto prob_fwd = make_problem(rheology0, sigma_data);
+  auto visco_fwd = ViscoelasticOperator(*prob_fwd);
+  auto trajectory = ForwardTrajectory(visco_fwd, true);
+  {
+    ExponentialTrapezoidSolver ode;
+    ode.Init(visco_fwd);
+    Vector m(visco_fwd.Height());
+    m = 0.0;
+    real_t t = 0.0, dt_step = dt;
+    trajectory.Record(m, t);
+    for (int n = 1; n <= n_steps; n++) {
+      ode.Step(m, t, dt_step);
+      trajectory.Record(m, t);
+    }
+  }
+  auto prob_adj = make_problem(rheology0, zero_data);
+  auto visco_adj = ViscoelasticOperator(*prob_adj);
+
+  auto chi_blob3 = FunctionCoefficient([](const Vector& x) {
+    const real_t dx = x[0] - 0.3, dy = x[1] - 0.35, dz = x[2] - 0.4;
+    return std::exp(-(dx * dx + dy * dy + dz * dz) / 0.03);
+  });
+  auto chi_all = ConstantCoefficient(1.0);
+  FiniteElementSpace sfes(f.body.get(), f.fec.get());
+  std::vector<ProductCoefficient> dirs;
+  dirs.emplace_back(eta0, chi_blob3);  // 0: eta blob
+  dirs.emplace_back(eta0, chi_all);    // 1: eta all
+  dirs.emplace_back(mu0, chi_blob3);   // 2: mu blob
+
+  struct Sweep {
+    std::unique_ptr<IsotropicKernel> eta, mu;
+  };
+  auto make_sweep = [&](const AdjointForce& force) {
+    Sweep sw;
+    sw.eta = std::make_unique<IsotropicKernel>(
+        IsotropicKernel::Parameter::Eta, sfes, &tau0);
+    sw.mu = std::make_unique<IsotropicKernel>(IsotropicKernel::Parameter::Mu,
+                                              sfes);
+    sw.eta->AddDirection(dirs[0]);
+    sw.eta->AddDirection(dirs[1]);
+    sw.mu->AddDirection(dirs[2]);
+    auto solver = AdjointSolver(visco_adj, trajectory);
+    solver.SetForce(force);
+    solver.AddKernel(*sw.eta);
+    solver.AddKernel(*sw.mu);
+    EXPECT_TRUE(solver.Run());
+    return sw;
+  };
+  AdjointForce force_u;
+  force_u.AddObservation(trajectory.Time(n_steps), g_u);
+  AdjointForce force_phi;
+  force_phi.AddPotentialObservation(trajectory.Time(n_steps), g_phi);
+  auto sweep_u = make_sweep(force_u);
+  auto sweep_phi = make_sweep(force_phi);
+
+  // FD: one rerun per sign and direction, both functionals sampled.
+  const real_t eps = 1e-3;
+  Coefficient* base_of[3] = {&eta0, &eta0, &mu0};
+  Coefficient* chi_of[3] = {&chi_blob3, &chi_all, &chi_blob3};
+  Measured fd[3];
+  for (int d = 0; d < 3; d++) {
+    Measured plus, minus;
+    for (const real_t sg : {eps, -eps}) {
+      auto bk = Bump(kappa0, *chi_of[d], 0.0);
+      auto bm = Bump(mu0, *chi_of[d], d == 2 ? sg : 0.0);
+      auto be = Bump(eta0, *chi_of[d], d == 2 ? 0.0 : sg);
+      auto out = run_forward(*bk.value, *bm.value, *be.value);
+      (sg > 0 ? plus : minus) = out;
+    }
+    fd[d].J_u = (plus.J_u - minus.J_u) / (2.0 * eps);
+    fd[d].J_phi = (plus.J_phi - minus.J_phi) / (2.0 * eps);
+  }
+
+  // Thresholds encode measurements at order 2, n = 12. The
+  // body-integrated eta rows are the structural gates: 8e-5 (u) and
+  // 9e-7 (phi) — the phi row is ALSO the certificate that
+  // AddPotentialForce loads only the potential block (feeding the
+  // border rows as if the dual were a surface load measured 10 %
+  // here; the bordered system's symmetry carries the eq.-58
+  // bookkeeping by itself). The blob rows carry the coarse ball's
+  // spatial floor (nodal sampling + curved tets): eta 2.7e-2/6.4e-2,
+  // mu 0.15/0.15 — order 1 is unusable for them (eta blob 0.59, mu
+  // blob SIGN-FLIPS at internal order zero), and order 2 restores
+  // sign and magnitude; they gate structure, not sharpness.
+  auto gate = [&](Sweep& sw, auto member, const char* what) {
+    EXPECT_NEAR(sw.eta->Directional(0) / (fd[0].*member), 1.0, 1.5e-1)
+        << what << ", eta blob";
+    EXPECT_NEAR(sw.eta->Directional(1) / (fd[1].*member), 1.0, 1e-3)
+        << what << ", eta all";
+    EXPECT_NEAR(sw.mu->Directional(0) / (fd[2].*member), 1.0, 3e-1)
+        << what << ", mu blob";
+  };
+  gate(sweep_u, &Measured::J_u, "full-physics u observation");
+  gate(sweep_phi, &Measured::J_phi, "full-physics phi observation");
 }

@@ -313,6 +313,18 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::AddPotentialForce(
               "of the potential space.");
   Vector ft(fes_phi_->GetTrueVSize());
   ToTrueDofs(*fes_phi_, f, ft);
+  // The increment deliberately does NOT feed the border data (the mass
+  // row's sea_Sd_ or the omega rows' rot_r_): the bordered system is
+  // symmetric with (Phi_g, omega) among its unknowns, so the exact
+  // discrete adjoint of an observation J = f . Phi loads ONLY the
+  // potential block — the continuum reading of Yu et al. (2025,
+  // eq. 58), where a D_phi J datum stands beside the surface mass in
+  // the jump condition, is realised automatically through the
+  // symmetric border coupling columns. (Feeding the rows as if the
+  // dual were a registered surface load double-counts: measured as a
+  // 10 % error on the full-physics potential-observation FD gate of
+  // TestAdjointFingerprint, which gates this choice.) The forward's
+  // surface loads DO feed those rows, as data of those equations.
   MakeCompatible(ft);
   B_phi_ += ft;
 }

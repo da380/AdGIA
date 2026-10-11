@@ -299,10 +299,15 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
    * layout of the potential space on the PARENT mesh. Accumulates onto
    * the assembled @f$\ell_\phi@f$ and is cleared by the next
    * AssembleForce(); the 2-D compatibility treatment is applied to the
-   * increment as to the assembled load. NOTE: the rotational border's
-   * @f$\omega@f$-row data are read off the raw assembled load, so
-   * increments added here deliberately do not feed them (the adjoint's
-   * @f$\omega@f$-row datum is a separate input; see
+   * increment as to the assembled load. The increment deliberately
+   * does NOT feed the border data (sea_Sd_, rot_r_): the bordered
+   * system is symmetric with the uniform term and @f$\omega@f$ among
+   * its unknowns, so the exact discrete adjoint of a potential
+   * observation loads only the potential block, and the continuum
+   * mass-like reading of the datum (Yu et al. 2025, eq. 58) is
+   * realised through the symmetric border columns automatically —
+   * feeding the rows double-counts (measured 10 % on the full-physics
+   * FD gate; see the implementation comment and
    * doc/planning/adjoint_note.md).
    */
   void AddPotentialForce(const mfem::Vector& f) override;

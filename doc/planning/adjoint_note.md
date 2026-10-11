@@ -410,12 +410,25 @@ reduction is already in the examples' lambdas).
   deliberately do not feed them — the adjoint's ω-row datum is the
   separate T D_ω J input, but any future term that SHOULD pair with
   ψ_k must not arrive through the slot.
-- The prescribed-C playback against `RefreshWaterLoad`'s assumptions
-  (it was built for the dynamic update; confirm a stored-history
-  coefficient drives it without re-deriving C from the adjoint state).
-- The fingerprint solve's mass row under impulsive loading (∫σ† dS = 0
-  must hold per impulse; the forward machinery enforces it per solve,
-  which should carry over — confirm at rung 4).
+- ~~The prescribed-C playback~~ — dissolved at rung 4 (11 Oct 2026):
+  with FROZEN shorelines (the first-order-exact production path) C is
+  constant, so C† = C₀ and no playback machinery arises; the
+  reversed-C playback belongs to the migrating (second-order) forward
+  only, if ever.
+- ~~The fingerprint solve's mass row under impulsive loading~~ — and
+  the whole eq.-58 question — resolved at rung 4 by the FD gate, the
+  other way round from the note's first guess: the DISCRETE bordered
+  system is symmetric with the uniform term and ω among its unknowns,
+  so the exact discrete adjoint of a potential observation loads ONLY
+  the potential block; the continuum reading (the D_φ J datum standing
+  beside σ† in the jump condition) is realised automatically through
+  the symmetric border columns. Feeding `sea_Sd_`/`rot_r_` as if the
+  dual were a surface load double-counts — measured as a 10 % error on
+  the full-physics potential-observation gate, then removed. The
+  forward's surface loads DO feed those rows, as data of those
+  equations. (An SL observation is different: its functional touches
+  the uniform-term and ω COMPONENTS of the solution, so its dual has
+  genuine entries in those slots — the remaining WP8.4 plumbing.)
 - ~~Whether the adjoint stepper needs `InvalidateDisplacement` at every
   observation time~~ — resolved at rung 2: the driver owns it (the
   impulse solve leaves the problem's displacement singular, and the m†
@@ -448,6 +461,12 @@ reduction is already in the examples' lambdas).
 - **Store-all ≡ re-solve** at 1.1e-11: the m-only state recovery
   through `SolveElastic` reproduces the memoised fields to solver
   roundoff — the slaved-state identity measured, and the seed of GA6.
+- **Order matters for viscoelastic kernels:** at order 1 the
+  internal-variable space has order zero, and the localised kernel
+  rows are not merely inaccurate but WRONG (η-blob at 0.59 of FD,
+  μ-blob sign-flipped on the 3-D ball); order 2 restores sign and
+  magnitude with the documented O(h) floor on blob rows. Elastic
+  kernels are safe at order 1 (pointwise gradients only).
 - **A test-configuration trap worth remembering:** an observation
   functional mirror-symmetric to the load makes J vanish identically,
   and every body-wide FD row becomes 0/0 roundoff while localised rows
