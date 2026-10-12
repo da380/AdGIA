@@ -24,8 +24,8 @@ using namespace mfem;
 using namespace AdGIA;
 
 inline std::string MeshFile(int dim) {
-  return dim == 2 ? "../data/elastogravity_2d.msh"
-                  : "../data/coupled_poisson.msh";
+  return dim == 2 ? "../data/disc_buffer_2d.msh"
+                  : "../data/ball_buffer_coarse_3d.msh";
 }
 
 // Non-dimensional constants of the tests: unit radius, G such that the
@@ -80,13 +80,13 @@ inline double L2Norm(const GridFunction& u) {
 
 // --- three-layer models with a fluid outer core -----------------------------
 //
-// data/elastogravity_three_layer_{2d,3d}.msh: attributes 1 inner core,
+// data/earth_innercore_{2d,3d}.msh: attributes 1 inner core,
 // 2 outer core (fluid), 3 mantle, 4 buffer; boundary attributes 1 ICB,
 // 2 CMB, 3 surface, 4 outer. Radii 0.1931 / 0.5467 / 1 / 1.2 (Earth's
 // ratios). The solid SubMesh {1, 3} is disconnected and inherits the
 // boundary attributes 1, 2, 3.
 //
-// data/elastogravity_two_layer_2d.msh: attributes 1 fluid core, 2 mantle,
+// data/earth_fluidcore_2d.msh: attributes 1 fluid core, 2 mantle,
 // 3 buffer; boundary attributes 1 CMB, 2 surface, 3 outer.
 //
 // Non-dimensional densities: inner core 1.3, fluid from 1.2 (ICB) to 1.1
@@ -99,13 +99,13 @@ constexpr double kRIcb = 0.1931;
 constexpr double kRCmb = 0.5467;
 
 inline std::string ThreeLayerMeshFile(int dim) {
-  return dim == 2 ? "../data/elastogravity_three_layer_2d.msh"
-                  : "../data/elastogravity_three_layer_3d.msh";
+  return dim == 2 ? "../data/earth_innercore_2d.msh"
+                  : "../data/earth_innercore_3d.msh";
 }
 
 inline std::string TwoLayerMeshFile(int dim) {
-  return dim == 2 ? "../data/elastogravity_two_layer_2d.msh"
-                  : "../data/elastogravity_two_layer_3d.msh";
+  return dim == 2 ? "../data/earth_fluidcore_2d.msh"
+                  : "../data/earth_fluidcore_3d.msh";
 }
 
 inline double SolidDensity(const Vector& x) {

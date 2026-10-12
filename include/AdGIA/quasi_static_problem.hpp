@@ -101,15 +101,12 @@ struct MaxwellRelaxationOptions {
    * behaves like GMRES on the fixed-point system, so it can converge
    * growing (Rayleigh–Taylor) content too — without driving the
    * per-step shear toward the conditioning floor. The window restarts
-   * at every operator (beta) change. Measured at depth 4 (aw/fc):
-   * ~40 % fewer steps everywhere; wall time -10-35 % in serial 2-D
-   * and on the 3-D ball (347 vs 539 iterations at the default beta,
-   * matching the beta0 = 30 economy without the N^2 < 0-unsafe
-   * knob), with improved fc increment floors — but +70 % on a small
+   * at every operator (beta) change. Measured at depth 4: about 40 %
+   * fewer steps; wall time -10-35 % in serial 2-D and on the 3-D ball
+   * (347 vs 539 iterations at the default beta), but +70 % on a small
    * parallel 2-D case (the mixed updates degrade warm starts and
    * tighten the inexact tolerances sooner). Problem-dependent, so
-   * OPT-IN; the solver-calibration harness is the place to decide it
-   * per problem. Destroys the physical-time reading of the
+   * opt-in. Destroys the physical-time reading of the
    * trajectory, so plateau_mode ignores it and steps plainly. */
   int anderson = 0;
   bool plateau_mode = false;     ///< stop at the physical plateau instead
@@ -132,11 +129,11 @@ struct GaugePenaltyOptions {
  * @brief The deviatoric fluid operator @f$\epsilon\mu Q@f$ — the one
  * engine under both fluid treatments and the vacuum-extension
  * regularisation. One assembled matrix, two readings: the
- * relabelling-gauge penalty of the gauge treatment
- * (doc/gauged_fluid.md), and the per-step effective shear
+ * relabelling-gauge penalty of the gauge treatment,
+ * and the per-step effective shear
  * @f$\gamma\hat Q@f$ of the Maxwell step at
- * @f$\epsilon = 1/(1+\beta)@f$ (the structural identity of
- * doc/static_fluid_core.tex, "The Maxwell relaxation method").
+ * @f$\epsilon = 1/(1+\beta)@f$. Reference: doc/gauged_fluid.md
+ * (gauge treatment), doc/static_fluid_core.tex (Maxwell relaxation).
  *
  * Owns the attribute marker, the scaled coefficients, the penalty
  * integrator (borrowed, not owned, by the problem's combined solver
@@ -435,23 +432,20 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   //     the DEFAULT and the general method): eps mu Q is the per-step
   //     effective shear of an artificial Maxwell solid, and Solve()
   //     relaxes the Heaviside-loaded system to the secular static
-  //     response (doc/static_fluid_core.tex, "The Maxwell relaxation
-  //     method"). Honest at any stratification, any geometry, any
+  //     response. Honest at any stratification, any geometry, any
   //     number of fluid regions.
   //   - GAUGE PENALTY (SetFluid with GaugePenaltyOptions): eps mu Q is
   //     a relabelling-gauge fixing term, removed by iterated Tikhonov
-  //     refinement (doc/gauged_fluid.md). The cheaper specialist for
+  //     refinement. The cheaper specialist for
   //     neutral or near-neutral models with a validated epsilon
   //     window; also the Maxwell treatment's own per-step engine (the
   //     refinement iteration is exactly the beta -> infinity limit of
   //     the Maxwell step).
 
-  /** @brief The penalty form, at namespace scope since the engine
-   * moved there; this alias keeps the historical nested spelling. */
+  /** @brief Alias of the namespace-scope penalty form. */
   using GaugePenalty = AdGIA::GaugePenalty;
 
-  /** @brief The penalty options, at namespace scope like the enum;
-   * this alias keeps the nested spelling. */
+  /** @brief Alias of the namespace-scope penalty options. */
   using GaugePenaltyOptions = AdGIA::GaugePenaltyOptions;
 
   /**
@@ -463,8 +457,7 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
    * load is applied as a Heaviside step and the quasi-static Maxwell
    * system is stepped by backward Euler until the SOLID region stops
    * moving — the secular static response, computed with nothing but
-   * welded elastic solves (doc/static_fluid_core.tex, "The Maxwell
-   * relaxation method"; honest at any stratification, on any
+   * welded elastic solves (honest at any stratification, on any
    * geometry, for any number of fluid regions).
    *
    * The problem is linear, so the Maxwell internal variable is the
@@ -519,9 +512,7 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
    * @f$\epsilon\,2\mu_g\,\mathrm{dev}\,\varepsilon(u):\mathrm{dev}\,
    * \varepsilon(u')@f$ of the relabelling formulation, on the *solver*
    * operator only, and Solve() removes the @f$O(\epsilon)@f$ bias from
-   * the observables by iterated Tikhonov refinement (GaugeRefine();
-   * doc/gauged_fluid.md, "Gauge fixing: penalty plus iterated
-   * refinement"). The specialist treatment for neutral or
+   * the observables by iterated Tikhonov refinement (GaugeRefine()). The specialist treatment for neutral or
    * near-neutral models with a validated epsilon window; the physical
    * operator (SystemMatrix()) is unchanged, and the fluid displacement
    * is gauge (the solid displacement and fields derived from
@@ -561,9 +552,7 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   void SetGaugeEpsilon(mfem::real_t epsilon);
   mfem::real_t GaugeEpsilon() const;
 
-  /** @brief The solid-everywhere preconditioner experiment
-   * (doc/planning/solvers.md, "Solid-everywhere preconditioner for the
-   * clean gauged system"): the Krylov operator becomes the CLEAN
+  /** @brief The solid-everywhere preconditioner mode: the Krylov operator becomes the CLEAN
    * @f$A@f$ — no penalty in the operator — while the preconditioner is
    * built on @f$A + \epsilon_{\mathrm{prec}} Q@f$ with
    * @f$\epsilon_{\mathrm{prec}}@f$ of order one (the model made solid
@@ -737,9 +726,9 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
    * u_k@f$ through the virtual SolveLinearSystem(), so problems whose
    * solves carry further unknowns (a potential block) inherit it
    * unchanged, companion loads reapplied each time (equivalent, by
-   * linearity, to the historical zero-companion-load increment
-   * accumulation). Residuals @f$\|\epsilon Q\,\delta_k\|@f$ are
-   * recorded as before (GaugeResiduals()).
+   * linearity, to accumulating zero-companion-load increments).
+   * Residuals @f$\|\epsilon Q\,\delta_k\|@f$ are recorded
+   * (GaugeResiduals()).
    */
   bool GaugeRefine(mfem::Vector& X);
 
@@ -800,6 +789,12 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   long total_its_ = 0;
   std::unique_ptr<mfem::BilinearForm> prec_form_;
   mfem::OperatorHandle prec_A_;
+  /** True when the preconditioner was built on the current solver matrix
+   * and is being reused, with that matrix not yet captured. */
+  bool PreconditionerAwaitsCapture() const;
+  /** Take @p src into prec_A_ (with its ownership) so it outlives the
+   * next reassembly. */
+  void CapturePreconditionerMatrix(mfem::OperatorHandle& src);
 
   // Fluid regions: the engine (the deviatoric fluid operator, with
   // its marker, coefficients, integrator and matrices) lives in
@@ -842,14 +837,14 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
    * semi-convergence signature (epsilon too small for this mesh/model)
    * and a rate above 0.2 leaves a bias @f$\sim\mathrm{rate}^k@f$ beyond
    * the refinement budget (epsilon too large, or too few refinements).
-   * Warn only; the thresholds and the epsilon window are discussed in
-   * doc/gauged_fluid.md, "Gauge fixing: penalty plus iterated
-   * refinement". */
+   * Warn only. */
   void WarnGaugeContraction() const;
 
+  mutable mfem::Vector warm_z_;  ///< SetWarmStartTolerance workspace
   mfem::real_t t_ = 0.0;
   mfem::real_t rel_tol_ = 1e-12;
-  mfem::IterativeSolver::PrintLevel print_level_;
+  mfem::IterativeSolver::PrintLevel print_level_ =
+      mfem::IterativeSolver::PrintLevel();
   bool operator_dirty_ = true;
   /** Bumped by every operator (re)assembly or rescale: anything derived
    * from the assembled operator (cached border columns, unit responses)

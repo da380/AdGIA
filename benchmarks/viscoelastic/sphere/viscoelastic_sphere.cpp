@@ -29,7 +29,7 @@
 // shared Evolve() of viscoelastic_common.hpp.
 //
 // Sample runs:
-//    mpiexec -np 4 ./viscoelastic_sphere -c case.json -o 2 -scheme exptrap
+//    mpiexec -np 4 ./viscoelastic_sphere -c case.json -o 2 -scheme exptrap \
 //        -dt 0.05 -out results.json
 // ============================================================================
 
@@ -87,6 +87,8 @@ int main(int argc, char* argv[]) {
   step.scheme = scheme;
   MFEM_VERIFY(KnownScheme(step.scheme),
               "-scheme must be exptrap, sdirk23, be, etd1, rk4 or adaptive.");
+  MFEM_VERIFY(step.dt > 0.0 && step.min_steps >= 1,
+              "Need -dt > 0, -min-steps >= 1.");
 
   // --- the case and the mesh --------------------------------------------------
 

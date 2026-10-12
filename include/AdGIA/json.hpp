@@ -14,6 +14,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -43,7 +44,10 @@ struct Json {
   }
   bool IsNull() const { return type == Type::Null; }
   bool IsInteger() const {
-    return type == Type::Number && number == std::floor(number);
+    return type == Type::Number && std::isfinite(number) &&
+           number == std::floor(number) &&
+           number >= std::numeric_limits<int>::min() &&
+           number <= std::numeric_limits<int>::max();
   }
 };
 
@@ -236,7 +240,7 @@ inline Json ReadJsonFile(const std::string& path) {
   MFEM_VERIFY(in.good(), "Cannot open " << path << ".");
   std::stringstream buffer;
   buffer << in.rdbuf();
-  const std::string text = buffer.str();
+  const std::string text = std::move(buffer).str();
   return JsonReader(text, path).Read();
 }
 

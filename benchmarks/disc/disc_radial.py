@@ -1,9 +1,9 @@
-"""The per-degree radial reference of the gravitating disc (rung 2).
+"""The per-degree radial reference of the gravitating disc.
 
 The theta-reduction of the welded gauged referential weak form at
 phi_e = id with the hydrostatic natural state
-(doc/gravitating_elasticity.md, "the linearised system in (u, zeta1)";
-doc/planning/disc_gravity_reference.md), solved by a 1-D hp-FEM:
+(doc/gravitating_elasticity.md, "the linearised system in (u, zeta1)"),
+solved by a 1-D hp-FEM:
 
   u-row:    material (bare C) + geometric (S_e = -p0 I)
             + (1/8 pi G) <a''(u,v) g0, g0>
@@ -12,7 +12,7 @@ doc/planning/disc_gravity_reference.md), solved by a 1-D hp-FEM:
             + (1/4 pi G) <a'(u) g0, grad chi>
 
 with, at the identity, a'(u) = (div u) 1 - Du - Du^T and the a''
-contraction of the reference doc. g0 = g(r) rhat lives everywhere the
+contraction of that section. g0 = g(r) rhat lives everywhere the
 background field does — buffer included — through the vacuum-extended
 displacement, here the code's taper rule (linear taper of the surface
 trace; the extension is gauge). The referential organisation conserves
@@ -26,14 +26,14 @@ zeta1 = Z cos l theta): U, V continuous on the body (welded), Z on
 contractions are plain 2x2 amplitude-matrix algebra per dof pair with
 one common angular factor that divides out.
 
-Degrees: l = 0 (V absent) and l >= 2 in this version; l = 1 (the
-translation null pair) is pending. Methods: welded, slip and dahlen
+Degrees: l = 0 (V absent) and l >= 2; l = 1 (the translation null
+pair) is not supported. Methods: welded, slip and dahlen
 (see solve_degree), plus the Maxwell relaxation route
 (solve_degree_maxwell): the core as an artificial Maxwell solid,
 time-stepped under the Heaviside load until the solid stops moving —
 the secular limit computed with welded solid-elastic solves only.
 
-Validation (run as a script): the G -> 0 limit against the rung-0
+Validation (run as a script): the G -> 0 limit against the no-gravity
 closed forms (disc_reference), and gravity smoke tests.
 """
 from __future__ import annotations
@@ -41,7 +41,6 @@ from __future__ import annotations
 import dataclasses
 import math
 import sys
-from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -94,7 +93,7 @@ def _lagrange_eval(nodes: np.ndarray, x: np.ndarray):
     return V, D
 
 
-@dataclass
+@dataclasses.dataclass
 class _Segment:
     lo: float
     hi: float
@@ -152,7 +151,7 @@ def solve_degree(model: DiscGravityModel, l: int, *, p: int = 8,
 
     Every interface-form sign is pinned by the aw_core_2d null test
     (welded == slip == dahlen on the neutral core)."""
-    assert l == 0 or l >= 2, "l = 1 not implemented yet"
+    assert l == 0 or l >= 2, "l = 1 is not supported"
     assert method in ("welded", "slip", "dahlen")
     if l == 0 and method == "slip":
         method = "welded"  # no tangential channel at l = 0
@@ -196,7 +195,6 @@ def solve_degree(model: DiscGravityModel, l: int, *, p: int = 8,
 
     nb, npnt = len(rb), len(rp)
     ic = int(np.argmin(np.abs(rb - c)))      # interface node in rb
-    nfl = len(body_els) // 2                  # fluid elements count
     if dahlen:
         # u lives on the mantle only: map body node k -> mantle dof
         # (k - ic), fluid nodes carry no u.
@@ -259,7 +257,6 @@ def solve_degree(model: DiscGravityModel, l: int, *, p: int = 8,
             uU = np.stack([Vq, Dq / J], axis=-1)              # nloc dofs
             n_u = nloc
 
-        rho0 = None  # density never appears in the perturbation rows
         p0 = np.zeros_like(r) if in_buffer else model.p0(r)
         g0 = model.g(r)
         if in_fluid:
@@ -337,9 +334,8 @@ def solve_degree(model: DiscGravityModel, l: int, *, p: int = 8,
                                      * two_ert[None, :, :]
                                      - 0.5 * d[:, None, :]
                                      * d[None, :, :]))
-            # amplitudes: U_i = H11*r - l V... recover U, V values from
-            # the stored amplitudes: U = r*H11 - l*V; easier: rebuild
-            # from err/ett is ambiguous — store U,V directly instead.
+            # U and V at the quadrature points come from UVvals: the
+            # strain amplitudes above do not determine them separately.
             Uv = UVvals[..., 0]
             Vv = UVvals[..., 1]
             # grad(u . grad Phi0) . u' : ((gU)' Ubar - (l g U / r) Vbar)
@@ -611,7 +607,7 @@ def solve_degree_maxwell(model: DiscGravityModel, l: int, *, p: int = 8,
     .maxwell: the converged value's step count and operator count,
     the stagnation step and plateau value (their gap is a band
     estimate at N^2 != 0), and the full step history."""
-    assert l == 0 or l >= 2, "l = 1 not implemented yet"
+    assert l == 0 or l >= 2, "l = 1 is not supported"
     assert mode in ("converge", "plateau")
     if mu_core is None:
         mu_core = float(np.asarray(model.mu[1](np.array([model.c])),
@@ -728,7 +724,7 @@ def validate(verbose: bool = True) -> bool:
         lines.append(f"  {label:<52s} {value:10.3e}  "
                      f"{'ok' if good else 'FAIL'}")
 
-    # G -> 0 limit vs rung 0 on fluid_core_2d's elastic data
+    # G -> 0 limit vs the no-gravity closed form on fluid_core_2d's elastic data
     tiny = disc_models.fluid_core_2d(G_newton=1e-12)
     m0 = DiscModel(lam=disc_models.KAPPA_MANTLE - disc_models.MU_MANTLE,
                    mu=disc_models.MU_MANTLE,
@@ -740,11 +736,11 @@ def validate(verbose: bool = True) -> bool:
         r = s.responses()
         e = abs(r["ur_a"] - ex.responses["ur_a"]) / abs(
             ex.responses["ur_a"])
-        record(f"G->0 l={l} ur_a vs rung 0", e, 1e-5)
+        record(f"G->0 l={l} ur_a vs no-gravity exact", e, 1e-5)
         if l >= 2:
             e = abs(r["ut_a"] - ex.responses["ut_a"]) / abs(
                 ex.responses["ut_a"])
-            record(f"G->0 l={l} ut_a vs rung 0", e, 1e-5)
+            record(f"G->0 l={l} ut_a vs no-gravity exact", e, 1e-5)
 
     # resolution independence: STRICT on the neutral core (well-posed);
     # the non-neutral core's drift is physics (the static operator
@@ -781,9 +777,9 @@ def validate(verbose: bool = True) -> bool:
                abs(s_ / w_ - 1.0), 1e-8)
         record(f"aw null l={l}: |dahlen/welded - 1|",
                abs(d_ / w_ - 1.0), 1e-6)
-    # G -> 0: slip == welded == rung 0
+    # G -> 0: slip == welded == the no-gravity closed form
     sl = solve_degree(tiny, 2, method="slip").responses()["ur_a"]
-    record("G->0 l=2 slip vs rung 0",
+    record("G->0 l=2 slip vs no-gravity exact",
            abs(sl - solve0(m0, 2).responses["ur_a"])
            / abs(solve0(m0, 2).responses["ur_a"]), 1e-5)
     # fc splits (physics): measured, loosely bounded
@@ -797,11 +793,11 @@ def validate(verbose: bool = True) -> bool:
                      f" fluid-treatment gap — {abs(d_/s_-1):.3%})")
 
     # ---- Maxwell relaxation route (the secular time-stepping) ----
-    # G -> 0: the relaxed core is the rung-0 fluid exactly
+    # G -> 0: the relaxed core is the no-gravity fluid exactly
     for l in (0, 2):
         sm = solve_degree_maxwell(tiny, l)
         ex = solve0(m0, l).responses["ur_a"]
-        record(f"maxwell G->0 l={l} ur_a vs rung 0 "
+        record(f"maxwell G->0 l={l} ur_a vs no-gravity exact "
                f"({sm.maxwell['steps']} steps, {sm.maxwell['stop']})",
                abs(sm.responses()["ur_a"] - ex) / abs(ex), 1e-5)
     # aw null: the plateau joins welded == slip == dahlen

@@ -14,6 +14,12 @@ output a new name, and add a line to CMakeLists.txt. Every script takes
 `--out DIR`, `--verbose` to let gmsh talk, `--scale` on the element
 sizes (the canned sizes are deliberately coarse; smaller is finer) and
 `--help`.
+
+Shared here: the Earth model of the layered meshes (radii ICB, CMB,
+SURFACE in units of the surface radius, the SIZING table and
+`geometry`), the radial hat of the CMB topography, the sizing of a
+thin-buffer ball, `build_mfem` (mesh, move the nodes, export to MFEM)
+and `SeaLevelBand`, the refinement of the coastline meshes.
 """
 from __future__ import annotations
 
@@ -23,6 +29,26 @@ from pathlib import Path
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 
+# The Earth model shared by layered_earth.py, equilibrium_bodies.py and
+# aspherical_body.py. Radii are in units of the Earth's radius (6371 km):
+# the inner-core boundary at 1230 km, the core-mantle boundary at
+# 3483 km, the surface at 6371 km.
+EARTH_RADIUS_KM = 6371.0
+ICB = 1230.0 / EARTH_RADIUS_KM
+CMB = 3483.0 / EARTH_RADIUS_KM
+SURFACE = 1.0
+
+#: Element sizes of the layered Earth meshes by dimension, in units of
+#: the surface radius: (size on every interface, size far from them,
+#: distance over which one grows into the other).
+SIZING = {
+    2: (0.085, 0.17, 0.85),
+    3: (0.135, 0.27, 1.35),
+}
+
+#: A ball-in-buffer sizing grows from the sphere size h to the far size
+#: over this many times h (a gentle transition across the whole ball).
+GROWTH_LENGTHS = 10.0
 
 
 def parser(description: str) -> argparse.ArgumentParser:
@@ -35,9 +61,10 @@ def parser(description: str) -> argparse.ArgumentParser:
     p.add_argument("--verbose", action="store_true",
                    help="let gmsh print as it works")
     p.add_argument("--scale", type=float, default=1.0,
-                   help="scale factor on the element sizes (smaller is "
-                        "finer — e.g. 0.5 for a higher-resolution version "
-                        "of a deliberately coarse canned mesh)")
+                   help="dimensionless factor on every element size (default "
+                        "%(default)s; smaller is finer, e.g. 0.5 for a "
+                        "higher-resolution version of a deliberately "
+                        "coarse canned mesh)")
     return p
 
 
@@ -46,8 +73,83 @@ def sizes(args, *values: float) -> tuple[float, ...]:
     return tuple(args.scale * v for v in values)
 
 
+def geometry(layers: int):
+    """The skeleton and names of the two- or three-layer Earth.
+
+    2 layers: fluid_core [0, CMB], mantle [CMB, 1]; interfaces cmb,
+    surface. 3 layers: inner_core [0, ICB], outer_core [ICB, CMB],
+    mantle [CMB, 1]; interfaces icb, cmb, surface. Radii in units of
+    the surface radius.
+    """
+    from planetmodel import Geometry, Skeleton
+    if layers == 2:
+        return Geometry(Skeleton([0.0, CMB, SURFACE]),
+                        layer_names=["fluid_core", "mantle"],
+                        interface_names=["cmb", "surface"])
+    if layers == 3:
+        return Geometry(Skeleton([0.0, ICB, CMB, SURFACE]),
+                        layer_names=["inner_core", "outer_core", "mantle"],
+                        interface_names=["icb", "cmb", "surface"])
+    raise ValueError(f"--layers must be 2 or 3, got {layers}")
+
+
+def radial_hat(r, layers: int):
+    """The hat in radius that is 1 on the CMB and 0 on the ICB (the
+    centre in the two-layer model) and on the surface; its kinks lie on
+    interfaces, which are the knots of a displacement built on it."""
+    inner = ICB if layers == 3 else 0.0
+    up = (r - inner) / (CMB - inner)
+    down = (SURFACE - r) / (SURFACE - CMB)
+    return np.clip(np.minimum(up, down), 0.0, 1.0)
+
+
+def hat_knots(layers: int) -> list[float]:
+    """The interface radii at which `radial_hat` has a kink."""
+    return [ICB, CMB, SURFACE] if layers == 3 else [CMB, SURFACE]
+
+
+def ball_in_buffer_sizing(h: float, buffer_radius: float):
+    """Sizing of a unit ball in a thin buffer shell reaching to
+    `buffer_radius` (both in surface radii): size h on the spheres,
+    growing over GROWTH_LENGTHS * h to a far size of 2h that is capped
+    at the buffer thickness, so a thin shell is not filled with
+    flattened elements (never below h)."""
+    from planetmodel.mesh3d import UniformInterfaces
+    far = max(h, min(2.0 * h, buffer_radius - SURFACE))
+    return UniformInterfaces(h, far, GROWTH_LENGTHS * h)
+
+
+def build_mfem(spec, name: str, args, moved: str) -> None:
+    """Mesh `spec` with gmsh, then write the MFEM file `name`.mesh (and
+    `.json`) in args.out with the nodes moved by the geometry's
+    displacement; `moved` describes the move for the log line. The
+    spherical reference mesh (`<name>_reference.msh` and its manifest)
+    is an intermediate and is removed, also if the export fails."""
+    from planetmodel.mesh3d import build_layered_mesh, export_mfem_mesh
+    reference = build_layered_mesh(spec, args.out / f"{name}_reference",
+                                   verbose=args.verbose)
+    try:
+        exported = export_mfem_mesh(reference, args.out / name,
+                                    delivery="physical")
+        report(reference)
+        ratio = exported.quality.get("min_ratio", float("nan"))
+        print(f"{exported.mesh_path.name}: {moved}; "
+              f"smallest Jacobian ratio {ratio:.3f}")
+        print(f"  manifest: {exported.manifest_path}")
+    finally:
+        for p in (reference.msh_path, reference.manifest_path):
+            p.unlink(missing_ok=True)
+
+
 class SeaLevelBand:
     """planetmodel Refinement: fine where a surface field is near zero.
+
+    Units: `lats` and `lons` are in degrees (lats ascending or
+    descending, lons 0 to 360 inclusive); `field` is in radians, with
+    `band` in the same units; `size`, `far_size`, `depth_width` and
+    `radius` are in planet radii (lengths of the mesh); `gradation` is
+    the growth of the size per radian of `field` (and per planet radius
+    of radial distance beyond the plateau).
 
     The field is a wrapped lat-lon grid (poles and the 360-degree
     column included, so plain bilinear interpolation covers the

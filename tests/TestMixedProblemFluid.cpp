@@ -1,3 +1,5 @@
+#include <cstdlib>
+
 #include "MixedProblemTestCommon.hpp"
 #include "TestCommon.hpp"
 
@@ -110,6 +112,10 @@ struct Case {
   }
 };
 
+// Diagnostic output of the passing tests is printed only when the
+// environment variable ADGIA_TEST_VERBOSE is set.
+bool Verbose() { return std::getenv("ADGIA_TEST_VERBOSE") != nullptr; }
+
 double RelDiff(const GridFunction& a, const GridFunction& b) {
   GridFunction d(a);
   d -= b;
@@ -135,7 +141,7 @@ TEST_P(MixedProblemFluidTest, SchurAndMinresAgree) {
   ASSERT_TRUE(minres->Solve());
 
   EXPECT_TRUE(minres->HasFluidRegions());
-  {
+  if (Verbose()) {
     const auto res = minres->RigidModeResiduals();
     std::cout << "dim " << dim << " order " << order << " residuals:";
     for (double r : res) std::cout << " " << r;
@@ -176,10 +182,13 @@ TEST(MixedProblemFluidModes, ResidualsDecreaseWithOrder) {
       worst_region.push_back(wr);
       RigidTranslation tr(dim, dim - 1);
       translation.push_back(p->ModeResidual(s.InnerCoreMode(tr)));
-      std::cout << "dim " << dim << " order " << order
-                << ": worst global residual " << wg << ", region rotation "
-                << wr << ", inner-core translation " << translation.back()
-                << "\n";
+      if (Verbose()) {
+        std::cout << "dim " << dim << " order " << order
+                  << ": worst global residual " << wg
+                  << ", region rotation " << wr
+                  << ", inner-core translation " << translation.back()
+                  << "\n";
+      }
     }
     EXPECT_LT(worst_global[1], 0.2 * worst_global[0]);
     EXPECT_LT(worst_region[1], 0.5 * worst_region[0]);
@@ -307,8 +316,10 @@ TEST(MixedProblemFluidBlock, PositivityDiagnostic) {
     auto p = s.Problem(false);
     double hi = 0.0;
     const double lo = p->PotentialBlockMinEigenvalue(40, &hi);
-    std::cout << "dim " << dim << ": potential block Ritz values " << lo
-              << " .. " << hi << "\n";
+    if (Verbose()) {
+      std::cout << "dim " << dim << ": potential block Ritz values " << lo
+                << " .. " << hi << "\n";
+    }
     EXPECT_GT(lo, 0.0);
     EXPECT_GT(hi, lo);
 
@@ -322,15 +333,17 @@ TEST(MixedProblemFluidBlock, PositivityDiagnostic) {
     std::vector<FluidRegion> regions{OuterCore(*s.solid, steep)};
     auto q = s.Problem(false, false, &regions);
     const double lo_steep = q->PotentialBlockMinEigenvalue(40);
-    std::cout << "dim " << dim << ": steep fluid, smallest Ritz value "
-              << lo_steep << "\n";
+    if (Verbose()) {
+      std::cout << "dim " << dim << ": steep fluid, smallest Ritz value "
+                << lo_steep << "\n";
+    }
     EXPECT_LT(lo_steep, lo);
   }
 }
 
 TEST(MixedProblemFluidTwoLayer, SchurAndMinresAgree) {
   // Fluid core, solid mantle: the fluid is enclosed by the solid only.
-  Mesh parent("../data/elastogravity_two_layer_2d.msh", 1, 1);
+  Mesh parent("../data/earth_fluidcore_2d.msh", 1, 1);
   ASSERT_EQ(parent.Dimension(), 2);
   Array<int> attrs({2});
   SubMesh mantle(SubMesh::CreateFromDomain(parent, attrs));
@@ -431,7 +444,7 @@ TEST_P(MixedProblemFluidTest, LoadPotentialIgnoresTheFluidMass) {
 // doc/quasi_static_models.tex, "Fluid regions and the ladder of CMB
 // approximations"): 'uniform' = constant interface density with the fluid
 // mass term dropped, 'winkler' = uniform without the interface potential
-// coupling (F3). Both stay symmetric (the two solvers agree), and both
+// coupling. Both stay symmetric (the two solvers agree), and both
 // move the answer.
 TEST(MixedProblemFluidCMB, ApproximateConditions) {
   Case c(2, 2);
@@ -463,24 +476,18 @@ TEST(MixedProblemFluidCMB, ApproximateConditions) {
   ASSERT_TRUE(winkler->Solve());
   GridFunction phi_winkler(winkler->Potential());
 
-  auto rel_diff = [](const GridFunction& a, const GridFunction& b) {
-    GridFunction d(a);
-    d -= b;
-    return L2Norm(d) / L2Norm(b);
-  };
-
-  // Dropping (F3) must remove both halves: dropping only one would break
+  // Dropping the interface potential coupling must remove both halves: dropping only one would break
   // the symmetry the two solvers rely on, so their agreement is the
   // sharpest check.
   winkler->SetSolverType(
       LinearQuasiStaticMixedSelfGravitatingProblem::SolverType::SchurCG);
   winkler->AssembleForce(0.0);
   ASSERT_TRUE(winkler->Solve());
-  EXPECT_LT(rel_diff(winkler->Potential(), phi_winkler), 1e-6);
+  EXPECT_LT(RelDiff(winkler->Potential(), phi_winkler), 1e-6);
 
   // The approximations are not no-ops on the stratified test model.
-  EXPECT_GT(rel_diff(phi_full, phi_uniform), 1e-3);
-  EXPECT_GT(rel_diff(phi_uniform, phi_winkler), 1e-3);
+  EXPECT_GT(RelDiff(phi_full, phi_uniform), 1e-3);
+  EXPECT_GT(RelDiff(phi_uniform, phi_winkler), 1e-3);
 }
 
 INSTANTIATE_TEST_SUITE_P(MixedProblemFluid, MixedProblemFluidTest,

@@ -7,6 +7,7 @@
 
 #include "AdGIA/null_space.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 #include "AdGIA/detail/fem_factory.hpp"
@@ -15,14 +16,19 @@ namespace AdGIA {
 
 RigidTranslation::RigidTranslation(int dimension, int component)
     : mfem::VectorCoefficient(dimension), component_{component} {
-  MFEM_ASSERT(component >= 0 && component < dimension,
-              "component out of range");
+  SetComponent(component);
 }
 
-void RigidTranslation::SetComponent(int component) { component_ = component; }
+void RigidTranslation::SetComponent(int component) {
+  MFEM_VERIFY(component >= 0 && component < vdim,
+              "RigidTranslation: component out of range.");
+  component_ = component;
+}
 
 void RigidTranslation::Eval(mfem::Vector &V, mfem::ElementTransformation &T,
                             const mfem::IntegrationPoint &ip) {
+  MFEM_ASSERT(component_ >= 0 && component_ < vdim,
+              "component out of range");
   V.SetSize(vdim);
   V = 0.;
   V[component_] = 1;
@@ -30,19 +36,26 @@ void RigidTranslation::Eval(mfem::Vector &V, mfem::ElementTransformation &T,
 
 RigidRotation::RigidRotation(int dimension, int component)
     : mfem::VectorCoefficient(dimension), component_{component} {
-  MFEM_ASSERT(component >= 0 && component < dimension,
-              "component out of range");
-  MFEM_ASSERT(dimension == 3 || component == 2,
-              "In two dimensions only z-rotation defined");
+  MFEM_VERIFY(dimension == 2 || dimension == 3,
+              "RigidRotation: the dimension must be 2 or 3.");
+  SetComponent(component);
 #ifndef MFEM_THREAD_SAFE
   x_.SetSize(dimension);
 #endif
 }
 
-void RigidRotation::SetComponent(int component) { component_ = component; }
+void RigidRotation::SetComponent(int component) {
+  MFEM_VERIFY(vdim == 3 ? (component >= 0 && component < 3) : component == 2,
+              "RigidRotation: in two dimensions only the z-rotation "
+              "(component 2) is defined; in three the component is 0, 1 or "
+              "2.");
+  component_ = component;
+}
 
 void RigidRotation::Eval(mfem::Vector &V, mfem::ElementTransformation &T,
                          const mfem::IntegrationPoint &ip) {
+  MFEM_ASSERT(vdim == 3 ? (component_ >= 0 && component_ < 3) : component_ == 2,
+              "component out of range for the dimension");
   V.SetSize(vdim);
 #ifdef MFEM_THREAD_SAFE
   mfem::Vector x_(vdim);
@@ -166,8 +179,11 @@ void ProjectedSolver::SetSolver(mfem::Solver &solver) {
 
 void ProjectedSolver::SetOperator(const mfem::Operator &op) {
   MFEM_VERIFY(solver_, "ProjectedSolver: call SetSolver() first.");
-  projected_ = std::make_unique<ProjectedOperator>(op, *P_);
-  solver_->SetOperator(*projected_);
+  // The inner solver may still point at the old projected operator until
+  // it has been given the new one.
+  auto next = std::make_unique<ProjectedOperator>(op, *P_);
+  solver_->SetOperator(*next);
+  projected_ = std::move(next);
   height = op.Height();
   width = op.Width();
 }
@@ -193,19 +209,19 @@ void ProjectedSolver::SetGauge(const mfem::Operator *M) {
   // keep their Euclidean condition (x is projected before the gauge, and
   // the basis is Euclidean-orthonormal, so adding multiples of the gauged
   // vectors leaves the components along the others at zero).
-  mfem::Vector Mn(M->Height());
+  std::vector<mfem::Vector> Mn;
   mfem::real_t max_norm = 0.0;
   std::vector<mfem::real_t> norms;
   for (int i = 0; i < P_->Size(); i++) {
-    M->Mult(P_->Basis(i), Mn);
-    norms.push_back(P_->Dot(P_->Basis(i), Mn));
+    Mn.emplace_back(M->Height());
+    M->Mult(P_->Basis(i), Mn.back());
+    norms.push_back(P_->Dot(P_->Basis(i), Mn.back()));
     max_norm = std::max(max_norm, norms.back());
   }
   for (int i = 0; i < P_->Size(); i++) {
     if (norms[i] > 1e-12 * max_norm) {
       gauge_idx_.push_back(i);
-      Mn_.emplace_back(M->Height());
-      M->Mult(P_->Basis(i), Mn_.back());
+      Mn_.push_back(std::move(Mn[i]));
     }
   }
   const int n = static_cast<int>(gauge_idx_.size());

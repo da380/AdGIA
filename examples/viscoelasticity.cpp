@@ -17,7 +17,8 @@
 // Time integrators (-s): exponential trapezoid (default; second order, one
 // solve per step, no step restriction), exponential Euler, backward Euler
 // and SDIRK23 through MFEM's implicit solvers, and explicit RK4 / forward
-// Euler (stable only for dt < ~2.8 tau_min).
+// Euler (conditionally stable: dt < 2 tau_min for forward Euler, dt <
+// ~2.78 tau_min for RK4).
 //
 // Options (defaults in brackets):
 //   -m        mesh file [../data/star.mesh].
@@ -31,8 +32,9 @@
 //             attributes 1 and 2, e.g. beam-quad.mesh).
 //   -s        time integrator [0]: 0 = exponential trapezoid, 1 =
 //             exponential Euler, 2 = backward Euler, 3 = SDIRK23,
-//             4 = RK4, 5 = forward Euler (4 and 5 are explicit,
-//             stable only for dt < ~2.8 tau_min).
+//             4 = RK4, 5 = forward Euler (4 and 5 are explicit; stable
+//             only for dt < ~2.78 tau_min (RK4) and dt < 2 tau_min
+//             (forward Euler)).
 //   -map      strain map [0]: 0 = Galerkin projection, 1 =
 //             interpolation.
 //   -tf       final time [5].
@@ -62,16 +64,18 @@
 //    ./viscoelasticity -m ../data/beam-quad.mesh -p 1 -ti 1.3
 //    ./viscoelasticity -m ../data/beam-quad.mesh -p 1 -gamma 5 -rtol 1e-3
 //
-// -gamma g (with -nexp n) puts the composite Newtonian / power-law
-// relaxation law of Crawford et al. (2017, App. A) on the Maxwell branch,
-// tau = tau0 / (1 + g (|dev sigma| / 2 mu0)^(n-1)) with mu0 the unrelaxed
-// shear modulus; -rtol r > 0 replaces the fixed steps by the adaptive
-// exponential trapezoid solver with that relative tolerance.
-//
 // One source serves the serial and the parallel build; the genuine
 // differences are the mesh partitioning, the global reductions on the
 // printed norms and counts, the per-rank native-format save and the
 // GLVis stream header. (Run with mpiexec -np N in a parallel build.)
+//
+// Mesh requirements: 2-D or 3-D, any mesh. Problem 0 (-p 0) marks ALL
+// external boundaries (MarkExternalBoundaries) for the traction, so any mesh
+// works. Problem 1
+// (-p 1) needs boundary attributes 1 (clamped) and 2 (loaded), e.g.
+// ../data/beam-quad.mesh. The default ../data/star.mesh is an MFEM mesh.
+// The moduli are nondimensional: lambda = mu = 1 when unrelaxed (kappa =
+// 1 + 2/d), and the density plays no role (no gravity).
 // ============================================================================
 
 #include <cmath>
@@ -82,6 +86,7 @@
 #include <sstream>
 
 #include "AdGIA.hpp"
+#include "visualisation.hpp"
 
 using namespace std;
 using namespace mfem;
@@ -351,10 +356,15 @@ int main(int argc, char* argv[]) {
   Vector m(visco.Height());
   m = 0.0;
 
-  if (Root() && solver_type >= 4 && dt > 2.5 * visco.MinRelaxationTime()) {
+  // Real-axis stability limits of the explicit schemes, in units of tau_min:
+  // 2 for forward Euler, about 2.78 for RK4.
+  const real_t explicit_limit = solver_type == 5 ? 2.0 : 2.78;
+  if (Root() && solver_type >= 4 &&
+      dt > explicit_limit * visco.MinRelaxationTime()) {
     cout << "Warning: dt = " << dt
-         << " exceeds the explicit stability limit of roughly 2.8 tau_min = "
-         << 2.8 * visco.MinRelaxationTime()
+         << " exceeds the explicit stability limit of roughly "
+         << explicit_limit << " tau_min = "
+         << explicit_limit * visco.MinRelaxationTime()
          << ". Expect blow-up; use an implicit or exponential integrator.\n";
   }
 
@@ -447,23 +457,8 @@ int main(int argc, char* argv[]) {
 
   // Visualise if glvis is open.
   if (visualization) {
-    char vishost[] = "localhost";
-    int visport = 19916;
-    socketstream sol_sock(vishost, visport);
-    sol_sock.precision(8);
-#ifdef MFEM_USE_MPI
-    sol_sock << "parallel " << Mpi::WorldSize() << " " << Mpi::WorldRank()
-             << "\n";
-#endif
-    sol_sock << "solution\n";
-    mesh.Print(sol_sock);
-    problem->Displacement().Save(sol_sock);
-    sol_sock << flush;
-    if (dim == 2) {
-      sol_sock << "keys Rjlvvvvvmm\n" << flush;
-    } else {
-      sol_sock << "keys m\n" << flush;
-    }
+    examples::GLVisWindow win("Displacement", examples::DefaultKeys(dim));
+    win.Send(mesh, problem->Displacement());
   }
 
   return 0;

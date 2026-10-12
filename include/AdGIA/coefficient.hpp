@@ -79,7 +79,7 @@ class BoundaryNormalDotCoefficient : public mfem::Coefficient {
  * where @f$|\nabla\Phi_0|@f$ vanishes.
  *
  * The coefficient @f$\rho'_F \phi\phi'@f$ is the fluid mass term of the
- * hydrostatic Poisson equation, eq. (2.8) of Al-Attar & Tromp (2014); it is
+ * hydrostatic Poisson equation (Al-Attar & Tromp 2014); it is
  * negative wherever density increases downward. Analytic radial models can
  * supply @f$g^{-1}\partial_r\rho@f$ directly instead of using this class.
  */

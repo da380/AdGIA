@@ -5,8 +5,9 @@
  * MatrixCoefficients producing elasticity tensors in that representation
  * (isotropic, transversely isotropic, general Voigt input, rotated frames,
  * deviatoric splits, the relabelling transformation and the
- * effective-to-bare conversion under hydrostatic pre-stress). The integrator consuming them, ElasticTensorIntegrator,
- * lives in bilininteg.hpp with the other bilinear form integrators.
+ * effective-to-bare conversion under hydrostatic pre-stress). The
+ * integrator consuming them, ElasticTensorIntegrator, lives in
+ * bilininteg.hpp with the other bilinear form integrators.
  */
 
 #pragma once
@@ -94,10 +95,22 @@ struct SymmetricTensorBasis {
   static void RotationMatrix(int dim, const mfem::DenseMatrix& R,
                              mfem::DenseMatrix& Q);
 
+  /// As above with caller-owned scratch matrices E, RE, RERt (resized to
+  /// d x d), for use in per-point evaluation.
+  static void RotationMatrix(int dim, const mfem::DenseMatrix& R,
+                             mfem::DenseMatrix& Q, mfem::DenseMatrix& E,
+                             mfem::DenseMatrix& RE, mfem::DenseMatrix& RERt);
+
   /// Mandel matrix of the congruence eps -> F^T eps F for a general
   /// invertible F (RotationMatrix is the orthogonal case with R = F^T).
   static void CongruenceMatrix(int dim, const mfem::DenseMatrix& F,
                                mfem::DenseMatrix& Q);
+
+  /// As above with caller-owned scratch matrices E, FtE, FtEF (resized to
+  /// d x d), for use in per-point evaluation.
+  static void CongruenceMatrix(int dim, const mfem::DenseMatrix& F,
+                               mfem::DenseMatrix& Q, mfem::DenseMatrix& E,
+                               mfem::DenseMatrix& FtE, mfem::DenseMatrix& FtEF);
 };
 
 /**
@@ -183,6 +196,12 @@ class TransverselyIsotropicElasticTensorCoefficient
                     mfem::real_t L, mfem::real_t N, const mfem::Vector& n,
                     mfem::DenseMatrix& Cm);
 
+  /// As above with a caller-owned scratch vector for the full tensor
+  /// (resized to d^4).
+  static void Build(int dim, mfem::real_t A, mfem::real_t C, mfem::real_t F,
+                    mfem::real_t L, mfem::real_t N, const mfem::Vector& n,
+                    mfem::DenseMatrix& Cm, std::vector<mfem::real_t>& full);
+
  private:
   mfem::Coefficient *A_, *C_, *F_, *L_, *N_;
   mfem::VectorCoefficient* axis_;
@@ -224,7 +243,7 @@ class RotatedElasticTensorCoefficient : public ElasticTensorCoefficient {
  private:
   mfem::MatrixCoefficient* C_;
   mfem::MatrixCoefficient* R_;
-  mfem::DenseMatrix Cl_, Rm_, Q_, tmp_;
+  mfem::DenseMatrix Cl_, Rm_, Q_, tmp_, E_, T1_, T2_;
 };
 
 /**
@@ -254,7 +273,8 @@ class DeviatoricProjectionElasticTensorCoefficient
 
 /**
  * @brief The relabelling transformation of the second elastic tensor
- * (doc/gravitating_elasticity.md §1; the (C, S_e) form of AC18 eq. 136):
+ * (doc/gravitating_elasticity.md §1; the (C, S_e) form of Al-Attar &
+ * Crawford 2018, eq. 136):
  * @f[
  *   \hat{\tilde C}(\tilde x) = J_\xi\, Q_{\xi}^{-T}\,
  *   \hat C(\xi(\tilde x))\, Q_{\xi}^{-1},
@@ -277,7 +297,7 @@ class RelabelledElasticTensorCoefficient : public ElasticTensorCoefficient {
  private:
   mfem::MatrixCoefficient* C_;
   Diffeomorphism* xi_;
-  mfem::DenseMatrix F_, Qi_, Cq_, tmp_;
+  mfem::DenseMatrix F_, Qi_, Cq_, tmp_, E_, T1_, T2_;
 };
 
 /**

@@ -36,9 +36,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <numbers>
+#include <utility>
 #include <vector>
 
 #include "AdGIA.hpp"
@@ -566,7 +569,9 @@ inline std::pair<mfem::real_t, mfem::real_t> SurfacePeaks(
   top_marker = 0;
   top_marker[top_attr - 1] = 1;
   fes_z.GetEssentialVDofs(top_marker, on_top);
-  mfem::real_t mn = 0.0, mx = 0.0;
+  // (ranks without top dofs contribute the identities of min and max)
+  mfem::real_t mn = std::numeric_limits<mfem::real_t>::infinity();
+  mfem::real_t mx = -std::numeric_limits<mfem::real_t>::infinity();
   for (int i = 0; i < u_z.Size(); i++) {
     if (on_top[i]) {
       mn = std::min(mn, u_z(i));

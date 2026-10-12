@@ -113,12 +113,12 @@ class SubMeshDofInjection : public mfem::Operator {
    * parent -> sub and the dual prolongation.
    *
    * Built row-by-row over *owned* sub true dofs through
-   * ParFiniteElementSpace::GetGlobalTDofNumber. (Note: the seemingly simpler
-   * R_parent * P_loc * P_sub product is wrong when a shared parent dof on the
-   * submesh boundary is owned by a rank whose local elements there all lie
-   * outside the submesh: that rank's P_loc row is empty and the entry is
-   * silently lost. The owner of a *sub* true dof always has the submesh
-   * element, so this construction has no such case.)
+   * ParFiniteElementSpace::GetGlobalTDofNumber. The product
+   * R_parent * P_loc * P_sub is not used: it loses an entry when a shared
+   * parent dof on the submesh boundary is owned by a rank whose local
+   * elements there all lie outside the submesh (that rank's P_loc row is
+   * empty). The owner of a *sub* true dof always has the submesh element, so
+   * this construction has no such case.
    */
   std::unique_ptr<mfem::HypreParMatrix> NewTrueDofMatrix() const;
 #endif

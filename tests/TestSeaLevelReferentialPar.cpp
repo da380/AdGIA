@@ -1,7 +1,6 @@
 /*
-  Parallel twin of TestSeaLevelReferential.cpp (WP7 phase A,
-  doc/planning/referential_sea_level_plan.md): the referential water
-  load on the 3-D two-layer mesh, all-ocean, phi_e = id. Run with 1, 2
+  Parallel twin of TestSeaLevelReferential.cpp (the
+  referential water load on the 3-D two-layer mesh, all-ocean, phi_e = id. Run with 1, 2
   and 4 ranks; a standalone MPI program that exits with status 1 if any
   check fails.
 
@@ -104,13 +103,13 @@ double GlobalSum(double v) {
 }
 
 // rotation: 0 = water only; 1 = the traditional border composes with
-// water (moments away from near-neutral wander, the WP4 lesson); 2 =
+// water (moments away from near-neutral wander); 2 =
 // the GENERALISED door (SetRotation(Omega): model inertia + Tisserand
-// gauge) on a triaxial density — the parallel leg of WP7 phase B, which
+// gauge) on a triaxial density, which
 // exercises the ModelInertiaTensor reduction, the gauge block and the
 // gauge-preserving solve tail.
 void RunCase(int order, const std::string& label, int rotation = 0) {
-  const char* mesh_file = "../data/coupled_poisson.msh";
+  const char* mesh_file = "../data/ball_buffer_coarse_3d.msh";
   Mesh smesh(mesh_file, 1, 1);
   const int dim = smesh.Dimension();
   Array<int> body_attr({1}), buffer_attr({2});
@@ -138,7 +137,7 @@ void RunCase(int order, const std::string& label, int rotation = 0) {
   ConstantCoefficient w(kRhoW / G0());
 
   // The generalised door wants genuinely distinct model moments:
-  // polynomial triaxiality, as in the serial G8d certificate.
+  // polynomial triaxiality, as in the serial conservation certificate.
   FunctionCoefficient rho_tri([](const Vector& x) {
     const double r2 = x * x;
     return kRho * (1.0 + 0.1 * (3.0 * x[2] * x[2] - r2) +
@@ -249,7 +248,7 @@ void RunCase(int order, const std::string& label, int rotation = 0) {
       ProductCoefficient wpsi(w, problem.SolutionCentrifugalPotential());
       total -= surface_integral(wpsi);
     }
-    // Route grade tightens with order (the G8d lesson: the assembled
+    // Route grade tightens with order (the assembled
     // data integrate sigma against the interpolated psi/zeta with the
     // forms' rules): measured 2.4e-4 at o1, passing 5e-5 at o2, on the
     // generalised case.
@@ -295,8 +294,8 @@ void RunCase(int order, const std::string& label, int rotation = 0) {
   }
 }
 
-// The fluid-core mantle-Tisserand leg (G8c phase 2,
-// generalised_rotation_note.md "The fluid-core wrinkle"): the
+// The fluid-core mantle-Tisserand leg (the
+// fluid-core wrinkle): the
 // input-moments generalised door composed with the gauged fluid core
 // on the two-layer ball. The gauge metric restricts to the solid
 // attributes; the parallel certificates are the serial omega match and
@@ -304,7 +303,7 @@ void RunCase(int order, const std::string& label, int rotation = 0) {
 void RunFluidCase(const std::string& label) {
   const int order = 1, dim = 3;
   const double r_cmb = 0.5467, r_icb = 0.1931;
-  Mesh smesh("../data/elastogravity_two_layer_3d.msh", 1, 1);
+  Mesh smesh("../data/earth_fluidcore_3d.msh", 1, 1);
   Array<int> body_attr({1, 2}), buffer_attr({3});
   Vector bb_min, bb_max;
   smesh.GetBoundingBox(bb_min, bb_max);

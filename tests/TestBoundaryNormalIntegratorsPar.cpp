@@ -68,8 +68,8 @@ void Position(const Vector& x, Vector& v) { v = x; }
 double HalfR2(const Vector& x) { return 0.5 * (x * x); }
 
 std::string MeshFile(int dim) {
-  return dim == 2 ? "../data/elastogravity_three_layer_2d.msh"
-                  : "../data/elastogravity_three_layer_3d.msh";
+  return dim == 2 ? "../data/earth_innercore_2d.msh"
+                  : "../data/earth_innercore_3d.msh";
 }
 
 Array<int> Marker(int max, std::initializer_list<int> attrs) {

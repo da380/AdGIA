@@ -1,6 +1,6 @@
 /*
   Parallel tests of the viscoelastic composition of the sea-level
-  machinery (WP6 of doc/planning/sea_level_plan.md). Run with 1, 2 and
+  machinery. Run with 1, 2 and
   4 ranks; a standalone MPI program that exits with status 1 if any
   check fails.
 
@@ -33,6 +33,7 @@ namespace {
 int num_checks = 0;
 int num_failures = 0;
 
+// Unlike the sibling Par files, Check bounds |value| (<= bound).
 void Check(double value, double bound, const std::string& label) {
   num_checks++;
   const bool ok = std::abs(value) <= bound;
@@ -228,8 +229,8 @@ void RunCase(int order, const std::string& label) {
     }
     Check(visco.SolveElastic(m, t) ? 0.0 : 1.0, 0.0,
           label + ": rotating stack steps");
-    // 3-D order 1 sits at the faceted-sphere route grade (~1e-3, the
-    // WP3 hierarchy; measured 3.2e-4 here).
+    // 3-D order 1 sits at the faceted-sphere route grade (~1e-3,
+    // the route-grade hierarchy; measured 3.2e-4 here).
     Check(mass_residual(*pr), 2e-3, label + ": rotating mass");
     const double om = pr->AngularVelocity().Norml2();
     Check(std::isfinite(om) && om > 0.0 ? 0.0 : 1.0, 0.0,

@@ -71,7 +71,7 @@ counts compared in `timing.png` and in the summary:
 
 ```
 ./run fluid_core --h 0.3 --order 2 --np 8 \
-    --method dahlen gauged referential slip slip_broken --solver 1 0
+    --method dahlen gauged referential maxwell slip slip_broken --solver 1 0
 ./plot runs
 ```
 
@@ -80,15 +80,17 @@ counts compared in `timing.png` and in the summary:
 | `dahlen` | Eulerian, fluid eliminated (`doc/self_gravitation.md`); `--cmb` picks its fluid-interface treatment |
 | `gauged` | Eulerian, the fluid in the displacement space with a gauge shear penalty (`doc/gauged_fluid.md`) |
 | `referential` | the welded gauged referential formulation (`doc/gravitating_elasticity.md`): bare moduli from the exported hydrostatic pressure `p0`, equilibrium stress `-p0 I` |
+| `maxwell` | the referential formulation with the fluid by Maxwell relaxation (`SetFluid`'s default treatment, the general method): the core an artificial Maxwell solid relaxed to the secular static state (`doc/static_fluid_core.tex`); `-mxbeta` sets the physical-phase dt/tau |
 | `slip` | the slipping fluid–solid interface, single-valued potential (`doc/slip_interface.tex`): broken displacement pair, normal-jump constraint by penalty and augmented Lagrangian, or by a KKT multiplier (`-kkt`) |
 | `slip_broken` | the same with the potential broken per region as well |
 
 `--solver 1 0` runs the Eulerian methods under both of their linear
 solvers (block MINRES, and the Schur-complement CG with the `_schur`
 suffix); the referential and slipping methods have their own solvers and
-ignore the choice. The referential and slipping methods solve the load
-problems only (no tidal numbers, no radial functions) and need a case
-with the `p0` field; the slipping methods accept one fluid core inside
+ignore the choice. The referential and maxwell methods take tidal
+forcings through the referential tidal load; the slipping methods solve
+the load problems only (no tidal numbers, no radial functions). All
+need a case with the `p0` field; the slipping methods accept one fluid core inside
 one solid shell, so no model with an inner core. The driver options of
 the formulations (`-geps`, `-gref`, `-gauge-kkt`, `-theta`, `-al`,
 `-sweep-tol`, `-kkt`, `-kkt-order`) and their defaults are in
@@ -97,7 +99,10 @@ the formulations (`-geps`, `-gref`, `-gauge-kkt`, `-theta`, `-al`,
 On a fluid core that is not neutrally stratified (`fluid_core`'s uniform
 core) the compressible methods differ from the Dahlen/pyslfp response by
 O(N²) at every degree, so converged cross-method ladders split there; at
-h ~ 0.3 the split is below the mesh error (`doc/gauged_fluid.md`).
+h ~ 0.3 the split is below the mesh error (`doc/gauged_fluid.md`). The
+Maxwell relaxation resolves the secular limit there; the gauge-penalty
+methods are defined only to the stratification band at N² ≠ 0
+(`doc/static_fluid_core.tex`).
 
 `--map A` runs the referential methods from relabelled coordinates — the
 relabelling family's benchmark, described in `../relabelling/README.md`.

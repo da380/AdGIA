@@ -127,8 +127,8 @@ library's Riesz maps (`riesz.hpp`) — L2, and Sobolev metrics of order 1
 and 2 posed on the buffered mesh with outer Dirichlet conditions — with
 only the H2 representative mathematically right for continuous moduli.
 Conventions are stated in the header; the gravitating version, where
-the equilibrium state varies too, is deliberately left to a later
-example (Yu et al. 2025, `doc/Elasticity/ggae388.pdf`). Shows (`-vis`):
+the equilibrium state varies too, is `gia_kernels` and the `-kernel`
+mode of `ice_age_loading` (Yu et al. 2025, `doc/Elasticity/ggae388.pdf`). Shows (`-vis`):
 the forward and adjoint displacements and each modulus's sensitivity in
 the three metrics, on the physical sub-domain. `-vd`/`-va` add a smooth
 radial / harmonic-polynomial variation of the base moduli. `./adjoint_elasticity -r 1`
@@ -171,7 +171,7 @@ under a surface load or a tidal potential: a uniform solid of any shape,
 a fluid core under a mantle, or a solid inner core in a fluid outer core;
 Schur-CG and block-MINRES solvers compared, rigid-mode diagnostics. Shows
 (`-vis`): displacement and potential. `./elastogravity_layered -o 2 -vis`,
-`./elastogravity_layered -m ../data/elastogravity_three_layer_3d.msh -o 1 -vis`
+`./elastogravity_layered -m ../data/earth_innercore_3d.msh -o 1 -vis`
 
 **`referential_elastogravity`**: the general referential formulation
 beside the Eulerian one on the same problem: two formalisms, one answer,
@@ -180,8 +180,13 @@ potential perturbation.
 
 **`self_gravitating_solvers`**: one problem (a fluid core under a mantle,
 degree-2 load), the main linear-solver architectures of the library, with a
-table of cost and agreement (the KKT enforcement of the slipping interface
-is exercised by `slipping_interface -enforce kkt`). Shows: the solution, and the difference field
+table of cost and agreement: Dahlen (Schur CG and block MINRES), the gauged
+and welded referential gauge-penalty treatments, and the Maxwell
+architecture (the referential problem with the core an artificial Maxwell
+solid relaxed to the secular static state through `SetFluid`; the general
+fluid treatment, `doc/static_fluid_core.tex`), plus the slipping-interface
+solvers (the KKT enforcement of the slipping
+interface is exercised by `slipping_interface -enforce kkt`). Shows: the solution, and the difference field
 of the architecture that agrees least (rigid modes removed). Add `-no-slip`
 for a quicker run without the slipping-interface solvers.
 
@@ -189,7 +194,7 @@ for a quicker run without the slipping-interface solvers.
 self-gravitating disc or sphere by degree, one solve each; in 3-D beside
 the incompressible sphere's closed form. Shows: the load response at one
 degree (`-vl`); the CSV plots the Love numbers against degree.
-`./love_numbers`, `./love_numbers -m ../data/coupled_poisson.msh -o 2 -lmax 4 -kappa 100`
+`./love_numbers`, `./love_numbers -m ../data/ball_buffer_coarse_3d.msh -o 2 -lmax 4 -kappa 100`
 
 **`anisotropic_elasticity`**: radially anisotropic (transversely
 isotropic, as in PREM) elasticity with `ElasticTensorIntegrator`; with
@@ -253,12 +258,12 @@ angular-momentum-row residual; the equilibrium moments are data
 (`-C1 -C2 -C3`), not derived from the model. Shows: the displacement
 without and with feedback, and their difference.
 `./rotational_feedback`, `./rotational_feedback -Omega 0.3`,
-`./rotational_feedback -m ../data/coupled_poisson.msh -o 1`
+`./rotational_feedback -m ../data/ball_buffer_coarse_3d.msh -o 1`
 
 **`generalised_rotation`**: the generalised (Maitra & Al-Attar)
-rotational theory beside the traditional one on a triaxial body
-(`doc/planning/generalised_rotation_note.md`) — the referential class's
-two doors. The traditional omega depends on the arbitrary rigid
+rotational theory beside the traditional one on a triaxial body — the
+referential class's two doors: the traditional angular-velocity border and
+the generalised door (the model's own inertia plus the Tisserand gauge). The traditional omega depends on the arbitrary rigid
 representative of the displacement: the gauge sweep measures the shift
 under re-gauges u → u + b×x, matches it against the closed form
 D⁻¹[ad_b, I]Ω (exact), and shows the Tisserand-pinned row flat at
@@ -281,7 +286,7 @@ benchmark family's (smooth polar continent, ice cap, a melt unloading
 the +x hemisphere of the cap smoothly), with every piece of the
 geometry and load an option, and `-Omega` adding the rotational
 feedback to the same bordered solve; frozen shorelines (first-order
-exact). The default mesh, `data/sea_level_fingerprint.msh`, is refined
+exact). The default mesh, `data/fingerprint_ring_3d.msh`, is refined
 in a ring about this state's shoreline circle
 (`meshes/fingerprint_coastline.py`). `-earth` swaps in the real
 present-day geography — ICE-7G topography and ice sampled at the
@@ -344,9 +349,9 @@ composes after (the library verifies this). Maps via
 --global-only`. `./shoreline_refinement -no-vis`,
 `mpiexec -np 4 ./shoreline_refinement -l 3 -no-vis`
 
-**`gia_kernels`**: THE ADJOINT DEMONSTRATOR — first-order GIA
+**`gia_kernels`**: the adjoint demonstrator — first-order GIA
 sensitivity kernels on an idealised, well-resolved configuration,
-everything analytic (David's brief: homogeneous Maxwell planet, 1-D
+everything analytic (homogeneous Maxwell planet, 1-D
 viscosity background, a smooth polar continent carrying a Gaussian ice
 blob melting linearly, a windowed point-like sea-level measure at a
 distant ocean site, present day = the final time). One forward run and
@@ -381,17 +386,16 @@ Prints the eustatic equivalent, ocean-mean sea level, uniform term and
 displacement norm per step; writes the history CSV (`plot_csv.py`) and
 the endpoint fingerprint for the NetCDF/cartopy map chain. The body is
 the toy homogeneous planet, so the output is qualitative — real
-geography on a model rheology; resolved runs belong to the server. An
-the build's `data/earth_coastlines.msh` — the ball refined along the
-real coastlines and the shallow shelves, one sizing field with no
-coastline isolation — suits `-m`
-out of the box, and an optional step 0 rebuilds it from a sharper or
-re-dated topography (`meshes/README.md`, "The coastline mesh").
+geography on a model rheology; resolved runs belong to the server. The
+build's `data/earth_coastlines.msh` — the ball refined along the real
+coastlines and the shallow shelves, one sizing field with no coastline
+isolation — suits `-m` out of the box, and an optional step 0 rebuilds
+it from a sharper or re-dated topography (`meshes/README.md`, "The
+coastline mesh").
 `./ice_age_loading`, then the two printed `ice_ng_to_surface` calls,
 then `./ice_age_loading -ice ice_age_nodes_ice.csv -state
 ice_age_nodes_state.csv`
 
-### Fluids and interfaces
 With `-kernel` the run finishes with ONE adjoint sweep (the common
 adjoint structure, `adjoint.hpp`) giving the kernels of a present-day
 windowed sea-level observation at `-obs-lat`/`-obs-lon` (Boston by
@@ -401,29 +405,34 @@ at `-nk` epochs for the ice-masked pyslfp maps
 (`<build>/earth_data/plot_fingerprint_kernel`, two epochs side by
 side) — the deglacial viscous-memory structure over the ice sheets.
 Use `-o 2`: order 1's internal variables make localised viscoelastic
-kernels unreliable (the adjoint note's order finding; the run warns).
-The I₀ kernel vanishes identically under this chain's frozen C₀.
-The ice-kernel maps are masked by the ice extent AT EACH EPOCH
-(`--ice-dates`), drawn global-only (zooms are less relevant at
-deglacial times) and headlined with the observation
+kernels unreliable (the run warns). The I₀ kernel vanishes identically
+under this chain's frozen C₀. The ice-kernel maps are masked by the ice
+extent AT EACH EPOCH (`--ice-dates`), drawn global-only (zooms are less
+relevant at deglacial times) and headlined with the observation
 (`--obs-label`). The viscosity kernel is also exported on `-nd`
 DEPTH SHELLS (serial runs; `--no-mask --global-only` maps: the
 shallow shell concentrates around the observation and the load, the
 deep shell spreads to continental scale). `-fluid-core` runs the
-three-layer planet (inviscid outer core by the gauge-penalty
-treatment, μ = 0 there in the rheology — the Maxwell branch stays
-whole-mesh so the kernels remain valid) and `-lateral-visc` gives
-the base model a smooth 3-D viscosity: Dahlen-route forward, 1-D
-elastic and density, 3-D viscosity — the classic inversion setting.
-`-taylor <n>` runs the TAYLOR TEST: exact J(m₀ + s δm) against the
-affine prediction J₀ + s·dJ[δm] for a mantle viscosity blob and an
-ice-rate cap, written to `taylor_test.csv`/`taylor_remainder.csv`
-for `plot_csv.py` — the viscosity panel shows the genuine curvature
-(strong on the softening side), the ice panel exact linearity.
+three-layer planet (use `-m ../data/earth_innercore_3d.msh`):
+an inviscid outer core by the gauge-penalty fluid treatment (a
+uniform-density toy core; being compressible it is not neutrally
+stratified, so the penalty answer carries the usual stratification-band
+caveat — adequate for a demonstration figure), with μ = 0 there in the
+rheology; the Maxwell branch stays whole-mesh so the kernels remain
+valid. `-lateral-visc` gives the base model a smooth 3-D
+viscosity (1-D elastic and density, 3-D viscosity — the classic
+inversion setting). `-taylor <n>` runs the TAYLOR TEST: exact
+J(m₀ + s δm) against the affine prediction J₀ + s·dJ[δm] for a mantle
+viscosity blob and an ice-rate cap, written to
+`taylor_test.csv`/`taylor_remainder.csv` for `plot_csv.py` — the
+viscosity panel shows the genuine curvature (strong on the softening
+side), the ice panel exact linearity.
+
+### Fluids and interfaces
 
 **`gauged_fluid_cavity`**: an elastic body with a fluid core under a
-surface pressure, no gravity: the gauged fluid (`SetGaugedFluid`) and its
-Tikhonov refinement. Shows: the displacement, and the fluid pressure,
+surface pressure, no gravity: the gauge-penalty fluid
+(`SetFluid` with `GaugePenaltyOptions`) and its Tikhonov refinement. Shows: the displacement, and the fluid pressure,
 which must be uniform (the fluid displacement itself is gauge).
 
 **`sliding_fluid_ellipse`**: a fluid core that slips along its boundary

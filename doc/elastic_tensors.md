@@ -191,20 +191,15 @@ problem"):
   relabelling pull-back, as for `ElasticTensorIntegrator`.
 
 The two mapped constructors are therefore not interchangeable. The
-covariant gauge penalty of a gauged fluid
-(`LinearQuasiStaticProblemBase::SetGaugedFluid` with a non-identity map,
-and the fluid penalty of the slip problem) is assembled with
+covariant gauge penalty of a fluid
+(`LinearQuasiStaticProblemBase::SetFluid` with `GaugePenaltyOptions` and a
+non-identity map, and the fluid penalty of the slip problem) is assembled with
 `ElasticTensorIntegrator(C_dev, map)`, where `C_dev` is the isotropic
-deviatoric tensor of the penalty (λ = −2εμ_g/d, μ = εμ_g): this form is the
-exact pull-back of the unmapped penalty, so a relabelled problem's gauge is
-the pull-back of the unmapped one. `MaterialStiffnessIntegrator` would be
-wrong here because it expects a relabelled tensor and carries no Jacobian.
-The distinction matters because the gauge subspace has stiffness O(ε): an
-O(εA) difference in the penalty between a problem and its relabelling of
-amplitude A moves the gauge representative by O(A), not by the
-discretisation error. Where both sides of an identity assemble the
-same term, both use the same integrator class (the identity map included),
-so the quadrature defaults coincide.
+deviatoric tensor of the penalty (λ = −2εμ_g/d, μ = εμ_g).
+`MaterialStiffnessIntegrator` would be wrong here because it expects a
+relabelled tensor and carries no Jacobian. The rule and why it matters (the
+gauge subspace has stiffness O(ε), so a non-covariant penalty moves the gauge
+representative at O(1)) are in `mappings.md`, Pitfalls.
 
 ### Internal-variable coupling
 

@@ -1,5 +1,5 @@
-"""Rung 0 of the disc family: run the driver and compare with the exact
-reference (README.md; doc/planning/no_gravity_analytics.md).
+"""Disc family: run the driver and compare with the exact no-gravity
+reference (README.md).
 
 For each requested (order, refinements) the driver solves every degree
 with the welded and the slipping method; this script compares
@@ -15,17 +15,22 @@ reference fix the translation differently, so the comparison uses the
 gauge-invariant combinations U + V per circle. Exit status is nonzero
 when a tolerance fails: reference agreement must improve down the
 ladder (no fixed tolerance), while the welded-slip identity must hold
-near solver tolerance on every rung.
+near solver tolerance on every (order, refinement) run. With --shift the
+central difference of the shifted-interface runs must match the exact
+interface derivative to --shift-tol.
 """
 import argparse
 import json
 import math
+import shlex
 import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
 from disc_reference import DiscModel, solve  # noqa: E402
+from outputs import outside_source  # noqa: E402
 
 
 def run_driver(programs: str, mpiexec: str, np: int, out: Path,
@@ -100,6 +105,7 @@ def shift_mode(args, extra) -> bool:
     them, the mapped constraint row (slip) under a jumping F."""
     eps = args.shift
     ok = True
+    ptag = f"_P{args.P0}" if args.P0 else ""
     for order in args.orders:
         for ref in args.refinements:
             print(f"-- shift {eps}, order {order}, refinements {ref}")
@@ -107,7 +113,7 @@ def shift_mode(args, extra) -> bool:
                 runs = {}
                 for sgn, tag in ((+1, "+"), (-1, "-")):
                     out = (Path(args.out) /
-                           f"results_{method}_o{order}r{ref}"
+                           f"results_{method}_o{order}r{ref}{ptag}"
                            f"_shift{tag}{eps}.json")
                     runs[sgn] = run_driver(
                         args.programs, args.mpiexec, args.np, out, method,
@@ -138,32 +144,51 @@ def shift_mode(args, extra) -> bool:
                                  s.derivatives["ut_a"]))
                     for name, fd, ex in items:
                         rel = abs(fd - ex) / max(abs(ex), 1e-12)
+                        good = rel <= args.shift_tol
+                        ok &= good
                         print(f"    l={l} {name:<12} FD {fd:>12.6f} "
-                              f"exact {ex:>12.6f}  rel {rel:.2e}")
+                              f"exact {ex:>12.6f}  rel {rel:.2e}  "
+                              f"{'ok' if good else 'FAIL'}")
+    print("PASS" if ok else "FAIL")
     return ok
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--orders", type=int, nargs="+", default=[2])
-    p.add_argument("--refinements", type=int, nargs="+", default=[0, 1])
-    p.add_argument("--lmax", type=int, default=4)
-    p.add_argument("--np", type=int, default=1)
-    p.add_argument("--out", default=".", help="where results land")
-    p.add_argument("--programs", default="../bin")
-    p.add_argument("--mpiexec", default="mpiexec")
+    p = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    p.add_argument("--orders", type=int, nargs="+", default=[2],
+                   help="finite-element orders to run")
+    p.add_argument("--refinements", type=int, nargs="+", default=[0, 1],
+                   help="uniform mesh refinement counts to run")
+    p.add_argument("--lmax", type=int, default=4,
+                   help="highest spherical-harmonic degree solved")
+    p.add_argument("--np", type=int, default=1,
+                   help="MPI ranks (1 runs the driver serially)")
+    p.add_argument("--out", default=".",
+                   help="directory receiving result files (must be in a "
+                        "build tree or outside the repository)")
+    p.add_argument("--programs", default="../bin",
+                   help="directory containing disc_benchmark")
+    p.add_argument("--mpiexec", default="mpiexec",
+                   help="MPI launcher used when --np > 1")
     p.add_argument("--identity-tol", type=float, default=1e-4,
-                   help="welded-vs-slip gap allowed on every rung")
+                   help="welded-vs-slip gap allowed on every run")
     p.add_argument("--P0", type=float, default=0.0,
-                   help="rung 1: run with this uniform surface pressure "
-                        "(passed to the driver; the reference follows)")
+                   help="uniform surface pressure passed to the driver "
+                        "(the reference follows); 0 means none")
     p.add_argument("--shift", type=float, default=0.0,
                    help="run the shift leg at +/- this eps instead of "
-                        "the absolute ladder")
+                        "the absolute ladder; 0 selects the ladder")
+    p.add_argument("--shift-tol", type=float, default=5e-2,
+                   help="largest relative difference between the central "
+                        "difference and the exact interface derivative "
+                        "accepted in the shift leg")
     p.add_argument("--program-args", default="",
-                   help="extra driver options, one string")
+                   help="extra driver options, one shell-quoted string")
     args = p.parse_args()
-    extra = args.program_args.split()
+    args.out = outside_source(Path(args.out))
+    extra = shlex.split(args.program_args)
     if args.P0:
         extra += ["-P0", str(args.P0)]
     if args.shift:

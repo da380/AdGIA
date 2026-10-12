@@ -6,7 +6,6 @@
 
 #include "AdGIA/elastic_tensor.hpp"
 
-#include <cmath>
 #include <numbers>
 
 namespace AdGIA {
@@ -115,6 +114,7 @@ void SymmetricTensorBasis::Unpack(int dim, const DenseMatrix& Cm,
 void SymmetricTensorBasis::Apply(const DenseMatrix& Cm, const Vector& eps,
                                  Vector& sig) {
   const int n = Cm.Height();
+  // The 1-D case (n == 1) is unused and untested.
   const int dim = n == 6 ? 3 : (n == 3 ? 2 : 1);
   MFEM_VERIFY(Size(dim) == n && eps.Size() == n,
               "SymmetricTensorBasis::Apply: size mismatch.");
@@ -150,23 +150,42 @@ void SymmetricTensorBasis::DeviatoricProjector(int dim, DenseMatrix& P) {
   }
 }
 
+namespace {
+
+// The orthonormal basis tensor of reduced component t: E_jj = 1 on the
+// diagonal, E_jk = E_kj = 1/sqrt(2) off it.
+void BasisTensor(int dim, int t, DenseMatrix& E) {
+  int j, k;
+  SymmetricTensorBasis::Component(dim, t, j, k);
+  E = 0.0;
+  if (j == k) {
+    E(j, j) = 1.0;
+  } else {
+    E(j, k) = 1.0 / std::numbers::sqrt2_v<real_t>;
+    E(k, j) = 1.0 / std::numbers::sqrt2_v<real_t>;
+  }
+}
+
+}  // namespace
+
 void SymmetricTensorBasis::RotationMatrix(int dim, const DenseMatrix& R,
                                           DenseMatrix& Q) {
+  DenseMatrix E, RE, RERt;
+  RotationMatrix(dim, R, Q, E, RE, RERt);
+}
+
+void SymmetricTensorBasis::RotationMatrix(int dim, const DenseMatrix& R,
+                                          DenseMatrix& Q, DenseMatrix& E,
+                                          DenseMatrix& RE, DenseMatrix& RERt) {
   const int n = Size(dim);
   Q.SetSize(n);
+  E.SetSize(dim);
+  RE.SetSize(dim);
+  RERt.SetSize(dim);
   // Column t of Q: Mandel components of R E_t R^T, with E_t the
   // orthonormal basis tensor of component t.
-  DenseMatrix E(dim), RE(dim), RERt(dim);
-  int j, k;
   for (int t = 0; t < n; t++) {
-    Component(dim, t, j, k);
-    E = 0.0;
-    if (j == k) {
-      E(j, j) = 1.0;
-    } else {
-      E(j, k) = 1.0 / std::numbers::sqrt2_v<real_t>;
-      E(k, j) = 1.0 / std::numbers::sqrt2_v<real_t>;
-    }
+    BasisTensor(dim, t, E);
     Mult(R, E, RE);
     MultABt(RE, R, RERt);
     for (int s = 0; s < n; s++) {
@@ -179,20 +198,22 @@ void SymmetricTensorBasis::RotationMatrix(int dim, const DenseMatrix& R,
 
 void SymmetricTensorBasis::CongruenceMatrix(int dim, const DenseMatrix& F,
                                              DenseMatrix& Q) {
+  DenseMatrix E, FtE, FtEF;
+  CongruenceMatrix(dim, F, Q, E, FtE, FtEF);
+}
+
+void SymmetricTensorBasis::CongruenceMatrix(int dim, const DenseMatrix& F,
+                                             DenseMatrix& Q, DenseMatrix& E,
+                                             DenseMatrix& FtE,
+                                             DenseMatrix& FtEF) {
   const int n = Size(dim);
   Q.SetSize(n);
+  E.SetSize(dim);
+  FtE.SetSize(dim);
+  FtEF.SetSize(dim);
   // Column t of Q: Mandel components of F^T E_t F.
-  DenseMatrix E(dim), FtE(dim), FtEF(dim);
-  int j, k;
   for (int t = 0; t < n; t++) {
-    Component(dim, t, j, k);
-    E = 0.0;
-    if (j == k) {
-      E(j, j) = 1.0;
-    } else {
-      E(j, k) = 1.0 / std::numbers::sqrt2_v<real_t>;
-      E(k, j) = 1.0 / std::numbers::sqrt2_v<real_t>;
-    }
+    BasisTensor(dim, t, E);
     MultAtB(F, E, FtE);
     Mult(FtE, F, FtEF);
     for (int s = 0; s < n; s++) {
@@ -217,7 +238,8 @@ void RelabelledElasticTensorCoefficient::Eval(DenseMatrix& K,
   xi_->EvalGradient(F_, T, ip);
   const auto J = F_.Det();
   F_.Invert();
-  SymmetricTensorBasis::CongruenceMatrix(dim_, F_, Qi_);  // eps -> F^-T eps F^-1
+  SymmetricTensorBasis::CongruenceMatrix(dim_, F_, Qi_, E_, T1_,
+                                        T2_);  // eps -> F^-T eps F^-1
   C_->Eval(Cq_, T, ip);
   const int n = SymmetricTensorBasis::Size(dim_);
   tmp_.SetSize(n);
@@ -312,6 +334,13 @@ void TransverselyIsotropicElasticTensorCoefficient::Build(int dim, real_t A,
                                                           const Vector& n,
                                                           DenseMatrix& Cm) {
   std::vector<real_t> full(dim * dim * dim * dim);
+  Build(dim, A, C, F, L, N, n, Cm, full);
+}
+
+void TransverselyIsotropicElasticTensorCoefficient::Build(
+    int dim, real_t A, real_t C, real_t F, real_t L, real_t N, const Vector& n,
+    DenseMatrix& Cm, std::vector<real_t>& full) {
+  full.resize(dim * dim * dim * dim);
   const real_t c1 = A - 2.0 * N;
   const real_t c2 = N;
   const real_t c3 = F - A + 2.0 * N;
@@ -340,6 +369,7 @@ void TransverselyIsotropicElasticTensorCoefficient::Eval(
     DenseMatrix& K, ElementTransformation& T, const IntegrationPoint& ip) {
   const real_t A = A_->Eval(T, ip), C = C_->Eval(T, ip), F = F_->Eval(T, ip),
                L = L_->Eval(T, ip), N = N_->Eval(T, ip);
+  // Debug-build check: this is the per-point hot path.
   MFEM_ASSERT(L > 0.0 && N > 0.0 && C > 0.0 && A > N && (A - N) * C > F * F,
               "TransverselyIsotropicElasticTensorCoefficient: the moduli "
               "violate the TI stability conditions.");
@@ -348,7 +378,7 @@ void TransverselyIsotropicElasticTensorCoefficient::Eval(
   MFEM_VERIFY(norm > 0.0,
               "TransverselyIsotropicElasticTensorCoefficient: zero axis.");
   n_ /= norm;
-  Build(dim_, A, C, F, L, N, n_, K);
+  Build(dim_, A, C, F, L, N, n_, K, full_);
 }
 
 // --- Voigt input -------------------------------------------------------------
@@ -387,7 +417,7 @@ void RotatedElasticTensorCoefficient::Eval(DenseMatrix& K,
   R_->Eval(Rm_, T, ip);
   // C' = Q C Q^T with Q the Mandel representation of the rotation; this
   // equals R_ia R_jb R_kc R_ld C_abcd.
-  SymmetricTensorBasis::RotationMatrix(dim_, Rm_, Q_);
+  SymmetricTensorBasis::RotationMatrix(dim_, Rm_, Q_, E_, T1_, T2_);
   const int n = SymmetricTensorBasis::Size(dim_);
   tmp_.SetSize(n);
   K.SetSize(n);

@@ -2,7 +2,7 @@
 // relabelled_identity.cpp
 //
 // The discrete change-of-variables identity at the level of the FULL
-// self-gravitating SOLVE (leg B of the relabelling family,
+// self-gravitating SOLVE (the relabelled-identity benchmark,
 // doc/benchmarks.tex; doc/mappings.md, "The discrete change-of-variables
 // identity"): the same problem class solves
 //
@@ -47,16 +47,14 @@
 //    every WELDED case is STRICT, the gauged fluid included
 //    (u 1.6e-7 at A = 0.02, h = 0.3, the DtN-centring floor).
 //    Through the SLIPPING interface the run is STRICT too (u 1.6e-6,
-//    zeta 7.2e-7 at A = 0.02, h = 0.3 on fluid_core) since the
-//    interface kernels' direction slot became the pullback-consistent
-//    P_T F^{-1}(1 - nu nu^T/|nu|^2) (7 Oct 2026; the old P_T F^{-1}
-//    slot, not invariant under face-fixing shears of F, broke the
-//    identity at u 1.2e-2, zeta 8e-3, growing under refinement).
+//    zeta 7.2e-7 at A = 0.02, h = 0.3 on fluid_core): the interface
+//    kernels' direction slot is the pullback-consistent
+//    P_T F^{-1}(1 - nu nu^T/|nu|^2).
 //    For the welded organisation the driver prints the
 //    operator-action probes and the per-attribute breakdown; for
 //    slip_broken it prints, after the solves, the sixteen broken blocks
 //    and the stored constraint kernels of both sides, which locate the
-//    differing terms (doc/benchmarks.tex, leg B, gives the measured
+//    differing terms (doc/benchmarks.tex gives the measured
 //    pattern). (The single-valued slip organisation refuses non-identity
 //    maps outright, so it cannot be run here.)
 //
@@ -96,7 +94,7 @@ double SurfaceLoad(const Vector& x) {
   return 0.02 * (2.0 * c * c - 1.0) + 0.01 * x[0] * x[1] / (r * r);
 }
 
-// A smooth positive ocean weight for the -water leg (as above, any
+// A smooth positive ocean weight for the -water option (as above, any
 // smooth data will do).
 double WaterWeight(const Vector& x) {
   const double r2 = x * x;
@@ -177,13 +175,12 @@ int main(int argc, char* argv[]) {
   args.AddOption(&dtn_degree, "-deg", "--dtn-degree", "DtN degree.");
   args.AddOption(&water, "-water", "--water", "-no-water", "--no-water",
                  "Replace the plain surface load by the water feedback "
-                 "(SetWaterLoad) on both sides — the WP7.4 gate "
-                 "(doc/planning/referential_sea_level_plan.md): the "
-                 "bordered water solve joins the identity. Welded only.");
+                 "(SetWaterLoad) on both sides: the bordered water "
+                 "solve joins the identity. Welded only.");
   args.AddOption(&map_surface, "-map-surface", "--map-surface",
                  "-no-map-surface", "--no-map-surface",
                  "A SURFACE-MOVING radial relabelling in place of the "
-                 "interface-fixing interior one: the leg that exercises "
+                 "interface-fixing interior one: the case that exercises "
                  "the referential-area conventions (the Nanson J_Sigma "
                  "and the composed data) on the surface loads and the "
                  "water terms. Solid models and the welded method only.");
@@ -259,7 +256,6 @@ int main(int argc, char* argv[]) {
 
   H1_FECollection fec(order, dim);
   FunctionCoefficient sigma(SurfaceLoad);
-  ConstantCoefficient mu_gauge(1.0);
 
   // The vacuum extension is GAUGE: any admissible E serves. The identity
   // needs the SAME gauge data on both sides — the builder samples the
@@ -513,7 +509,7 @@ int main(int argc, char* argv[]) {
       }
       MPI_Allreduce(MPI_IN_PLACE, s, 4, MPITypeMap<real_t>::mpi_type,
                     MPI_SUM, MPI_COMM_WORLD);
-      if (Mpi::Root()) {
+      if (root) {
         std::cout << "  probe " << name << ": |dr_u|/|r_u| "
                   << std::sqrt(s[0] / std::max(s[1], real_t{1e-300}))
                   << ", |dr_z|/|r_z| "
@@ -543,7 +539,7 @@ int main(int argc, char* argv[]) {
       }
       MPI_Allreduce(MPI_IN_PLACE, q, 2, MPITypeMap<real_t>::mpi_type,
                     MPI_SUM, MPI_COMM_WORLD);
-      if (Mpi::Root()) {
+      if (root) {
         std::cout << "    penalty alone: |dQu|/|Qu| "
                   << std::sqrt(q[0] / std::max(q[1], real_t{1e-300}))
                   << "\n";
@@ -707,12 +703,10 @@ int main(int argc, char* argv[]) {
   // Strict everywhere: every assembled term is covariant — the welded
   // cases, the gauged fluid included, since the gauge penalty is
   // assembled as the exact pull-back (ElasticTensorIntegrator with the
-  // pulled-back deviatoric tensor and the map), and since 7 Oct 2026
-  // the slipping-interface forms too, whose direction slot is the
-  // pullback-consistent P_T F^{-1}(1 - nu nu^T/|nu|^2)
-  // (TestSlipInterface, InterfaceKernelsFaceShearCovariance; the old
-  // P_T F^{-1} slot broke this identity at 1.2e-2).
-  const bool strict = true;
+  // pulled-back deviatoric tensor and the map), and the slipping-interface
+  // forms too, whose direction slot is the pullback-consistent
+  // P_T F^{-1}(1 - nu nu^T/|nu|^2) (TestSlipInterface,
+  // InterfaceKernelsFaceShearCovariance).
   // With water, the uniform term joins the identity (the border is
   // part of the solve).
   const real_t dg =
@@ -722,7 +716,7 @@ int main(int argc, char* argv[]) {
                            real_t{1e-12})
             : 0.0;
   const bool pass = okA && okB &&
-                    (!strict || (du < 1e-5 && dz < 1e-5 && dg < 1e-4));
+                    (du < 1e-5 && dz < 1e-5 && dg < 1e-4);
   if (root) {
     std::cout << "\nrelabelled identity (" << m << ", order " << order
               << ", amplitude " << amplitude

@@ -6,7 +6,7 @@
 // here), solved monolithically with the water-load feedback
 // (LinearQuasiStaticMixedSelfGravitatingProblem::SetWaterLoad), for
 // comparison with pyslfp's pseudo-spectral solution of the same problem
-// (run.py drives both sides; doc/planning/sea_level_plan.md, rung 1).
+// (run.py drives both sides).
 //
 // The initial state is analytic and smooth (the pyslfp testing trick),
 // axisymmetric about +z, in the case's non-dimensional units:
@@ -22,11 +22,11 @@
 //
 // run.py passes the same constants to the pyslfp side, so the two
 // solvers see one problem. Shorelines are frozen (first-order exact)
-// unless -mig runs the WP5 Picard loop (rung 3: against pyslfp's
+// unless -mig runs the Picard shoreline-migration loop (against pyslfp's
 // nonlinear solver, whose ocean-function updates are SHARP where ours
 // are smoothed over -shore — a convention difference that lives at the
 // shoreline and shrinks with the smoothing on the resolved ladder).
-// Rotation is off unless -Omega (WP4). The surface gravity entering the
+// Rotation is off unless -Omega. The surface gravity entering the
 // ocean weight w = rho_w C0 / g is the case's own (G M / a^2).
 // -no-water applies the same melt load WITHOUT the water feedback (a
 // plain elastic loading solve) — the control row of the timing sweep,
@@ -38,13 +38,15 @@
 // iterations, times, migration statistics).
 //
 // Options (defaults in brackets): the case options of
-// benchmark_case.hpp (-c, -o, ...; -method dahlen or referential — the
-// WP7 leg rides the welded referential class, where tau = zeta^1 and
-// the border collapses to the zeta row) plus
+// benchmark_case.hpp (-c, -o, ...; -method dahlen or referential; the
+// referential method rides the welded referential class, where
+// tau = zeta^1 and the border collapses to the zeta row) plus
 //   -rhow / -rhoi   water and ice density, case units [0.2, 0.1834]
 //   -ocean-depth    [6.3e-4]      -cont-amp   [1.4e-3]
 //   -cont-width     [0.7]         -cap-amp    [4.7e-4]
 //   -cap-width      [0.35]        -melt       [0.5]
+//   -melt-width     smoothing width of the hemispheric unloading factor
+//                   H(x), case length units [0.15]
 //   -shore          smoothing width of the ocean fraction, in units of
 //                   rho_w*SL [1e-5]
 //   -Omega          rotation rate, case units [0: rotation off]
@@ -52,6 +54,11 @@
 //   -mig            shoreline migration (Picard on C; off = frozen C0)
 //   -mig-tol        migration stop, relative SL1 increment [1e-3]
 //   -mig-iters      migration pass cap [12]
+//   -mig-inexact    inexact-Picard factor, 0 = every pass at full
+//                   tolerance [0.1]
+//   -mig-inexact-max  loosest per-pass relative tolerance of the inexact
+//                   Picard [1e-3]
+//   -mig-verbose    per-pass migration trace [off]
 //   -feedback       border | monolithic | picard [border]: the bordered
 //                   solve by column elimination; the same system as ONE
 //                   MINRES with a block preconditioner whose border
@@ -68,8 +75,9 @@
 //                   counts are printed to measure exactly that.
 //   -picard-tol     picard stop: relative SL1 increment [1e-8]
 //   -picard-max     picard pass cap [30]
-//   -no-water       melt load without the water feedback (elastic
-//                   control; incompatible with -mig)
+//   -water/-no-water  water-load feedback [on]; off applies the melt
+//                   load without it (elastic control; incompatible
+//                   with -mig)
 //   -slcsv          the fingerprint CSV [sea_level.csv]
 //   -out            the scalars JSON [sea_level.json]
 //   -export-nodes   write the surface node CSV and exit (run.py --earth
@@ -281,8 +289,10 @@ int main(int argc, char* argv[]) {
                  "Per-pass migration trace (tolerances, increments, "
                  "Phi_g, guard events).");
   args.AddOption(&feedback, "-feedback", "--feedback",
-                 "border (monolithic) or picard (feedback as explicit "
-                 "loads around the plain elastic operator).");
+                 "border | monolithic | picard: the bordered solve, the "
+                 "same system as one block-preconditioned MINRES, or the "
+                 "feedback as explicit loads around the plain elastic "
+                 "operator.");
   args.AddOption(&picard_tol, "-picard-tol", "--picard-tolerance",
                  "Picard stop: relative SL1 increment.");
   args.AddOption(&picard_max, "-picard-max", "--picard-maximum",
@@ -316,8 +326,7 @@ int main(int argc, char* argv[]) {
                   (std::string(options.method) == "dahlen" &&
                    !options.gauged),
               "sea_level_benchmark: -method dahlen (the plain Eulerian "
-              "problem) or referential (the welded referential class; "
-              "doc/planning/referential_sea_level_plan.md).");
+              "problem) or referential (the welded referential class).");
   MFEM_VERIFY(water || !migrate,
               "sea_level_benchmark: -mig needs the water load (-water)");
   const bool picard = std::string(feedback) == "picard";
@@ -622,6 +631,8 @@ int main(int argc, char* argv[]) {
 
   if (Mpi::Root()) {
     std::ofstream os(out);
+    MFEM_VERIFY(os.good(), "sea_level_benchmark: cannot write " << out
+                                                              << ".");
     os << "{\n";
     os << "  \"gravity\": " << Num(c.gravity) << ",\n";
     os << "  \"radius\": " << Num(c.radius) << ",\n";

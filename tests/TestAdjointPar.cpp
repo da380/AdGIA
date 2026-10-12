@@ -18,6 +18,7 @@
 #include <functional>
 #include <iostream>
 #include <memory>
+#include <numbers>
 #include <string>
 #include <vector>
 
@@ -55,17 +56,18 @@ constexpr real_t kKappa0 = 5.4;
 constexpr real_t kMu0 = 2.7;
 constexpr real_t kEta0 = 2.7;
 constexpr real_t kP0 = 0.05;
+constexpr real_t kPi = std::numbers::pi;
 
 void Traction2D(const Vector& x, Vector& t) {
   t.SetSize(2);
   t[0] = 0.0;
-  t[1] = -kP0 * std::cos(2.0 * M_PI * x[0]);
+  t[1] = -kP0 * std::cos(2.0 * kPi * x[0]);
 }
 
 void Station2D(const Vector& x, Vector& v) {
   constexpr real_t s = 0.08;
   auto window = [](real_t x0, real_t c) {
-    return std::exp(-(x0 - c) * (x0 - c) / (s * s)) / (s * std::sqrt(M_PI));
+    return std::exp(-(x0 - c) * (x0 - c) / (s * s)) / (s * std::sqrt(kPi));
   };
   v.SetSize(2);
   v[0] = 0.0;
@@ -83,12 +85,7 @@ Bumped Bump(Coefficient& m0, Coefficient& chi, real_t s) {
   return b;
 }
 
-}  // namespace
-
-
-namespace {
-
-// Rung-3 observation duals (as in the serial TestAdjoint): windowed
+// Gravitating-leg observation duals (as in the serial TestAdjoint): windowed
 // stations at the angles 0.3 and 1.4, off every mirror image of the
 // degree-2 load's symmetries.
 real_t StationWindow(const Vector& x) {
@@ -96,9 +93,9 @@ real_t StationWindow(const Vector& x) {
   const real_t phi = std::atan2(x[1], x[0]);
   auto window = [phi](real_t centre) {
     real_t d = phi - centre;
-    while (d > M_PI) d -= 2.0 * M_PI;
-    while (d < -M_PI) d += 2.0 * M_PI;
-    return std::exp(-d * d / (s * s)) / (s * std::sqrt(M_PI));
+    while (d > kPi) d -= 2.0 * kPi;
+    while (d < -kPi) d += 2.0 * kPi;
+    return std::exp(-d * d / (s * s)) / (s * std::sqrt(kPi));
   };
   return window(1.4) - window(0.3);
 }
@@ -115,7 +112,7 @@ real_t MassLoad(const Vector& x) {
   return self_grav_test::SurfaceLoad(x, 0.0);
 }
 
-// The gravitating leg: GA1 reciprocity (including the PotentialForceSlot
+// The gravitating leg: reciprocity (including the PotentialForceSlot
 // sign certificate) and the kappa/mu/eta blob FD gates for displacement
 // and potential observations on the mixed Maxwell body. Thresholds are
 // the serial measurements' grades (the identities hold per run on any
@@ -161,7 +158,7 @@ void GravitatingLeg() {
     return p;
   };
 
-  // --- GA1 reciprocity -------------------------------------------------
+  // --- reciprocity -----------------------------------------------------
   {
     auto kappa = ConstantCoefficient(self_grav_test::kKappa);
     auto mu = ConstantCoefficient(self_grav_test::kMu);
@@ -303,10 +300,8 @@ void GravitatingLeg() {
 
 }  // namespace
 
-
-// Gate GA8's parallel leg: the two-branch Prony kernels (blob direction,
-// the three modes the multi-branch widening added: mu_inf, and the fast
-// branch's mu_2/eta_2) against FD at n = 32; the thresholds are that
+// The two-branch Prony kernels (blob direction; the three modes mu_inf and
+// the fast branch's mu_2/eta_2) against FD at n = 32; the thresholds are that
 // resolution's measured O(dt^2) floors (mu_2 2.2e-2, eta_2 2.8e-3,
 // mu_inf 5.3e-4; the serial gate documents the factor-4 convergence).
 void PronyLeg() {
@@ -344,8 +339,7 @@ void PronyLeg() {
   const real_t dt = t_final / n_steps;
 
   auto run_forward = [&](Coefficient& mu_inf, Coefficient& mu2,
-                         Coefficient& eta2, ForwardTrajectory* keep,
-                         real_t* J) {
+                         Coefficient& eta2, real_t* J) {
     auto tau1 = RatioCoefficient(eta10, mu10);
     auto tau2 = RatioCoefficient(eta2, mu2);
     std::vector<MaxwellBranch> branches = {{&mu10, &tau1, nullptr},
@@ -362,14 +356,8 @@ void PronyLeg() {
     if (!visco.SolveElastic(m, t)) {
       Check(1.0, 0.0, "prony forward solve");
     }
-    if (keep) {
-      keep->Record(m, t);
-    }
     for (int n = 1; n <= n_steps; n++) {
       ode.Step(m, t, dt_step);
-      if (keep) {
-        keep->Record(m, t);
-      }
     }
     if (!visco.SolveElastic(m, t)) {
       Check(1.0, 0.0, "prony forward solve");
@@ -445,7 +433,7 @@ void PronyLeg() {
       auto bm2 = Bump(mu20, chi_blob, row.which == 1 ? sg : 0.0);
       auto be2 = Bump(eta20, chi_blob, row.which == 2 ? sg : 0.0);
       real_t J = 0.0;
-      run_forward(*bmi.value, *bm2.value, *be2.value, nullptr, &J);
+      run_forward(*bmi.value, *bm2.value, *be2.value, &J);
       fd += (sg > 0 ? J : -J);
     }
     fd /= 2.0 * eps;

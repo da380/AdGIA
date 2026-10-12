@@ -12,6 +12,7 @@
 #pragma once
 
 #include <functional>
+#include <memory>
 #include <vector>
 
 #include "mfem.hpp"
@@ -124,7 +125,7 @@ class RadialHydrostaticBackground {
  * @brief The same physical equilibrium described from a relabelled
  * reference body: given a radial hydrostatic base and a relabelling
  * @f$\boldsymbol{\xi}@f$ (the identity at and outside the surface for the
- * present problem class), owns the transformed chain
+ * referential classes), owns the transformed chain
  * @f[
  *   \tilde\rho = J_\xi\,\rho\circ\xi, \qquad
  *   \tilde C = J_\xi\, Q_\xi^{-T} (\hat C\circ\xi)\, Q_\xi^{-1}, \qquad
@@ -240,6 +241,14 @@ class MinimumNormEquilibriumStress : public mfem::MatrixCoefficient {
   int iterations_ = 0;
 };
 
+/** @brief The mode-th rigid-motion field of @p dim dimensions
+ * (translations first, then rotations about the origin), as a function
+ * for a VectorFunctionCoefficient — shared by the saddle's lifted
+ * border fields and the enclosed components' load integrals, so the
+ * two cannot drift apart. */
+std::function<void(const mfem::Vector&, mfem::Vector&)> RigidMode(int dim,
+                                                                  int mode);
+
 /**
  * @brief The assembled minimum-deviatoric Stokes saddle, kept alive so
  * that repeated solves pay assembly and preconditioner setup once. No
@@ -252,14 +261,6 @@ class MinimumNormEquilibriumStress : public mfem::MatrixCoefficient {
  * MinimumDeviatoricEquilibriumStress, which delegates to this class
  * (and can borrow a shared instance). Serial and parallel.
  */
-/** @brief The mode-th rigid-motion field of @p dim dimensions
- * (translations first, then rotations about the origin), as a function
- * for a VectorFunctionCoefficient — shared by the saddle's lifted
- * border fields and the enclosed components' load integrals, so the
- * two cannot drift apart. */
-std::function<void(const mfem::Vector&, mfem::Vector&)> RigidMode(int dim,
-                                                                  int mode);
-
 class StokesSaddleSolver {
  public:
   /** Parameters as in MinimumDeviatoricEquilibriumStress; the spaces,
@@ -432,15 +433,15 @@ class MinimumDeviatoricEquilibriumStress : public mfem::MatrixCoefficient {
  * @brief The elliptic buffer-taper rule: extend an equilibrium mapping,
  * given (at least) on the body, to the whole ball by a one-off harmonic
  * solve in the buffer (doc/gravitating_elasticity.md §3, "Gravity: three
- * formulations"; the
- * alternative to the analytic TaperedDiffeomorphism when the mapping is
- * only known on the body, e.g.\ discrete or planetmodel-supplied).
+ * formulations"); the alternative to the analytic
+ * TaperedDiffeomorphism when the mapping is only known on the body,
+ * e.g. discrete or planetmodel-supplied.
  *
  * The displacement @f$\mathbf{h} = \boldsymbol{\xi} - \mathrm{id}@f$ is
  * interpolated on the body (nodal, at @p order — the interpolated mode
  * of doc/mappings.md, "The discrete change-of-variables identity"),
- * extended into the buffer by the vector
- * Laplace equation with Dirichlet data @f$\mathbf{h}@f$ on the shared
+ * extended into the buffer by the vector Laplace equation with
+ * Dirichlet data @f$\mathbf{h}@f$ on the shared
  * body surface and @f$\mathbf{0}@f$ on the outer (DtN) sphere, and
  * returned as an owning GridFunctionDiffeomorphism on the parent mesh.
  * The DtN-sphere identity convention holds pointwise (values); by the

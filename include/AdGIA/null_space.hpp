@@ -84,8 +84,8 @@ class RigidRotation : public mfem::VectorCoefficient {
                        1 (y-axis), or 2 (z-axis) are valid. */
 
 #ifndef MFEM_THREAD_SAFE
-  mfem::Vector
-      x_; /**< Internal buffer for the transformed spatial coordinates. */
+  /** Internal buffer for the transformed spatial coordinates. */
+  mfem::Vector x_;
 #endif
 
  public:
@@ -133,7 +133,10 @@ class RigidRotation : public mfem::VectorCoefficient {
 class MappedRotation : public mfem::VectorCoefficient {
  public:
   MappedRotation(Diffeomorphism &map, int component)
-      : mfem::VectorCoefficient(map.GetVDim()), map_(&map), c_(component) {}
+      : mfem::VectorCoefficient(map.GetVDim()), map_(&map), c_(component) {
+    MFEM_VERIFY(vdim == 2 || (component >= 0 && component < 3),
+                "MappedRotation: the component must be 0, 1 or 2.");
+  }
 
   void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
             const mfem::IntegrationPoint &ip) override {

@@ -20,7 +20,7 @@ using DimOrderTypeTuple = std::tuple<int, int, int>;
 
 // The unit interval, square or cube with 20 elements per side (spacing
 // 0.05); elementType 0 gives simplices, 1 tensor-product elements.
-Mesh MakeMesh(int dim, int elementType) {
+inline Mesh MakeMesh(int dim, int elementType) {
   if (dim == 1) {
     return Mesh::MakeCartesian1D(20);
   } else if (dim == 2) {
@@ -34,11 +34,11 @@ Mesh MakeMesh(int dim, int elementType) {
 }
 
 // Vector and matrix with independent standard normal entries. The
-// generator is seeded from std::random_device, so the values differ from
-// run to run; the checks that use them hold for any input.
-Vector RandomVector(int dim) {
-  std::random_device rd;
-  std::mt19937 gen(rd());
+// generator is seeded with a fixed constant, so every call returns the
+// same values and failures are reproducible; the checks that use them
+// hold for any input.
+inline Vector RandomVector(int dim) {
+  std::mt19937 gen(12345u);
   std::normal_distribution<> distrib(0, 1);
 
   auto v = Vector(dim);
@@ -48,9 +48,8 @@ Vector RandomVector(int dim) {
   return v;
 }
 
-DenseMatrix RandomMatrix(int dim) {
-  std::random_device rd;
-  std::mt19937 gen(rd());
+inline DenseMatrix RandomMatrix(int dim) {
+  std::mt19937 gen(12345u);
   std::normal_distribution<> distrib(0, 1);
 
   auto A = DenseMatrix(dim);

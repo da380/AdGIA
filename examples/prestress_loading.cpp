@@ -54,7 +54,7 @@
 // ellipse: a copy of the reference body moved by the ellipse map.
 //
 // Options (defaults in brackets):
-//   -m    mesh file [../data/elastogravity_2d_wide.msh]: 2-D, body
+//   -m    mesh file [../data/disc_buffer_wide_2d.msh]: 2-D, body
 //         (attribute 1) plus buffer (attribute 2) out to the DtN
 //         sphere.
 //   -o    finite element order [2]; the stress generator uses
@@ -74,13 +74,28 @@
 //    ./prestress_loading
 //    ./prestress_loading -G 0.2 -o 3
 //    ./prestress_loading -e 0.3     (single ellipticity)
+//
+// Mesh requirements: 2-D only (checked). Origin-centred disc, in
+// nondimensional units with the body's reference radius 1 (hard-coded: the
+// body is the unit disc, r = 1, and the DtN sphere / buffer outer radius is
+// read from the mesh's bounding box): attribute 1 is the unit-disc body,
+// attribute 2 the buffer out to the DtN sphere (r = 2 for the default).
+// Boundary attributes: the surface of the body (where the surface load acts)
+// is the LARGEST boundary attribute of the body submesh. The default
+// ../data/disc_buffer_wide_2d.msh is made by
+// meshes/disc_with_wide_buffer.py (unit disc, buffer to r = 2). All
+// quantities nondimensional: rho = 1, bare kappa = 2, bare mu = 1.
 // ============================================================================
 
+#include <algorithm>
 #include <cmath>
+#include <functional>
 #include <iomanip>
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <numbers>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -123,15 +138,15 @@ constexpr double kKappaBare = 2.0;
 constexpr double kMuBare = 1.0;
 constexpr int kDtNDegree = 12;
 constexpr double kPi = std::numbers::pi;
+// A map is accepted as a diffeomorphism if its Jacobian determinant stays
+// above this at the element centres.
+constexpr double kMinJacobian = 0.05;
 
-double G = 0.1;       // gravitational constant (p/mu ~ pi G rho^2 / mu)
-double Sigma0 = 0.02; // surface mass load amplitude
-
-// Physical surface mass load: degree-2 zonal pattern about the y axis.
-double SurfaceLoad(const Vector& y) {
-  const double r = y.Norml2();
-  const double c = y[1] / r;
-  return Sigma0 * (1.0 + (2.0 * c * c - 1.0));
+// A number to a few significant digits, for labels.
+std::string Format(double v, int digits = 3) {
+  std::ostringstream os;
+  os << std::setprecision(digits) << v;
+  return os.str();
 }
 
 // The exact linear ellipse map (ball-wide formula; used pure on the
@@ -233,7 +248,7 @@ double L2Norm(const GridFunction& u) {
   Vector zero(vdim);
   zero = 0.0;
   VectorConstantCoefficient z(zero);
-  return const_cast<GridFunction&>(u).ComputeL2Error(z);
+  return u.ComputeL2Error(z);
 }
 
 // |dev S| pointwise (Frobenius), for plotting.
@@ -300,8 +315,10 @@ int main(int argc, char* argv[]) {
   Hypre::Init();
 #endif
 
-  const char* mesh_file = "../data/elastogravity_2d_wide.msh";
+  const char* mesh_file = "../data/disc_buffer_wide_2d.msh";
   int order = 2;
+  double G = 0.1;       // gravitational constant (p/mu ~ pi G rho^2 / mu)
+  double Sigma0 = 0.02;  // surface mass load amplitude
   double single_e = -1.0;
   bool visualization = true;
   const char* csv_file = "prestress_loading.csv";
@@ -326,6 +343,16 @@ int main(int argc, char* argv[]) {
     }
     return 1;
   }
+  if (Root()) {
+    args.PrintOptions(std::cout);
+  }
+
+  // Physical surface mass load: degree-2 zonal pattern about the y axis.
+  auto surface_load = [Sigma0](const Vector& y) {
+    const double r = y.Norml2();
+    const double c = y[1] / r;
+    return Sigma0 * (1.0 + (2.0 * c * c - 1.0));
+  };
 
   Mesh smesh(mesh_file, 1, 1);
   MFEM_VERIFY(smesh.Dimension() == 2, "a 2-D benchmark");
@@ -367,7 +394,7 @@ int main(int argc, char* argv[]) {
 
   examples::CsvTable table(csv_file, {"e", "dev_ratio", "du_rel", "dzeta_rel"});
   table.Meta("title", "Pre-stress in loading: full vs quasi-hydrostatic")
-      .Meta("note", "homogeneous ellipse, G = " + std::to_string(G).substr(0, 5))
+      .Meta("note", "homogeneous ellipse, G = " + Format(G, 3))
       .Meta("xlabel", "ellipticity e")
       .Meta("ylabel", "relative size")
       .Meta("logx", "true")
@@ -388,6 +415,9 @@ int main(int argc, char* argv[]) {
               << "    e    dev(S_e)/|S_e|   |du|/|u|    |dzeta|/|zeta|  "
                  "its(full/hydro)\n";
   }
+
+  // The prescribed vacuum extension does not depend on the ellipticity.
+  auto E = NewRadialVacuumExtension(fes_u, fes_buffer, 1.0, r_out);
 
   for (double e : sweep) {
     const double a = 1.0 + e, b = 1.0 / a;
@@ -415,7 +445,7 @@ int main(int argc, char* argv[]) {
     Diffeomorphism* phi_ptr = &tapered;
     const char* rule = "parameter";
     double min_J = min_jacobian(tapered);
-    if (min_J <= 0.05) {
+    if (min_J <= kMinJacobian) {
       harmonic = std::make_unique<GridFunctionDiffeomorphism>(
           NewHarmonicExtensionMapping(mesh, order, lin, body_attr,
                                       buffer_attr));
@@ -423,7 +453,7 @@ int main(int argc, char* argv[]) {
       rule = "harmonic";
       min_J = min_jacobian(*phi_ptr);
     }
-    if (min_J <= 0.05) {
+    if (min_J <= kMinJacobian) {
       if (Root()) {
         std::cout << std::setw(7) << e
                   << "   (skipped: no diffeomorphic taper, min J = "
@@ -435,7 +465,7 @@ int main(int argc, char* argv[]) {
 
     // The realistic equilibrium stress: relabelled minimum-deviatoric
     // generator, exact elliptical-cylinder self-gravity.
-    auto force = [a, b](const Vector& y, Vector& v) {
+    auto force = [a, b, G](const Vector& y, Vector& v) {
       const double c = 4.0 * kPi * G * kRho * kRho / (a + b);
       v.SetSize(2);
       v[0] = c * b * y[0];
@@ -457,7 +487,8 @@ int main(int argc, char* argv[]) {
 
     // The referential surface load: physical sigma per physical area,
     // composed and weighted with the Nanson area factor.
-    TransformedFunctionCoefficient sigma_comp(lin, SurfaceLoad);
+    TransformedFunctionCoefficient sigma_comp(
+        lin, std::function<real_t(const Vector&)>(surface_load));
     NansonAreaCoefficient nu(lin);
     ProductCoefficient sigma_ref(sigma_comp, nu);
 
@@ -467,7 +498,6 @@ int main(int argc, char* argv[]) {
       ReferentialElasticRheology rheology(dim, C, S, phi_e);
       LinearQuasiStaticReferentialSelfGravitatingProblem problem(
           &fes_u, &fes_zeta, rheology, rho, G, kDtNDegree);
-      auto E = NewRadialVacuumExtension(fes_u, fes_buffer, 1.0, r_out);
       problem.SetPrescribedVacuumExtension(fes_buffer, *E);
       problem.SetSurfaceLoad(sigma_ref, surface);
       problem.SetRelTol(1e-10);
@@ -531,7 +561,7 @@ int main(int argc, char* argv[]) {
       y(1) = x(1) / a;
     });
     ellipse.Transform(map);
-    const std::string tag = " (e = " + std::to_string(shown_e).substr(0, 5) + ")";
+    const std::string tag = " (e = " + Format(shown_e, 3) + ")";
     examples::GLVisWindow("|dev S_e|" + tag, examples::DefaultKeys(dim))
         .Send(ellipse, dev_field);
     examples::GLVisWindow("u_full - u_hydro" + tag, examples::DefaultKeys(dim))

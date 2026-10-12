@@ -1,8 +1,8 @@
 /*
-  Tests for the common adjoint structure (adjoint.hpp): the finite-
-  difference gates of gate GA0 run through AdjointForce /
-  ForwardTrajectory / AdjointSolver / IsotropicKernel instead of the
-  hand-rolled loops of the two adjoint examples.
+  Tests for the common adjoint structure (adjoint.hpp): finite-difference
+  checks of the kernels computed through AdjointForce /
+  ForwardTrajectory / AdjointSolver / IsotropicKernel, the same structure
+  the two adjoint examples use.
 
   The configuration is self-contained: a free unit square (traction
   problem, rigid modes projected), loaded on the top edge by a zero-mean,
@@ -12,10 +12,9 @@
   rigid-invariant for the gates to be clean: both the forward and the
   finite-difference solves run through the same rigid projector, and the
   elastic form annihilates rigid motions, so the discrete kernel identity
-  holds for the projected functional exactly (the examples' remark, made
-  precise in doc/planning/adjoint_note.md).
+  holds for the projected functional exactly.
 
-  Gates (thresholds encode measurements on this configuration; see each
+  Checks (thresholds encode measurements on this configuration; see each
   check):
    - static kappa/mu kernels against central finite differences, 2-D
      (order 2) and 3-D (order 1, coarse hexes — the dimension-general
@@ -39,6 +38,7 @@
 #include <cmath>
 #include <functional>
 #include <memory>
+#include <numbers>
 #include <vector>
 
 #include "AdGIA.hpp"
@@ -54,27 +54,28 @@ constexpr real_t kKappa0 = 5.4;
 constexpr real_t kMu0 = 2.7;
 constexpr real_t kEta0 = 2.7;  // tau = eta / mu = 1
 constexpr real_t kP0 = 0.05;
+constexpr real_t kPi = std::numbers::pi;
 
 // The traction on the top edge/face: normal, zero mean and zero torque.
 void Traction2D(const Vector& x, Vector& t) {
   t.SetSize(2);
   t[0] = 0.0;
-  t[1] = -kP0 * std::cos(2.0 * M_PI * x[0]);
+  t[1] = -kP0 * std::cos(2.0 * kPi * x[0]);
 }
 
 void Traction3D(const Vector& x, Vector& t) {
   t.SetSize(3);
   t = 0.0;
-  t[2] = -kP0 * std::cos(2.0 * M_PI * x[0]) * std::cos(2.0 * M_PI * x[1]);
+  t[2] = -kP0 * std::cos(2.0 * kPi * x[0]) * std::cos(2.0 * kPi * x[1]);
 }
 
 // The windowed two-station baseline on the bottom edge/face: normalised
-// Gaussian windows at x = 0.3 and 0.7 weighting the vertical displacement
-// with opposite signs.
+// Gaussian windows centred at x = 0.55 (positive) and x = 0.2 (negative)
+// weighting the vertical displacement.
 void Station2D(const Vector& x, Vector& v) {
   constexpr real_t s = 0.08;
   auto window = [](real_t x0, real_t c) {
-    return std::exp(-(x0 - c) * (x0 - c) / (s * s)) / (s * std::sqrt(M_PI));
+    return std::exp(-(x0 - c) * (x0 - c) / (s * s)) / (s * std::sqrt(kPi));
   };
   v.SetSize(2);
   v[0] = 0.0;
@@ -86,7 +87,7 @@ void Station3D(const Vector& x, Vector& v) {
   auto window = [](real_t x0, real_t y0, real_t cx) {
     return std::exp(-((x0 - cx) * (x0 - cx) + (y0 - 0.5) * (y0 - 0.5)) /
                     (s * s)) /
-           (s * s * M_PI);
+           (s * s * kPi);
   };
   v.SetSize(3);
   v = 0.0;
@@ -275,14 +276,12 @@ TEST(Adjoint, ViscoelasticKernels) {
   auto cont_weight = [t_final](real_t t) { return t / t_final; };
 
   // One forward run: step to t_final; returns (J at t_final, J at the
-  // interior node, the trapezoid quadrature of w(t) g.u(t)); optionally
-  // records the trajectory (twice: both store policies).
+  // interior node, the trapezoid quadrature of w(t) g.u(t)).
   struct Measured {
     real_t J_end = 0.0, J_mid = 0.0, J_cont = 0.0;
   };
   auto run_forward = [&](Coefficient& kappa, Coefficient& mu,
-                         Coefficient& eta, ForwardTrajectory* keep,
-                         ForwardTrajectory* keep_lean) {
+                         Coefficient& eta) {
     auto tau = RatioCoefficient(eta, mu);
     auto rheology = IsotropicMaxwellRheology::Maxwell(dim, kappa, mu, tau);
     auto prob = LinearQuasiStaticTractionProblem(&fes, rheology, traction,
@@ -304,12 +303,6 @@ TEST(Adjoint, ViscoelasticKernels) {
       }
       if (n == n_steps) {
         out.J_end = Jt;
-      }
-      if (keep) {
-        keep->Record(m, t);
-      }
-      if (keep_lean) {
-        keep_lean->Record(m, t);
       }
     };
     sample(0);
@@ -418,7 +411,6 @@ TEST(Adjoint, ViscoelasticKernels) {
   // === The FD table: one rerun per sign and direction, all three
   // functionals sampled on the way ===
   const real_t eps = 1e-3;
-  Coefficient* m0_of[] = {&kappa0, &mu0, &eta0};
   Coefficient* chi_of[] = {&chi_blob, &chi_all};
   // fd[param][dir] per functional
   Measured fd[3][2];
@@ -429,8 +421,7 @@ TEST(Adjoint, ViscoelasticKernels) {
         auto kp = Bump(kappa0, *chi_of[c], p == 0 ? s : 0.0);
         auto mp = Bump(mu0, *chi_of[c], p == 1 ? s : 0.0);
         auto ep = Bump(eta0, *chi_of[c], p == 2 ? s : 0.0);
-        auto out =
-            run_forward(*kp.value, *mp.value, *ep.value, nullptr, nullptr);
+        auto out = run_forward(*kp.value, *mp.value, *ep.value);
         (s > 0 ? plus : minus) = out;
       }
       fd[p][c].J_end = (plus.J_end - minus.J_end) / (2.0 * eps);
@@ -463,17 +454,18 @@ TEST(Adjoint, ViscoelasticKernels) {
 }
 
 // ============================================================================
-// Rung 3: self-gravity on the mixed class (WP8.3).
+// Self-gravity on the mixed class.
 //
 // The configuration is the canned two-layer disc of the mixed-problem
 // tests (MixedProblemTestCommon.hpp: body attribute 1 of radius 1 inside
 // a buffer shell; kG = 0.05 makes the coupling O(1)). The load is the
 // degree-2 surface mass pattern, held constant in time; the observations
 // are windowed STATION duals at the angles 0.3 and 1.4 — chosen off every
-// mirror image of the load's symmetries (x -> -x and y -> -y), the
-// symmetry trap of the file header — on the displacement (radial
-// component, body surface) and on the POTENTIAL (parent mesh, boundary
-// attribute 1), the latter through the new PotentialForceSlot.
+// mirror image of the load's symmetries (x -> -x and y -> -y), so that
+// no symmetry of the load makes an error invisible to the observation —
+// on the displacement (radial component, body surface) and on the
+// POTENTIAL (parent mesh, boundary attribute 1), the latter through
+// PotentialForceSlot.
 
 namespace {
 
@@ -483,9 +475,9 @@ real_t StationWindow(const Vector& x) {
   const real_t phi = std::atan2(x[1], x[0]);
   auto window = [phi](real_t centre) {
     real_t d = phi - centre;
-    while (d > M_PI) d -= 2.0 * M_PI;
-    while (d < -M_PI) d += 2.0 * M_PI;
-    return std::exp(-d * d / (s * s)) / (s * std::sqrt(M_PI));
+    while (d > kPi) d -= 2.0 * kPi;
+    while (d < -kPi) d += 2.0 * kPi;
+    return std::exp(-d * d / (s * s)) / (s * std::sqrt(kPi));
   };
   return window(1.4) - window(0.3);
 }
@@ -558,7 +550,8 @@ struct GravCase {
 
 }  // namespace
 
-// GA1 on the static gravitating solve: the solve is its own adjoint.
+// Reciprocity of the static gravitating solve: the solve is its own
+// adjoint.
 // (a) displacement-displacement reciprocity g.u(f) = f.u(g);
 // (b) displacement-potential reciprocity h_phi . phi(f) = f . u(h_phi),
 //     which pins the sign and scale of the PotentialForceSlot.
@@ -607,9 +600,9 @@ TEST(Adjoint, GravitatingReciprocity) {
   EXPECT_NEAR(b1 / b2, 1.0, 2e-9);
 }
 
-// The rung-3 FD gate: kappa/mu/eta kernels on the gravitating Maxwell
+// Finite-difference check of the kappa/mu/eta kernels on the gravitating Maxwell
 // body, for a final-time DISPLACEMENT observation and a final-time
-// POTENTIAL observation (the new slot end to end).
+// POTENTIAL observation (the potential slot end to end).
 TEST(Adjoint, GravitatingViscoelasticKernels) {
   const int order = 2, n_steps = 24;
   const real_t t_final = 2.0;
@@ -750,7 +743,7 @@ TEST(Adjoint, GravitatingViscoelasticKernels) {
   gate(sweep_phi, &Measured::J_phi, 5e-3, "potential observation");
 }
 
-// Gate GA8 (the rheology axis, R1): per-branch kernels on a two-branch
+// Per-branch kernels on a two-branch
 // generalised Maxwell body with a long-term shear modulus — the
 // relaxation-spectrum kernels. The parameterisation is
 // (kappa, mu_inf, {mu_k, eta_k}) with tau_k = eta_k / mu_k; each
@@ -790,9 +783,7 @@ TEST(Adjoint, PronyKernels) {
   // One forward run for a parameter set; returns J = g . u(t1).
   auto run_forward = [&](Coefficient& kappa, Coefficient& mu_inf,
                          Coefficient& mu1, Coefficient& eta1,
-                         Coefficient& mu2, Coefficient& eta2,
-                         ForwardTrajectory* keep,
-                         ViscoelasticOperator** keep_op) -> real_t {
+                         Coefficient& mu2, Coefficient& eta2) -> real_t {
     auto tau1 = RatioCoefficient(eta1, mu1);
     auto tau2 = RatioCoefficient(eta2, mu2);
     std::vector<MaxwellBranch> branches = {{&mu1, &tau1, nullptr},
@@ -808,17 +799,10 @@ TEST(Adjoint, PronyKernels) {
     m = 0.0;
     real_t t = 0.0, dt_step = dt;
     EXPECT_TRUE(visco.SolveElastic(m, t));
-    if (keep) {
-      keep->Record(m, t);
-    }
     for (int n = 1; n <= n_steps; n++) {
       ode.Step(m, t, dt_step);
-      if (keep) {
-        keep->Record(m, t);
-      }
     }
     EXPECT_TRUE(visco.SolveElastic(m, t));
-    (void)keep_op;
     return g * prob.Displacement();
   };
 
@@ -898,7 +882,7 @@ TEST(Adjoint, PronyKernels) {
         auto be2 = Bump(eta20, *chi_of[c], p == 5 ? sg : 0.0);
         const real_t J =
             run_forward(*bk.value, *bmi.value, *bm1.value, *be1.value,
-                        *bm2.value, *be2.value, nullptr, nullptr);
+                        *bm2.value, *be2.value);
         fd += (sg > 0 ? J : -J);
       }
       fd /= 2.0 * eps;

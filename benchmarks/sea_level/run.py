@@ -1,6 +1,5 @@
 """Run the sea-level fingerprint benchmark: AdGIA's monolithic solve
-against pyslfp's pseudo-spectral solution of the same problem (rung 1 of
-doc/planning/sea_level_plan.md).
+against pyslfp's pseudo-spectral solution of the same problem.
 
 One spherically layered model (homogeneous by default), one smooth
 analytical initial state (continent at the north pole, ice cap on it)
@@ -21,12 +20,12 @@ eustatic values, and the per-degree amplitudes of the difference.
 Everything lands in <out>/<model>/h<h>/ as sea_level.{csv,json},
 reference.json and report.json.
 
-At low resolution the two sides need not agree closely (this script
-builds the machinery; the resolved comparison belongs to the server
-campaign). The degree-1 row is listed separately: the reference-frame
-convention there has not yet been reconciled.
+At low resolution the two sides need not agree closely. The degree-1 row
+is flagged in the printed table: the two codes do not share a
+reference-frame convention for the degree-1 component, so differences
+there are not discretisation error.
 
---nonlinear (rung 3) adds shoreline migration: AdGIA's Picard loop
+--nonlinear adds shoreline migration: AdGIA's Picard loop
 (-mig) against pyslfp's nonlinear solver, both from the same initial
 state and ice change. The frozen/linear pair is solved too, so the
 report carries the migration effect delta = SL(migrating) - SL(frozen)
@@ -50,9 +49,9 @@ them sampled at its surface nodes (-state/-ice/-dice; the node set is
 mesh- and order-specific, so the sampling is per case). Everything
 downstream — the comparison, the report, the figure — is the simple
 leg's, so the two geographies read side by side. Linear and frozen-C
-only for now (no --nonlinear, --timings or --coast with it).
+only (--nonlinear, --timings and --coast are rejected with it).
 
---timings (no comparison) times the solve across the feature axis —
+--timings (no comparison; incompatible with --nonlinear) times the solve across the feature axis —
 the same melt load as a plain elastic solve (-no-water), with the
 water feedback, with rotation, and with shoreline migration — min and
 mean of --repeat runs, with ratios against the elastic control.
@@ -63,6 +62,10 @@ mean of --repeat runs, with ratios against the elastic control.
     python run.py --timings --repeat 5
     python run.py --earth --lmax 64 --np 8
     python run.py --earth --melt-region west-antarctica --h 0.3 --np 8
+
+Cached driver outputs are tagged with order, method, rotation, lmax,
+buffer and (with --earth) the melt region and fraction; the case
+directory carries h, --coast, --earth and a non-default --buffer.
 
 The build makes a launcher, <build>/benchmarks/sea_level/run, meant to
 be started there so that `runs` is in the build tree.
@@ -344,28 +347,37 @@ def figure(path, em, adgia, ref, frac, report):
 def main() -> None:
     p = argparse.ArgumentParser(
         description=__doc__,
-        formatter_class=argparse.RawDescriptionHelpFormatter)
+        formatter_class=type("Fmt", (argparse.RawDescriptionHelpFormatter,
+                                     argparse.ArgumentDefaultsHelpFormatter),
+                             {}))
     p.add_argument("--method", default="dahlen",
                    choices=["dahlen", "referential"],
-                   help="the problem class of the solve (the referential "
-                        "leg is WP7 phase A; outputs are tagged _ref)")
+                   help="problem class of the solve; outputs of the "
+                        "referential class are tagged _ref")
     p.add_argument("--model", default="homogeneous",
                    help="model name from common/models.py")
     p.add_argument("--h", type=float, default=0.4, help="element size")
-    p.add_argument("--order", type=int, default=2)
-    p.add_argument("--np", type=int, default=4)
+    p.add_argument("--order", type=int, default=2,
+                   help="finite-element order")
+    p.add_argument("--np", type=int, default=4, help="MPI ranks")
     p.add_argument("--lmax", type=int, default=32,
                    help="pyslfp truncation degree")
-    p.add_argument("--buffer", type=float, default=0.5)
-    p.add_argument("--out", type=Path, default=Path("runs"))
-    p.add_argument("--programs", type=Path, default=None)
-    p.add_argument("--mpiexec", default=None)
+    p.add_argument("--buffer", type=float, default=0.5,
+                   help="mesh buffer passed to make_case.py")
+    p.add_argument("--out", type=Path, default=Path("runs"),
+                   help="output root (must be in a build tree or outside "
+                        "the repository)")
+    p.add_argument("--programs", type=Path, default=None,
+                   help="directory containing sea_level_benchmark; "
+                        "located automatically when not given")
+    p.add_argument("--mpiexec", default=None,
+                   help="MPI launcher; mpiexec when not given")
     p.add_argument("--rot", action="store_true",
                    help="rotational feedback on both sides, with pyslfp's "
                         "Earth rotation rate and principal moments as the "
                         "shared data")
     p.add_argument("--nonlinear", action="store_true",
-                   help="rung 3: shoreline migration (AdGIA -mig) against "
+                   help="shoreline migration (AdGIA -mig) against "
                         "pyslfp's nonlinear solver; the frozen/linear pair "
                         "is solved too, for the migration-effect delta")
     p.add_argument("--timings", action="store_true",
@@ -391,20 +403,30 @@ def main() -> None:
                         "does not depend on it; small keeps the stated "
                         "problem in the fingerprint regime, flotation "
                         "changes negligible")
-    p.add_argument("--remake", action="store_true")
-    p.add_argument("--force", action="store_true")
-    p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--remake", action="store_true",
+                   help="rebuild the case mesh even if case.json exists")
+    p.add_argument("--force", action="store_true",
+                   help="rerun the driver even if its outputs exist")
+    p.add_argument("--dry-run", action="store_true",
+                   help="print the commands without running them")
     args = p.parse_args()
 
     if args.earth and (args.nonlinear or args.timings or args.coast):
         raise SystemExit("--earth is the linear comparison on the "
-                         "real-coastline mesh: no --nonlinear, --timings "
-                         "or --coast with it (yet)")
-    programs = find_programs(args.programs)
+                         "real-coastline mesh: --nonlinear, --timings "
+                         "and --coast are not supported with it")
+    if args.timings and args.nonlinear:
+        raise SystemExit("--timings and --nonlinear are not supported "
+                         "together: the timing rows already include "
+                         "shoreline migration")
+    programs = (args.programs or Path("<programs>") if args.dry_run
+                else find_programs(args.programs))
     out = outside_source(args.out)
     case = out / args.model / (f"h{args.h:g}" +
                                ("_coast" if args.coast else "") +
-                               ("_earth" if args.earth else ""))
+                               ("_earth" if args.earth else "") +
+                               ("" if args.buffer == 0.5
+                                else f"_b{args.buffer:g}"))
     case.mkdir(parents=True, exist_ok=True)
 
     # pyslfp first: it also supplies the densities, so that the flotation
@@ -526,7 +548,9 @@ def main() -> None:
     tag = (f"o{args.order}" +
            ("_ref" if args.method == "referential" else "") +
            ("_rot" if args.rot else "") +
-           (f"_{args.melt_region.replace('-', '_')}" if args.earth else ""))
+           (f"_{args.melt_region.replace('-', '_')}"
+            f"_f{args.melt_fraction:g}" if args.earth else "") +
+           f"_l{args.lmax}_b{args.buffer:g}")
     slcsv, sljson = solve(tag, rot_args if args.rot else [])
     if args.nonlinear:
         # The migration runs tight (-mig-inexact 0): this solver stack
@@ -611,7 +635,7 @@ def main() -> None:
           f"(rel {report['diff_ocean_rel']:.3f})")
     print("  l    |SL|_adgia    |SL|_pyslfp   |diff|")
     for row in report["degrees"]:
-        note = "   (frame convention unreconciled)" if row["l"] == 1 else ""
+        note = "   (degree-1 frame conventions differ)" if row["l"] == 1 else ""
         print(f"  {row['l']:<3} {row['adgia']:<13.4g} "
               f"{row['pyslfp']:<13.4g} {row['diff']:.4g}{note}")
     if args.rot:
@@ -627,7 +651,7 @@ def main() -> None:
     if not args.nonlinear:
         return
 
-    # Rung 3: shoreline migration against pyslfp's nonlinear solver, from
+    # Shoreline migration against pyslfp's nonlinear solver, from
     # the same initial state and ice-thickness change. The primary row is
     # the migrating-fingerprint comparison; the sharp probe is the
     # migration effect delta = SL(migrating) - SL(frozen) on each side,
@@ -683,7 +707,7 @@ def main() -> None:
            frac, report_delta)
 
     mg = report_nl["adgia"]
-    print(f"\nnonlinear (rung 3): AdGIA {mg.get('mig_passes', '?')} extra "
+    print(f"\nnonlinear: AdGIA {mg.get('mig_passes', '?')} extra "
           f"passes (relative SL1 increment {mg.get('mig_last_change', 0):.2e}, "
           f"{mg.get('mig_outer_iterations', '?')} outer iterations)")
     print(f"  migrating fingerprints: ocean-RMS rel diff "

@@ -32,7 +32,7 @@ std::string Rheology::BranchLabel(int k) const {
 Coefficient& Rheology::BranchShearModulus(int /*k*/) const {
   MFEM_ABORT("Rheology::BranchShearModulus: this rheology has no scalar "
              "branch moduli (TraceFreeInternalVariables() is false).");
-  return *static_cast<Coefficient*>(nullptr);
+  std::abort();  // unreachable; MFEM_ABORT is not declared [[noreturn]]
 }
 
 // ---------------------------------------------------------------------------
@@ -44,7 +44,7 @@ namespace {
 [[noreturn]] void NoBranches(const char* cls, const char* method) {
   MFEM_ABORT(cls << "::" << method
                  << ": a purely elastic rheology has no branches.");
-  std::abort();
+  std::abort();  // unreachable; MFEM_ABORT is not declared [[noreturn]]
 }
 
 /// form.AddDomainIntegrator(integ[, *marker]).
@@ -435,16 +435,28 @@ class CompositeStiffness : public ElasticStiffness {
   }
 
   void AddIntegrators(BilinearForm& form, Array<int>* marker) override {
-    if (marker) {
-      // Nested composite: restrict every region to the outer marker.
-      for (auto& m : markers_) {
-        MFEM_VERIFY(m.Size() == marker->Size(),
+    // The forms reference markers_ by address, and forms are rebuilt on
+    // reassembly, so this is called repeatedly. The narrowing is
+    // recomputed from the regions' own markers each time (never
+    // compounded in place), which keeps repeated calls idempotent and a
+    // call with a different outer marker correct.
+    for (int i = 0; i < static_cast<int>(markers_.size()); i++) {
+      const auto& base = r_->RegionMarker(i);
+      auto& m = markers_[i];
+      if (marker) {
+        // Nested composite: restrict every region to the outer marker.
+        MFEM_VERIFY(base.Size() == marker->Size(),
                     "CompositeRheology: marker sizes differ.");
         for (int a = 0; a < m.Size(); a++) {
-          m[a] = m[a] && (*marker)[a];
+          m[a] = base[a] && (*marker)[a];
+        }
+      } else {
+        for (int a = 0; a < m.Size(); a++) {
+          m[a] = base[a];
         }
       }
-    } else {
+    }
+    if (!marker) {
       r_->VerifyCoverage(*form.FESpace()->GetMesh());
     }
     for (int i = 0; i < r_->NumRegions(); i++) {

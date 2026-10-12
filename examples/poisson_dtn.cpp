@@ -16,16 +16,16 @@ Gauss-Seidel, the comm-aware OrthoSolver, and per-rank output files.
 ---
 ### Boundary Condition Methods
 
-1.  **Homogeneous Neumann:** A `∂ϕ/∂n = 0` condition is applied on the
+0.  **Homogeneous Neumann (-mth 0):** A `∂ϕ/∂n = 0` condition is applied on the
     mesh's exterior boundary. This approach is general but is only
     accurate if the boundary is far from the source density.
 
-2.  **Dirichlet-to-Neumann (DtN):** An exact DtN operator is added to the
+1.  **Dirichlet-to-Neumann (DtN) (-mth 1):** An exact DtN operator is added to the
     system matrix. For 2D problems, an additional correction is also
     applied to the right-hand-side vector. This method requires a
     spherical exterior boundary.
 
-3.  **Multipole Expansion:** The right-hand-side vector is modified based
+2.  **Multipole Expansion (-mth 2):** The right-hand-side vector is modified based
     on a multipole expansion of the interior density. This method also
     requires a spherical exterior boundary.
 
@@ -42,7 +42,7 @@ Gauss-Seidel, the comm-aware OrthoSolver, and per-rank output files.
 ### Command-Line Options
 
 Options (defaults in brackets):
-  -m    mesh file [../data/circular_offset.msh]: attribute 1 is the
+  -m    mesh file [../data/offset_disc_2d.msh]: attribute 1 is the
         source body, as described above; the DtN and multipole
         methods need a spherical exterior boundary.
   -o    finite element polynomial order [1].
@@ -52,29 +52,38 @@ Options (defaults in brackets):
         parallel build only.
   -deg  truncation degree of the DtN / multipole expansion [8]; used
         by methods 1 and 2 only.
-  -res  set to 1 to output the pointwise error against the exact
-        uniform-sphere solution instead of the potential [0]; needs
+  -res / -no-res   output the pointwise error against the exact
+        uniform-sphere solution instead of the potential [off]; needs
         a spherical source body.
   -mth  solution method [0]: 0 = Neumann, 1 = DtN, 2 = multipole
         (1 and 2 need a spherical exterior boundary).
-  -lin  problem type [0]: 0 = reference density, 1 = the linearised
-        density perturbation of a rigid translation.
+  -lin / -no-lin   problem type [-no-lin]: the reference density, or
+        (-lin) the linearised density perturbation of a rigid
+        translation.
+  -vis / -no-vis   send the field to GLVis [on]; -no-vis runs headless.
 
 ### Sample runs
 
     ./poisson_dtn -o 2
-    ./poisson_dtn -o 2 -mth 1 -res 1     (DtN, error against the exact solution)
-    mpiexec -np 4 ./poisson_dtn -o 2 -mth 2 -lin 1   (parallel build)
+    ./poisson_dtn -o 2 -mth 1 -res       (DtN, error against the exact solution)
+    mpiexec -np 4 ./poisson_dtn -o 2 -mth 2 -lin   (parallel build)
 
 The solution (or, with -res 1, the error) is written to refined.mesh and
 sol.gf (one file per rank in parallel) and sent to GLVis if a server is
-running.
+running (-vis, the default). The files are always written.
+
+### Mesh requirements
+
+2-D or 3-D. Attribute 1 is the source body (uniform density 1), other
+attributes the surrounding region; boundary attribute 1 is the surface of the
+source body (a circle or sphere for -res). The DtN and multipole methods need
+the exterior boundary to be a circle or
+sphere. Default ../data/offset_disc_2d.msh (meshes/offset_disc.py, an
+off-centre disk inside a larger disk). Nondimensional, G = 1.
 
 *******************************************************************************/
 
-#include <cassert>
 #include <chrono>
-#include <cstddef>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -82,9 +91,10 @@ running.
 #include <numbers>
 #include <sstream>
 
-#include "mfem.hpp"
 #include "AdGIA.hpp"
+#include "mfem.hpp"
 #include "uniform_sphere.hpp"
+#include "visualisation.hpp"
 
 using namespace std;
 using namespace mfem;
@@ -135,14 +145,15 @@ int main(int argc, char *argv[]) {
 #endif
 
   // Set default options.
-  const char *mesh_file = "../data/circular_offset.msh";
+  const char *mesh_file = "../data/offset_disc_2d.msh";
   int order = 1;
   int refinement = 0;
   int parallel_refinement = 0;
   int degree = 8;
-  int residual = 0;
+  bool residual = false;
   int method = 0;
-  int linearised = 0;
+  bool linearised = false;
+  bool visualization = true;
 
   // Deal with options.
   OptionsParser args(argc, argv);
@@ -155,12 +166,15 @@ int main(int argc, char *argv[]) {
                  "number of parallel mesh refinements (parallel build only)");
   args.AddOption(&degree, "-deg", "--degree",
                  "Truncation degree of the DtN / multipole expansion.");
-  args.AddOption(&residual, "-res", "--residual",
+  args.AddOption(&residual, "-res", "--residual", "-no-res", "--no-residual",
                  "Output the residual from reference solution");
   args.AddOption(&method, "-mth", "--method",
                  "Solution method: 0 = Neumann, 1 = DtN, 2 = multipole.");
-  args.AddOption(&linearised, "-lin", "--linearised",
-                 "Solve reference (0) or linearised (1) problem.");
+  args.AddOption(&linearised, "-lin", "--linearised", "-no-lin",
+                 "--no-linearised",
+                 "Solve the linearised (rather than the reference) problem.");
+  args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
+                 "--no-visualization", "Enable or disable GLVis.");
 
   args.Parse();
   if (!args.Good()) {
@@ -200,13 +214,10 @@ int main(int argc, char *argv[]) {
   auto c1 = MeshCentroid(&mesh, dom_marker);
   auto [found1, same1, r1] = SphericalBoundaryRadius(&mesh, bdr_marker, c1);
 
-  // Properties of the full mesh.
-  auto c2 = MeshCentroid(&mesh);
-  auto [found2, same2, r2] = SphericalBoundaryRadius(&mesh, c2);
-
   // If residual from exact solution required, check mesh is appropriate.
   if (residual) {
-    assert(found1 == 1 && same1 == 1);
+    MFEM_VERIFY(found1 == 1 && same1 == 1,
+                "-res needs a spherical source body (boundary attribute 1).");
   }
 
   // Set up the finite element spaces.
@@ -234,7 +245,7 @@ int main(int argc, char *argv[]) {
 
   // For the linearised problem, we need a discontinuous vector L2 space.
   std::unique_ptr<SpaceType> vfes;
-  if (linearised == 1) {
+  if (linearised) {
     vfes = std::make_unique<SpaceType>(&mesh, &L2, dim);
   }
 
@@ -267,7 +278,7 @@ int main(int argc, char *argv[]) {
 
   // Project displacement to a gridfunction if necessary.
   std::unique_ptr<FieldType> u;
-  if (linearised == 1) {
+  if (linearised) {
     auto uCoeff1 = VectorConstantCoefficient(uv);
     auto uCoeff = PWVectorCoefficient(dim);
     uCoeff.UpdateCoefficient(1, uCoeff1);
@@ -275,13 +286,13 @@ int main(int argc, char *argv[]) {
     u->ProjectCoefficient(uCoeff);
   }
 
-  if (linearised == 0) {
+  if (!linearised) {
     // For reference problem set up the linear form.
     b.AddDomainIntegrator(new DomainLFIntegrator(rho_coeff));
     b.Assemble();
 
     // For the DtN method in 2D add the additional term to the rhs.
-    if (method == 1 and dim == 2) {
+    if (method == 1 && dim == 2) {
       x = 1.0;
       auto mass = b(x);
       auto l = LFType(&fes);
@@ -304,7 +315,7 @@ int main(int argc, char *argv[]) {
   // If using the multipole method, modify the rhs. (The parallel
   // operators are constructed on the communicator.)
   if (method == 2) {
-    if (linearised == 0) {
+    if (!linearised) {
 #ifdef MFEM_USE_MPI
       auto c =
           PoissonMultipoleOperator(MPI_COMM_WORLD, dfes.get(), &fes, degree);
@@ -402,9 +413,9 @@ int main(int argc, char *argv[]) {
 
   auto exact = UniformSphereSolution(dim, c1, r1);
   auto exact_coeff =
-      linearised == 0 ? exact.Coefficient() : exact.LinearisedCoefficient(uv);
+      !linearised ? exact.Coefficient() : exact.LinearisedCoefficient(uv);
 
-  if (residual == 1) {
+  if (residual) {
     // Subtract exact solution.
     auto y = FieldType(&fes);
     y.ProjectCoefficient(exact_coeff);
@@ -425,7 +436,7 @@ int main(int argc, char *argv[]) {
     x -= px;
   }
 
-  if (residual == 1) {
+  if (residual) {
     // Relative L2 error of the (mean-free) residual on the source body.
     auto submesh = SubMeshType::CreateFromDomain(mesh, dom_marker);
     auto subfes = SpaceType(&submesh, &H1);
@@ -451,18 +462,9 @@ int main(int argc, char *argv[]) {
   x.Save(sol_ofs);
 
   // Visualise if glvis is open.
-  char vishost[] = "localhost";
-  int visport = 19916;
-  socketstream sol_sock(vishost, visport);
-  sol_sock.precision(8);
-#ifdef MFEM_USE_MPI
-  sol_sock << "parallel " << Mpi::WorldSize() << " " << Mpi::WorldRank()
-           << "\n";
-#endif
-  sol_sock << "solution\n" << mesh << x << flush;
-  if (dim == 2) {
-    sol_sock << "keys Rjlbc\n" << flush;
-  } else {
-    sol_sock << "keys RRRilmc\n" << flush;
+  if (visualization) {
+    examples::GLVisWindow win(residual ? "error" : "potential",
+                              examples::DefaultKeys(dim));
+    win.Send(mesh, x);
   }
 }

@@ -144,6 +144,7 @@ void RunCase(int dim, int elementType, int order, const std::string& label) {
   // Projected CG with a projected BoomerAMG.
   HypreBoomerAMG amg(A);
   amg.SetSystemsOptions(pfes.GetVDim(), true);
+  // Nodal systems AMG for the vector displacement space.
   HYPRE_BoomerAMGSetNodal(amg, 4);
   HYPRE_BoomerAMGSetNodalDiag(amg, 1);
   HYPRE_BoomerAMGSetCycleRelaxType(amg, 8, 3);

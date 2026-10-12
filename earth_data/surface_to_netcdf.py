@@ -58,9 +58,9 @@ def read_nodes(path: Path):
 
 
 def grid(xyz: np.ndarray, values: np.ndarray, nlat: int, nlon: int):
-    # Unit directions of the nodes and of the target grid; linear
-    # interpolation in R^3 restricted to the sphere handles the poles
-    # and the date line without special cases.
+    # Unit directions of the nodes and of the target grid; a thin-plate
+    # RBF in R^3 evaluated on the sphere handles the poles and the date
+    # line without special cases.
     d = xyz / np.linalg.norm(xyz, axis=1, keepdims=True)
     lats = np.linspace(90.0, -90.0, nlat)
     lons = np.arange(nlon) * (360.0 / nlon)
@@ -127,12 +127,22 @@ def main() -> None:
     p = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("csv", type=Path)
-    p.add_argument("-o", "--out", type=Path, default=None)
-    p.add_argument("--nlat", type=int, default=181)
-    p.add_argument("--nlon", type=int, default=360)
-    p.add_argument("--name", default=None)
-    p.add_argument("--plot", action="store_true")
+    p.add_argument("csv", type=Path,
+                   help="exported surface CSV (header x,y,z,value)")
+    p.add_argument("-o", "--out", type=Path, default=None,
+                   help="output NetCDF file (default: the CSV with a "
+                        ".nc extension)")
+    p.add_argument("--nlat", type=int, default=181,
+                   help="latitude rows, from +90 to -90 degrees inclusive "
+                        "(default %(default)s, one per degree)")
+    p.add_argument("--nlon", type=int, default=360,
+                   help="longitude columns over [0, 360) degrees "
+                        "(default %(default)s, one per degree)")
+    p.add_argument("--name", default=None,
+                   help="variable name in the file (default: the CSV stem)")
+    p.add_argument("--plot", action="store_true",
+                   help="also write a quick-look PNG beside the output "
+                        "(default off)")
     args = p.parse_args()
 
     name = args.name or args.csv.stem

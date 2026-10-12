@@ -4,10 +4,9 @@
 #include "TestCommon.hpp"
 
 /*
-  Gates for shoreline migration (ShorelineMigration; WP5 of
-  doc/planning/sea_level_plan.md) on the canned two-layer meshes, with
+  Gates for shoreline migration (ShorelineMigration) on the canned two-layer meshes, with
   the fingerprint-style analytical state: a super-Gaussian continent at
-  the pole (+y in 2-D, +z in 3-D), an ice cap on it, and a melt load
+  the pole (+z), an ice cap on it, and a melt load
   scaled by an amplitude.
 
   1. The off-switch (max_iterations = 0) equals the frozen-C solve with
@@ -38,8 +37,8 @@ constexpr double kCapWidth = 0.35;
 constexpr double kShore = 5e-3;
 
 double G0(int dim) {
-  return dim == 2 ? 2.0 * std::numbers::pi * kG * kRho
-                  : 4.0 * std::numbers::pi * kG * kRho / 3.0;
+  MFEM_VERIFY(dim == 3, "the water load is 3-D only");
+  return 4.0 * std::numbers::pi * kG * kRho / 3.0;
 }
 
 double Colat(const Vector& x) {
@@ -128,14 +127,10 @@ Run Migrate(Case& c, VectorCoefficient& grad_phi0, Coefficient& sl0,
   Run r;
   r.p = c.Problem();
   if (rotate) {
-    Vector moments(c.dim == 2 ? 1 : 3);
-    if (c.dim == 2) {
-      moments[0] = 2.0;
-    } else {
-      moments[0] = 1.2;
-      moments[1] = 1.3;
-      moments[2] = 2.0;
-    }
+    Vector moments(3);
+    moments[0] = 1.2;
+    moments[1] = 1.3;
+    moments[2] = 2.0;
     r.p->SetRotation(0.1, moments);
   }
   ShorelineMigration::Options opt;
@@ -210,7 +205,9 @@ TEST_P(ShorelineTest, MigrationConvergesAndConservesMass) {
   GridFunctionCoefficient pc(
       const_cast<GridFunction*>(&mig.p->PotentialOnBody()));
   SumCoefficient tau(ug, pc);
-  FunctionCoefficient ginv([g0](const Vector&) { return kRhoW / g0; });
+  // Pointwise 1/g = 1/(g0 |x|), the orchestrator's own route.
+  FunctionCoefficient ginv(
+      [g0](const Vector& x) { return kRhoW / (g0 * x.Norml2()); });
   ProductCoefficient w(ginv, C);
   ProductCoefficient wtau(w, tau);
   // sigma_d(C) through the orchestrator's own law, rebuilt test-side:
@@ -275,7 +272,7 @@ TEST_P(ShorelineTest, QuadraticAmplitudeScaling) {
 
 TEST_P(ShorelineTest, InexactMatchesTight) {
   const auto [dim, order] = GetParam();
-  if (dim == 3 && order > 1) {
+  if (order > 1) {
     GTEST_SKIP() << "covered at order 1";
   }
   Case c(dim, order);
@@ -310,7 +307,7 @@ TEST_P(ShorelineTest, InexactMatchesTight) {
 
 TEST_P(ShorelineTest, GuardEscalatesToTight) {
   const auto [dim, order] = GetParam();
-  if (dim == 3 && order > 1) {
+  if (order > 1) {
     GTEST_SKIP() << "covered at order 1";
   }
   Case c(dim, order);
@@ -337,7 +334,7 @@ TEST_P(ShorelineTest, GuardEscalatesToTight) {
 
 TEST_P(ShorelineTest, ComposesWithRotation) {
   const auto [dim, order] = GetParam();
-  if (dim == 3 && order > 1) {
+  if (order > 1) {
     GTEST_SKIP() << "covered at order 1";
   }
   Case c(dim, order);

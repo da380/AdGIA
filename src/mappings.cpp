@@ -5,6 +5,8 @@
 
 #include "AdGIA/mappings.hpp"
 
+#include <algorithm>
+
 namespace AdGIA {
 
 using namespace mfem;
@@ -284,10 +286,8 @@ void GridFunctionDiffeomorphism::EvalGradient(DenseMatrix& F,
 
 real_t TransformedFunctionCoefficient::Eval(ElementTransformation& T,
                                             const IntegrationPoint& ip) {
-  real_t data[3];
-  Vector y(data, 3);
-  xi_->Eval(y, T, ip);
-  return f_(y);
+  xi_->Eval(y_, T, ip);
+  return f_(y_);
 }
 
 void TransformedVectorFunctionCoefficient::Eval(Vector& V,
@@ -377,7 +377,7 @@ void SetDisplacement(GridFunction& h, Diffeomorphism& xi) {
 }  // namespace
 
 GridFunctionDiffeomorphism Interpolate(Diffeomorphism& xi, Mesh& mesh) {
-  int ordering;
+  int ordering = Ordering::byVDIM;
   auto fec = GeometricCollection(mesh, ordering);
   auto fes = std::make_unique<FiniteElementSpace>(
       &mesh, fec.get(), mesh.SpaceDimension(), ordering);
@@ -423,7 +423,7 @@ real_t MaxIdentityDeviation(Diffeomorphism& xi, Mesh& mesh,
 #ifdef MFEM_USE_MPI
 
 GridFunctionDiffeomorphism Interpolate(Diffeomorphism& xi, ParMesh& mesh) {
-  int ordering;
+  int ordering = Ordering::byVDIM;
   auto fec = GeometricCollection(mesh, ordering);
   auto fes = std::make_unique<ParFiniteElementSpace>(
       &mesh, fec.get(), mesh.SpaceDimension(), ordering);

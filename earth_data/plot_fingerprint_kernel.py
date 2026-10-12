@@ -26,8 +26,10 @@ Usage:
       [--ice-threshold 1.0]  (metres of present-day ice)
       [--no-mask]            (toy geographies: draw unmasked maps only)
 
-Run from the build tree as <build>/earth_data/plot_fingerprint_kernel;
-the figure lands there.
+Needs the `maps` extra of the poetry project (cartopy and pyshtools:
+`poetry install --extras maps`) for pyslfp's maps. Run from the build
+tree as <build>/earth_data/plot_fingerprint_kernel; the figure lands
+there.
 """
 
 from __future__ import annotations
@@ -77,29 +79,53 @@ def main() -> None:
         description="Reciprocity-kernel maps, ice-masked, via pyslfp.")
     p.add_argument("csv", nargs="+", type=Path,
                    help="kernel CSVs (1-D model first, 3-D second)")
-    p.add_argument("--titles", nargs="+", default=None)
-    p.add_argument("--out", type=Path, default=Path("fingerprint_kernel.png"))
-    p.add_argument("--obs-lat", type=float, default=42.36)
-    p.add_argument("--obs-lon", type=float, default=-71.06)
-    p.add_argument("--nlat", type=int, default=361)
-    p.add_argument("--nlon", type=int, default=720)
+    p.add_argument("--titles", nargs="+", default=None,
+                   help="one column title per CSV (default: '1-D model' "
+                        "and '3-D $-$ 1-D', or '3-D model' with "
+                        "--side-by-side)")
+    p.add_argument("--out", type=Path, default=Path("fingerprint_kernel.png"),
+                   help="output PNG (default %(default)s)")
+    p.add_argument("--obs-lat", type=float, default=42.36,
+                   help="latitude of the observation site, in degrees "
+                        "north (default %(default)s, Boston); starred on "
+                        "the maps")
+    p.add_argument("--obs-lon", type=float, default=-71.06,
+                   help="longitude of the observation site, in degrees "
+                        "east (default %(default)s, Boston)")
+    p.add_argument("--nlat", type=int, default=361,
+                   help="latitude rows of the plotting grid, +90 to -90 "
+                        "degrees inclusive (default %(default)s, half a "
+                        "degree; finer than surface_to_netcdf's 181, "
+                        "deliberately, for map quality)")
+    p.add_argument("--nlon", type=int, default=720,
+                   help="longitude columns of the plotting grid over "
+                        "[0, 360) degrees (default %(default)s, half a "
+                        "degree; surface_to_netcdf's 360 differs "
+                        "deliberately)")
     p.add_argument("--version", default="ICE7G",
-                   choices=["ICE5G", "ICE6G", "ICE7G"])
-    p.add_argument("--ice-lmax", type=int, default=180)
-    p.add_argument("--ice-threshold", type=float, default=1.0)
+                   choices=["ICE5G", "ICE6G", "ICE7G"],
+                   help="ice model for the mask (default %(default)s)")
+    p.add_argument("--ice-lmax", type=int, default=180,
+                   help="spherical-harmonic truncation degree of the "
+                        "ice model (default %(default)s)")
+    p.add_argument("--ice-threshold", type=float, default=1.0,
+                   help="ice thickness, in metres, above which a point is "
+                        "inside the mask (default %(default)s)")
     p.add_argument("--no-mask", action="store_true",
-                   help="skip the ice mask (toy geographies)")
+                   help="skip the ice mask, for toy geographies (default: "
+                        "mask)")
     p.add_argument("--side-by-side", action="store_true",
                    help="two kernels on one scale instead of kernel + "
-                        "difference")
+                        "difference (default off)")
     p.add_argument("--ice-dates", nargs="+", type=float, default=None,
                    help="mask each column by the ICE-7G extent at this "
-                        "date (ka BP), one per CSV [present for all] — "
+                        "date in ka BP, one per CSV (default: the "
+                        "present day for all) — "
                         "ice-history kernels should be masked by the "
                         "sheet AT THAT EPOCH")
     p.add_argument("--global-only", action="store_true",
-                   help="global maps only (no Greenland/Antarctica zoom "
-                        "rows) — the right layout for deglacial-time "
+                   help="global maps only, no Greenland/Antarctica zoom rows "
+                        "(default off) — the right layout for deglacial-time "
                         "ice kernels and for viscosity-kernel depth "
                         "shells")
     p.add_argument("--cbar-label", default=None,

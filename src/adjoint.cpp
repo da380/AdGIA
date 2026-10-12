@@ -378,9 +378,9 @@ void SeaLevelLoadKernel::AddPair(real_t w, const AdjointPair& p) {
   GridFunctionCoefficient slc(sl_.get());
 
   // Directional pairings: delta J = +g int dsigma(t) SL1+ dS in the
-  // LIBRARY's load/readout conventions (the FD gate fixed the sign;
-  // the paper's eq. 63 carries -g in its own conventions), the
-  // impulses with weight one (the fingerprint solves' singular parts).
+  // LIBRARY's load/readout conventions (the paper's eq. 63 carries -g
+  // in its own conventions), the impulses with weight one (the
+  // fingerprint solves' singular parts).
   for (std::size_t i = 0; i < directions_.size(); i++) {
     directions_[i]->SetTime(p.t);
     ProductCoefficient ds_sl(*directions_[i], slc);
@@ -415,10 +415,14 @@ void SeaLevelLoadKernel::AddPair(real_t w, const AdjointPair& p) {
       return;
     }
     if (!times_.empty() && times_.back() == p.t) {
-      *idot_[times_.size() - 1] = tmp;  // the node's latest smooth value
+      // Second pairing at an observation node: the post-jump state,
+      // valid on the node's forward-LEFT side. The arrived value in
+      // idot_right_ keeps the forward-right side.
+      *idot_[times_.size() - 1] = tmp;
     } else {
       times_.push_back(p.t);
       idot_.push_back(std::make_unique<GridFunction>(tmp));
+      idot_right_.push_back(std::make_unique<GridFunction>(tmp));
     }
   }
 }
@@ -428,21 +432,23 @@ void SeaLevelLoadKernel::Finalize() {
     finalized_ = true;
     return;
   }
-  // idot_[n] currently holds the integrand f(t_n); arrival order is
-  // DESCENDING forward time. Replace it by the backward cumulative
-  // trapezoid D(t_n) = int_{t_n}^{t_1} f ds, plus every atom at or
-  // after t_n.
+  // idot_[n] holds the forward-left integrand f(t_n^-) and
+  // idot_right_[n] the forward-right one f(t_n^+); arrival order is
+  // DESCENDING forward time. Replace idot_[n] by the backward
+  // cumulative trapezoid D(t_n) = int_{t_n}^{t_1} f ds — each
+  // interval pairing the one-sided values valid on it — plus every
+  // atom at or after t_n.
   const int K = static_cast<int>(times_.size());
   GridFunction cum(&sea_.SurfaceSpace());
   cum = 0.0;
-  std::unique_ptr<GridFunction> prev;
+  std::unique_ptr<GridFunction> prev_left;
   for (int k = 0; k < K; k++) {
-    if (prev) {
+    if (prev_left) {
       const real_t dt = times_[k - 1] - times_[k];
-      cum.Add(0.5 * dt, *prev);
-      cum.Add(0.5 * dt, *idot_[k]);
+      cum.Add(0.5 * dt, *prev_left);       // f(t_{k-1}^-), upper end
+      cum.Add(0.5 * dt, *idot_right_[k]);  // f(t_k^+), lower end
     }
-    prev = std::make_unique<GridFunction>(*idot_[k]);
+    prev_left = std::make_unique<GridFunction>(*idot_[k]);
     *idot_[k] = cum;
     for (std::size_t a = 0; a < atoms_.size(); a++) {
       if (atoms_t_[a] >= times_[k]) {
@@ -450,6 +456,7 @@ void SeaLevelLoadKernel::Finalize() {
       }
     }
   }
+  idot_right_.clear();
   finalized_ = true;
 }
 
@@ -475,6 +482,10 @@ void AdjointSolver::Pair(real_t w, const AdjointPair& p) {
 }
 
 void AdjointSolver::ResolveSlots(LinearQuasiStaticProblem& problem) {
+  // Re-resolved per run: a later force may no longer need a slot, and
+  // a stale pointer must not survive into the next sweep.
+  phi_slot_ = nullptr;
+  border_slot_ = nullptr;
   bool needs_phi = force_->HasContinuousPotential();
   bool needs_border = false;
   for (int i = 0; i < force_->NumObservations(); i++) {
@@ -547,7 +558,7 @@ bool AdjointSolver::ImpulseSolve(int obs, real_t s) {
 
 void AdjointSolver::ApplyJump(const GridFunction& udag_g, Vector& mdag) {
   // [m+] = (1/tau) eps-projection of the impulsive response, per branch at
-  // its nodes (adjoint_note.md, eq. 80 of the paper).
+  // its nodes (Yu et al. 2025, eq. 80).
   op_->ComputeStrain(udag_g, strain_);
   const int nd_full = op_->InternalScalarSpace().GetVSize();
   for (int b = 0; b < op_->NumBranches(); b++) {
@@ -578,7 +589,7 @@ bool AdjointSolver::RunEvolution() {
       MFEM_VERIFY(op.NumBranchNodes(b) ==
                       op.InternalScalarSpace().GetVSize(),
                   "AdjointSolver: kernel accumulators support whole-mesh "
-                  "branches for now (region-restricted branches need "
+                  "branches only (region-restricted branches need "
                   "marker-restricted kernel quadrature).");
     }
   }
@@ -679,28 +690,34 @@ bool AdjointSolver::RunEvolution() {
     }
 
     // Forward fields at node n and the trapezoid weights of its two
-    // subintervals (adjoint_note.md: at an observation the node weight
-    // splits across the jump — the forward-right part pairs the arrived
-    // state, the forward-left part the post-jump one).
-    const GridFunction& u_f = fwd.Displacement(n);
-    fwd.Strain(n, dbuf);
-    *d_f = dbuf;
-    for (int b = 0; b < nb; b++) {
-      fop.BranchToFull(fwd.State(n), b, mbuf);
-      *m_f[b] = mbuf;
+    // subintervals (at an observation the node weight splits across
+    // the jump — the forward-right part pairs the arrived state, the
+    // forward-left part the post-jump one). With no registered
+    // accumulators the pairing fields are never fetched: lean
+    // trajectory policies would otherwise re-solve per node for
+    // nothing.
+    const bool pairing = !kernels_.empty();
+    const GridFunction* u_f = pairing ? &fwd.Displacement(n) : nullptr;
+    if (pairing) {
+      fwd.Strain(n, dbuf);
+      *d_f = dbuf;
+      for (int b = 0; b < nb; b++) {
+        fop.BranchToFull(fwd.State(n), b, mbuf);
+        *m_f[b] = mbuf;
+      }
     }
     const real_t wR = n < N ? 0.5 * (fwd.Time(n + 1) - fwd.Time(n)) : 0.0;
     const real_t wL = n > 0 ? 0.5 * (fwd.Time(n) - fwd.Time(n - 1)) : 0.0;
 
     auto pair_state = [&](real_t w) {
-      if (w <= 0.0) {
+      if (!pairing || w <= 0.0) {
         return;
       }
       for (int b = 0; b < nb; b++) {
         op.BranchToFull(mdag, b, mbuf);
         *mdag_f[b] = mbuf;
       }
-      Pair(w, AdjointPair{u_f, d_f.get(), m_ptr, prob.Displacement(),
+      Pair(w, AdjointPair{*u_f, d_f.get(), m_ptr, prob.Displacement(),
                           mdag_ptr, fwd.Time(n), false, &prob});
     };
 
@@ -721,8 +738,10 @@ bool AdjointSolver::RunEvolution() {
       // response; the m+_k are bounded, so mdag is empty here. The
       // problem's state is the impulse solve's (the generalized
       // fingerprint fields), which the sea-level accumulators read.
-      Pair(1.0, AdjointPair{u_f, d_f.get(), m_ptr, *udag_g, {},
-                            fwd.Time(n), true, &prob});
+      if (pairing) {
+        Pair(1.0, AdjointPair{*u_f, d_f.get(), m_ptr, *udag_g, {},
+                              fwd.Time(n), true, &prob});
+      }
       ApplyJump(*udag_g, mdag);
     }
     if (!ok) {

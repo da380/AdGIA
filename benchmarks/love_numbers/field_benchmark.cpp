@@ -19,8 +19,8 @@
 // of degree one; it is taken to the frame of the centre of mass of the body
 // and its load, that of the reference, by the translation that removes the
 // degree-one part of the potential on the surface. With a fluid layer lmin
-// defaults to one: Dahlen's fluid differs from the reference at degree zero
-// by design (doc/gauged_fluid.md, "Degree 0"), and with the degrees summed
+// defaults to one: the Eulerian methods' fluid differs from the reference at
+// degree zero by design, and with the degrees summed
 // into one load that difference would enter every degree's fields. -lmin 0
 // includes degree zero anyway, for either method, to show it.
 //
@@ -240,10 +240,10 @@ int main(int argc, char* argv[]) {
   const int top = reference.NumLayers();
   for (int i = 0; i < n; i++) {
     const int l = basis.Degree(i);
-    ru[i] = load[i] * reference.Eval(top, RadialReference::U, l, c.radius);
-    rv[i] = load[i] * reference.Eval(top, RadialReference::V, l, c.radius);
+    ru[i] = load[i] * reference.Eval(top, RadialReference::Component::U, l, c.radius);
+    rv[i] = load[i] * reference.Eval(top, RadialReference::Component::V, l, c.radius);
     rphi[i] =
-        load[i] * reference.Eval(top, RadialReference::Phi, l, c.radius);
+        load[i] * reference.Eval(top, RadialReference::Component::Phi, l, c.radius);
   }
 
   if (root) {

@@ -19,6 +19,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <string>
@@ -77,15 +78,16 @@ class RadialReference {
   real_t Radius() const { return layers_.back().r_outer; }
   bool Fluid(int attribute) const { return layers_[attribute - 1].fluid; }
 
-  enum Component { U = 0, V = 1, Phi = 2 };
+  enum class Component { U = 0, V = 1, Phi = 2 };
 
   // A radial function of degree l at the radius r, as the layer of the
   // given attribute has it; r is taken into the layer when outside it. An
   // attribute above the layers is the exterior, where phi continues
   // harmonically and the displacement is zero.
-  real_t Eval(int attribute, Component c, int l, real_t r) const {
+  real_t Eval(int attribute, Component component, int l, real_t r) const {
+    const int c = static_cast<int>(component);
     if (attribute > NumLayers()) {
-      if (c != Phi) {
+      if (component != Component::Phi) {
         return 0.0;
       }
       const Layer& top = layers_.back();
@@ -168,8 +170,10 @@ class ReferenceDisplacement : public VectorCoefficient {
       }
       if (basis_.Degree(i) != degree) {
         degree = basis_.Degree(i);
-        U = reference_.Eval(T.Attribute, RadialReference::U, degree, r);
-        V = reference_.Eval(T.Attribute, RadialReference::V, degree, r);
+        U = reference_.Eval(T.Attribute, RadialReference::Component::U,
+                             degree, r);
+        V = reference_.Eval(T.Attribute, RadialReference::Component::V,
+                             degree, r);
       }
       radial += c_[i] * U * Y_[i];
       for (int k = 0; k < vdim; k++) {
@@ -212,7 +216,8 @@ class ReferencePotential : public Coefficient {
       }
       if (basis_.Degree(i) != degree) {
         degree = basis_.Degree(i);
-        radial = reference_.Eval(T.Attribute, RadialReference::Phi, degree, r);
+        radial = reference_.Eval(T.Attribute,
+                                 RadialReference::Component::Phi, degree, r);
       }
       phi += c_[i] * radial * Y_[i];
     }

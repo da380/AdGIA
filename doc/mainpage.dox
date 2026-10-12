@@ -10,8 +10,10 @@
  * deformation of a self-gravitating elastic or viscoelastic body, with fluid
  * regions, general (non-hydrostatic, non-natural) reference states and
  * slipping fluid–solid interfaces. The sea-level equation, rotational
- * feedbacks and the adjoints are planned for the near future. Serial and
- * parallel (MPI) paths are provided throughout, normally in one class.
+ * feedbacks, shoreline migration and the first-order adjoints are in place;
+ * the interface kernels and the second-order adjoints are still to come.
+ * Serial and parallel (MPI) paths are provided throughout, normally in one
+ * class.
  *
  * @section contents Library contents
  *
@@ -71,7 +73,8 @@
  * LinearQuasiStaticProblem (`quasi_static_problem.hpp`) is the interface of
  * a linear quasi-static equilibrium problem; LinearQuasiStaticProblemBase
  * implements it on a serial or parallel displacement space, including the
- * gauge penalty of a gauged fluid region (SetGaugedFluid), with
+ * treatment of fluid regions by SetFluid (Maxwell relaxation by default, the
+ * gauge penalty with GaugePenaltyOptions), with
  * LinearQuasiStaticTractionProblem and LinearQuasiStaticClampedProblem as
  * reference problems. The material is a Rheology (`rheology.hpp`): elastic
  * or generalised Maxwell, isotropic or anisotropic, optionally with
@@ -83,8 +86,10 @@
  *   couples the displacement on a SubMesh of the body to the Eulerian
  *   potential perturbation on the enclosing ball, with the DtN outer
  *   condition. Fluid regions are treated either in Dahlen's way
- *   (FluidRegion) or as gauged fluids in the displacement space. It
- *   requires a hydrostatic, natural reference state.
+ *   (FluidRegion) or in the displacement space through SetFluid: by Maxwell
+ *   relaxation, the general method, or by the gauge penalty, clean for
+ *   neutrally stratified fluids. It requires a hydrostatic, natural
+ *   reference state.
  * - LinearQuasiStaticReferentialSelfGravitatingProblem
  *   (`referential_problem.hpp`) is the fully referential formulation about
  *   a general reference state (bare elastic tensor, equilibrium stress and
@@ -97,7 +102,13 @@
  *   referential potential.
  *
  * All three implement LinearQuasiStaticProblem, so the viscoelastic layer
- * runs on them unchanged.
+ * runs on them unchanged. For fluid regions the Maxwell relaxation of
+ * SetFluid is the general method (any geometry, stratification and number of
+ * regions); the gauge penalty is clean only for neutrally stratified fluids
+ * (at N² ≠ 0 its semi-convergence is Rayleigh–Taylor growth); Dahlen's mixed
+ * formulation is the workhorse for hydrostatic models, and the slipping
+ * and welded formulations are idealisations that serve as instruments
+ * (`doc/static_fluid_core.tex`).
  *
  * @subsection sec_background Background states
  * `background.hpp` generates the reference state the referential classes
@@ -124,7 +135,42 @@
  * ViscoelasticOperator (`viscoelastic.hpp`) evolves the internal variables
  * of a generalised Maxwell body around any LinearQuasiStaticProblem, with
  * explicit, implicit and exponential time stepping (ExponentialEulerSolver,
- * ExponentialTrapezoidSolver, AdaptiveExponentialTrapezoidSolver).
+ * ExponentialTrapezoidSolver, AdaptiveExponentialTrapezoidSolver). The
+ * referential classes are elastic-only apart from the artificial Maxwell
+ * relaxation of their fluid regions, which is a solution device and not a
+ * physical rheology.
+ *
+ * @subsection sec_sealevel Sea level, rotation and shoreline migration
+ * `sea_level.hpp`, `rotation.hpp` and `centrifugal.hpp`: the water-load
+ * feedback of the sea-level equation and its uniform-term and
+ * angular-velocity borders on the mixed and the referential problems
+ * (SetWaterLoad, SetRotation, with elimination and monolithic solve routes;
+ * the rotation through the traditional border or the generalised Tisserand
+ * door), shoreline migration (ShorelineMigration), the surface layer
+ * (SeaLevelOperator) and ice-history loading (IceHistory). `bordered.hpp`
+ * (BorderedElimination) eliminates the appended scalar unknowns.
+ * RefineToShoreline (`mesh.hpp`) refines a mesh along the shoreline.
+ *
+ * @subsection sec_adjoint Adjoints
+ * `adjoint.hpp`: the first-order adjoint force (AdjointForce), the forward
+ * trajectory store (ForwardTrajectory), kernel accumulators
+ * (KernelAccumulator, IsotropicKernel, SeaLevelLoadKernel) and the adjoint
+ * driver (AdjointSolver) for static and viscoelastic, gravitating problems,
+ * including the water-load and rotation feedbacks; kernels for viscosity,
+ * ice load and moduli.
+ *
+ * @subsection sec_descent Riesz maps and descent
+ * `riesz.hpp`: Riesz maps (L2RieszMap, SobolevRieszMap) identifying
+ * derivative duals with gradients in L2 and in (iterated, vector-valued)
+ * Sobolev metrics. `descent.hpp`: the constrained metric
+ * (ConstrainedMetric) and the projected nonlinear-CG and Levenberg–Marquardt
+ * Gauss–Newton loops over them.
+ *
+ * @subsection sec_figures Equilibrium figures
+ * `equilibrium_figures.hpp`: the density feasibility functional
+ * (DensityFeasibility, DensityFeasibilityProblem) of the equilibrium-figures
+ * programme and its adjoint-free derivative. The shape stage is not yet
+ * implemented.
  *
  * @subsection sec_null_space Null-space projection
  * NullSpaceProjector (`null_space.hpp`) holds an orthonormal basis of a
@@ -152,7 +198,10 @@
  *   classes and the background module.
  * - `doc/self_gravitation.md`: the mixed problem with Dahlen fluid regions,
  *   its fluid–solid interface conditions and CMB approximations.
- * - `doc/gauged_fluid.md`: the gauged treatment of fluid regions.
+ * - `doc/gauged_fluid.md`: the gauge-penalty treatment of fluid regions.
+ * - `doc/static_fluid_core.tex`: the static fluid-core problem and the status
+ *   of the formulations (Maxwell relaxation, gauge penalty, Dahlen, slipping,
+ *   welded).
  * - `doc/slip_interface.tex`: the slipping fluid–solid interface —
  *   derivation, discretisation, constraint enforcement, verification.
  * - `doc/gauge_penalty_iteration.tex`: gauge penalties and their iterated
@@ -162,11 +211,13 @@
  *   `doc/elastic_tensors.md`, `doc/null_space.md`, `doc/mfem_notes.md`:
  *   SubMesh coupling, rheologies and time stepping, elastic tensors,
  *   projected solvers, MFEM facts and pitfalls.
+ * - `doc/equilibrium_figures.tex`: equilibrium states and hydrostatic
+ *   figures by constrained optimisation.
  * - `doc/benchmarks.tex`: the benchmark families and their results.
  * - `doc/BenchmarkPapers/code_survey.md`: a survey of the published 3-D
  *   GIA codes and benchmarks, set against the library's treatments.
  * - `INSTALL.md`, `examples/README.md`, `meshes/README.md`,
- *   `benchmarks/README.md`.
+ *   `benchmarks/README.md`, `earth_data/README.md`.
  *
  * Planning (open issues and future work, not a description of the code):
  * `doc/planning/`, indexed by its `README.md` — `open_issues.md`,

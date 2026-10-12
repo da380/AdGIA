@@ -22,14 +22,16 @@
 //     permanent.
 //
 // The box [0,W]x[0,H] (2-D) or [0,W]x[0,W]x[0,H] (3-D, -d 3) is split into
-// three layers of element attribute by the depth of each element's centre,
-// so the layer boundaries fall on element faces and the thicknesses are
-// rounded to the element grid (with the default -ny 10: lithosphere 10% of
-// H, asthenosphere 20%, mantle 70%):
-//   3 lithosphere   - centre in the top 10% of H, elastic (relaxation time
-//                     1e6: it does not relax over the run)
-//   2 asthenosphere - centre in the next 15%, short relaxation time tau_a
-//                     (a weak channel that lets the lithosphere flex)
+// three layers of element attribute by element ROW (the layers are bands of
+// whole rows of the -ny rows through the depth, so the layer boundaries fall
+// on element faces and are rounded to the element grid: the top 10% of the
+// rows, at least one, are lithosphere, the next 20%, at least one, are
+// asthenosphere, the rest mantle; with the default -ny 10 that is 1, 2 and 7
+// rows, i.e. 10%, 20% and 70% of H):
+//   3 lithosphere   - the top band, elastic (relaxation time 1e6: it does
+//                     not relax over the run)
+//   2 asthenosphere - the next band, short relaxation time tau_a (a weak
+//                     channel that lets the lithosphere flex)
 //   1 mantle        - the rest, relaxation time tau_m
 // all sharing bulk modulus kappa = 1 + 2/dim and shear modulus mu = 1
 // (nondimensional), i.e. a classical Maxwell body (mu_inf = 0) per layer
@@ -60,7 +62,7 @@
 //   -d      space dimension, 2 or 3 [2].
 //   -o      finite element order of the displacement [2].
 //   -nx     elements across the width [40]; in 3-D also across the
-//           direction perpendicular to the load strip.
+//           second horizontal direction (the box is W x W in plan).
 //   -ny     elements through the depth H [10]; the layer thicknesses
 //           are rounded to this element grid.
 //   -W      width of the box [4].
@@ -85,14 +87,23 @@
 //    ./viscoelastic_loading
 //    ./viscoelastic_loading -rtol 1e-3
 //    ./viscoelastic_loading -d 3 -nx 12 -ny 4 -o 1 -n 10
+//
+// Mesh requirements: none read; the mesh is built internally (no mesh
+// file): a Cartesian quadrilateral box [0,W]x[0,H] (2-D) or hexahedral box
+// [0,W]x[0,W]x[0,H] (3-D), z (y in 2-D) pointing up with the free surface
+// at the top. Element attributes 1/2/3 are mantle/asthenosphere/lithosphere
+// as above. Boundary attributes (MFEM Cartesian numbering): bottom 1 (clamped),
+// top 3 (2-D) or 6 (3-D, loaded); the sides are free. Nondimensional
+// (kappa = 1 + 2/dim, mu = 1, no gravity).
 // ============================================================================
 
+#include <algorithm>
 #include <cmath>
-#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <sstream>
 
 #include "AdGIA.hpp"
 #include "visualisation.hpp"
@@ -158,8 +169,8 @@ int main(int argc, char* argv[]) {
   args.AddOption(&order, "-o", "--order",
                  "Finite element order for the displacement.");
   args.AddOption(&nx, "-nx", "--num-elements-x",
-                 "Elements across the width (3-D: also across the depth "
-                 "direction perpendicular to the load strip).");
+                 "Elements across the width (3-D: also across the second "
+                 "horizontal direction).");
   args.AddOption(&ny, "-ny", "--num-elements-y",
                  "Elements through the depth H.");
   args.AddOption(&W, "-W", "--width", "Width of the box.");
@@ -212,18 +223,26 @@ int main(int argc, char* argv[]) {
   const int bottom_attr = 1;
   const int top_attr = dim == 2 ? 3 : 6;
 
-  // Assign the three layers by element-centre depth: lithosphere (top 10%
-  // of H, elastic), asthenosphere (next 15%), mantle (remaining 75%).
-  // (On the serial mesh, before partitioning: the layering is then
-  // identical in both builds.)
+  // Assign the three layers by element ROW through the depth (rows are
+  // counted from the top; deterministic, no floating-point comparison at a
+  // cutoff): lithosphere = the top 10% of the rows, asthenosphere = the next
+  // 20% (each at least one row), mantle = the rest. (On the serial mesh,
+  // before partitioning: the layering is then identical in both builds.)
+  MFEM_VERIFY(ny >= 3, "At least 3 element rows are needed for 3 layers.");
+  const int n_lith = std::max(1, static_cast<int>(std::lround(0.10 * ny)));
+  const int n_asth = std::max(1, static_cast<int>(std::lround(0.20 * ny)));
   Vector center(dim);
   for (int e = 0; e < smesh.GetNE(); e++) {
     smesh.GetElementCenter(e, center);
-    const real_t frac = center(dim - 1) / H;
+    // The centre of row j (from the bottom) is at (j + 1/2) H / ny, so the
+    // floor below is far from an integer.
+    const int row = std::min(
+        ny - 1, static_cast<int>(std::floor(center(dim - 1) / H * ny)));
+    const int row_from_top = ny - 1 - row;
     int attr;
-    if (frac >= 0.9) {
+    if (row_from_top < n_lith) {
       attr = 3;  // lithosphere
-    } else if (frac >= 0.75) {
+    } else if (row_from_top < n_lith + n_asth) {
       attr = 2;  // asthenosphere
     } else {
       attr = 1;  // mantle
@@ -339,13 +358,13 @@ int main(int argc, char* argv[]) {
   e_z(dim - 1) = 1.0;
   VectorConstantCoefficient e_z_c(e_z);
   InnerProductCoefficient u_z_c(u_c, e_z_c);
-  examples::GLVisWindow window("u_z (load on for t < " +
-                                   std::to_string(t_load).substr(0, 4) + ")",
+  std::ostringstream load_text;
+  load_text << std::setprecision(3) << t_load;
+  examples::GLVisWindow window("u_z (load on for t < " + load_text.str() + ")",
                                examples::DefaultKeys(dim));
   examples::CsvTable table(csv_file, {"t", "u_z"});
   table.Meta("title", "Surface displacement under the load centre")
-      .Meta("note", "load on for t < " + std::to_string(t_load).substr(0, 4) +
-                        ", then removed")
+      .Meta("note", "load on for t < " + load_text.str() + ", then removed")
       .Meta("xlabel", "time")
       .Meta("ylabel", "u_z(load centre)");
   auto show = [&](real_t t_now, real_t uz, bool first) {

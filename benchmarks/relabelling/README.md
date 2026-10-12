@@ -45,8 +45,8 @@ and writes the identity logs and aspherical results to
   `-method slip_broken` the run is informational: it also compares the
   sixteen assembled blocks of the broken organisation
   (`ApplyBrokenBlock`) and the stored constraint kernels
-  (`ApplyBrokenKernel`). Two further legs join the identity for WP7
-  (`doc/planning/referential_sea_level_plan.md`): `-water` replaces the
+  (`ApplyBrokenKernel`). Two further legs extend the identity to the
+  referential sea-level solve: `-water` replaces the
   plain surface load by the full water feedback (`SetWaterLoad`), whose
   bordered solve joins the identity — strict (measured u 4.9e-7,
   Φ_g 4.8e-10 at A = 0.02, h = 0.3, homogeneous), and `-map-surface`
@@ -55,8 +55,7 @@ and writes the identity logs and aspherical results to
   mapped side's load and weight compose with the map and carry the
   Nanson factor `J_Σ`, which is also `SetWaterLoad`'s
   `surface_jacobian`. Strict both plain (u 8.0e-9) and with water
-  (u 9.7e-9, Φ_g 1.3e-12) — the latter caught the data-row Jacobian
-  convention on its first run, which is the gate's job.
+  (u 9.7e-9, Φ_g 1.3e-12), which pins the data-row Jacobian convention.
 - **`aspherical_reference`** (exact F): the same spherical physics
   described from an aspherical reference body, whose mesh is the image of
   a spherical gmsh mesh under the radial stretch of
@@ -75,7 +74,7 @@ and writes the identity logs and aspherical results to
       python <repo>/meshes/aspherical_body.py --dim 3 --buffer \
           --scale 0.5 --name _s0.5 --out <dir>
 
-  With `-water` (leg G7b of the WP7 plan) the degree sweep is replaced
+  With `-water` the degree sweep is replaced
   by ONE water solve on the aspherical body, certified internally with
   no spherical reference: monolithic ≡ fixed point (measured 4.5e-8),
   the displacement agreement (1.8e-7), and the mass-conservation

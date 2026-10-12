@@ -37,8 +37,8 @@ namespace AdGIA {
  */
 class DomainVectorScalarIntegrator : public mfem::BilinearFormIntegrator {
  private:
-  mfem::VectorCoefficient*
-      QV; /**< Pointer to the vector coefficient \f$\bvec{q}\f$. */
+  mfem::VectorCoefficient* QV =
+      nullptr; /**< Pointer to the vector coefficient \f$\bvec{q}\f$. */
   Diffeomorphism* map_ = nullptr; /**< Optional mapping (pull-back form). */
 
 #ifndef MFEM_THREAD_SAFE
@@ -114,7 +114,7 @@ class DomainVectorScalarIntegrator : public mfem::BilinearFormIntegrator {
    */
   const mfem::IntegrationRule* GetDefaultIntegrationRule(
       const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
-      const mfem::ElementTransformation& trans) const {
+      const mfem::ElementTransformation& trans) const override {
     return &GetRule(trial_fe, test_fe, trans);
   }
 };
@@ -470,7 +470,7 @@ class DomainDivVectorDivVectorIntegrator : public mfem::BilinearFormIntegrator {
   void AssembleElementMatrix2(const mfem::FiniteElement& trial_fe,
                               const mfem::FiniteElement& test_fe,
                               mfem::ElementTransformation& Trans,
-                              mfem::DenseMatrix& elmat);
+                              mfem::DenseMatrix& elmat) override;
 
   /**
    * @brief Assembly method when the trial and test spaces are equal.
@@ -523,14 +523,14 @@ class DomainVectorGradVectorIntegrator : public mfem::BilinearFormIntegrator {
  private:
   mfem::Coefficient* Q =
       nullptr; /**< Pointer to the scalar coefficient \f$q\f$. */
-  mfem::VectorCoefficient*
-      QV; /**< Pointer to the vector coefficient \f$\bvec{w}\f$. */
+  mfem::VectorCoefficient* QV =
+      nullptr; /**< Pointer to the vector coefficient \f$\bvec{w}\f$. */
   Diffeomorphism* map_ = nullptr; /**< Optional mapping (pull-back form). */
 
 #ifndef MFEM_THREAD_SAFE
   mfem::Vector qv, test_shape; /**< Internal buffers for vector coefficient
                                   values and test shape functions. */
-  mfem::DenseMatrix trial_dshape, left_elmat, rigth_elmat_trans,
+  mfem::DenseMatrix trial_dshape, left_elmat, right_elmat_trans,
       part_elmat; /**< Internal buffers for trial derivative shape functions and
                      various intermediate matrices. */
   mfem::DenseMatrix F_, dtmp_; /**< Mapping buffers. */
@@ -1202,7 +1202,7 @@ class GeometricStiffnessIntegrator : public mfem::BilinearFormIntegrator {
  * The Diffeomorphism here is the *equilibrium mapping* (exact or
  * interpolated per the object), not the relabelling pull-back of the
  * other mapped integrators: a relabelling composes into the mapping and
- * transforms the coefficients (Al-Attar et al. 2018, "AC18" of
+ * transforms the coefficients (Al-Attar & Crawford 2018, see
  * doc/gravitating_elasticity.md, eqs. 134–136; done by the
  * background-state layer), leaving this integrator's form unchanged.
  * Consequently this is the plain pull-back of the elastic form only when
@@ -1325,8 +1325,8 @@ class ReferentialGravityCouplingIntegrator
 
 #ifndef MFEM_THREAD_SAFE
   mfem::DenseMatrix dshape_u_, gshape_u_, dshape_p_, gshape_p_, F_, a_, M_,
-      agp_;
-  mfem::Vector g0v_, w_, beta_, gamma_, fw_;
+      agp_, AGP_, FW_;
+  mfem::Vector g0v_, w_, beta_, gamma_, wg_;
 #endif
 
  public:
@@ -1516,7 +1516,7 @@ and intermediate matrices during integration. */
    */
   const mfem::IntegrationRule* GetDefaultIntegrationRule(
       const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
-      const mfem::ElementTransformation& trans) const {
+      const mfem::ElementTransformation& trans) const override {
     return &GetRule(trial_fe, test_fe, trans);
   }
 };
@@ -1770,13 +1770,12 @@ class BoundaryNormalNormalIntegrator : public mfem::BilinearFormIntegrator {
  * \f$\nabla_\Sigma\f$ the tangential (surface shape-function) gradient,
  * and \f$P_T\f$ the tangential projector. The direction slot is
  * tangential on the slip constraint; off it the discrete form needs a
- * sanitiser, and the \f$\bnu\f$-orthogonal projection BEFORE
+ * sanitiser, and the \f$\bnu\f$-orthogonal projection before
  * \f$F_e^{-1}\f$ is the pullback of the deformed face's own tangential
- * projector -- the unique choice invariant under face-fixing shears of
- * \f$F_e\f$, i.e. the one that preserves the discrete
- * change-of-variables identity (TestSlipInterface,
- * InterfaceKernelsFaceShearCovariance). Unmapped, it is contained in
- * \f$P_T\f$ and changes nothing. NON-symmetric by design: \f$\bvec{u}\f$
+ * projector -- the choice invariant under face-fixing shears of
+ * \f$F_e\f$, which preserves the discrete change-of-variables identity.
+ * Unmapped, it is contained in \f$P_T\f$ and changes nothing. The kernel
+ * is non-symmetric by design: \f$\bvec{u}\f$
  * occupies the test (row) slot and \f$\bvec{w}\f$ the trial (column)
  * slot, and the symmetrised two-field interface blocks are built from
  * \f$G\f$ and the pairing by NewSlipInterfaceMatrix
@@ -1793,7 +1792,7 @@ class SlipInterfacePressureIntegrator : public mfem::BilinearFormIntegrator {
 
 #ifndef MFEM_THREAD_SAFE
   mfem::Vector shape_, normal_, nu_;
-  mfem::DenseMatrix dshape_, gshape_, Jt_, JtJ_, F_, Fi_, PT_, dir_;
+  mfem::DenseMatrix dshape_, gshape_, Jt_, JtJ_, JtJi_, F_, Fi_, PT_, dir_, T_;
 #endif
 
  public:
@@ -1820,7 +1819,7 @@ class SlipInterfacePressureIntegrator : public mfem::BilinearFormIntegrator {
 };
 
 /**
- * @brief The one-sided VECTOR kernel of the broken-\f$\zeta\f$ gravity
+ * @brief The one-sided vector kernel of the broken-\f$\zeta\f$ gravity
  * interface form (doc/slip_interface.tex, proposition "The gravity
  * interface form"): on boundary elements of one (solid-side) vector space,
  * \f[
@@ -1846,7 +1845,7 @@ class SlipInterfaceGravityIntegrator : public mfem::BilinearFormIntegrator {
 
 #ifndef MFEM_THREAD_SAFE
   mfem::Vector shape_, normal_, nu_, gz_, b_, A_;
-  mfem::DenseMatrix dshape_, gshape_, Jt_, JtJ_, F_, Fi_, PT_, dir_;
+  mfem::DenseMatrix dshape_, gshape_, Jt_, JtJ_, JtJi_, F_, Fi_, PT_, dir_, T_;
 #endif
 
  public:
@@ -1878,7 +1877,7 @@ class SlipInterfaceGravityIntegrator : public mfem::BilinearFormIntegrator {
 };
 
 /**
- * @brief The one-sided SCALAR--vector kernel of the broken-\f$\zeta\f$
+ * @brief The one-sided scalar--vector kernel of the broken-\f$\zeta\f$
  * gravity interface form: mixed boundary integrator with scalar trial
  * \f$\zeta\f$ (which carries the surface gradient) and vector test
  * \f$\bvec{w}\f$ (the slip slot),
@@ -1901,8 +1900,8 @@ class SlipInterfaceGravityScalarIntegrator
   Diffeomorphism* map_ = nullptr;
 
 #ifndef MFEM_THREAD_SAFE
-  mfem::Vector shape_, normal_, nu_, gz_, b_;
-  mfem::DenseMatrix dshape_, gshape_, Jt_, JtJ_, F_, Fi_, PT_, dir_, T_;
+  mfem::Vector shape_, normal_, nu_, gz_, b_, test_shape_;
+  mfem::DenseMatrix dshape_, gshape_, Jt_, JtJ_, JtJi_, F_, Fi_, PT_, dir_, T_;
 #endif
 
  public:

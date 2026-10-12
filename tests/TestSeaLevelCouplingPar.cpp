@@ -3,7 +3,7 @@
   and 4 ranks; a standalone MPI program that exits with status 1 if any
   check fails.
 
-  Mirrors the serial rung-0 gates on the 3-D two-layer mesh, all-ocean:
+  Mirrors the serial gates on the 3-D two-layer mesh, all-ocean:
   the spectral identity s = -T/(1 + rho_w T) against the plain-solve
   response, the mass-conservation certificate, the inert uniform term
   for a zero-mean load, and SchurCG == BlockMINRES through the

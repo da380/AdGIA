@@ -1,4 +1,4 @@
-"""The gravitating disc models of rung 2 (disc_gravity_reference.md).
+"""The gravitating disc models of the disc family.
 
 Two-layer discs in the codebase's 2-D convention (grad^2 Phi = 4 pi G
 rho, g = (4 pi G / r) int rho s ds), in benchmark-style units G = 1,
@@ -35,14 +35,9 @@ CMB = 3483.0 / 6371.0
 #: fluid_core's SI values in the density scale.
 RHO_CORE = 11000.0 / 5000.0
 RHO_MANTLE = 4500.0 / 5000.0
-#: Moduli: rho vp^2-style values scaled as in the 3-D benchmark's
-#: units (kappa / (rho_scale G_SI-free combination)); what matters for
-#: the physics ratios is kappa / (G rho^2 R^2), kept at the 3-D
-#: benchmark's order one. Chosen to mirror fluid_core: kappa of the
-#: core from vp 9000 against rho 11000, mantle kappa/mu from vp 11000,
-#: vs 6000 against rho 4500, in the unit where 4 pi G rho_scale R^2 /3
-#: ~ g-scale. The absolute scale is free in a linear problem; ratios
-#: follow the 3-D model.
+#: Moduli follow the 3-D fluid_core model's ratios (core kappa from
+#: vp 9000, rho 11000; mantle kappa and mu from vp 11000, vs 6000,
+#: rho 4500), times 10; the absolute scale is free in a linear problem.
 KAPPA_CORE = RHO_CORE * (9000.0 / 11000.0) ** 2 * 10.0
 KAPPA_MANTLE = RHO_MANTLE * ((11000.0 / 11000.0) ** 2
                              - 4.0 / 3.0 * (6000.0 / 11000.0) ** 2) * 10.0
@@ -65,15 +60,15 @@ class DiscGravityModel:
     kappa: tuple[Callable, Callable]
     mu: tuple[Callable, Callable]
     #: gravitational constant used for this model's state (G -> 0
-    #: reduces the assembler to the rung-0 problem exactly: p0 and g
+    #: reduces the assembler to the no-gravity problem exactly: p0 and g
     #: both scale with it)
     G: float = G
     #: core density derivative d rho / dr (analytic; the Dahlen F1
     #: term and N^2 use it)
-    rho_prime_core: Callable = field(default=None, compare=False)
+    rho_prime_core: Callable | None = field(default=None, compare=False)
     #: filled by _attach_state
-    g: Callable = field(default=None, compare=False)
-    p0: Callable = field(default=None, compare=False)
+    g: Callable | None = field(default=None, compare=False)
+    p0: Callable | None = field(default=None, compare=False)
     total_mass: float = field(default=0.0, compare=False)
     core_mass: float = field(default=0.0, compare=False)
 
@@ -141,7 +136,7 @@ def fluid_core_2d(cmb: float = CMB, G_newton: float = G) -> DiscGravityModel:
 def aw_core_2d(cmb: float = CMB, G_newton: float = G) -> DiscGravityModel:
     """The neutral twin: closed-form AW core under fluid_core_2d's
     mantle; kappa re-derived at the given cmb with (rho0, alpha)
-    frozen (disc_gravity_reference.md)."""
+    frozen."""
     rho0, alpha = AW_RHO0, AW_ALPHA
     kappa0 = math.pi * G_newton * rho0 ** 2 * cmb ** 2 / alpha
 

@@ -12,6 +12,10 @@ refined.mesh
 # gmsh meshes are generated into the build tree by meshes/
 data/*.msh
 data/*.json
+data/*.mesh
+!data/beam-quad.mesh
+!data/beam-tet.mesh
+!data/star.mesh
 
 # benchmark output
 benchmarks/**/runs/

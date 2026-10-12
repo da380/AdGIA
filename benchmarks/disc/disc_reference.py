@@ -1,11 +1,11 @@
-"""Exact reference for the no-gravity disc family (rung 0).
+"""Exact reference for the no-gravity disc family.
 
 A fluid disc 0 <= r <= c (bulk modulus kappa_f, no shear, no
 pre-stress) inside a solid annulus c <= r <= a (plane strain, Lame
 lam, mu), no gravity. Load: boundary traction on r = a of one Fourier
 degree, sigma.rhat = -t cos(l theta) rhat (shear-free), except at
 l = 1 where the self-equilibrated variant sigma_rt = -t sin(theta) is
-added so the net force vanishes (doc/planning/no_gravity_analytics.md).
+added so the net force vanishes.
 
 Without gravity the fluid's pressure perturbation is constant, so for
 l >= 1 the interface is exactly traction-free and the solid solves a
@@ -23,7 +23,8 @@ from the Michell tables: with d = u(k+1) + l v and w = v(k+1) + l u
 
 whose solvability gives the exponents k = 1 +/- l (d, w modes) and,
 with d = w = 0, k = -1 +/- l. The same construction generalises to
-the pre-stressed rung, where only the symbol changes. At l = 1 the
+the case with a uniform surface pre-pressure P0, where only the symbol
+changes. At l = 1 the
 exponents k = 1 - l and k = l - 1 collide at zero (the translation /
 logarithmic pair); the translation is gauge and the logarithmic
 solution carries exactly the net force, so the self-equilibrated load
@@ -50,12 +51,11 @@ import numpy as np
 class DiscModel:
     """Plane-strain annulus (lam, mu) on [c, a] over a fluid disc of
     bulk modulus kappa_f; t is the load amplitude. The moduli are the
-    EFFECTIVE (physical) ones; P0 is the uniform surface pressure of
-    rung 1 (doc/planning/no_gravity_analytics.md): the volume operator
-    and the interface conditions collapse to the rung-0 ones in
-    effective variables, and only the loaded-surface rows change, to
-    the dead-traction amplitudes of delta P . N = sigma_eff . N
-    - P0 cof(Du) N."""
+    EFFECTIVE (physical) ones; P0 is a uniform surface pressure: the
+    volume operator and the interface conditions are those of the P0 = 0
+    problem in effective variables, and only the loaded-surface rows
+    change, to the dead-traction amplitudes of delta P . N =
+    sigma_eff . N - P0 cof(Du) N."""
     lam: float
     mu: float
     kappa_f: float
@@ -136,10 +136,10 @@ def _system(model: DiscModel, l: int):
         f = dat if deriv else at
         return np.array([f(pm[which], r) for pm in per_mode])
 
-    # Rung 1: the dead referential traction at the loaded surface is
-    # delta P . N, whose amplitude rows gain -P0 (u + l v) r^(k-1)
-    # (radial) and -P0 (l u + v) r^(k-1) (tangential); the interface
-    # rows are the effective (rung-0) ones unchanged.
+    # The dead referential traction at the loaded surface is delta P . N,
+    # whose amplitude rows gain -P0 (u + l v) r^(k-1) (radial) and
+    # -P0 (l u + v) r^(k-1) (tangential); the interface rows are the
+    # effective (P0 = 0) ones unchanged.
     def srr_hat(r):
         return row(SRR, r) - model.P0 * np.array(
             [(m.u + l * m.v) * r ** (m.k - 1.0) for m in ms])
@@ -283,14 +283,14 @@ def validate(lmax: int = 6, verbose: bool = True) -> bool:
             record(f"l={l} Navier FD residual", navier_residual(model, s),
                    1e-5)
 
-    # Rung 1 (P0): zero pressure reduces to rung 0 exactly; the l = 0
+    # P0: zero pressure reduces to the P0 = 0 problem exactly; the l = 0
     # surface row matches the direct delta-P formula
     # lam (U' + U/r) + (2 mu - P0) U'; derivatives still match FD.
     P0 = 0.3
     for l in (0, 2, 3):
         s0 = solve(model, l)
         sz = solve(DiscModel(lam, mu, model.kappa_f, c, a, P0=0.0), l)
-        record(f"l={l} P0=0 reduces to rung 0",
+        record(f"l={l} P0=0 reduces to the unpressurised problem",
                abs(s0.responses["ur_a"] - sz.responses["ur_a"]), 1e-14)
     mp = DiscModel(lam, mu, model.kappa_f, c, a, P0=P0)
     sp = solve(mp, 0)

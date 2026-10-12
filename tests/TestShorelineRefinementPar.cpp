@@ -90,7 +90,7 @@ int main(int argc, char* argv[]) {
   Mpi::Init(argc, argv);
   Hypre::Init();
 
-  Mesh smesh("../data/coupled_poisson.msh", 1, 1);
+  Mesh smesh("../data/ball_buffer_coarse_3d.msh", 1, 1);
   ParMesh mesh(MPI_COMM_WORLD, smesh);
   smesh.Clear();
 
@@ -105,6 +105,8 @@ int main(int argc, char* argv[]) {
   Check(mesh.GetGlobalNE() > ne0, "global element count grew");
   Check(mesh.Conforming(), "mesh stays conforming");
   Check(mesh.CheckElementOrientation(false) == 0, "no inverted elements");
+  // Short-circuit before the collective is safe: dev0 is globally reduced,
+  // so every rank takes the same branch.
   Check(dev0 > 1e-4 && BandSurfaceDeviation(mesh) < 5e-5,
         "band surface geometry improved past the measured grade");
 

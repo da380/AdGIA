@@ -284,8 +284,9 @@ double UniformDiscPressure(const Vector& x) {
 
 }  // namespace
 
-// Al-Attar & Woodhouse (2010, §3.3): the minimum equilibrium stress solves the equilibrium
-// equations weakly, at discretisation level improving with order.
+// Al-Attar & Woodhouse (2010, §3.3): the minimum equilibrium stress solves
+// the equilibrium equations weakly, at discretisation level improving with
+// order.
 TEST(Background, MinimumNormEquilibriumSatisfiesWeakForm) {
   const int dim = 2;
   Mesh parent(MeshFile(dim).c_str(), 1, 1);
@@ -306,8 +307,9 @@ TEST(Background, MinimumNormEquilibriumSatisfiesWeakForm) {
   EXPECT_LT(res[1], 5e-2);
 }
 
-// Al-Attar & Woodhouse (2010, §3.4) on the uniform disc: the minimum deviatoric equilibrium
-// stress recovers the hydrostatic state, T = -p0 1 with
+// Al-Attar & Woodhouse (2010, §3.4) on the uniform disc: the minimum
+// deviatoric equilibrium stress recovers the hydrostatic state, T = -p0 1
+// with
 // p0 = pi G rho^2 (1 - r^2), essentially free of deviatoric content.
 TEST(Background, MinimumDeviatoricRecoversHydrostatic) {
   const int dim = 2;
@@ -369,12 +371,13 @@ TEST(Background, EquilibriumStressOptimalityOrdering) {
 // linear: grad Phi = 4 pi G rho / (a + b) * (b x, a y).
 TEST(Background, EllipseNeedsDeviatoricStress) {
   const int dim = 2;
-  const double a = 1.2, b = 1.0 / 1.2;
+  // constexpr, so the captureless Transform callback can use them.
+  constexpr double a = 1.2, b = 1.0 / 1.2;
   Mesh parent(MeshFile(dim).c_str(), 1, 1);
   parent.Transform([](const Vector& x, Vector& y) {
     y.SetSize(2);
-    y[0] = 1.2 * x[0];
-    y[1] = x[1] / 1.2;
+    y[0] = a * x[0];
+    y[1] = b * x[1];
   });
   Array<int> body_attr({1});
   SubMesh body(SubMesh::CreateFromDomain(parent, body_attr));
@@ -408,7 +411,7 @@ TEST(Background, EllipseNeedsDeviatoricStress) {
 // identity that underwrites referential shape optimisation.
 TEST(Background, MappedGeneratorsMatchTransformedMesh) {
   const int dim = 2;
-  const double a = 1.2, b = 1.0 / 1.2;
+  constexpr double a = 1.2, b = 1.0 / 1.2;
   Mesh parent(MeshFile(dim).c_str(), 1, 1);
   Array<int> body_attr({1});
   SubMesh body(SubMesh::CreateFromDomain(parent, body_attr));
@@ -447,8 +450,8 @@ TEST(Background, MappedGeneratorsMatchTransformedMesh) {
   Mesh mapped(body);
   mapped.Transform([](const Vector& x, Vector& y) {
     y.SetSize(2);
-    y(0) = 1.2 * x(0);
-    y(1) = x(1) / 1.2;
+    y(0) = a * x(0);
+    y(1) = b * x(1);
   });
   FiniteElementSpace mfes_u(&mapped, &fec_u, dim), mfes_p(&mapped, &fec_p);
   MinimumNormEquilibriumStress T_mn(mfes_u, f_phys);

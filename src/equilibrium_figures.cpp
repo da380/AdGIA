@@ -1,7 +1,9 @@
 #include "AdGIA/equilibrium_figures.hpp"
 
+#include <cstddef>
 #include <memory>
 #include <numbers>
+#include <vector>
 
 #include "AdGIA/detail/fem_factory.hpp"
 #include "AdGIA/poisson.hpp"
@@ -43,11 +45,34 @@ real_t GlobalSum(FiniteElementSpace& fes, real_t v) {
 #ifdef MFEM_USE_MPI
   if (auto* pfes = dynamic_cast<ParFiniteElementSpace*>(&fes)) {
     real_t global = 0.0;
-    MPI_Allreduce(&v, &global, 1, MPI_DOUBLE, MPI_SUM, pfes->GetComm());
+    MPI_Allreduce(&v, &global, 1, MPITypeMap<real_t>::mpi_type, MPI_SUM,
+                  pfes->GetComm());
     return global;
   }
 #endif
   return v;
+}
+
+// The rigid motion of the g-th enclosed component in the adjoint flow:
+// minus the border multiplier's coefficients (the border multiplier
+// enters its constraint with the opposite sign to the field
+// multiplier's), expanded in the rigid modes.
+std::unique_ptr<VectorFunctionCoefficient> CoreMotion(
+    int dim, int modes_per, std::size_t g, const Vector& border) {
+  std::vector<real_t> a(modes_per);
+  for (int mode = 0; mode < modes_per; mode++) {
+    a[mode] = -border[static_cast<int>(g) * modes_per + mode];
+  }
+  return std::make_unique<VectorFunctionCoefficient>(
+      dim, [dim, a](const Vector& x, Vector& v) {
+        v.SetSize(dim);
+        v = 0.0;
+        Vector mode_v(dim);
+        for (int mode = 0; mode < static_cast<int>(a.size()); mode++) {
+          RigidMode(dim, mode)(x, mode_v);
+          v.Add(a[mode], mode_v);
+        }
+      });
 }
 
 // The whole-mesh Poisson operator with the DtN closure, kept assembled
@@ -184,11 +209,13 @@ class PoissonSolver {
 
 // The persistent, density-independent machinery.
 struct DensityFeasibilityProblem::Impl {
-  FiniteElementSpace *fes_phi, *fes_u, *fes_p;
-  Coefficient* mu;
-  const Array<int>* essential_bdr;
-  real_t G;
-  Array<int> stokes_marker;
+  FiniteElementSpace *fes_phi = nullptr, *fes_u = nullptr, *fes_p = nullptr;
+  Coefficient* mu = nullptr;
+  const Array<int>* essential_bdr = nullptr;
+  real_t G = 0.0;
+  // MFEM's integrator registration takes non-const markers; the markers
+  // are never modified.
+  mutable Array<int> stokes_marker;
 
   std::unique_ptr<PoissonSolver> poisson;
   std::unique_ptr<StokesSaddleSolver> saddle;
@@ -203,26 +230,18 @@ struct DensityFeasibilityProblem::Impl {
   // integrals).
   const std::vector<RigidComponent>* rigid = nullptr;
   std::vector<Array<int>> rigid_markers;      // for the saddle
-  std::vector<Array<int>> component_markers;  // parent regions
+  mutable std::vector<Array<int>> component_markers;  // parent regions
   int modes_per = 0;
   Vector ones_phi;
 
-  // int_{marked region} coeff, as the marked dual dotted with ones.
-  real_t IntegrateOver(const Array<int>& marker, Coefficient& coeff) const {
+  // This rank's part of int_{marked region} coeff, as the marked dual
+  // dotted with ones.
+  real_t LocalIntegral(Array<int>& marker, Coefficient& coeff) const {
     auto lf = detail::MakeLinearForm(fes_phi);
-    Array<int>& m = const_cast<Array<int>&>(marker);
-    lf->AddDomainIntegrator(new DomainLFIntegrator(coeff), m);
+    lf->AddDomainIntegrator(new DomainLFIntegrator(coeff), marker);
     Vector dual;
     AssembleTrueRHS(*fes_phi, *lf, dual);
-    real_t v = dual * ones_phi;
-#ifdef MFEM_USE_MPI
-    if (auto* pfes = dynamic_cast<ParFiniteElementSpace*>(fes_phi)) {
-      real_t global = 0.0;
-      MPI_Allreduce(&v, &global, 1, MPI_DOUBLE, MPI_SUM, pfes->GetComm());
-      v = global;
-    }
-#endif
-    return v;
+    return dual * ones_phi;
   }
 
   // The border loads W_k = int_{component} rho grad(Phi) . r_k.
@@ -233,14 +252,22 @@ struct DensityFeasibilityProblem::Impl {
     GradientGridFunctionCoefficient grad_phi(
         const_cast<GridFunction*>(&phi));
     int k = 0;
-    for (const auto& marker : component_markers) {
+    for (auto& marker : component_markers) {
       for (int mode = 0; mode < modes_per; mode++, k++) {
         VectorFunctionCoefficient r(dim, RigidMode(dim, mode));
         InnerProductCoefficient g_dot_r(grad_phi, r);
         ProductCoefficient integrand(rho_parent, g_dot_r);
-        W[k] = IntegrateOver(marker, integrand);
+        W[k] = LocalIntegral(marker, integrand);
       }
     }
+    // One reduction for all (component, mode) integrals.
+#ifdef MFEM_USE_MPI
+    if (auto* pfes = dynamic_cast<ParFiniteElementSpace*>(fes_phi)) {
+      const Vector local(W);
+      MPI_Allreduce(local.GetData(), W.GetData(), W.Size(),
+                    MPITypeMap<real_t>::mpi_type, MPI_SUM, pfes->GetComm());
+    }
+#endif
     return W;
   }
 };
@@ -393,7 +420,7 @@ void DensityFeasibility::Solve(Coefficient& rho_parent,
     ScalarVectorProductCoefficient rho_u(rho_parent, u_coeff);
 
     auto r = detail::MakeLinearForm(s.fes_phi);
-    Array<int>& marker = const_cast<Array<int>&>(s.stokes_marker);
+    Array<int>& marker = s.stokes_marker;
     r->AddDomainIntegrator(new DomainLFGradIntegrator(rho_u), marker);
     // With rigid components the adjoint "velocity" extends into each
     // core as its rigid multiplier motion — the border load's own
@@ -403,29 +430,12 @@ void DensityFeasibility::Solve(Coefficient& rho_parent,
     if (s.rigid) {
       const int dim = s.fes_phi->GetMesh()->Dimension();
       for (std::size_t g = 0; g < s.component_markers.size(); g++) {
-        std::vector<real_t> a(s.modes_per);
-        for (int mode = 0; mode < s.modes_per; mode++) {
-          // MINUS: the border multiplier pairs with its constraint with
-          // the opposite sign to the field multiplier's pattern (the FD
-          // harness pinned it).
-          a[mode] = -rigid_a_[static_cast<int>(g) * s.modes_per + mode];
-        }
-        core_motion.push_back(std::make_unique<VectorFunctionCoefficient>(
-            dim, [dim, a](const Vector& x, Vector& v) {
-              v.SetSize(dim);
-              v = 0.0;
-              Vector mode_v(dim);
-              for (int mode = 0; mode < static_cast<int>(a.size());
-                   mode++) {
-                RigidMode(dim, mode)(x, mode_v);
-                v.Add(a[mode], mode_v);
-              }
-            }));
+        core_motion.push_back(CoreMotion(dim, s.modes_per, g, rigid_a_));
         core_rho_u.push_back(std::make_unique<ScalarVectorProductCoefficient>(
             rho_parent, *core_motion.back()));
         r->AddDomainIntegrator(
             new DomainLFGradIntegrator(*core_rho_u.back()),
-            const_cast<Array<int>&>(s.component_markers[g]));
+            s.component_markers[g]);
       }
     }
     Vector R;
@@ -475,7 +485,7 @@ void DensityFeasibility::HessianAction(
               "DensityFeasibility: the control space must live on the "
               "Stokes mesh.");
   const real_t four_pi_G = 4.0 * std::numbers::pi * s.G;
-  Array<int>& marker = const_cast<Array<int>&>(s.stokes_marker);
+  Array<int>& marker = s.stokes_marker;
 
   // The potential's sensitivity: (K + DtN) dPhi = -4 pi G (drho, v).
   auto dphi = detail::MakeGridFunction(s.fes_phi);
@@ -546,27 +556,12 @@ void DensityFeasibility::HessianAction(
     if (s.rigid) {
       const int dim = s.fes_phi->GetMesh()->Dimension();
       for (std::size_t g = 0; g < s.component_markers.size(); g++) {
-        std::vector<real_t> a(s.modes_per);
-        for (int mode = 0; mode < s.modes_per; mode++) {
-          // MINUS, as in the gradient's core extension.
-          a[mode] = -da[static_cast<int>(g) * s.modes_per + mode];
-        }
-        core_motion.push_back(std::make_unique<VectorFunctionCoefficient>(
-            dim, [dim, a](const Vector& x, Vector& v) {
-              v.SetSize(dim);
-              v = 0.0;
-              Vector mode_v(dim);
-              for (int mode = 0; mode < static_cast<int>(a.size());
-                   mode++) {
-                RigidMode(dim, mode)(x, mode_v);
-                v.Add(a[mode], mode_v);
-              }
-            }));
+        core_motion.push_back(CoreMotion(dim, s.modes_per, g, da));
         core_rho.push_back(std::make_unique<ScalarVectorProductCoefficient>(
             rho_parent, *core_motion.back()));
         r->AddDomainIntegrator(
             new DomainLFGradIntegrator(*core_rho.back()),
-            const_cast<Array<int>&>(s.component_markers[g]));
+            s.component_markers[g]);
       }
     }
     Vector R;
@@ -613,8 +608,8 @@ void DensityFeasibility::DerivativeOnParent(FiniteElementSpace& fes,
   SumCoefficient integrand(advective, w_coeff, -1.0, four_pi_G);
 
   auto lf = detail::MakeLinearForm(&fes);
-  Array<int>& marker = const_cast<Array<int>&>(s.stokes_marker);
-  lf->AddDomainIntegrator(new DomainLFIntegrator(integrand), marker);
+  lf->AddDomainIntegrator(new DomainLFIntegrator(integrand),
+                          s.stokes_marker);
   AssembleTrueRHS(fes, *lf, dual);
 }
 

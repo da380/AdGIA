@@ -178,8 +178,11 @@ saddle with a parameter-robust block preconditioner (it would take ε out
 of the conditioning for the gauged, referential and slipping methods);
 Schöberl-type parameter-robust multigrid (heavy without MFEM support).
 Changes to the fluid formulation are not pursued — the penalty with
-iterated refinement is the accepted formulation; only numerical levers
-(the next items) remain open.
+iterated refinement is the accepted gauge-fixing formulation for the
+penalty path; the Maxwell relaxation is the general fluid treatment
+(`doc/static_fluid_core.tex`) and the penalty is the specialist for
+neutrally stratified fluids; only numerical levers (the next items)
+remain open.
 
 **See:** `doc/gauge_penalty_iteration.tex`, "Semi-convergence and the
 operating point"; `doc/gauged_fluid.md` §1 "Gauge fixing: penalty plus

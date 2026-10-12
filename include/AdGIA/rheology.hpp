@@ -136,9 +136,9 @@ class ElasticStiffness {
  * operator reads the branch data from here, so the two layers cannot
  * disagree. When TraceFreeInternalVariables() is true the internal
  * variables are trace-free and BranchShearModulus() supplies the scalar
- * @f$\mu_k@f$ of @f$C_k = 2\mu_k P_{dev}@f$; otherwise they are full symmetric tensors and
- * BranchModulus() supplies @f$C_k@f$ pointwise (Mandel form, see
- * SymmetricTensorBasis).
+ * @f$\mu_k@f$ of @f$C_k = 2\mu_k P_{dev}@f$; otherwise they are full
+ * symmetric tensors and BranchModulus() supplies @f$C_k@f$ pointwise (Mandel
+ * form, see SymmetricTensorBasis).
  */
 class Rheology {
  public:

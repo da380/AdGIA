@@ -15,7 +15,7 @@
 // - The system is solved as one block system (CG with a block-diagonal
 //   preconditioner), with the cross terms assembled by
 //   (Par)SubMeshMixedBilinearForm.
-// - Mesh: ../data/coupled_poisson.msh, made by meshes/ball_with_buffer.py.
+// - Mesh: ../data/ball_buffer_coarse_3d.msh, made by meshes/ball_with_buffer.py.
 //   The mesh is deliberately coarse (relative L2 errors of order 0.2 to 0.5)
 //   so that it builds and runs quickly; halve the sizes in that script for a
 //   converged run.
@@ -23,13 +23,20 @@
 //   differences, marked below: the parallel mesh, the Par forms and hypre
 //   matrices, AMG in place of diagonal smoothing, the global coefficient
 //   norms, and the GLVis stream headers.
+// - Mesh requirements: 3-D only (the exact solution is the 3-D l = 1
+//   field z f(r)). Origin-centred; attribute 1 is the ball of radius 1
+//   (the submesh domain), attribute 2 the buffer out to r = 2. Boundary
+//   attribute 2 is the outer sphere r = 2 (psi2 = 0 there); on the
+//   submesh, boundary attribute 1 is the sphere r = 1 (psi1 = 0 there).
+//   The default ../data/ball_buffer_coarse_3d.msh is made by
+//   meshes/ball_with_buffer.py. Nondimensional.
 // - The exact solution is known in closed form (psi1Exact, psi2Exact
 //   below, with f1, f2 made from them); the program prints the relative
 //   L2 errors of ψ1, of ψ2 and of ψ2 restricted to the submesh. With
 //   -vis, ψ1 and ψ2 are shown on the submesh beside their exact values.
 //
 // Options (defaults in brackets):
-//   -m    mesh file [../data/coupled_poisson.msh]: the two-sphere mesh
+//   -m    mesh file [../data/ball_buffer_coarse_3d.msh]: the two-sphere mesh
 //         from meshes/ball_with_buffer.py (deliberately coarse; halve
 //         the sizes there for a converged run).
 //   -rt   relative tolerance of the block CG solve [1e-10].
@@ -40,12 +47,14 @@
 // Sample runs:  ./coupled_poisson -o 2
 //               mpiexec -np 4 ./coupled_poisson -o 2 -vis   (parallel build)
 // -----------------------------------------------------------------------------
+#include <algorithm>
 #include <cmath>
+#include <iostream>
 
-#include "mfem.hpp"
 #include "AdGIA.hpp"
+#include "mfem.hpp"
+#include "visualisation.hpp"
 
-using namespace std;
 using namespace mfem;
 using namespace AdGIA;
 
@@ -81,10 +90,9 @@ double CoeffNorm(Coefficient &c, Mesh &mesh,
 }
 #endif
 
-}  // namespace
 
 real_t psi1Exact(const Vector &x) {
-  const real_t r = sqrt(x(0) * x(0) + x(1) * x(1) + x(2) * x(2));
+  const real_t r = std::sqrt(x(0) * x(0) + x(1) * x(1) + x(2) * x(2));
   const real_t z = x(2);
 
   if (r < 1.0) {
@@ -95,7 +103,7 @@ real_t psi1Exact(const Vector &x) {
 }
 
 real_t psi2Exact(const Vector &x) {
-  const real_t r = sqrt(x(0) * x(0) + x(1) * x(1) + x(2) * x(2));
+  const real_t r = std::sqrt(x(0) * x(0) + x(1) * x(1) + x(2) * x(2));
   const real_t z = x(2);
 
   if (r < 1.0) {
@@ -106,7 +114,7 @@ real_t psi2Exact(const Vector &x) {
 }
 
 real_t f1Exact(const Vector &x) {
-  const real_t r = sqrt(x(0) * x(0) + x(1) * x(1) + x(2) * x(2));
+  const real_t r = std::sqrt(x(0) * x(0) + x(1) * x(1) + x(2) * x(2));
   const real_t z = x(2);
 
   if (r < 1.0) {
@@ -117,7 +125,7 @@ real_t f1Exact(const Vector &x) {
 }
 
 real_t f2Exact(const Vector &x) {
-  const real_t r = sqrt(x(0) * x(0) + x(1) * x(1) + x(2) * x(2));
+  const real_t r = std::sqrt(x(0) * x(0) + x(1) * x(1) + x(2) * x(2));
   const real_t z = x(2);
 
   if (r < 1.0) {
@@ -127,6 +135,8 @@ real_t f2Exact(const Vector &x) {
   }
 }
 
+}  // namespace
+
 int main(int argc, char *argv[]) {
 #ifdef MFEM_USE_MPI
   Mpi::Init(argc, argv);
@@ -134,7 +144,7 @@ int main(int argc, char *argv[]) {
 #endif
   StopWatch chrono;
 
-  const char *mesh_file = "../data/coupled_poisson.msh";
+  const char *mesh_file = "../data/ball_buffer_coarse_3d.msh";
   real_t rel_tol = 1e-10;
   int order = 1;
   bool visualization = false;
@@ -148,12 +158,12 @@ int main(int argc, char *argv[]) {
   args.Parse();
   if (!args.Good()) {
     if (Root()) {
-      args.PrintUsage(cout);
+      args.PrintUsage(std::cout);
     }
     return 1;
   }
   if (Root()) {
-    args.PrintOptions(cout);
+    args.PrintOptions(std::cout);
   }
 
   Mesh smesh(mesh_file, 1, 1);
@@ -181,8 +191,8 @@ int main(int argc, char *argv[]) {
   const auto n2 = fes.GetVSize();
 #endif
   if (Root()) {
-    cout << "Number of psi1-unknowns: " << n1 << endl;
-    cout << "Number of psi2-unknowns: " << n2 << endl;
+    std::cout << "Number of psi1-unknowns: " << n1 << "\n";
+    std::cout << "Number of psi2-unknowns: " << n2 << "\n";
   }
 
   FieldType psi1_gf(&fes_cond), psi2_gf(&fes), psi2_gf_cond(&fes_cond);
@@ -322,7 +332,7 @@ int main(int argc, char *argv[]) {
 
   chrono.Stop();
   if (Root()) {
-    cout << "Solver time = " << chrono.RealTime() << " s." << endl;
+    std::cout << "Solver time = " << chrono.RealTime() << " s.\n";
   }
 
   a11.RecoverFEMSolution(X.GetBlock(0), b1, psi1_gf);
@@ -330,7 +340,7 @@ int main(int argc, char *argv[]) {
 
   mesh_cond.Transfer(psi2_gf, psi2_gf_cond);
 
-  int order_quad = max(2, 2 * order + 1);
+  int order_quad = std::max(2, 2 * order + 1);
   const IntegrationRule *irs[Geometry::NumGeom];
   for (int i = 0; i < Geometry::NumGeom; ++i) {
     irs[i] = &(IntRules.Get(i, order_quad));
@@ -344,10 +354,10 @@ int main(int argc, char *argv[]) {
                             CoeffNorm(psi2_exact_coeff, mesh_cond, irs);
 
   if (Root()) {
-    cout << "\nErrors:" << endl;
-    cout << "psi1 L2 error = " << psi1_l2_err << endl;
-    cout << "psi2 L2 error = " << psi2_l2_err << endl;
-    cout << "psi2 (submesh) L2 error = " << psi2_cond_l2_err << endl;
+    std::cout << "\nErrors:\n";
+    std::cout << "psi1 L2 error = " << psi1_l2_err << "\n";
+    std::cout << "psi2 L2 error = " << psi2_l2_err << "\n";
+    std::cout << "psi2 (submesh) L2 error = " << psi2_cond_l2_err << "\n";
   }
 
   if (visualization) {
@@ -357,21 +367,11 @@ int main(int argc, char *argv[]) {
     psi2_exact_gf.ProjectCoefficient(psi2_exact_coeff);
     mesh_cond.Transfer(psi2_exact_gf, psi2_exact_gf_cond);
 
-    char vishost[] = "localhost";
-    int visport = 19916;
-
+    // GLVisWindow sends one piece per nonempty rank (the submesh can leave
+    // ranks empty).
     auto show = [&](const FieldType &f, const char *title) {
-      socketstream sock(vishost, visport);
-#ifdef MFEM_USE_MPI
-      sock << "parallel " << Mpi::WorldSize() << " " << Mpi::WorldRank()
-           << "\n";
-#endif
-      sock.precision(8);
-      sock << "solution\n"
-           << mesh_cond << f << "window_title '" << title << "'" << endl;
-#ifdef MFEM_USE_MPI
-      MPI_Barrier(mesh_cond.GetComm());
-#endif
+      examples::GLVisWindow win(title, examples::DefaultKeys(dim));
+      win.Send(mesh_cond, f);
     };
     show(psi1_gf, "psi1 numerical");
     show(psi1_exact_gf, "psi1 exact");

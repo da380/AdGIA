@@ -4,8 +4,8 @@
 #
 # A Python able to `import planetmodel.mesh3d` and `import mfem.ser` (the
 # aspherical meshes are written through PyMFEM) is needed, with planetmodel
-# at least PLANETMODEL_MINIMUM_VERSION (1.2.3 first wrote manifest schema 5
-# and optimised the linear volume mesh before curving). MESHES_PYTHON
+# at least PLANETMODEL_MINIMUM_VERSION (1.2.4 added the Refinement protocol
+# and near_curve that the coastline meshes use). MESHES_PYTHON
 # names one; otherwise the root poetry environment (ADGIA_POETRY_PYTHON,
 # found by the top-level CMakeLists) is tried, then the Python found by
 # CMake, and failing those a virtual environment is created under the
@@ -14,7 +14,7 @@
 
 set(MESHES_PYTHON "" CACHE FILEPATH
     "Python interpreter with planetmodel[meshing]; found or created if empty")
-set(PLANETMODEL_MINIMUM_VERSION "1.2.3")
+set(PLANETMODEL_MINIMUM_VERSION "1.2.4")
 set(PLANETMODEL_REQUIREMENT
     "planetmodel[meshing,mfem]>=${PLANETMODEL_MINIMUM_VERSION}" CACHE STRING
     "pip requirement installed into the build's venv when no suitable Python is found")
@@ -142,33 +142,33 @@ function(meshes_add script)
     set(MESHES_OUTPUTS ${MESHES_OUTPUTS} ${outputs} PARENT_SCOPE)
 endfunction()
 
-meshes_add(unit_disc.py        disk)
+meshes_add(unit_disc.py        disc_2d)
 meshes_add(earth_coastlines.py earth_coastlines
                                DEPENDS ice7g_topography_lmax64.npz)
-meshes_add(fingerprint_coastline.py sea_level_fingerprint)
-meshes_add(unit_ball.py        ball)
-meshes_add(offset_disc.py      circular_offset)
-meshes_add(disc_with_buffer.py elastogravity_2d)
-meshes_add(disc_with_wide_buffer.py elastogravity_2d_wide)
-meshes_add(ball_with_buffer.py coupled_poisson)
-meshes_add(layered_earth.py    elastogravity_two_layer_2d
-                               elastogravity_three_layer_2d
-                               elastogravity_two_layer_3d
-                               elastogravity_three_layer_3d
+meshes_add(fingerprint_coastline.py fingerprint_ring_3d)
+meshes_add(unit_ball.py        ball_3d)
+meshes_add(offset_disc.py      offset_disc_2d)
+meshes_add(disc_with_buffer.py disc_buffer_2d)
+meshes_add(disc_with_wide_buffer.py disc_buffer_wide_2d)
+meshes_add(ball_with_buffer.py ball_buffer_coarse_3d)
+meshes_add(layered_earth.py    earth_fluidcore_2d
+                               earth_innercore_2d
+                               earth_fluidcore_3d
+                               earth_innercore_3d
                                ARGS --all)
 meshes_add(equilibrium_bodies.py
-                               flattened_two_layer_2d
-                               flattened_two_layer_3d
-                               flattened_three_layer_2d
-                               flattened_three_layer_3d
-                               cmb_topo_two_layer_2d
-                               cmb_topo_two_layer_3d
-                               cmb_topo_three_layer_2d
-                               cmb_topo_three_layer_3d
-                               cmb_bump_two_layer_2d
-                               cmb_bump_two_layer_3d
-                               cmb_bump_three_layer_2d
-                               cmb_bump_three_layer_3d
+                               earth_fluidcore_flat_2d
+                               earth_fluidcore_flat_3d
+                               earth_innercore_flat_2d
+                               earth_innercore_flat_3d
+                               earth_fluidcore_cmbtopo_2d
+                               earth_fluidcore_cmbtopo_3d
+                               earth_innercore_cmbtopo_2d
+                               earth_innercore_cmbtopo_3d
+                               earth_fluidcore_cmbbump_2d
+                               earth_fluidcore_cmbbump_3d
+                               earth_innercore_cmbbump_2d
+                               earth_innercore_cmbbump_3d
                                MFEM ARGS --all)
 meshes_add(aspherical_body.py  aspherical_2d aspherical_buffer_2d
                                aspherical_3d aspherical_buffer_3d

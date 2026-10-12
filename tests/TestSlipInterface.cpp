@@ -55,6 +55,16 @@ using Mat2 = std::array<std::array<double, 2>, 2>;
 constexpr double kPi = std::numbers::pi;
 double rc = 0.6;  // referential interface radius (a variable: the
                   // discrete cross-check resets it to the mesh's)
+
+// Sets rc for the scope of a test and restores it on exit, including the
+// early return of a fatal ASSERT.
+struct RcGuard {
+  explicit RcGuard(double value) : saved(rc) { rc = value; }
+  ~RcGuard() { rc = saved; }
+  RcGuard(const RcGuard&) = delete;
+  RcGuard& operator=(const RcGuard&) = delete;
+  double saved;
+};
 constexpr double rOut = 0.9;    // support limit of the solid field
 constexpr double piP = 0.3;     // referential pressure
 constexpr double lam = 1.1, mu = 0.7, kap = 2.0;
@@ -484,7 +494,7 @@ TEST(SlipInterface, SecondVariationIdentity) {
 }
 
 TEST(SlipInterface, SecondVariationMapped) {
-  // f = 1.15 - (0.15/0.81) r^2: curved radial map, f(0.9) = 1 - ish,
+  // f = 1.15 - (0.15/0.81) r^2: curved radial map, f(0.9) = 1 exactly,
   // J_e and nu genuinely non-trivial on Sigma.
   RunCase(EquilibriumMap{1.15, 0.15 / 0.81}, "phi_e radial");
 }
@@ -501,8 +511,7 @@ TEST(SlipInterface, DiscreteMatrixMatchesQuadrature) {
   using namespace mfem;
   using namespace AdGIA;
 
-  const double rc_saved = rc;
-  rc = 3483.0 / 6371.0;  // the two-layer mesh's interface radius
+  const RcGuard rc_guard(3483.0 / 6371.0);  // the two-layer mesh's radius
 
   const Field V1{0.31, 0.62, -0.41, 0.53, 0.27};
   const SlipFlow S1{0.8, 0.0};
@@ -559,7 +568,7 @@ TEST(SlipInterface, DiscreteMatrixMatchesQuadrature) {
     std::vector<double> rel;
     double welded = 0.0, scale = 0.0;
     for (int order : {1, 2}) {
-      Mesh parent("../data/elastogravity_two_layer_2d.msh", 1, 1);
+      Mesh parent("../data/earth_fluidcore_2d.msh", 1, 1);
       Array<int> fluid_attr({1}), solid_attr({2});
       SubMesh solid(SubMesh::CreateFromDomain(parent, solid_attr));
       SubMesh fluid(SubMesh::CreateFromDomain(parent, fluid_attr));
@@ -621,7 +630,6 @@ TEST(SlipInterface, DiscreteMatrixMatchesQuadrature) {
     EXPECT_LT(welded, 1e-10 * scale);
   }
 
-  rc = rc_saved;
 }
 
 
@@ -630,8 +638,9 @@ TEST(SlipInterface, DiscreteMatrixMatchesQuadrature) {
 // Hessian of the broken motion, explicitly"): with a rigid stress-free
 // solid (rho_s = 0 and the hydrostatic fluid pressure vanishing at the
 // interface, pi(rc) = 0), B_Sigma and the extension terms switch off,
-// isolating the volume pieces specific to the broken motion: the mismatch coupling (through its zeta1-eliminated
-// stationary value) and the rho w.grad grad zeta0 w term. Exact
+// isolating the volume pieces specific to the broken motion: the
+// mismatch coupling (through its zeta1-eliminated stationary value) and
+// the rho w.grad grad zeta0 w term. Exact
 // disc-preserving families (radial squeeze, rotation, composition);
 // the density stays radial, so the exact gravitational self-energy is
 // a single 1-D integral by the shell theorem,
@@ -855,7 +864,7 @@ TEST(SlipInterface, GravityHessianIdentity) {
       // part cancel jointly; both the exact energy and the assembled
       // prediction must see it.
       const double term_scale =
-          2.0 * kPi * Gg * rho * rho;  // the size of the players
+          2.0 * kPi * Gg * rho * rho;  // the scale of the individual terms
       EXPECT_LT(std::abs(d2), 5e-4 * term_scale);
       EXPECT_LT(std::abs(pred), 5e-4 * term_scale);
     } else {
@@ -872,8 +881,6 @@ TEST(SlipInterface, GravityHessianIdentity) {
     const GravityFamily fr{0.4, 0.0, 0.0}, fo{0.0, 0.8, 0.0};
     auto Etwo = [&](double e1, double e2) {
       // phi = (1 + e1 m) Rot(e2 A) x: an exact two-parameter family.
-      GravityFamily f{0.0, 0.0};
-      (void)f;
       double E = 0.0;
       const double rc2 = rc * rc;
       for (int i = 0; i < Nr; i++) {
@@ -1247,8 +1254,7 @@ TEST(SlipInterface, DiscreteGravityPiecesMatchQuadrature) {
   using gravity_fd::Gg;
   using gravity_fd::rho;
 
-  const double rc_saved = rc;
-  rc = 3483.0 / 6371.0;  // the two-layer mesh's interface radius
+  const RcGuard rc_guard(3483.0 / 6371.0);  // the two-layer mesh's radius
 
   const gravity_fd::GravityFamily fam{0.4, 0.8, 0.5};  // generic fluid w
   const Field US{0.31, 0.62, -0.41, 0.53, 0.27};       // solid-side u_s
@@ -1350,7 +1356,7 @@ TEST(SlipInterface, DiscreteGravityPiecesMatchQuadrature) {
   std::vector<double> relMass, relZeta, relVtil;
   for (int order : {1, 2}) {
     SCOPED_TRACE(order);
-    Mesh parent("../data/elastogravity_two_layer_2d.msh", 1, 1);
+    Mesh parent("../data/earth_fluidcore_2d.msh", 1, 1);
     Array<int> fluid_attr({1}), solid_attr({2});
     SubMesh solid(SubMesh::CreateFromDomain(parent, solid_attr));
     SubMesh fluid(SubMesh::CreateFromDomain(parent, fluid_attr));
@@ -1433,7 +1439,6 @@ TEST(SlipInterface, DiscreteGravityPiecesMatchQuadrature) {
   EXPECT_LT(relVtil[1], 5e-3);
   EXPECT_LT(relVtil[1], relVtil[0]);
 
-  rc = rc_saved;
 }
 
 // ---------------------------------------------------------------------------
@@ -1452,8 +1457,7 @@ TEST(SlipInterface, DiscreteGravityInterfaceMatchesQuadrature) {
   using namespace AdGIA;
   using gravity_fd::Gg;
 
-  const double rc_saved = rc;
-  rc = 3483.0 / 6371.0;  // the two-layer mesh's interface radius
+  const RcGuard rc_guard(3483.0 / 6371.0);  // the two-layer mesh's radius
 
   const Field VS{0.31, 0.62, -0.41, 0.53, 0.27};
   const Field VF{-0.22, 0.35, 0.18, -0.47, 0.39};
@@ -1581,7 +1585,7 @@ TEST(SlipInterface, DiscreteGravityInterfaceMatchesQuadrature) {
     std::vector<double> rel;
     double welded = 0.0;
     for (int order : {1, 2}) {
-      Mesh parent("../data/elastogravity_two_layer_2d.msh", 1, 1);
+      Mesh parent("../data/earth_fluidcore_2d.msh", 1, 1);
       Array<int> fluid_attr({1}), solid_attr({2});
       SubMesh solid(SubMesh::CreateFromDomain(parent, solid_attr));
       SubMesh fluid(SubMesh::CreateFromDomain(parent, fluid_attr));
@@ -1662,7 +1666,6 @@ TEST(SlipInterface, DiscreteGravityInterfaceMatchesQuadrature) {
     EXPECT_LT(welded, 1e-10);
   }
 
-  rc = rc_saved;
 }
 
 // Covariance of the one-sided interface kernels: the discrete
@@ -1671,15 +1674,12 @@ TEST(SlipInterface, DiscreteGravityInterfaceMatchesQuadrature) {
 // kernels on the reference mesh must reproduce, dof for dof, the
 // UNMAPPED kernels assembled on the mesh whose nodes are displaced by
 // the same interpolant (the isoparametric identity every certified
-// volume integrator satisfies; doc/mappings.md). This is the
-// element-level instrument proposed in doc/planning/open_issues.md
-// ("Mapped slip_broken: the slipping-interface forms are not
-// covariant"): it fails, at the 10 % level under an O(0.2) shear, for
-// a direction slot sanitised as P_T F^{-1} -- not invariant under the
-// face-fixing shears an adjacent-element F evaluation produces off the
-// constraint set -- and passes for the pullback-consistent
-// P_T F^{-1} (1 - nu nu^T / |nu|^2), which is the deformed face's own
-// tangential projector pulled back. The gravity data transform with
+// volume integrator satisfies; doc/mappings.md, doc/slip_interface.tex).
+// The direction slot must be the pullback-consistent
+// P_T F^{-1} (1 - nu nu^T / |nu|^2), the deformed face's own tangential
+// projector pulled back; a bare P_T F^{-1} is not invariant under the
+// face-fixing shears an adjacent-element F evaluation produces, and
+// would break the identity at the 10 % level under an O(0.2) shear. The gravity data transform with
 // the map (g on the deformed side, F^T g o xi on the reference side),
 // so any residual is the kernels' own.
 TEST(SlipInterface, InterfaceKernelsFaceShearCovariance) {
@@ -1707,7 +1707,7 @@ TEST(SlipInterface, InterfaceKernelsFaceShearCovariance) {
     g(1) = 0.9 + 0.2 * y(0) + 0.1 * y(1);
   };
 
-  Mesh parent("../data/elastogravity_two_layer_2d.msh", 1, 1);
+  Mesh parent("../data/earth_fluidcore_2d.msh", 1, 1);
   Array<int> solid_attr({2});
   SubMesh solid(SubMesh::CreateFromDomain(parent, solid_attr));
   solid.SetCurvature(2);

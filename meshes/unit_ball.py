@@ -1,6 +1,7 @@
-"""The unit ball: data/ball.msh.
+"""The unit ball: data/ball_3d.msh.
 
-One layer and one boundary. Domain attribute 1 is the ball and boundary
+One layer and one boundary; lengths and element sizes are in units of
+the radius. Domain attribute 1 is the ball and boundary
 attribute 1 its sphere. Order-2 elements, refined towards the boundary.
 About fifty thousand tetrahedra; the build takes a minute or two.
 
@@ -23,7 +24,7 @@ def main() -> None:
     sizing = UniformInterfaces(*sizes(args, 0.047, 0.094, 0.2))
 
     spec = MeshSpec(ball, sizing, dimension=3, order=2)
-    report(build_layered_mesh(spec, args.out / "ball", verbose=args.verbose))
+    report(build_layered_mesh(spec, args.out / "ball_3d", verbose=args.verbose))
 
 
 if __name__ == "__main__":

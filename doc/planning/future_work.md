@@ -223,7 +223,9 @@ rigid motions of the buffer would make them exact discrete null pairs.
 ### Chaljub–Valette two-potential fluid and the essential spectrum
 
 **Status:** open question; not used as a formulation (the penalty gauged
-formulation is the accepted one); the spectral prediction is untested.
+formulation is the accepted gauge-fixing one for the penalty path; the Maxwell
+relaxation is the general fluid treatment, `doc/static_fluid_core.tex`, and
+the penalty the specialist for neutrally stratified fluids); the spectral prediction is untested.
 
 Chaljub & Valette (2004) write the fluid displacement as
 u = ∇χ + ξ s, s = ∇ρ/ρ − g/c², N² = s·g. For a non-rotating hydrostatic

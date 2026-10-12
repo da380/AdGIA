@@ -397,7 +397,7 @@ namespace {
 // A Mandel tensor restricted to attribute 1 (zero on the buffer).
 class BodyOnlyTensor : public MatrixCoefficient {
  public:
-  BodyOnlyTensor(int dim, MatrixCoefficient& inner)
+  explicit BodyOnlyTensor(MatrixCoefficient& inner)
       : MatrixCoefficient(inner.GetHeight()), inner_(&inner) {}
   void Eval(DenseMatrix& K, ElementTransformation& T,
             const IntegrationPoint& ip) override {
@@ -453,7 +453,7 @@ TEST(ReferentialProblem, HydrostaticCrossCheckBallWide2D) {
     auto C_eff =
         IsotropicElasticTensorCoefficient::FromBulkModulus(dim, kappa, mu);
     BareElasticTensorCoefficient C_bare(dim, C_eff, p0);
-    BodyOnlyTensor C(dim, C_bare);
+    BodyOnlyTensor C(C_bare);
     MatrixFunctionCoefficient S(dim, [](const Vector& x, DenseMatrix& S) {
       S.SetSize(x.Size());
       S = 0.0;
@@ -640,12 +640,12 @@ TEST(ReferentialProblem, TransformationLawCoefficients) {
   // diffusion tensor scaled by the pressure).
   {
     auto xi = TaperedMap(dim, 0.08);
-    ConstantCoefficient p(0.37);
+    constexpr double pressure = 0.37;
     MatrixFunctionCoefficient S(dim, [](const Vector& x, DenseMatrix& S) {
       S.SetSize(x.Size());
       S = 0.0;
       for (int i = 0; i < x.Size(); i++) {
-        S(i, i) = -0.37;
+        S(i, i) = -pressure;
       }
     });
     PullbackStressCoefficient S_rel(dim, S, xi);
@@ -653,7 +653,7 @@ TEST(ReferentialProblem, TransformationLawCoefficients) {
     DenseMatrix S1, A;
     S_rel.Eval(S1, *T, ip);
     a.Eval(A, *T, ip);
-    A *= -0.37;
+    A *= -pressure;
     DenseMatrix D(S1);
     D -= A;
     EXPECT_LT(D.MaxMaxNorm(), 1e-13);
@@ -732,7 +732,7 @@ TEST(ReferentialProblem, FluidRelabellingNullPair) {
 
     std::vector<double> res, res_wrong;
     for (int order : {1, 2, 3}) {
-      Mesh parent("../data/elastogravity_two_layer_2d.msh", 1, 1);
+      Mesh parent("../data/earth_fluidcore_2d.msh", 1, 1);
       Array<int> body_attr({1, 2});
       SubMesh body(SubMesh::CreateFromDomain(parent, body_attr));
       H1_FECollection fec(order, dim);
@@ -783,7 +783,7 @@ TEST(ReferentialProblem, FluidRelabellingNullPair) {
   {
     std::vector<double> res;
     for (int order : {1, 2}) {
-      Mesh parent("../data/elastogravity_two_layer_2d.msh", 1, 1);
+      Mesh parent("../data/earth_fluidcore_2d.msh", 1, 1);
       Array<int> body_attr({1, 2});
       SubMesh body(SubMesh::CreateFromDomain(parent, body_attr));
       H1_FECollection fec(order, dim);
@@ -815,7 +815,7 @@ TEST(ReferentialProblem, GaugedFluidCrossCheck2D) {
   const double eps = 1e-2;
   const int nref = 3;
 
-  Mesh parent("../data/elastogravity_two_layer_2d.msh", 1, 1);
+  Mesh parent("../data/earth_fluidcore_2d.msh", 1, 1);
   Array<int> body_attr({1, 2}), buffer_attr({3});
   SubMesh body(SubMesh::CreateFromDomain(parent, body_attr));
   SubMesh buffer(SubMesh::CreateFromDomain(parent, buffer_attr));
@@ -908,9 +908,7 @@ TEST(ReferentialProblem, GaugedFluidCrossCheck2D) {
     ConstantCoefficient zc(0.0);
     const double rel =
         d.ComputeL2Error(zc) /
-        std::max(1e-30, const_cast<GridFunction&>(
-                            referential.PotentialOnBody())
-                            .ComputeL2Error(zc));
+        std::max(1e-30, referential.PotentialOnBody().ComputeL2Error(zc));
     EXPECT_LT(rel, 2e-2);
   }
 }
@@ -1105,7 +1103,7 @@ TEST(ReferentialProblem, RelabelledEquilibrium2D) {
     double du2 = 0.0, un2 = 0.0;
     std::vector<double> dz;
     double zn2 = 0.0;
-    Vector x(dim), y(dim), a, b;
+    Vector x(dim), y(dim);
     int n_pts = 0;
     for (int i = 0; i < 40; i++) {
       const double r = 0.15 + 0.75 * (i % 8) / 7.0;
@@ -1145,7 +1143,7 @@ TEST(ReferentialProblem, RelabelledEquilibrium2D) {
     u_err.push_back(std::sqrt(du2 / un2));
     z_err.push_back(std::sqrt(dz2 / zn2));
   }
-  // Agreement at the half-percent level at both orders. The error does
+  // Agreement at the 1.5 % level at both orders. The error does
   // not fall with the FIELD order because the mesh geometry is fixed at
   // order 2 and the exact analytic map carries the geometric
   // interpolation error (the exact-F-versus-interpolated-F effect of

@@ -339,11 +339,11 @@ TEST_P(GeneralisedStiffnessTest, MaterialAffineEnergyPatch) {
   }
 }
 
-
 // The referential gravity blocks against second differences of the exact
 // functional T = int <a(F) g, g> dV, a(F) = J F^{-1} F^{-T}, g = g0 + grad
-// zeta1, at the equilibrium mapping: the assembled bilinear forms must reproduce the mixed partial
-// derivatives of T in the FE directions to finite-difference accuracy.
+// zeta1, at the equilibrium mapping: the assembled bilinear forms must
+// reproduce the mixed partial derivatives of T in the FE directions to
+// finite-difference accuracy.
 namespace {
 
 double GravityFunctional(Mesh& mesh, Diffeomorphism& phi,

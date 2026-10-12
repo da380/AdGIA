@@ -21,7 +21,7 @@ using namespace AdGIA;
 
 namespace {
 
-constexpr char kMeshFile[] = "../data/coupled_poisson.msh";
+constexpr char kMeshFile[] = "../data/ball_buffer_coarse_3d.msh";
 
 double ShorelineColatitude(double phi) {
   return 0.9 + 0.15 * std::sin(3.0 * phi);
@@ -125,7 +125,7 @@ TEST(ShorelineRefinement, GeometricWidthControlsBand) {
   };
   const int ne_narrow = refine_with_width(0.08);
   const int ne_wide = refine_with_width(0.3);
-  EXPECT_GT(ne_narrow, 1756);  // the base mesh's element count
+  EXPECT_GT(ne_narrow, Mesh(kMeshFile, 1, 1).GetNE());  // base element count
   EXPECT_GT(ne_wide, ne_narrow);
 }
 

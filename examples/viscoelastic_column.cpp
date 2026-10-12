@@ -72,11 +72,20 @@
 //    ./viscoelastic_column -n 4         (coarser steps: the face run's error
 //                                        is the time stepping's)
 //    ./viscoelastic_column -d 3 -nz 4
+//
+// Mesh requirements: none read; the mesh is built internally (no mesh file):
+// a Cartesian box of width W = 0.5 and height H = 1 (quadrilaterals in 2-D,
+// hexahedra with a W x W plan in 3-D, nx elements across and nz up), made
+// periodic in the horizontal direction(s) by MakePeriodic, so the side faces
+// carry no boundary attribute. Boundary attribute 1 is the bottom (clamped),
+// the top is 3 (2-D) or 6 (3-D) (loaded). Dimensionless; z (y in 2-D) is up.
 // ============================================================================
+#include <algorithm>
 #include <cmath>
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -348,9 +357,10 @@ int main(int argc, char* argv[]) {
     for (const auto& run : runs) {
       emax = std::max(emax, GlobalMax(run.error.Normlinf()));
     }
+    std::ostringstream t_text;
+    t_text << std::setprecision(3) << t_final;
     for (std::size_t r = 0; r < runs.size(); r++) {
-      examples::GLVisWindow w("u_z - exact at t = " +
-                                  std::to_string(t_final).substr(0, 4) +
+      examples::GLVisWindow w("u_z - exact at t = " + t_text.str() +
                                   ", interface " + names[r],
                               examples::DefaultKeys(dim));
       w.SetValueRange(-emax, emax);

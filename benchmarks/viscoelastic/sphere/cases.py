@@ -42,6 +42,7 @@ The mesh path is filled in by the caller (study.py), which builds it.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -52,6 +53,26 @@ sys.path.insert(0, str(HERE))
 
 import histories as hist  # noqa: E402
 from meshes import outside_source  # noqa: E402
+
+
+def _box_output_times():
+    """output_times of the box sub-family's cases module (the same
+    function), loaded by path: both sub-families name their module
+    cases.py, and the sys.path entries box/cases.py adds are removed
+    again so that `reference` and the like keep resolving to this
+    directory."""
+    saved = list(sys.path)
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "box_cases", HERE.parent / "box" / "cases.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    finally:
+        sys.path[:] = saved
+    return module.output_times
+
+
+output_times = _box_output_times()
 
 KAPPA = 5.0 / 3.0
 
@@ -118,16 +139,6 @@ MODELS = ("maxwell_ball", "lid", "core_lid", "channel", "burgers_lid",
 RADIAL = MODELS[:-2]
 
 
-def output_times(t_final: float, n: int, history) -> list[float]:
-    times = [t_final * (j + 1) / n for j in range(n)]
-    bps = [b["time"] for b in history.breakpoints()]
-    for j, t in enumerate(times):
-        for b in bps:
-            if abs(t - b) < 1e-6 * t_final:
-                times[j] = t + 1e-3 * t_final / n
-    return times
-
-
 def make_case(model_name: str, *, dim: int = 2, degree: int = 2,
               history=None, amplitude: float = 1.0,
               contrast: float = 100.0, t_final: float = 8.0,
@@ -156,19 +167,29 @@ def make_case(model_name: str, *, dim: int = 2, degree: int = 2,
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("model", choices=MODELS)
-    p.add_argument("--dim", type=int, default=2)
-    p.add_argument("--degree", type=int, default=2)
+    class Fmt(argparse.RawDescriptionHelpFormatter,
+              argparse.ArgumentDefaultsHelpFormatter):
+        pass
+
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=Fmt)
+    p.add_argument("model", choices=MODELS, help="the model")
+    p.add_argument("--dim", type=int, default=2,
+                   help="dimension: 2 (disc) or 3 (ball)")
+    p.add_argument("--degree", type=int, default=2,
+                   help="spherical-harmonic degree of the load")
     p.add_argument("--history", default="heaviside",
-                   choices=sorted(hist.PRESETS))
-    p.add_argument("--contrast", type=float, default=100.0)
+                   choices=sorted(hist.PRESETS), help="load history preset")
+    p.add_argument("--contrast", type=float, default=100.0,
+                   help="viscosity contrast of the channel and lateral "
+                        "models")
     p.add_argument("--h", type=float, default=0.1,
                    help="element size of the mesh to build")
     p.add_argument("--order", type=int, default=2, help="mesh order")
-    p.add_argument("--meshes", type=Path, default=Path.cwd() / "meshes")
-    p.add_argument("--out", type=Path, default=Path("case.json"))
+    p.add_argument("--meshes", type=Path, default=Path.cwd() / "meshes",
+                   help="directory the mesh is built in or found in")
+    p.add_argument("--out", type=Path, default=Path("case.json"),
+                   help="case file to write (must be in a build tree or "
+                        "outside the repository)")
     a = p.parse_args()
     from meshes import mesh_path
     case = make_case(a.model, dim=a.dim, degree=a.degree,

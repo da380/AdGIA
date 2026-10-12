@@ -1,13 +1,66 @@
-#ifndef ADGIA_EQUILIBRIUM_FIGURES_HPP
-#define ADGIA_EQUILIBRIUM_FIGURES_HPP
+#pragma once
 
 #include <memory>
+#include <vector>
 
 #include "mfem.hpp"
 
 #include "AdGIA/background.hpp"
 
 namespace AdGIA {
+
+class DensityFeasibility;
+
+/**
+ * @brief An enclosed solid component (an inner core) of the fluid-only
+ * certificate: without it, the functional never asks whether the
+ * component's force and torque balance — six conditions a connected
+ * solid satisfies automatically but a floating one does not
+ * (doc/equilibrium_figures.tex §2) — and J = 0 is optimistic. The
+ * component's boundary joins the Stokes saddle as a rigid boundary
+ * group, and its own weight and torque, @f$\int \rho\,\nabla\Phi\cdot
+ * \mathbf{r}_k@f$ over its region, enter the border right-hand side.
+ */
+struct RigidComponent {
+  /** The component's boundary, as a boundary-attribute marker on the
+   * STOKES (fluid) mesh (e.g. the ICB's inherited attribute). */
+  mfem::Array<int> fluid_bdr_marker;
+  /** The component's region, as domain attributes on the PARENT. */
+  mfem::Array<int> parent_attributes;
+};
+
+/**
+ * @brief The persistent half of the feasibility evaluation: none of the
+ * operators — the Poisson system with its DtN closure and
+ * preconditioner, the Stokes saddle with its preconditioner — depends on
+ * the density,
+ * so an optimisation loop assembles them once here and pays only the
+ * solves per evaluation. Parameters as in DensityFeasibility, minus
+ * the densities; everything is borrowed and must outlive the problem.
+ */
+class DensityFeasibilityProblem {
+ public:
+  /** @param rigid Optional enclosed solid components (RigidComponent);
+   * borrowed, must outlive the problem. */
+  DensityFeasibilityProblem(
+      mfem::FiniteElementSpace& fes_phi, int dtn_degree, mfem::real_t G,
+      const mfem::Array<int>& stokes_attributes,
+      mfem::FiniteElementSpace& fes_u, mfem::FiniteElementSpace& fes_p,
+      mfem::Coefficient* mu = nullptr,
+      const mfem::Array<int>* essential_bdr = nullptr,
+      const std::vector<RigidComponent>* rigid = nullptr);
+  ~DensityFeasibilityProblem();
+
+  /** @brief The functional, its fields and its derivative at one
+   * density (the two coefficients as in DensityFeasibility). */
+  std::unique_ptr<DensityFeasibility> Evaluate(
+      mfem::Coefficient& rho_parent, mfem::Coefficient& rho_stokes) const;
+
+ private:
+  friend class DensityFeasibility;
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
+};
 
 /**
  * @brief The density feasibility functional of the equilibrium-figures
@@ -77,60 +130,8 @@ namespace AdGIA {
  * @f$\nabla\Phi@f$). Unlike the mixed problem's fluid coupling,
  * nothing here pairs a potential value with the density non-linearly
  * in the gauge, so the 2-D certificate is consistent, not merely
- * regularised — the FD tests hold to the 3-D tolerances.
+ * regularised.
  */
-class DensityFeasibility;
-
-/**
- * @brief An enclosed solid component (an inner core) of the fluid-only
- * certificate: without it, the functional never asks whether the
- * component's force and torque balance — six conditions a connected
- * solid satisfies automatically but a floating one does not
- * (doc/equilibrium_figures.tex §2) — and J = 0 is optimistic. The
- * component's boundary joins the Stokes saddle as a rigid boundary
- * group, and its own weight and torque, @f$\int \rho\,\nabla\Phi\cdot
- * \mathbf{r}_k@f$ over its region, enter the border right-hand side.
- */
-struct RigidComponent {
-  /** The component's boundary, as a boundary-attribute marker on the
-   * STOKES (fluid) mesh (e.g. the ICB's inherited attribute). */
-  mfem::Array<int> fluid_bdr_marker;
-  /** The component's region, as domain attributes on the PARENT. */
-  mfem::Array<int> parent_attributes;
-};
-
-/**
- * @brief The persistent half of the feasibility evaluation: none of the
- * operators — the Poisson system with its DtN closure and
- * preconditioner, the Stokes saddle with its — depends on the density,
- * so an optimisation loop assembles them once here and pays only the
- * solves per evaluation. Parameters as in DensityFeasibility, minus
- * the densities; everything is borrowed and must outlive the problem.
- */
-class DensityFeasibilityProblem {
- public:
-  /** @param rigid Optional enclosed solid components (RigidComponent);
-   * borrowed, must outlive the problem. */
-  DensityFeasibilityProblem(
-      mfem::FiniteElementSpace& fes_phi, int dtn_degree, mfem::real_t G,
-      const mfem::Array<int>& stokes_attributes,
-      mfem::FiniteElementSpace& fes_u, mfem::FiniteElementSpace& fes_p,
-      mfem::Coefficient* mu = nullptr,
-      const mfem::Array<int>* essential_bdr = nullptr,
-      const std::vector<RigidComponent>* rigid = nullptr);
-  ~DensityFeasibilityProblem();
-
-  /** @brief The functional, its fields and its derivative at one
-   * density (the two coefficients as in DensityFeasibility). */
-  std::unique_ptr<DensityFeasibility> Evaluate(
-      mfem::Coefficient& rho_parent, mfem::Coefficient& rho_stokes) const;
-
- private:
-  friend class DensityFeasibility;
-  struct Impl;
-  std::unique_ptr<Impl> impl_;
-};
-
 class DensityFeasibility {
  public:
   /**
@@ -257,7 +258,7 @@ class DensityFeasibility {
                      mfem::Coefficient& rho_stokes);
   void Solve(mfem::Coefficient& rho_parent, mfem::Coefficient& rho_stokes);
 
-  // One-shot compatibility: the public constructor owns its problem.
+  // Owned problem for the one-shot constructor.
   std::unique_ptr<DensityFeasibilityProblem> own_problem_;
   const DensityFeasibilityProblem* problem_ = nullptr;
 
@@ -274,5 +275,3 @@ class DensityFeasibility {
 };
 
 }  // namespace AdGIA
-
-#endif  // ADGIA_EQUILIBRIUM_FIGURES_HPP

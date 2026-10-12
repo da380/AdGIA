@@ -209,21 +209,37 @@ def parse_params(items: list[str]) -> dict:
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("model", choices=MODELS)
-    p.add_argument("--dim", type=int, default=2)
-    p.add_argument("--mode", type=int, nargs="*", default=[1])
-    p.add_argument("--load", choices=("uniaxial_stress", "uniaxial_strain"))
+    class Fmt(argparse.RawDescriptionHelpFormatter,
+              argparse.ArgumentDefaultsHelpFormatter):
+        pass
+
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=Fmt)
+    p.add_argument("model", choices=MODELS, help="the model")
+    p.add_argument("--dim", type=int, default=2,
+                   help="dimension of the body (2 or 3)")
+    p.add_argument("--mode", type=int, nargs="*", default=[1],
+                   help="Fourier mode numbers of a slab's surface load, "
+                        "one per horizontal direction")
+    p.add_argument("--load", choices=("uniaxial_stress", "uniaxial_strain"),
+                   default=None,
+                   help="load of a box model (uniaxial_stress when not "
+                        "given); slabs always take a surface load")
     p.add_argument("--history", default="heaviside",
-                   choices=sorted(hist.PRESETS))
+                   choices=sorted(hist.PRESETS), help="load history preset")
     p.add_argument("--param", nargs="*", default=[],
                    help="history parameters, key=value")
-    p.add_argument("--contrast", type=float, default=100.0)
-    p.add_argument("--width", type=float, default=2.0)
-    p.add_argument("--t-final", type=float, default=8.0)
-    p.add_argument("--n-times", type=int, default=40)
-    p.add_argument("--out", type=Path, default=Path("case.json"))
+    p.add_argument("--contrast", type=float, default=100.0,
+                   help="viscosity contrast of the channel, contrast and "
+                        "gradient models")
+    p.add_argument("--width", type=float, default=2.0,
+                   help="horizontal period of a slab")
+    p.add_argument("--t-final", type=float, default=8.0,
+                   help="last output time")
+    p.add_argument("--n-times", type=int, default=40,
+                   help="number of equally spaced output times")
+    p.add_argument("--out", type=Path, default=Path("case.json"),
+                   help="case file to write (must be in a build tree or "
+                        "outside the repository)")
     a = p.parse_args()
     h = hist.make(a.history, **parse_params(a.param))
     case = make_case(a.model, dim=a.dim, mode=a.mode, history=h, load=a.load,

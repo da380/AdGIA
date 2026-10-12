@@ -169,7 +169,9 @@ void SurfaceHarmonics::EvalImpl(const Vector& x, Vector& Y,
     sectoral *= -sqrt_[2 * l + 1] * isqrt_[2 * l] * sin_theta;
     pm1_[l] = sectoral;
     p_[l] = 0.0;
-    std::swap(p_, pm1_);
+    // Vector::Swap exchanges the buffers; std::swap would move-assign
+    // through a temporary, the aliasing hazard of mfem::Vector moves.
+    p_.Swap(pm1_);
     const int base = l * l + l;
     Y[base] = p_[0];
     for (int m = 1; m <= l; m++) {
@@ -568,7 +570,9 @@ void HarmonicExpansionGradientCoefficient::Eval(Vector& V,
   // nabla(r^l Y) = (1/R)(r/R)^{l-1}(l Y rhat + grad_1 Y). At the exact
   // centre only l = 1 survives ((r/R)^0 = 1), where the combination is
   // direction-independent and EvalWithGradient's theta = 0 convention
-  // gives it correctly with rhat along the axis; elsewhere rhat = x/r.
+  // gives it correctly with rhat along that convention's axis: the
+  // last coordinate in 3-D, the FIRST in 2-D (EvalImpl takes
+  // theta = 0 along +x there); elsewhere rhat = x/r.
   const real_t q = r / R_;
   real_t ql = 1.0;  // (r/R)^{l-1}
   int l_prev = 1;
@@ -586,7 +590,8 @@ void HarmonicExpansionGradientCoefficient::Eval(Vector& V,
     }
     const real_t s = c_[i] * ql / R_;
     for (int d = 0; d < vdim; d++) {
-      const real_t rhat = r > 0.0 ? x_[d] / r : (d == vdim - 1 ? 1.0 : 0.0);
+      const int axis = (vdim == 2) ? 0 : vdim - 1;
+      const real_t rhat = r > 0.0 ? x_[d] / r : (d == axis ? 1.0 : 0.0);
       V[d] += s * (l * Y_[i] * rhat + gradY_(d, i));
     }
   }

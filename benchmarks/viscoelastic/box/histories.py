@@ -226,10 +226,10 @@ def multi_sine(omegas=(1.0, math.sqrt(2.0) * 2.0, math.pi * 3.0),
 
 
 def ramped_periodic(omega: float = 2.0, T: float = math.sqrt(5.0)) -> History:
-    """sin(omega t) with its amplitude ramped linearly over [0, T]:
-    (t/T) sin(omega t) is not a piece type, so the ramp is approximated by
-    the smooth envelope 0.5(1 - cos(pi t / T)) sin(omega t), expanded into
-    sines of omega and omega +- pi/T."""
+    """sin(omega t) with its amplitude raised over [0, T] by the
+    raised-cosine envelope 0.5(1 - cos(pi t / T)) (C^1 at both ends; a
+    linear ramp (t/T) sin(omega t) is not a piece type), expanded exactly
+    into sines of omega and omega +- pi/T."""
     nu = math.pi / T
     # 0.5 sin(w t) - 0.25 [sin((w+nu) t) + sin((w-nu) t)] on [0, T)
     pieces = [Piece(0.0, T, b=0.5, omega=omega),

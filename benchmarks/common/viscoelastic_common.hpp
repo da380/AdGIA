@@ -325,6 +325,7 @@ EvolveResult Evolve(LinearQuasiStaticProblemBase& problem,
                     const StepOptions& opt, Observe observe) {
   using Clock = std::chrono::steady_clock;
   MFEM_VERIFY(KnownScheme(opt.scheme), "Unknown scheme " << opt.scheme);
+  MFEM_VERIFY(!times.empty(), "Evolve: no output times.");
   struct Mark {
     real_t time;
     bool output = false, jump = false;

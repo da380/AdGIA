@@ -6,9 +6,8 @@
 // under a degree-2 surface mass load, solved through
 //
 //   1. dahlen / Schur CG        the Eulerian formulation with the fluid
-//                               eliminated (doc/self_gravitation.md;
-//                               doc/quasi_static_models.tex, "Fluid
-//                               regions and the ladder of CMB
+//                               eliminated (doc/quasi_static_models.tex,
+//                               "Fluid regions and the ladder of CMB
 //                               approximations"): the potential block is
 //                               eliminated and CG runs on the symmetric
 //                               Schur complement in the displacement
@@ -21,13 +20,11 @@
 //                               nested solves, more (cheaper) iterations;
 //   3. gauged / block MINRES    the fluid joins the displacement space
 //                               with its bulk modulus and a deviatoric
-//                               gauge penalty eps Q (doc/gauged_fluid.md);
-//                               the solver interleaves Tikhonov gauge
+//                               gauge penalty eps Q; the solver interleaves Tikhonov gauge
 //                               refinements, each one more linear solve,
 //                               removing the O(eps) bias;
-//   4. referential              the welded gauged REFERENTIAL formulation
-//                               (doc/gravitating_elasticity.md): bare
-//                               moduli, S_e = -p0 1, potential unknown
+//   4. referential              the welded gauged REFERENTIAL formulation:
+//                               bare moduli, S_e = -p0 1, potential unknown
 //                               zeta; projected block MINRES — the rigid
 //                               modes are projected out of the Krylov
 //                               space rather than pinned — plus the gauge
@@ -36,8 +33,7 @@
 //                               core an artificial MAXWELL solid,
 //                               relaxed to the secular static state
 //                               under the Heaviside load
-//                               (SetFluid; doc/
-//                               static_fluid_core.tex): backward Euler
+//                               (SetFluid): backward Euler
 //                               on the memory displacement, stopping on
 //                               the SOLID increment, beta escalation on
 //                               stagnation — no gauge refinements, no
@@ -55,12 +51,10 @@
 //                               four-block system, no fluid extension.
 //
 // Not included: the KKT multiplier enforcement of the slip constraint
-// (EnableKKT; see slipping_interface.cpp, -enforce kkt, and
-// doc/slip_interface.tex, "KKT enforcement" — a multiplier space one order
-// below the displacement can make the gauge refinements diverge in 2-D,
-// "The multiplier space"), and the exact-gauge KKT of the mixed problem
-// (EnableGaugeKKT), which is not competitive (doc/slip_interface.tex,
-// "Why the fluid gauge stays a penalty").
+// (EnableKKT; see slipping_interface.cpp, -enforce kkt — a multiplier space
+// one order below the displacement can make the gauge refinements diverge
+// in 2-D), and the exact-gauge KKT of the mixed problem (EnableGaugeKKT),
+// which is not competitive.
 //
 // All seven must agree on the observables (the mantle displacement, modulo
 // rigid modes) at the level of the discretisations; the table prints the
@@ -77,8 +71,7 @@
 // part company, typically at the core-mantle boundary.
 //
 // Besides the solver comparison, -model turns the example into the
-// interactive physics lab of the 2-D/3-D fluid-core programme
-// (benchmarks/disc, doc/planning/disc_gravity_reference.md): -model fc
+// interactive physics lab for fluid-core models in 2-D and 3-D: -model fc
 // is the non-neutral core, where the welded, slipping and Dahlen
 // architectures genuinely differ (the welded-vs-slip gap is the
 // suppressed non-removable slip; the full-elastic answers carry the
@@ -91,9 +84,19 @@
 // One source serves the serial and the parallel build, and the same
 // source serves 2-D and 3-D (the mesh decides).
 //
+// Mesh requirements. Default ../data/earth_fluidcore_2d.msh
+// (meshes/layered_earth.py; the 3-D twin is earth_fluidcore_3d.msh).
+// Domain attributes: 1 fluid core, 2 solid mantle, 3 buffer. The planet
+// radius is 1 and the core radius kRc = 3483/6371 is hard-coded: the core
+// boundary and the loaded surface are located geometrically, as the
+// boundary attributes whose elements lie at radius in (0.9, 1.1) kRc and
+// in (0.9, 1.1) respectively. The buffer's outer radius, needed by the
+// vacuum extension, is read from the mesh's bounding box. Units are
+// nondimensional (planet radius 1; densities, moduli and G per -model).
+//
 // Options (defaults in brackets):
 //   -m       two-layer mesh, 2-D or 3-D (fluid core 1, mantle 2,
-//            buffer 3) [../data/elastogravity_two_layer_2d.msh].
+//            buffer 3) [../data/earth_fluidcore_2d.msh].
 //   -model   uniform (the solver demo), fc (non-neutral core) or aw
 //            (the Adams-Williamson neutral twin) [uniform].
 //   -l       degree of the surface mass load, >= 1 [2].
@@ -104,7 +107,7 @@
 //   -o       finite element order [2].
 //   -rt      relative solver tolerance [1e-10].
 //   -geps    fluid gauge penalty factor [-1: the model default, 1e-2
-//            uniform, 1e-1 fc/aw].
+//            uniform and aw, 1e-1 fc].
 //   -gref    Tikhonov gauge refinements per solve [3].
 //   -theta   slip normal-jump penalty [-1: the model default, 1e2
 //            uniform, 1e3 fc/aw].
@@ -122,12 +125,14 @@
 //    ./self_gravitating_solvers -model aw            (all must agree)
 //    ./self_gravitating_solvers -model fc -l 3
 //    ./self_gravitating_solvers -model fc -kappa-scale 10
-//    ./self_gravitating_solvers -m ../data/elastogravity_two_layer_3d.msh \
+//    ./self_gravitating_solvers -m ../data/earth_fluidcore_3d.msh \
 //                               -model fc -no-slip -o 1
 // ============================================================================
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <functional>
 #include <iomanip>
 #include <iostream>
 #include <memory>
@@ -173,22 +178,22 @@ long long TrueSize(SpaceType& fes) {
 // Models (unit radius, fluid core below r_cmb):
 //   uniform  the non-dimensional solver-demo body of the tests: rho = 1
 //            and kappa = 1 everywhere, mu = 0.5 in the mantle, weak
-//            coupling G = 0.05 — the historical default of this example;
+//            coupling G = 0.05 — the default model;
 //   fc       the benchmark twins' fluid_core in the disc family's units
 //            (densities in 5000 kg/m^3, G = 1): uniform core with
 //            N^2 < 0, where welded, slipping and Dahlen genuinely
-//            differ (benchmarks/disc, doc/planning/
-//            disc_gravity_reference.md);
+//            differ;
 //   aw       the closed-form Adams-Williamson neutral twin (N^2 = 0,
 //            dimension-aware kappa; every tangential slip is removable
 //            and the Dahlen reduction is exact, so ALL architectures
 //            must coincide at discretisation level).
 constexpr int kDtNDegree = 12;
 constexpr double kRc = 3483.0 / 6371.0;
-double kEps = -1.0;   // < 0: the model default (1e-2 uniform; 1e-1 on
-                      // fc/aw, whose non-neutral or strongly coupled
-                      // fluid sectors need it — the slip classes
-                      // cannot warn about a semi-convergent gauge)
+double kEps = -1.0;   // < 0: the model default (1e-1 on fc, whose
+                      // non-neutral fluid sector needs the larger
+                      // penalty; 1e-2 on uniform and aw — the slip
+                      // classes cannot warn about a semi-convergent
+                      // gauge)
 double kTheta = -1.0;  // < 0: the model default (1e2 uniform, 1e3 fc/aw
                        // — the strong-coupling models scale the
                        // interface stiffnesses ~20x)
@@ -213,7 +218,7 @@ Model MakeModel(const std::string& name, int dim, double G_opt,
     return m;
   }
   // the disc family's units: densities / 5000 kg/m^3, moduli from the
-  // fluid_core velocities (benchmarks/disc/disc_models.py)
+  // fluid_core velocities
   const double rho_mantle = 4500.0 / 5000.0;
   const double rho_core_mean = 11000.0 / 5000.0;
   const double kap_mantle =
@@ -237,7 +242,7 @@ Model MakeModel(const std::string& name, int dim, double G_opt,
   MFEM_VERIFY(kappa_scale == 1.0,
               "-kappa-scale breaks the AW identity; use -model fc");
   // mass-matched central density and the closed-form neutral kappa,
-  // dimension-aware (doc/planning/disc_gravity_reference.md)
+  // dimension-aware
   const double a = kAwAlpha;
   const double rho0 = dim == 2 ? rho_core_mean / (1.0 - a / 2.0)
                                : rho_core_mean / (1.0 - 3.0 * a / 5.0);
@@ -269,7 +274,7 @@ Model MakeModel(const std::string& name, int dim, double G_opt,
 }
 
 // Pure degree-l surface mass load (no degree-0 part, where the Dahlen
-// fluid treatment differs by design — doc/gauged_fluid.md, "Degree 0"):
+// fluid treatment differs by design):
 // cos(l theta) in 2-D, P_l(cos theta) in 3-D.
 int LoadDegree = 2;
 double SurfaceLoad(const Vector& x) {
@@ -318,6 +323,7 @@ struct Entry {
   int iterations = 0;
   double setup_seconds = 0.0, solve_seconds = 0.0;
   double difference = NAN;  // vs the first entry, mantle, modulo rigid
+  bool converged = true;
 };
 
 }  // namespace
@@ -328,7 +334,7 @@ int main(int argc, char* argv[]) {
   Hypre::Init();
 #endif
 
-  const char* mesh_file = "../data/elastogravity_two_layer_2d.msh";
+  const char* mesh_file = "../data/earth_fluidcore_2d.msh";
   const char* model_name = "uniform";
   int order = 2;
   bool with_slip = true;
@@ -389,6 +395,7 @@ int main(int argc, char* argv[]) {
   const int dim = smesh.Dimension();
 #ifdef MFEM_USE_MPI
   MeshType parent(MPI_COMM_WORLD, smesh);
+  smesh.Clear();
 #else
   MeshType& parent = smesh;
 #endif
@@ -492,8 +499,8 @@ int main(int argc, char* argv[]) {
 
   auto record = [&](const std::string& name, long long unknowns,
                     int iterations, double setup, double solve,
-                    const GridFunction& u) {
-    Entry e{name, unknowns, iterations, setup, solve, NAN};
+                    bool converged, const GridFunction& u) {
+    Entry e{name, unknowns, iterations, setup, solve, NAN, converged};
     auto mantle = on_mantle(u);
     if (!reference) {
       reference = std::move(mantle);
@@ -522,7 +529,8 @@ int main(int argc, char* argv[]) {
     table.push_back(e);
     if (Root()) {
       std::cout << "  " << name << ": done (" << e.solve_seconds
-                << " s solve)\n";
+                << " s solve)" << (converged ? "" : " NOT CONVERGED")
+                << "\n";
     }
   };
 
@@ -550,12 +558,10 @@ int main(int argc, char* argv[]) {
       dahlen.AssembleForce(0.0);
       const double setup = Seconds(t0);
       t0 = Clock::now();
-      if (!dahlen.Solve() && Root()) {
-        std::cout << "  (not converged)\n";
-      }
+      const bool converged = dahlen.Solve();
       record(schur ? "dahlen / Schur CG" : "dahlen / block MINRES",
              TrueSize(fes_s) + TrueSize(fes_phi),
-             dahlen.LastOuterIterations(), setup, Seconds(t0),
+             dahlen.LastOuterIterations(), setup, Seconds(t0), converged,
              dahlen.Displacement());
     }
   }
@@ -576,10 +582,10 @@ int main(int argc, char* argv[]) {
     gauged.AssembleForce(0.0);
     const double setup = Seconds(t0);
     t0 = Clock::now();
-    gauged.Solve();
+    const bool converged = gauged.Solve();
     record("gauged / block MINRES",
            TrueSize(fes_body) + TrueSize(fes_phi),
-           gauged.LastOuterIterations(), setup, Seconds(t0),
+           gauged.LastOuterIterations(), setup, Seconds(t0), converged,
            gauged.Displacement());
   }
 
@@ -600,10 +606,10 @@ int main(int argc, char* argv[]) {
     referential.AssembleForce(0.0);
     const double setup = Seconds(t0);
     t0 = Clock::now();
-    referential.Solve();
+    const bool converged = referential.Solve();
     record("referential / projected MINRES",
            TrueSize(fes_body) + TrueSize(fes_zeta),
-           referential.LastOuterIterations(), setup, Seconds(t0),
+           referential.LastOuterIterations(), setup, Seconds(t0), converged,
            referential.Displacement());
   }
 
@@ -633,7 +639,7 @@ int main(int argc, char* argv[]) {
     maxwell.AssembleForce(0.0);
     const double setup = Seconds(t0);
     t0 = Clock::now();
-    maxwell.Solve();
+    const bool converged = maxwell.Solve();
     const auto& rep = maxwell.MaxwellReport();
     if (Root()) {
       std::cout << "  maxwell relaxation: " << rep.steps << " steps, "
@@ -645,7 +651,7 @@ int main(int argc, char* argv[]) {
     record("maxwell relaxed / projected MINRES",
            TrueSize(fes_body) + TrueSize(fes_zeta),
            static_cast<int>(maxwell.TotalIterations()), setup, Seconds(t0),
-           maxwell.Displacement());
+           converged, maxwell.Displacement());
   }
 
   // --- 6 & 7: the slipping interface, single-valued and broken zeta.
@@ -672,7 +678,7 @@ int main(int argc, char* argv[]) {
       slip.AssembleForce(0.0);
       const double setup = Seconds(t0);
       t0 = Clock::now();
-      slip.Solve();
+      const bool converged = slip.Solve();
       // Single-valued: u_s, u_f and zeta on the ball. Broken: u_s, u_f,
       // zeta on the solid shell and buffer, zeta on the core (the four
       // spaces of BrokenSpace()).
@@ -687,7 +693,7 @@ int main(int argc, char* argv[]) {
       record(broken ? "slip broken-zeta / AL + proj. MINRES"
                     : "slip / AL + projected MINRES",
              unknowns,
-             slip.LastOuterIterations(), setup, Seconds(t0),
+             slip.LastOuterIterations(), setup, Seconds(t0), converged,
              slip.Displacement());
     }
   }
@@ -701,7 +707,8 @@ int main(int argc, char* argv[]) {
                 << e.iterations << std::setw(10) << std::fixed
                 << std::setprecision(2) << e.setup_seconds << std::setw(10)
                 << e.solve_seconds << std::setw(14) << std::scientific
-                << std::setprecision(2) << e.difference << "\n"
+                << std::setprecision(2) << e.difference
+                << (e.converged ? "" : "  NOT CONVERGED") << "\n"
                 << std::defaultfloat;
     }
     std::cout << "\n";
@@ -718,8 +725,7 @@ int main(int argc, char* argv[]) {
                    "band-level plateau) through time alone, and "
                    "the full-elastic answers carry the non-neutral "
                    "resolution floor (rerun at another order and watch "
-                   "them move while the physics stays inside the band; "
-                   "doc/planning/disc_gravity_reference.md).\n";
+                   "them move while the physics stays inside the band).\n";
     } else {
       std::cout << "The architectures agree on the mantle displacement "
                    "(modulo rigid modes) at the level of the "

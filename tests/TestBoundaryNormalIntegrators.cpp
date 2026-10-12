@@ -192,7 +192,7 @@ TEST_P(CartesianTest, NormalDotCoefficient) {
 TEST_P(CartesianTest, BarotropicDensityGradient) {
   const auto [dim, elementType, order] = GetParam();
   if (order < 2) {
-    return;  // Phi0 quadratic
+    GTEST_SKIP() << "Phi0 is quadratic and needs order >= 2";
   }
   auto mesh = MakeMesh(dim, elementType);
   Spaces sp(mesh, order);
@@ -235,8 +235,8 @@ INSTANTIATE_TEST_SUITE_P(
 // buffer shell (out to radius 1.2 in 2-D, 2 in 3-D); bdr attribute 1 the
 // unit sphere, 2 the outer one.
 std::string TwoLayerMesh(int dim) {
-  return dim == 2 ? "../data/elastogravity_2d.msh"
-                  : "../data/coupled_poisson.msh";
+  return dim == 2 ? "../data/disc_buffer_2d.msh"
+                  : "../data/ball_buffer_coarse_3d.msh";
 }
 
 double SphereArea(int dim, double r) {
@@ -308,7 +308,7 @@ TEST(BoundaryNormalOrientation, InheritedInterfaces2D) {
   // Three-layer disc: attributes 1 (inner core), 2 (outer core), 3
   // (mantle), 4 (shell); boundary attributes 1 (ICB), 2 (CMB), 3 (surface),
   // 4 (outer). One disconnected SubMesh for the two solid regions.
-  Mesh parent("../data/elastogravity_three_layer_2d.msh", 1, 1);
+  Mesh parent("../data/earth_innercore_2d.msh", 1, 1);
   ASSERT_EQ(parent.Dimension(), 2);
   Array<int> solid({1, 3});
   SubMesh mesh(SubMesh::CreateFromDomain(parent, solid));
@@ -351,7 +351,7 @@ TEST(BoundaryNormalOrientation, InheritedInterface3D) {
   // The shell (attribute 2) of the ball-in-ball mesh: its inner sphere
   // (bdr attribute 1, radius 1) is an inherited interior interface with
   // m = -r_hat; the outer sphere (attribute 2, radius 2) has m = +r_hat.
-  Mesh parent("../data/coupled_poisson.msh", 1, 1);
+  Mesh parent("../data/ball_buffer_coarse_3d.msh", 1, 1);
   ASSERT_EQ(parent.Dimension(), 3);
   Array<int> shell({2});
   SubMesh mesh(SubMesh::CreateFromDomain(parent, shell));

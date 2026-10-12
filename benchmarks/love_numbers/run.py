@@ -21,7 +21,10 @@ for the Love-number results, --combined, in that order.
 
 A run whose results file exists is skipped unless `--force` is given, and a
 case that exists is kept unless `--remake` is, so a sweep can be extended or
-resumed. plot.py reads the tree.
+resumed. Each results file carries the settings of its run under
+"run_settings" (lmin, lmax, dtn_degree, rel_tol, field_lmax, program_args);
+a skipped file whose settings differ from the current ones is reported, as
+is a file written without them. plot.py reads the tree.
 
     python run.py homogeneous --h 0.3 0.2 0.15 --order 2 --np 8
     python run.py inner_core --h 0.1 0.07 --order 2 3 --np 128 --lmax 8
@@ -47,6 +50,7 @@ degrees (README.md), its results carrying the suffix `_combined`.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shlex
 import sys
@@ -60,6 +64,32 @@ from drivers import find_programs, run  # noqa: E402
 from outputs import outside_source  # noqa: E402
 
 
+def stamp(results: Path, settings: dict) -> None:
+    """Record the run's settings in its results file."""
+    try:
+        payload = json.loads(results.read_text())
+        payload["run_settings"] = settings
+        results.write_text(json.dumps(payload, indent=2) + "\n")
+    except (OSError, ValueError, TypeError) as err:
+        print(f"  warning: could not record settings in {results}: {err}")
+
+
+def check_settings(results: Path, settings: dict) -> None:
+    """Warn when an existing results file was made with other settings."""
+    try:
+        have = json.loads(results.read_text()).get("run_settings")
+    except (OSError, ValueError, AttributeError):
+        have = None
+    if have is None:
+        print(f"  warning: {results} records no run settings; it may "
+              "not match the current options (--force to rerun)")
+    elif have != settings:
+        diff = {k: (have.get(k), v) for k, v in settings.items()
+                if have.get(k) != v}
+        print(f"  warning: {results} was made with other settings "
+              f"(file, now): {diff}; --force to rerun")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(
         description=__doc__,
@@ -71,12 +101,17 @@ def main() -> None:
                    help="element sizes on the interfaces, one case each")
     p.add_argument("--order", type=int, nargs="+", default=[2],
                    help="finite element orders, one run each per case")
-    p.add_argument("--np", type=int, default=os.cpu_count() // 2 or 1,
-                   help="number of MPI ranks")
-    p.add_argument("--lmax", type=int, default=6, help="highest degree")
-    p.add_argument("--lmin", type=int, default=0, help="lowest degree")
-    p.add_argument("--dtn-degree", type=int, default=16)
-    p.add_argument("--rel-tol", type=float, default=1e-10)
+    p.add_argument("--np", type=int, default=(os.cpu_count() or 2) // 2 or 1,
+                   help="number of MPI ranks (default: half the CPUs, at "
+                        "least 1)")
+    p.add_argument("--lmax", type=int, default=6, help="highest degree (default 6)")
+    p.add_argument("--lmin", type=int, default=0, help="lowest degree (default 0)")
+    p.add_argument("--dtn-degree", type=int, default=16,
+                   help="degree of the Dirichlet-to-Neumann boundary "
+                        "operator (at least the highest degree solved is "
+                        "used)")
+    p.add_argument("--rel-tol", type=float, default=1e-10,
+                   help="relative tolerance of the linear solver (default 1e-10)")
     p.add_argument("--method", nargs="+",
                    choices=("dahlen", "gauged", "referential", "maxwell",
                             "slip", "slip_broken"),
@@ -90,9 +125,6 @@ def main() -> None:
                         "slipping interface, single-valued or broken "
                         "zeta); non-dahlen results carry the method as a "
                         "suffix")
-    p.add_argument("--fluid", choices=("dahlen", "gauged"), default=None,
-                   help="deprecated alias: --fluid gauged adds gauged to "
-                        "--method")
     p.add_argument("--map", type=float, default=0.0, metavar="A",
                    help="amplitude of the interior relabelling: the 3-D "
                         "relabelled benchmark (relabelling.hpp) — the same "
@@ -143,7 +175,7 @@ def main() -> None:
     p.add_argument("--paraview", action="store_true",
                    help="with --field, write the fields for ParaView")
     p.add_argument("--mpiexec", default=os.environ.get("MPIEXEC", "mpiexec"),
-                   help="the MPI launcher")
+                   help="the MPI launcher (default: $MPIEXEC, else mpiexec)")
     p.add_argument("--launcher-args", default="",
                    help="further arguments of the launcher, as one string")
     p.add_argument("--program-args", default="",
@@ -188,8 +220,6 @@ def main() -> None:
                 failures.append(f"{case}: partition_case")
                 continue
         methods = list(args.method)
-        if args.fluid == "gauged" and "gauged" not in methods:
-            methods.append("gauged")
         for order, method, solver, cmb in ((o, m, s, c) for o in args.order
                                            for m in methods
                                            for s in args.solver
@@ -219,6 +249,11 @@ def main() -> None:
                         else []),
                       *shlex.split(args.program_args)]
             jobs = []
+            settings = {"lmin": args.lmin, "lmax": args.lmax,
+                        "dtn_degree": args.dtn_degree,
+                        "rel_tol": args.rel_tol,
+                        "field_lmax": args.field_lmax,
+                        "program_args": args.program_args}
             if not args.field_only:
                 jobs.append((
                     case / f"results_o{order}{love_suffix}.json",
@@ -241,12 +276,15 @@ def main() -> None:
             for results, log, command in jobs:
                 if results.exists() and not args.force:
                     print(f"  order {order}: {results} exists, skipped")
+                    check_settings(results, settings)
                     continue
                 ok = run([*launch, *command, "-out", str(results)], log=log,
                          dry_run=args.dry_run)
                 if not ok:
                     results.unlink(missing_ok=True)
                     failures.append(f"{results}")
+                elif not args.dry_run:
+                    stamp(results, settings)
     if failures:
         raise SystemExit("failed: " + "; ".join(failures))
 

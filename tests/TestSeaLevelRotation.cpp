@@ -4,11 +4,11 @@
 #include "TestCommon.hpp"
 
 /*
-  Gates for the WP4 composition (doc/planning/sea_level_plan.md): the
+  Gates for the rotation-water composition: the
   rotational border inside the solve (SetRotation), alone and jointly
   with the water load (SetWaterLoad), on the canned two-layer meshes.
 
-  1. Water off: SetRotation reproduces RotationalFeedback (the WP2
+  1. Water off: SetRotation reproduces RotationalFeedback (the
      orchestrator solves the same bordered system by its own
      elimination) — omega and displacement at solver tolerance.
   2. Composed: the monolithic joint border equals the fixed point that
@@ -32,26 +32,18 @@ constexpr double kOmega = 0.1;
 
 double Degree2(const Vector& x) {
   const double r = x.Norml2();
-  if (x.Size() == 2) {
-    return (x[0] * x[0] - x[1] * x[1]) / (r * r);
-  }
   const double c = x[2] / r;
   return 3.0 * c * c - 1.0;
 }
 
 double RotLoad(const Vector& x) {
   const double r = x.Norml2();
-  if (x.Size() == 2) {
-    // A mean part so that the 2-D spin (psi ~ |x|^2) is driven.
-    const double c = x[1] / r;
-    return 0.02 * (1.0 + 3.0 * c * c);
-  }
   return Degree2(x) + 0.01 * x[0] * x[2] / (r * r);
 }
 
 double G0(int dim) {
-  return dim == 2 ? 2.0 * std::numbers::pi * kG * kRho
-                  : 4.0 * std::numbers::pi * kG * kRho / 3.0;
+  MFEM_VERIFY(dim == 3, "the water load is 3-D only");
+  return 4.0 * std::numbers::pi * kG * kRho / 3.0;
 }
 
 // The iterated water load with rotation: w (c - tau - psi(omega)).
@@ -110,18 +102,14 @@ struct Case {
     fes_phi = std::make_unique<FiniteElementSpace>(parent.get(), fec.get());
     rheology = std::make_unique<IsotropicElasticRheology>(dim, kappa, mu);
     surface = SurfaceMarker(*body);
-    moments.SetSize(dim == 2 ? 1 : 3);
-    if (dim == 2) {
-      moments[0] = 2.0;
-    } else {
-      // Well away from the near-neutral wander regime (C3 - C1 small),
-      // where the feedback gain approaches one and amplifies ordinary
-      // assembly-route differences between the monolithic and the
-      // instrument's integrals by 1/(1 - gain).
-      moments[0] = 1.2;
-      moments[1] = 1.3;
-      moments[2] = 2.0;
-    }
+    moments.SetSize(3);
+    // Well away from the near-neutral wander regime (C3 - C1 small),
+    // where the feedback gain approaches one and amplifies ordinary
+    // assembly-route differences between the monolithic and the
+    // instrument's integrals by 1/(1 - gain).
+    moments[0] = 1.2;
+    moments[1] = 1.3;
+    moments[2] = 2.0;
     w0 = kRhoW / G0(dim);
     w = std::make_unique<ConstantCoefficient>(w0);
   }
@@ -199,7 +187,7 @@ TEST_P(SeaLevelRotationTest, MatchesRotationalFeedbackWithoutWater) {
 
 TEST_P(SeaLevelRotationTest, ComposedMatchesJointFixedPoint) {
   const auto [dim, order] = GetParam();
-  if (dim == 3 && order > 1) {
+  if (order > 1) {
     GTEST_SKIP() << "covered at order 1; the iteration repeats solves";
   }
   Case c(dim, order);
@@ -364,9 +352,6 @@ TEST_P(SeaLevelRotationTest, RowResidualsAtComposedState) {
 
 TEST_P(SeaLevelRotationTest, ZeroOmegaRecoversWaterOnly) {
   const auto [dim, order] = GetParam();
-  if (dim == 3) {
-    GTEST_SKIP() << "a physics identity; the 2-D runs cover it";
-  }
   Case c(dim, order);
   auto p = c.Problem(false);
   p->SetWaterLoad(*c.w, c.sigma, c.surface);

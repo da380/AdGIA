@@ -46,36 +46,40 @@ known to work — the full test suite passes on both.
 4. **MPI** (optional), for the parallel build: the same MPI that hypre and
    MFEM were built with, for the compiler and for `mpiexec`.
 5. **Python 3.12 or later** (examples, tests, benchmarks and earth-data
-   tools only). All of the Python tooling — the mesh generation in
-   `meshes/`, the benchmark scripts in `benchmarks/` (MPI builds only)
-   and the earth-data tools in `earth_data/` — shares **one**
-   environment, the poetry project of the repository root, made once:
-
-   ```bash
-   cd <repo>
-   poetry env use python3.12   # only if your python3 is older than 3.12
-   poetry install              # planetmodel (gmsh, PyMFEM), pyslfp,
-                               # matplotlib, netCDF4, ...
-   ```
-
-   Poetry needs a Python ≥ 3.12 and does not pick one up by itself: on a
-   machine whose `python3` is older, the `poetry env use` line is needed
-   first — without it `poetry install` reports the mismatch and creates
-   nothing. The configure step finds the environment (the line
-   `Python tooling: the poetry environment ...`), so a build directory
-   configured before the environment existed is configured again
-   (`cmake .` there) to pick it up; until then the benchmark and
-   earth-data launchers refuse to run, with this recipe in their message.
-   `-DMESHES_PYTHON`, `-DBENCHMARKS_PYTHON` and `-DEARTH_DATA_PYTHON`
-   each override the shared environment with one of your own.
-
-   Mesh generation alone does not need poetry: without the environment, a
-   qualifying Python that CMake finds is used, and failing that a virtual
-   environment `meshes-venv` is created under the build directory and
-   `planetmodel[meshing,mfem]>=1.2.3` installed there with pip
-   (`-DGENERATE_MESHES=OFF` skips generation). See `meshes/README.md`,
-   `benchmarks/README.md` and `earth_data/README.md`.
+   tools only); see "The Python environment" below.
 6. **Doxygen** (optional), for the API documentation.
+
+## The Python environment
+
+All of the Python tooling — the mesh generation in `meshes/`, the benchmark
+scripts in `benchmarks/` (MPI builds only) and the earth-data tools in
+`earth_data/` — shares **one** environment, the poetry project of the
+repository root, made once:
+
+```bash
+cd <repo>
+poetry env use python3.12   # only if your python3 is older than 3.12
+poetry install              # planetmodel (gmsh, PyMFEM), pyslfp,
+                            # matplotlib, netCDF4, ...
+```
+
+Poetry needs a Python ≥ 3.12 and does not pick one up by itself: on a
+machine whose `python3` is older, the `poetry env use` line is needed
+first — without it `poetry install` reports the mismatch and creates
+nothing. The configure step finds the environment (the line
+`Python tooling: the poetry environment ...`), so a build directory
+configured before the environment existed is configured again
+(`cmake .` there) to pick it up; until then the benchmark and
+earth-data launchers refuse to run, with this recipe in their message.
+`-DMESHES_PYTHON`, `-DBENCHMARKS_PYTHON` and `-DEARTH_DATA_PYTHON`
+each override the shared environment with one of your own.
+
+Mesh generation alone does not need poetry: without the environment, a
+qualifying Python that CMake finds is used, and failing that a virtual
+environment `meshes-venv` is created under the build directory and
+`planetmodel[meshing,mfem]>=1.2.4` installed there with pip
+(`-DGENERATE_MESHES=OFF` skips generation). See `meshes/README.md`,
+`benchmarks/README.md` and `earth_data/README.md`.
 
 ## Configure
 

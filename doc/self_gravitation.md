@@ -6,11 +6,14 @@ conditions, how each term is assembled, the solvers and the null space,
 and how the class is verified. The weak form follows Al-Attar & Tromp
 (2014, *Geophys. J. Int.* 196, 34–77, eq. 2.52) and Yu, Al-Attar, Syvret
 & Lloyd (2025, *Geophys. J. Int.* 240, 329–348, eq. 3 and Appendix A).
-The fluid treatment described here is Dahlen's. The class also has a
-gauged mode, in which the fluid keeps its displacement and the interface
-and fluid mass terms below never arise (`SetGaugedFluid`, or its
-exact-gauge variant `EnableGaugeKKT`); that mode is described in
-`doc/gauged_fluid.md`. Everything in this note is the hydrostatic,
+The fluid treatment described here is Dahlen's, the practical workhorse
+for hydrostatic (spherical) models. The class also treats fluid regions
+through `SetFluid`, in which the fluid keeps its displacement and the
+interface and fluid mass terms below never arise: by the gauge penalty
+(`SetFluid(..., GaugePenaltyOptions)`, or its exact-gauge variant
+`EnableGaugeKKT`), described in `doc/gauged_fluid.md`, or by the default
+Maxwell relaxation, the general method for any geometry and stratification
+(`doc/static_fluid_core.tex`, "The status of the formulations"). Everything in this note is the hydrostatic,
 natural specialisation of the general linearised theory of
 `doc/gravitating_elasticity.md` — including the fact that the moduli fed
 to this class are correctly the seismological (PREM) ones, which ceases
@@ -213,8 +216,9 @@ selected in the Love-number benchmarks by the driver option `-cmb`
 | `uniform` | as `nomass`, plus a constant `interface_density` (the region's outermost fluid-side value, e.g. the core-top density) |
 | `winkler` | as `uniform`, plus `interface_potential_coupling = false` (both halves of (F3) dropped, so the operator stays symmetric) |
 
-The gauged treatment is a separate formulation (benchmark method
-`gauged`), not a rung of this ladder.
+The gauged treatment (benchmark method `gauged`) and the Maxwell
+relaxation (benchmark method `maxwell`) are separate formulations, not
+rungs of this ladder.
 
 **Where coefficients are evaluated.** The solid density is evaluated on the
 SubMesh. A fluid density is evaluated on the *parent's* fluid elements (for

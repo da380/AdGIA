@@ -1,9 +1,10 @@
 """PREM-like layered Earth models with a buffer shell: the
-elastogravity_*_layer meshes.
+earth_{fluidcore,innercore}_{2,3}d meshes.
 
 Radii are in units of the Earth's radius, 6371 km: the inner-core
-boundary at 1230 km, the core-mantle boundary at 3483 km and the surface
-at 6371 km. Two layerings are built:
+boundary at 1230 km (0.1931), the core-mantle boundary at 3483 km
+(0.5467) and the surface at 6371 km (1); the buffer shell reaches to
+1.2. Two layerings are built, as a disc (2-D) or a ball (3-D):
 
   --layers 2   fluid core, mantle
   --layers 3   solid inner core, fluid outer core, mantle
@@ -14,49 +15,27 @@ boundary attributes count the interfaces from the centre (ICB, CMB,
 surface, outer). The examples recognise the layering from the number of
 domain attributes. Order-2 elements.
 
-Files: elastogravity_two_layer_2d.msh, elastogravity_three_layer_2d.msh,
-elastogravity_two_layer_3d.msh, elastogravity_three_layer_3d.msh; `--all`
-builds the four of them.
+Element sizes (common.SIZING, in surface radii): 0.085 on the interfaces
+growing to 0.17 over 0.85 in 2-D, 0.135 to 0.27 over 1.35 in 3-D; --scale
+multiplies them.
+
+Files: earth_fluidcore_2d.msh, earth_innercore_2d.msh,
+earth_fluidcore_3d.msh, earth_innercore_3d.msh, each
+with a .json manifest; `--all` builds all four.
 
 Used by: elastogravity_layered, gauged_fluid_cavity,
 self_gravitating_relaxation, self_gravitating_solvers,
 sliding_fluid_ellipse, the tests.
 """
-from planetmodel import Geometry, Skeleton
 from planetmodel.mesh3d import (MeshSpec, Shell, UniformInterfaces,
                                 build_layered_mesh)
 
-from common import parser, report, sizes
-
-EARTH_RADIUS_KM = 6371.0
-ICB = 1230.0 / EARTH_RADIUS_KM
-CMB = 3483.0 / EARTH_RADIUS_KM
-SURFACE = 1.0
-
-# Element size on every interface, far from them, and the distance over
-# which it grows, by dimension.
-SIZING = {
-    2: (0.085, 0.17, 0.85),
-    3: (0.135, 0.27, 1.35),
-}
-
-
-def geometry(layers: int) -> Geometry:
-    """The skeleton and names of the two- or three-layer Earth."""
-    if layers == 2:
-        return Geometry(Skeleton([0.0, CMB, SURFACE]),
-                        layer_names=["fluid_core", "mantle"],
-                        interface_names=["cmb", "surface"])
-    if layers == 3:
-        return Geometry(Skeleton([0.0, ICB, CMB, SURFACE]),
-                        layer_names=["inner_core", "outer_core", "mantle"],
-                        interface_names=["icb", "cmb", "surface"])
-    raise ValueError(f"--layers must be 2 or 3, got {layers}")
+from common import SIZING, geometry, parser, report, sizes
 
 
 def build(layers: int, dim: int, args) -> None:
-    words = {2: "two", 3: "three"}
-    name = f"elastogravity_{words[layers]}_layer_{dim}d"
+    words = {2: "fluidcore", 3: "innercore"}
+    name = f"earth_{words[layers]}_{dim}d"
     sizing = UniformInterfaces(*sizes(args, *SIZING[dim]))
     spec = MeshSpec(geometry(layers), sizing, dimension=dim, order=2,
                     shells=[Shell(ratio=0.2, name="buffer")])
@@ -66,11 +45,15 @@ def build(layers: int, dim: int, args) -> None:
 def main() -> None:
     p = parser(__doc__)
     p.add_argument("--layers", type=int, default=2, choices=(2, 3),
-                   help="2 for fluid core + mantle, 3 with a solid inner core")
+                   help="number of layers: 2 for fluid core + mantle, 3 "
+                        "with a solid inner core (default %(default)s; "
+                        "ignored with --all)")
     p.add_argument("--dim", type=int, default=2, choices=(2, 3),
-                   help="2 for a disc, 3 for a ball")
+                   help="2 for a disc, 3 for a ball (default %(default)s; "
+                        "ignored with --all)")
     p.add_argument("--all", action="store_true",
-                   help="build the three meshes the examples use")
+                   help="build all four meshes (2 and 3 layers, 2-D and 3-D) and "
+                        "ignore --layers and --dim")
     args = p.parse_args()
 
     if args.all:

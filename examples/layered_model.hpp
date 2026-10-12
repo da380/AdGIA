@@ -163,8 +163,11 @@ inline real_t Lame(const Vector& x) {
     lambda = Linear(461e9, 86e9, (r - kRCmb) / (kRSurface - kRCmb)) *
              MantlePerturbation(x);
   } else {
+    // lambda = kappa - 2 mu / dim, with the dimension from x (the profile
+    // is given in bulk and shear moduli).
     const real_t s = (r - kRCmb) / (kRSurface - kRCmb);
-    lambda = (Linear(650e9, 130e9, s) - 2.0 * Linear(280e9, 70e9, s) / 3.0) *
+    lambda = (Linear(650e9, 130e9, s) -
+              2.0 * Linear(280e9, 70e9, s) / x.Size()) *
              MantlePerturbation(x);
   }
   return ND.ScaleStress(lambda);

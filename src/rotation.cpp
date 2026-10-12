@@ -5,36 +5,34 @@
 
 #include "AdGIA/rotation.hpp"
 
+#include <algorithm>
+#include <cmath>
+
 #include "AdGIA/detail/fem_factory.hpp"
 
 namespace AdGIA {
 
 using namespace mfem;
 
+namespace {
+
+int MeshDimension(LinearQuasiStaticMixedSelfGravitatingProblem& problem) {
+  return problem.DisplacementSpace().GetMesh()->Dimension();
+}
+
+}  // namespace
+
 RotationalFeedback::RotationalFeedback(
     LinearQuasiStaticMixedSelfGravitatingProblem& problem, real_t Omega,
     const Vector& principal_moments)
-    : problem_(problem), Omega_(Omega), psi_(0, 0.0) {
+    : problem_(problem), Omega_(Omega), psi_(MeshDimension(problem), Omega) {
   FiniteElementSpace& fes = problem_.DisplacementSpace();
   dim_ = fes.GetMesh()->Dimension();
   nw_ = dim_ == 2 ? 1 : 3;
   MFEM_VERIFY(principal_moments.Size() == nw_,
               "RotationalFeedback: " << nw_ << " principal moment(s) "
               "expected ([C3] in 2-D, [C1, C2, C3] in 3-D).");
-  // D = diag(C3 - C1, C3 - C2, -C3) (eq. 16); its 2-D reduction is the
-  // spin row -C3 alone.
-  D_.SetSize(nw_);
-  D_ = 0.0;
-  if (dim_ == 2) {
-    D_(0, 0) = -principal_moments[0];
-  } else {
-    const real_t c1 = principal_moments[0], c2 = principal_moments[1],
-                 c3 = principal_moments[2];
-    D_(0, 0) = c3 - c1;
-    D_(1, 1) = c3 - c2;
-    D_(2, 2) = -c3;
-  }
-  psi_ = CentrifugalPotential(dim_, Omega_);
+  D_ = InertiaMatrix(principal_moments);
   omega_.SetSize(nw_);
   omega_ = 0.0;
   for (int k = 0; k < nw_; k++) {
@@ -51,6 +49,14 @@ RotationalFeedback::RotationalFeedback(
     comm_ = static_cast<ParFiniteElementSpace&>(fes).GetComm();
   }
 #endif
+  // psi enters the surface pairings through its interpolant on the
+  // scalar space, the same convention as the tidal machinery's columns
+  // (AssembleTidalLoad projects psi); mixing interpolant columns with
+  // exact-psi rows breaks the border's symmetry at interpolation grade.
+  for (int k = 0; k < nw_; k++) {
+    psi_interp_.push_back(detail::MakeGridFunction(sfes_.get()));
+    psi_interp_.back()->ProjectCoefficient(*psi_unit_[k]);
+  }
 }
 
 real_t RotationalFeedback::GlobalSum(real_t v) const {
@@ -66,13 +72,7 @@ real_t RotationalFeedback::GlobalSum(real_t v) const {
 
 real_t RotationalFeedback::SurfacePairing(Coefficient& sigma,
                                           const Array<int>& marker, int k) {
-  // psi enters through its interpolant on the scalar space, the same
-  // convention as the tidal machinery's columns (AssembleTidalLoad
-  // projects psi); mixing interpolant columns with exact-psi rows
-  // breaks the border's symmetry at interpolation grade.
-  auto psig = detail::MakeGridFunction(sfes_.get());
-  psig->ProjectCoefficient(*psi_unit_[k]);
-  GridFunctionCoefficient psii(psig.get());
+  GridFunctionCoefficient psii(psi_interp_[k].get());
   ProductCoefficient sp(sigma, psii);
   auto lf = detail::MakeLinearForm(sfes_.get());
   lf->AddBoundaryIntegrator(new BoundaryLFIntegrator(sp),

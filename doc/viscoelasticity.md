@@ -128,7 +128,8 @@ displacement space (the space decides) with the rheology's stiffness,
 time-dependent load registration (`RegisterTimeDependent`), lazy
 reassembly, the default preconditioned CG (Gauss–Seidel in serial,
 systems BoomerAMG with nodal coarsening in parallel; default relative tolerance
-1e-12) and the gauged-fluid option. The concrete classes:
+1e-12) and the treatment of fluid regions (`SetFluid`, below). The concrete
+classes:
 
 | Class | Header | Problem |
 |---|---|---|
@@ -152,18 +153,27 @@ problem; their tractions and prescribed values are referential fields.
 The viscoelastic operator needs `SupportsRelaxationWeights()` for the
 trapezoid and implicit schemes. The base class and the mixed problem
 support it; the referential classes take a `ReferentialElasticRheology`,
-which has no branches, so they are used elastically.
+which has no branches, so they are used elastically. (The Maxwell
+relaxation of their fluid regions, below, is an artificial device of the
+fluid treatment, distinct from the physical rheology; it does not make the
+classes viscoelastic.)
 
-**Gauged fluids.** `SetGaugedFluid(marker, μ_g, ε, refinements, penalty,
-map)` treats the marked attributes as an inviscid fluid in the relabelling
-formulation: the rheology supplies the fluid's bulk stiffness (zero shear),
-and a gauge-fixing shear penalty ε Q is added to the *solver* operator only.
-`Solve()` removes the O(ε) bias by iterated Tikhonov refinement, each
-refinement solve starting from zero. With a non-identity `map` the
-deviatoric penalty is assembled covariantly with
-`ElasticTensorIntegrator(C_dev, map)` (`elastic_tensors.md`, section
-"Material and geometric stiffness"). The formulation and its verification
-are in `gauged_fluid.md`.
+**Fluid regions: `SetFluid`.** `SetFluid(marker, μ, ...)` treats the marked
+attributes as an inviscid fluid: the rheology supplies the fluid's bulk
+stiffness (zero shear), and an artificial shear engine ε μ Q, with its
+deviatoric map, is added to the *solver* operator only. Two treatments read
+it differently. The default, `SetFluid(marker, mu_scale)`, is the Maxwell
+relaxation: ε μ Q is the per-step effective shear of an artificial Maxwell
+solid, and `Solve()` relaxes the Heaviside-loaded system to the secular
+static response; it is the general method (any geometry, stratification and
+number of regions), and the artificial relaxation is distinct from the
+physical rheology of the solid. `SetFluid(marker, μ_g, GaugePenaltyOptions{ε,
+refinements, form}, map)` is the gauge penalty: `Solve()` removes the O(ε)
+bias by iterated Tikhonov refinement, each refinement solve starting from
+zero, clean only for neutrally stratified fluids. `ClearFluid()` removes
+either. The covariant assembly with a non-identity `map` follows the rule of
+`mappings.md` (Pitfalls). The formulations and their verification are in
+`gauged_fluid.md` and `static_fluid_core.tex`.
 
 **Relaxation weights.** The implicit and exponential-trapezoid schemes
 eliminate `m^{n+1}` and need the stiffness reassembled as

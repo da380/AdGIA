@@ -29,13 +29,12 @@ void DomainLFDeformationGradientIntegrator::AssembleDeltaElementVect(
     const mfem::FiniteElement& fe, mfem::ElementTransformation& Trans,
     mfem::Vector& elvect) {
   using namespace mfem;
-  MFEM_ASSERT(delta_M_, "coefficient must be a MatrixDeltaCoefficient");
+  MFEM_VERIFY(delta_M_, "coefficient must be a MatrixDeltaCoefficient");
 
   const auto dof = fe.GetDof();
   const auto space_dim = Trans.GetSpaceDim();
 #ifdef MFEM_THREAD_SAFE
   DenseMatrix dshape, m;
-  Vector v;
 #endif
   dshape.SetSize(dof, space_dim);
   m.SetSize(space_dim, space_dim);
@@ -52,9 +51,9 @@ void DomainLFDeformationGradientIntegrator::AssembleRHSElementVect(
     mfem::Vector& elvect) {
   using namespace mfem;
 
-  auto dof = el.GetDof();
-  auto space_dim = Trans.GetSpaceDim();
-  MFEM_ASSERT(M_.GetHeight() == space_dim && M_.GetWidth() == space_dim,
+  const auto dof = el.GetDof();
+  const auto space_dim = Trans.GetSpaceDim();
+  MFEM_VERIFY(M_.GetHeight() == space_dim && M_.GetWidth() == space_dim,
               "Width of matrix coefficient must equal spatial dimension");
 
 #ifdef MFEM_THREAD_SAFE

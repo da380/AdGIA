@@ -36,10 +36,11 @@
 //    perturbation family (below).
 //
 // The exactness mode is the mapping object's: the analytic
-// CallableDiffeomorphism here gives convergence-to-reference runs (leg A,
-// love_benchmark -map); its nodal interpolant
+// CallableDiffeomorphism here gives convergence-to-reference runs (the
+// exact-F mapped benchmark, love_benchmark -map); its nodal interpolant
 // (AdGIA::Interpolate) gives the discrete change-of-variables
-// identity against the mapped mesh (leg B, relabelled_identity).
+// identity against the mapped mesh (the
+// relabelled-identity benchmark, relabelled_identity).
 // ============================================================================
 
 #pragma once
@@ -48,6 +49,7 @@
 #include <cmath>
 #include <fstream>
 #include <map>
+#include <memory>
 #include <numbers>
 #include <sstream>
 #include <string>
@@ -363,24 +365,22 @@ inline CallableDiffeomorphism InteriorRelabelling(
   };
   return CallableDiffeomorphism(
       dim,
-      [dim, amplitude, bump, w_of](const Vector& x, Vector& y) {
+      [dim, amplitude, bump, w_of, w = Vector(dim), Dw = DenseMatrix(dim)](
+          const Vector& x, Vector& y) mutable {
         const real_t r = x.Norml2();
         real_t h, hp;
         bump(r, h, hp);
-        Vector w;
-        DenseMatrix Dw;
         w_of(x, w, Dw);
         y.SetSize(dim);
         for (int i = 0; i < dim; i++) {
           y[i] = x[i] + amplitude * h * w[i];
         }
       },
-      [dim, amplitude, bump, w_of](const Vector& x, DenseMatrix& F) {
+      [dim, amplitude, bump, w_of, w = Vector(dim), Dw = DenseMatrix(dim)](
+          const Vector& x, DenseMatrix& F) mutable {
         const real_t r = x.Norml2();
         real_t h, hp;
         bump(r, h, hp);
-        Vector w;
-        DenseMatrix Dw;
         w_of(x, w, Dw);
         F.SetSize(dim);
         F = 0.0;
@@ -396,8 +396,7 @@ inline CallableDiffeomorphism InteriorRelabelling(
       });
 }
 
-// The degree-0 interface shift (the perturbation family,
-// doc/benchmarks.tex): a purely radial, piecewise-linear map of the
+// The degree-0 interface shift (the perturbation family): a purely radial, piecewise-linear map of the
 // reference boundaries 0 = b_0 < ... < b_n onto shifted ones, moving
 // ONE interface by eps and leaving the centre, the other interfaces,
 // the surface and everything beyond fixed:

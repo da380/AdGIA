@@ -37,8 +37,8 @@ constexpr double kEps = 1.0e-2;
 constexpr int kRefine = 3;
 
 std::string BodyMeshFile(int dim) {
-  return dim == 2 ? "../data/elastogravity_two_layer_2d.msh"
-                  : "../data/elastogravity_three_layer_3d.msh";
+  return dim == 2 ? "../data/earth_fluidcore_2d.msh"
+                  : "../data/earth_innercore_3d.msh";
 }
 
 // Radius of the boundary elements carrying @p attr on @p mesh.
@@ -169,7 +169,7 @@ struct Case {
   }
 };
 
-double RelL2Error(GridFunction& u, VectorCoefficient& exact) {
+double RelL2Error(const GridFunction& u, VectorCoefficient& exact) {
   Vector zero(u.FESpace()->GetVDim());
   zero = 0.0;
   VectorConstantCoefficient z(zero);
@@ -191,7 +191,7 @@ TEST(FluidGauge, UniformPressureMatchesLame2D) {
   LameSolution lame(2, c.r_cmb, 1.0);
   VectorFunctionCoefficient exact(
       2, [&lame](const Vector& x, Vector& u) { lame.Eval(x, u); });
-  auto u = prob.Displacement();
+  const auto& u = prob.Displacement();
   EXPECT_LT(RelL2Error(u, exact), 1.0e-4);
 }
 
@@ -208,7 +208,7 @@ TEST(FluidGauge, UniformPressureMatchesLame3D) {
   LameSolution lame(3, c.r_cmb, 1.0);
   VectorFunctionCoefficient exact(
       3, [&lame](const Vector& x, Vector& u) { lame.Eval(x, u); });
-  auto u = prob.Displacement();
+  const auto& u = prob.Displacement();
   EXPECT_LT(RelL2Error(u, exact), 1.0e-3);
 }
 

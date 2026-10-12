@@ -4,27 +4,26 @@
 #include "TestCommon.hpp"
 
 /*
-  WP7 phase-A gates of the referential water load
-  (doc/planning/referential_sea_level_plan.md; quasi_static_models.tex,
-  the referential sea-level subsection): SetWaterLoad on the welded
+  Gates of the referential water load (quasi_static_models.tex, the
+  referential sea-level subsection): SetWaterLoad on the welded
   referential class — the zeta-zeta collapse — on the canned two-layer
   ball, all-ocean (C0 = 1), small water density, phi_e = id. 3-D only,
   by the sea-level rule.
 
-  1. Monolithic == fixed point (G3): the pyslfp-style iteration with
+  1. Monolithic == fixed point: the pyslfp-style iteration with
      the water load evaluated from zeta directly. In the referential
      variables the instrument and the operator integrate the SAME
      field (no normal-projected vs full-gradient split as in the mixed
      class), so the agreement is instrument-quadrature grade.
-  2. The spectral identity (G1): with T the zeta/g amplitude response
+  2. The spectral identity: with T the zeta/g amplitude response
      per unit degree-2 surface mass (one plain solve), the monolithic
      sea-level amplitude satisfies s = -T/(1 + rho_w T).
-  3. Referential == mixed (G2): the same physical problem through both
+  3. Referential == mixed: the same physical problem through both
      classes (the hydrostatic cross-check pattern with water on):
      u directly, zeta against phi + u.grad Phi0, Phi_g against Phi_g,
      at the two discretisations' common accuracy, improving with
      order.
-  4. Mass conservation and the uniform term (G4): the re-integrated
+  4. Mass conservation and the uniform term: the re-integrated
      certificate at the solution; Phi_g inert for a zero-mean load.
 */
 
@@ -277,7 +276,7 @@ TEST_P(SeaLevelReferentialTest, SpectralIdentityAndMass) {
 }
 
 TEST(SeaLevelReferential, MatchesMixedWaterSolve) {
-  // G2: the hydrostatic cross-check with water on, at both orders:
+  // The hydrostatic cross-check with water on, at both orders:
   // common-discretisation agreement, improving with order.
   std::vector<double> u_diff, z_diff, g_diff;
   for (int order : {1, 2}) {
@@ -354,11 +353,11 @@ TEST(SeaLevelReferential, MatchesMixedWaterSolve) {
 }
 
 TEST(SeaLevelReferential, RotationMatchesMixed) {
-  // G6: the traditional rotation border through both classes on the
+  // The traditional rotation border through both classes on the
   // same spherical model, rotation-only and composed with water.
   // The load carries degree-2 order-1 content so the wander rows are
   // genuinely driven, and the moments sit away from near-neutral
-  // wander (both WP4 test-trap lessons).
+  // wander.
   const double Omega = 0.1;
   Vector moments(3);
   moments[0] = 1.2;
@@ -464,7 +463,7 @@ double Fraction0(const Vector& x) {
 }
 
 TEST(SeaLevelReferential, ShorelineMigrationMatchesMixed) {
-  // WP7.3: the shared orchestrator drives the referential class.
+  // The shared orchestrator drives the referential class.
   // (a) The off-switch reduces to the direct frozen-C referential
   // water solve (the C = C0 reduction of the load law), tight.
   // (b) The migrating referential run agrees with the migrating mixed
@@ -516,7 +515,7 @@ TEST(SeaLevelReferential, ShorelineMigrationMatchesMixed) {
   // (b) Migrating referential == migrating mixed: the classes'
   // common-discretisation agreement, improving with order (the weak
   // migrating state makes the o1 difference percent-grade, like the
-  // other cross-class gates' first rungs).
+  // other cross-class gates at first order).
   std::vector<double> u_diff;
   for (int o : {1, 2}) {
     RefCase cb(o);
@@ -538,8 +537,7 @@ TEST(SeaLevelReferential, ShorelineMigrationMatchesMixed) {
 }
 
 TEST(SeaLevelReferential, GeneralisedRotationDoor) {
-  // Phase B, the generalised door (generalised_rotation_note.md, "The
-  // secular reduction"): SetRotation(Omega) on a model with a mildly
+  // The generalised door: SetRotation(Omega) on a model with a mildly
   // triaxial density — (i) it is the input-moments border at the
   // model's own assembled moments (plumbing identity), (ii) the
   // Tisserand gauge pins the representative: the solution carries no
@@ -623,8 +621,7 @@ TEST(SeaLevelReferential, GeneralisedRotationDoor) {
 }
 
 TEST(SeaLevelReferential, ConservationCertificate) {
-  // G8d (generalised_rotation_note.md, "What WP7.6 gates"): the
-  // secular balance re-integrated at the solution through the
+  // The secular balance re-integrated at the solution through the
   // certificate's own route — exact psi_k (not the interpolant), the
   // instrument's own quadrature, moments integrated independently of
   // ModelInertiaTensor():
@@ -793,7 +790,10 @@ TEST(SeaLevelReferential, ConservationCertificate) {
     SumCoefficient inner(phig, zpsi, 1.0, -1.0);
     ProductCoefficient sigma_w(*c.w, inner);
     SumCoefficient sigma_total(sigma_data, sigma_w);
-    // The composed reassembly carries the water cross data through\n    // the body-space form while the library pairs them on the\n    // shadow route: strict degrades to reassembly grade.\n    certify(*p, sigma_total, 1.5e-5, 3e-3, "composed water");  // measured 4.9e-6 / 9.8e-4
+    // The composed reassembly carries the water cross data through
+    // the body-space form while the library pairs them on the
+    // shadow route: strict degrades to reassembly grade.
+    certify(*p, sigma_total, 1.5e-5, 3e-3, "composed water");  // measured 4.9e-6 / 9.8e-4
   }
 }
 

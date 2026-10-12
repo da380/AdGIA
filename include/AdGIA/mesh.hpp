@@ -8,7 +8,6 @@
 
 #pragma once
 
-#include <optional>
 #include <tuple>
 #include <vector>
 
@@ -74,10 +73,21 @@ mfem::Array<int> AllBoundariesMarker(mfem::Mesh* mesh);
  * equal.
  * - `mfem::real_t`: The radius found (-1 if the boundary is empty).
  *    Meaningful only if the first two return values equal 1.
+ *
+ * The sphericity verdict compares the maximum relative spread of the
+ * boundary nodes' distances from x0 against kSphericalBoundaryRTol;
+ * @p deviation, when given, receives that spread. The tolerance must
+ * absorb the quadrature error of a computed centroid on coarse meshes
+ * while still rejecting a genuinely non-spherical boundary: measured
+ * spreads on the house meshes reach 3.6e-6 (the coarse
+ * ball_buffer_coarse_3d ball), so 1e-3 keeps two to three orders of margin
+ * on both sides.
  */
+inline constexpr mfem::real_t kSphericalBoundaryRTol = 1e-3;
+
 std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
     mfem::Mesh* mesh, const mfem::Array<int>& bdr_marker,
-    const mfem::Vector& x0);
+    const mfem::Vector& x0, mfem::real_t* deviation = nullptr);
 
 /**
  * @brief Determines if an indicated boundary is spherical and returns its
@@ -161,7 +171,7 @@ std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(mfem::Mesh* mesh);
  */
 std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
     mfem::ParMesh* mesh, const mfem::Array<int>& bdr_marker,
-    const mfem::Vector& x0);
+    const mfem::Vector& x0, mfem::real_t* deviation = nullptr);
 
 /**
  * @brief Determines if an indicated boundary is spherical and returns its
@@ -293,8 +303,7 @@ mfem::Vector MeshCentroid(mfem::ParMesh* mesh, int order = 1);
  * This helper struct encapsulates properties and methods relevant to meshes
  * that are known to have an external boundary that lies on a spherical surface.
  * The centre is taken as the centroid of the whole mesh, and the external
- * boundary must be a sphere about it; this is checked by an assert, so only
- * in builds without NDEBUG.
+ * boundary must be a sphere about it; this is checked with MFEM_VERIFY.
  */
 struct SphericalMeshHelper {
   /** @brief The radius of the spherical external boundary. */
@@ -336,13 +345,12 @@ struct SphericalMeshHelper {
  * This function identifies all MPI ranks that own at least one boundary
  * element matching the provided boundary marker. It then calls
  * `MPI_Comm_split` to create a new communicator (`bdr_comm`) containing
- * only these "boundary" ranks.
+ * only these "boundary" ranks. Collective on the mesh's communicator; the
+ * caller owns the new communicator.
  *
  * @param mesh Pointer to the mfem::ParMesh object.
  * @param bdr_marker An `mfem::Array<int>` marking which boundary attributes
  * (1 for inclusion, 0 for exclusion) to consider.
- * Collective on the mesh's communicator; the caller owns the new
- * communicator.
  *
  * @return A `std::tuple` containing:
  * - `MPI_Comm`: The new communicator. Ranks not owning the boundary will

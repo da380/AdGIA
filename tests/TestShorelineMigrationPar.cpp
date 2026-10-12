@@ -270,10 +270,11 @@ int main(int argc, char* argv[]) {
   // axis lives in the serial suite.
   RunCase(1, "o1");
 
-  const int fails = static_cast<int>(GlobalSum(num_fails)) / 1;
+  int fails = 0;
+  MPI_Allreduce(&num_fails, &fails, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
   if (Mpi::Root()) {
     std::cout << (fails == 0 ? "PASS" : "FAIL") << " (" << num_checks
-              << " checks per rank)\n";
+              << " checks on the root rank)\n";
   }
   return fails == 0 ? 0 : 1;
 }

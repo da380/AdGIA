@@ -33,7 +33,7 @@ namespace {
 
 using namespace self_grav_test;
 
-constexpr int kDtNDegree = 8;
+constexpr int kFeasDtNDegree = 8;
 constexpr double kGravG = 0.05;
 
 double lateral_amplitude = 0.1;
@@ -43,13 +43,20 @@ double FluidRho(const Vector& x) {
   return 1.2 - 0.3 * r2 + lateral_amplitude * x[1];
 }
 
-// Sets the lateral amplitude, returning the previous value (the
-// rigid-core test switches to the symmetric model and back).
-double TestAmplitude(double value) {
-  const double old = lateral_amplitude;
-  lateral_amplitude = value;
-  return old;
-}
+// Sets the lateral amplitude for the lifetime of the object and restores
+// the previous value on destruction (the rigid-core test switches to the
+// symmetric model and back).
+struct ScopedLateralAmplitude {
+  explicit ScopedLateralAmplitude(double value) : saved_(lateral_amplitude) {
+    lateral_amplitude = value;
+  }
+  ~ScopedLateralAmplitude() { lateral_amplitude = saved_; }
+  ScopedLateralAmplitude(const ScopedLateralAmplitude&) = delete;
+  ScopedLateralAmplitude& operator=(const ScopedLateralAmplitude&) = delete;
+
+ private:
+  double saved_;
+};
 
 // The density by attribute: polynomial within each region, so that it
 // is exactly representable in an order-2 L2 control space.
@@ -70,9 +77,9 @@ class ModelDensity {
   PWCoefficient pw_;
 };
 
-// One evaluation of the functional for a control perturbation c (a
-// GridFunction on the control space over the Stokes SubMesh), in either
-// variant. Returns the value; optionally the derivative dual.
+// The spaces and data of one feasibility problem: the parent mesh, the
+// Stokes SubMesh with its velocity, pressure and control spaces, and the
+// control space's parent twin.
 struct ProblemSetup {
   Mesh* parent;
   SubMesh* stokes;
@@ -86,6 +93,9 @@ struct ProblemSetup {
   const Array<int>* essential_bdr = nullptr;
 };
 
+// One evaluation of the functional for a control perturbation c (a
+// GridFunction on the control space over the Stokes SubMesh), in either
+// variant. Returns the value; optionally the derivative dual.
 double Evaluate(const ProblemSetup& s, const GridFunction& c,
                 Vector* dual = nullptr) {
   // The perturbation on the parent (element-local L2 transfer: exact).
@@ -100,7 +110,7 @@ double Evaluate(const ProblemSetup& s, const GridFunction& c,
   ModelDensity rho0_stokes;
   SumCoefficient rho_stokes(rho0_stokes.Get(), dc_stokes);
 
-  DensityFeasibility J(*s.fes_phi, kDtNDegree, kGravG, rho_parent,
+  DensityFeasibility J(*s.fes_phi, kFeasDtNDegree, kGravG, rho_parent,
                        s.stokes_attributes, *s.fes_u, *s.fes_p, rho_stokes,
                        s.mu, s.essential_bdr);
   if (dual) {
@@ -221,9 +231,7 @@ TEST(EquilibriumFigures, ParentDerivativeAgreesWithStokesDerivative) {
   Array<int> ess(fluid.bdr_attributes.Max());
   ess = 1;
   ModelDensity rho;
-  // kDtNDegree by value: the name is ambiguous with the test common's
-  // at this (global) scope.
-  DensityFeasibility J(fes_phi, 8, kGravG, rho.Get(),
+  DensityFeasibility J(fes_phi, kFeasDtNDegree, kGravG, rho.Get(),
                        Array<int>({2}), fes_u, fes_p, rho.Get(), nullptr,
                        &ess);
 
@@ -265,11 +273,11 @@ TEST(EquilibriumFigures, PersistentProblemMatchesOneShot) {
   ess = 1;
   ModelDensity rho;
 
-  DensityFeasibility one_shot(fes_phi, 8, kGravG, rho.Get(),
+  DensityFeasibility one_shot(fes_phi, kFeasDtNDegree, kGravG, rho.Get(),
                               Array<int>({2}), fes_u, fes_p, rho.Get(),
                               nullptr, &ess);
 
-  DensityFeasibilityProblem problem(fes_phi, 8, kGravG, Array<int>({2}),
+  DensityFeasibilityProblem problem(fes_phi, kFeasDtNDegree, kGravG, Array<int>({2}),
                                     fes_u, fes_p, nullptr, &ess);
   auto first = problem.Evaluate(rho.Get(), rho.Get());
   auto second = problem.Evaluate(rho.Get(), rho.Get());
@@ -311,7 +319,7 @@ TEST(EquilibriumFigures, HessianActionMatchesFDAndIsSymmetric) {
   // The base state and two random directions with their coefficient
   // pairs (fluid, and the exact L2 transfer to the parent).
   ModelDensity rho0;
-  DensityFeasibility base(fes_phi, 8, kGravG, rho0.Get(),
+  DensityFeasibility base(fes_phi, kFeasDtNDegree, kGravG, rho0.Get(),
                           Array<int>({2}), fes_u, fes_p, rho0.Get(),
                           nullptr, &ess);
 
@@ -331,16 +339,21 @@ TEST(EquilibriumFigures, HessianActionMatchesFDAndIsSymmetric) {
   GridFunctionCoefficient dc(&d), dc_parent(&d_parent);
   GridFunctionCoefficient ec(&e), ec_parent(&e_parent);
 
-  Vector Hd, He, Hd_gn;
+  Vector Hd, He, Hd_gn, He_gn;
   base.HessianAction(rho0.Get(), rho0.Get(), dc_parent, dc, fes_rho, Hd);
   base.HessianAction(rho0.Get(), rho0.Get(), ec_parent, ec, fes_rho, He);
   base.HessianAction(rho0.Get(), rho0.Get(), dc_parent, dc, fes_rho,
                      Hd_gn, /*gn_only=*/true);
+  base.HessianAction(rho0.Get(), rho0.Get(), ec_parent, ec, fes_rho,
+                     He_gn, /*gn_only=*/true);
 
   // Symmetry: (H d) . e = (H e) . d, and likewise for Gauss-Newton.
   const double hde = Hd * e;
   const double hed = He * d;
   EXPECT_NEAR(hde, hed, 1e-8 * std::abs(hde));
+  const double gde = Hd_gn * e;
+  const double ged = He_gn * d;
+  EXPECT_NEAR(gde, ged, 1e-8 * std::abs(gde));
 
   // The residual term is present (the state is infeasible, J > 0).
   Vector res_part(Hd);
@@ -419,9 +432,9 @@ TEST(EquilibriumFigures, TwoDimensionsRigidCoreCertificate) {
   rigid[0].parent_attributes[0] = 1;  // the inner core
 
   ModelDensity rho;
-  DensityFeasibilityProblem clamped(fes_phi, 8, kGravG, Array<int>({2}),
+  DensityFeasibilityProblem clamped(fes_phi, kFeasDtNDegree, kGravG, Array<int>({2}),
                                     fes_u, fes_p, nullptr, &ess);
-  DensityFeasibilityProblem enriched(fes_phi, 8, kGravG, Array<int>({2}),
+  DensityFeasibilityProblem enriched(fes_phi, kFeasDtNDegree, kGravG, Array<int>({2}),
                                      fes_u, fes_p, nullptr, &ess, &rigid);
   auto j_clamped = clamped.Evaluate(rho.Get(), rho.Get());
   auto j_enriched = enriched.Evaluate(rho.Get(), rho.Get());
@@ -495,7 +508,7 @@ TEST(EquilibriumFigures, TwoLayerModelDerivativeMatchesFD) {
   SubMesh::Transfer(d, d_parent);
   GridFunctionCoefficient dc(&d), dc_parent(&d_parent);
 
-  DensityFeasibilityProblem problem(fes_phi, 8, kGravG, Array<int>({1}),
+  DensityFeasibilityProblem problem(fes_phi, kFeasDtNDegree, kGravG, Array<int>({1}),
                                     fes_u, fes_p, nullptr, &ess);
   auto base = problem.Evaluate(rho0, rho0);
   EXPECT_GT(base->Value(), 0.0);
@@ -542,9 +555,9 @@ TEST(EquilibriumFigures, RigidCoreCertificate) {
   rigid[0].parent_attributes[0] = 1;
 
   ModelDensity rho;
-  DensityFeasibilityProblem clamped(fes_phi, 8, kGravG, Array<int>({2}),
+  DensityFeasibilityProblem clamped(fes_phi, kFeasDtNDegree, kGravG, Array<int>({2}),
                                     fes_u, fes_p, nullptr, &ess);
-  DensityFeasibilityProblem enriched(fes_phi, 8, kGravG, Array<int>({2}),
+  DensityFeasibilityProblem enriched(fes_phi, kFeasDtNDegree, kGravG, Array<int>({2}),
                                      fes_u, fes_p, nullptr, &ess, &rigid);
 
   // The lateral model: the enrichment ADDS constraints on the stress
@@ -561,12 +574,13 @@ TEST(EquilibriumFigures, RigidCoreCertificate) {
   // The spherically symmetric model: the core balance is automatic, so
   // the two certificates agree and the rigid motion vanishes (to the
   // solver floor, against the translation scale of the multiplier).
-  const double amp = TestAmplitude(0.0);
-  auto j_c0 = clamped.Evaluate(rho.Get(), rho.Get());
-  auto j_e0 = enriched.Evaluate(rho.Get(), rho.Get());
-  TestAmplitude(amp);
-  EXPECT_NEAR(j_e0->Value(), j_c0->Value(),
-              1e-3 * std::abs(j_c0->Value()));
+  double value_c0 = 0.0, value_e0 = 0.0;
+  {
+    ScopedLateralAmplitude symmetric(0.0);
+    value_c0 = clamped.Evaluate(rho.Get(), rho.Get())->Value();
+    value_e0 = enriched.Evaluate(rho.Get(), rho.Get())->Value();
+  }
+  EXPECT_NEAR(value_e0, value_c0, 1e-3 * std::abs(value_c0));
 
   // The envelope derivative with the border: central FD along a random
   // direction (the same harness as the clamped test).

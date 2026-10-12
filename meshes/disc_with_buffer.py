@@ -1,4 +1,4 @@
-"""A unit disc with a buffer annulus around it: data/elastogravity_2d.msh.
+"""A unit disc with a buffer annulus around it: data/disc_buffer_2d.msh.
 
 The body is the unit disc. Outside it a shell, or buffer, extends to
 radius 1.2; the gravitational potential is solved on the whole domain and
@@ -32,7 +32,7 @@ def main() -> None:
     sizing = UniformInterfaces(*sizes(args, 0.08, 0.16, 0.8))
 
     spec = MeshSpec(body, sizing, dimension=2, order=2, shells=[buffer])
-    report(build_layered_mesh(spec, args.out / "elastogravity_2d",
+    report(build_layered_mesh(spec, args.out / "disc_buffer_2d",
                               verbose=args.verbose))
 
 

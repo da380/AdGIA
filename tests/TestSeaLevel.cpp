@@ -6,7 +6,7 @@
 #include "TestCommon.hpp"
 
 /*
-  Tests for SeaLevelOperator (the WP1 surface layer of the sea-level
+  Tests for SeaLevelOperator (the surface layer of the sea-level
   machinery) on the canned two-layer meshes: body attribute 1 (radius 1)
   inside a buffer, the body surface the SubMesh's only boundary.
 

@@ -573,7 +573,7 @@ run. Offsets of the welded methods against pyslfp on \code{fluid\_core} are
 therefore not attributed to any one of the three. The
 $N^2$-scaling of the 2-D envelope has not been run.
 
-\paragraph{The 3-D adjudication (8 October 2026).} The \code{aw\_core}
+\paragraph{The degree-1 adjudication.} The \code{aw\_core}
 null test is run and settles the degree-1 question: on the neutral twin
 ($h=0.3$, order 2) the degree-1 $h'$ of \code{referential}
 ($-1.2462882$), \code{slip} ($-1.2463654$) and \code{maxwell}
@@ -815,7 +815,9 @@ decomposition paragraph of \S\ref{sec:formulations}), and on this
 non-neutral core the suppression error is genuine but sits below the
 mesh level at these degrees — it is visible at degree~1, where the
 slip rides the soft core--shell translation. The slipping formulation
-is the general one. The $l'$
+is a finite idealisation of the dissipative completion and serves here as an
+instrument; the general treatment of such a core is the Maxwell relaxation
+(\code{doc/static\_fluid\_core.tex}). The $l'$
 column is larger in relative terms ($l'_2$ is small), and \code{winkler} is
 the outlier (\S\ref{sec:cmbresults}). Cost differs much more than accuracy.
 Mean cost per load solve, degrees 0--4:
@@ -1374,7 +1376,7 @@ forms are therefore not certified covariant.
 \caption{The identity per case, read from the campaign's identity logs.}
 \end{figure}
 
-\paragraph{The water and surface-moving legs (WP7.4).} Two flags extend
+\paragraph{The water and surface-moving legs.} Two flags extend
 the identity to the referential sea-level machinery. With \code{-water}
 both sides carry the bordered water solve (\code{SetWaterLoad}; the
 $\zeta\zeta$ collapse of \code{doc/quasi\_static\_models.tex}) and

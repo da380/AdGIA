@@ -11,7 +11,7 @@
 // the elastic solution with the lid at its unrelaxed modulus and the
 // mantle at mu_inf — which the example also solves directly and checks
 // against (printed as the distance to the relaxed limit, O(exp(-tf /
-// tau_e)) when the run is long enough).
+// tau_e)) for uniform relaxation times when the run is long enough).
 //
 // The machinery: a LinearQuasiStaticClampedProblem whose ExternalLoad()
 // carries the moment-tensor point sources
@@ -34,43 +34,6 @@
 // lithosphere pattern. The default lid contains the default fault, so
 // the transient is driven purely by relaxation beneath the rupture.
 //
-// The arguments shared with coseismic_deformation.cpp (see its header
-// for the details; same defaults):
-//   -d -o                      dimension and order                 [2, 2]
-//   -nx -nz -W -D              the box                   [64/24, 32/12, 8, 4]
-//   -dip -rake -strike -fd -fx -fl -fw -s -nd -ns -smooth -taper
-//            the fault (-smooth > 0: Gaussian densities of that many
-//            element widths instead of point sources — no near-fault
-//            delta artifacts, same far field; -taper, on by default:
-//            cos^2 slip taper to zero at the fault ends, -s the peak)
-//   -beta -alpha -gamma -bx -bz -br                 the elastic structure
-//   -topo -tx -tr -hill                             the topography
-// and its own (defaults in brackets):
-//   -nl      lid thickness in element rows (0: no lid;
-//            -1: 3 nz / 8, rounded up)                         [-1]
-//   -tau-s   stress-relaxation time tau_s of the SLS           [1]
-//   -tau-e   creep-retardation time tau_e (> tau_s); the
-//            relaxed modulus is mu_inf = mu_U tau_s / tau_e    [2]
-//   -tbeta   both times grow by 1 + tbeta |z| / D              [0]
-//   -talpha  both times grow by 1 + talpha x / W               [0]
-//   -tgamma  Gaussian weak zone: both times reduced by the
-//            factor 1 - tgamma exp(-r^2 / 2 tbr^2)  (< 1)      [0]
-//   -tbx     x of the weak-zone centre                         [0]
-//   -tbz     depth of the weak-zone centre below z = 0         [1.5]
-//   -tbr     Gaussian radius of the weak zone                  [1]
-//   -tf      final time                                        [10]
-//   -n       number of time steps (fixed dt), or output times
-//            when -rtol > 0                                    [50]
-//   -rtol    relative tolerance of adaptive stepping (0: fixed
-//            dt)                                               [0]
-//   -ox      x of the surface observation point (1e30: the
-//            coseismic uplift peak)                            [1e30]
-//   -pv      save time slices to a ParaView collection         [off]
-//   -vis / -no-vis   GLVis windows                             [on]
-//   -anim / -no-anim save the u_z frames and a replay script   [on]
-//   -csv     history table ("": off)   [postseismic_deformation.csv]
-//   -csvp    profiles table ("": off)      [postseismic_profiles.csv]
-//
 // Output: the history of u_z at the observation point on the screen and
 // in the history CSV (t, u_x, u_z); the profiles CSV holds the surface
 // u_z at t = 0 (coseismic), at t = tf, and the directly solved relaxed
@@ -88,6 +51,17 @@
 // differences are the mesh partitioning (mesh built, labelled and mapped
 // serially first), the solvers inside the problem class (Gauss-Seidel /
 // BoomerAMG), and the reductions of the sampled profile.
+//
+// Mesh requirements. No mesh file: the box is built internally
+// (fault_box.hpp). It spans x in [-W/2, W/2] (and y in [-W/2, W/2] in
+// 3-D) and z in [-D, 0], mapped and centred by the topography options.
+// Attribute 1 is the mantle; attribute 2 is the lid, the top -nl element
+// rows. The free surface is the top boundary (z = 0); every other
+// boundary is clamped. Units are nondimensional: lambda = mu = 1 for the
+// unrelaxed medium.
+//
+// The options shared with coseismic_deformation.cpp have the same
+// defaults.
 //
 // Options (defaults in brackets):
 //   -d       space dimension, 2 or 3 [2].
@@ -177,6 +151,7 @@
 //    ./postseismic_deformation -d 3 -o 1 -rake 0 -n 25
 // ============================================================================
 
+#include <algorithm>
 #include <cmath>
 #include <iomanip>
 #include <iostream>
@@ -470,7 +445,7 @@ int main(int argc, char* argv[]) {
   };
   if (anim) {
     if (Root()) {
-      std::filesystem::create_directories(frames_dir);
+      filesystem::create_directories(frames_dir);
     }
     ofstream ofs;
     if (Root()) {
@@ -522,8 +497,8 @@ int main(int argc, char* argv[]) {
     obs = profile.Nearest(obs_x);
   } else {
     for (int i = 1; i < npts; i++) {
-      if (std::abs(values0[(dim - 1) * npts + i]) >
-          std::abs(values0[(dim - 1) * npts + obs])) {
+      if (abs(values0[(dim - 1) * npts + i]) >
+          abs(values0[(dim - 1) * npts + obs])) {
         obs = i;
       }
     }
@@ -536,7 +511,7 @@ int main(int argc, char* argv[]) {
   // peaks times the growth bound mu_U / mu_inf = tau_e / tau_s (the
   // source region saturates by design).
   const real_t span = (tau_e / tau_s) * 1.2 *
-                      std::max({std::abs(uz0_min), std::abs(uz0_max),
+                      max({abs(uz0_min), abs(uz0_max),
                                 real_t{1e-30}});
   examples::GLVisWindow win_initial("u_z coseismic (t = 0)",
                                     examples::DefaultKeys(dim));
@@ -548,12 +523,12 @@ int main(int argc, char* argv[]) {
   examples::CsvTable history(csv_file, {"t", "u_x", "u_z"});
   history.Meta("title", "Post-seismic displacement at the surface point")
       .Meta("note",
-            "x = " + std::to_string(profile.X(obs)).substr(0, 6) +
+            "x = " + to_string(profile.X(obs)).substr(0, 6) +
                 "; stress glut held from t = 0")
       .Meta("xlabel", "time")
       .Meta("ylabel", "u");
 
-  auto observe = [&](const std::vector<double>& values, real_t t_now,
+  auto observe = [&](const vector<double>& values, real_t t_now,
                      int step) {
     const double ux = values[0 * npts + obs];
     const double uz = values[(dim - 1) * npts + obs];
@@ -641,7 +616,8 @@ int main(int argc, char* argv[]) {
   // The fully relaxed limit, solved directly: an elastic solid with the
   // lid at its unrelaxed modulus and the mantle at mu_inf, loaded by the
   // same stress glut. The run's final state should approach it as
-  // exp(-(t_final / tau_e) / (tau factor)).
+  // exp(-t_final / (tau_e f)), f the
+  // relaxation-time factor (1 for uniform times).
   FunctionCoefficient mu_u_c(
       [=](const Vector& x) { return mu0 * modulus_factor(x); });
   PWCoefficient mu_relaxed;

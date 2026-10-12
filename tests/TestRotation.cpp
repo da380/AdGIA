@@ -4,8 +4,8 @@
 #include "TestCommon.hpp"
 
 /*
-  Tests for RotationalFeedback (the WP2 rotation border of the sea-level
-  plan) on the canned meshes.
+  Tests for RotationalFeedback (the rotation border of the sea-level
+  machinery) on the canned meshes.
 
   The gates are independent of the border's own elimination algebra:
   1. Consistency: after Solve(), the angular-momentum row (eq. A5) is
@@ -197,7 +197,8 @@ TEST_P(RotationTest, PicardIterationApproachesBorderSolution) {
     unit.back()->SetUnit(k);
   }
   p2->SetTidalPotential(psi);
-  DenseMatrix DP = InertiaMatrix(c.moments);
+  const DenseMatrix inertia = InertiaMatrix(c.moments);
+  DenseMatrix DP(inertia);
   Vector w(nw), rhs(nw);
   w = 0.0;
   double err = 0.0;
@@ -209,7 +210,7 @@ TEST_P(RotationTest, PicardIterationApproachesBorderSolution) {
       rhs[k] = -(p2->TidalCoupling(*unit[k]) +
                  SurfacePair(*c.fes_u, c.sigma, *unit[k], c.surface));
       for (int j = 0; j < nw; j++) {
-        DP(k, j) = InertiaMatrix(c.moments)(k, j) +
+        DP(k, j) = inertia(k, j) +
                    p2->TidalTidalCoupling(*unit[k], *unit[j]);
       }
     }
@@ -219,7 +220,8 @@ TEST_P(RotationTest, PicardIterationApproachesBorderSolution) {
     d -= target;
     err = d.Norml2() / target.Norml2();
   }
-  // The feedback is weak, so three iterations contract far below 1%.
+  // The feedback is weak, so three iterations contract to a relative
+  // error below 1e-4.
   EXPECT_LT(err, 1e-4);
 }
 
@@ -243,7 +245,6 @@ TEST_P(RotationTest, OmegaScalesLinearlyInOmega0) {
 
 TEST(RotationFluid, FluidCoreTermsEnterTheBorder) {
   const int dim = 2, order = 2;
-  Case c(dim, order);  // solid body (for spaces only)
   // The three-layer fluid case from the fluid tests.
   Mesh parent(ThreeLayerMeshFile(dim).c_str(), 1, 1);
   Array<int> attrs({1, 3});

@@ -106,7 +106,7 @@ void ExponentialTrapezoidWeights(mfem::real_t h, mfem::real_t& e,
  *
  * The internal-variable spaces use Ordering::byNODES, so component @f$c@f$
  * of a branch occupies @f$[c\,n_d, (c+1)\,n_d)@f$, with the component
- * convention of TraceFreeSymmetricMatrixIndex / SymmetricMatrixIndex. Works on
+ * convention of SymmetricComponentOrder. Works on
  * serial and parallel problems alike (all operations are element-local; the
  * forces are L-vectors, which is what AddForce expects).
  */
@@ -295,6 +295,10 @@ class ViscoelasticOperator : public mfem::TimeDependentOperator {
    * when they change. */
   void SetEffectiveModulus(mfem::real_t dt, Scheme scheme) const;
 
+  /** @brief Fill the nodal exponential-trapezoid weights for @p dt at the
+   * current relaxation times, recomputing only when either changed. */
+  void EnsureTrapezoidWeights(mfem::real_t dt) const;
+
   bool CacheMatches(const mfem::Vector& m, mfem::real_t t) const;
   void UpdateCache(const mfem::Vector& m, mfem::real_t t) const;
 
@@ -344,7 +348,8 @@ class ViscoelasticOperator : public mfem::TimeDependentOperator {
   /// W with sigma_s = sum_t W_st m_t on unscaled tensor components
   /// (row-major, node-major: W(p)(s,t) at p ns ns + s ns + t).
   std::vector<mfem::Vector> branch_modulus_;
-  mfem::Vector CU_;  ///< nodal W-form of C_U (for the stress of state-dependent laws)
+  /// Nodal W-form of C_U (for the stress of state-dependent laws).
+  mfem::Vector CU_;
   std::vector<mfem::Vector> itau0_;         ///< nodal 1 / tau_k0
   mutable std::vector<mfem::Vector> itau_;  ///< current nodal 1 / tau_k
   bool linear_ = true;                      ///< no state-dependent law
@@ -362,6 +367,16 @@ class ViscoelasticOperator : public mfem::TimeDependentOperator {
   mutable mfem::real_t effective_dt_ = -1.0;
   mutable long effective_version_ = -1;  ///< tau version the weights hold
   mutable long tau_version_ = 0;         ///< bumped by EvaluateRelaxationTimes
+
+  // Exponential-trapezoid nodal weights (e, alpha, beta) per branch, valid
+  // for the step size and tau version they were computed at.
+  mutable std::vector<mfem::Vector> etw_e_, etw_alpha_, etw_beta_;
+  mutable mfem::real_t etw_dt_ = -1.0;
+  mutable long etw_version_ = -1;
+
+  // Scratch of the trapezoid and implicit steps.
+  mfem::Vector m_start_, m_mid_, d_mid_;
+  std::vector<mfem::Vector> old_itau_;
   int max_corrector_ = 1;
   mfem::real_t corrector_tol_ = 1e-3;
   int last_passes_ = 0;

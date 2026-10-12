@@ -192,7 +192,9 @@ TEST_P(CompositeRheologyTest, Bookkeeping) {
   for (int k = 0; k < 3; k++) {
     EXPECT_EQ(c.BranchRegion(k), region[k]);
     EXPECT_EQ(c.LocalBranch(k), local[k]);
-    EXPECT_EQ(&c.RelaxationTime(k), &c.RelaxationTime(k));
+    // The accessor returns a stable reference, not a fresh object.
+    const auto* first = &c.RelaxationTime(k);
+    EXPECT_EQ(first, &c.RelaxationTime(k));
   }
   EXPECT_EQ(c.BranchLabel(0), "core_branch0");
   EXPECT_EQ(c.BranchLabel(1), "region1_branch0");
@@ -472,6 +474,7 @@ TEST(CompositeRheologyMixedProblem, ElasticCoreMaxwellMantle) {
   SubMesh solid = SubMesh::CreateFromDomain(parent, attrs);
   H1_FECollection fec(order, dim);
   FiniteElementSpace fes_u(&solid, &fec, dim), fes_phi(&parent, &fec);
+  // Qualified: elastic_test's constants are also in scope here.
   ConstantCoefficient kappa(self_grav_test::kKappa), mu(self_grav_test::kMu),
       tau(1.0);
   FunctionCoefficient rho_s(SolidDensity), rho_f(FluidDensity);

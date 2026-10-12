@@ -3,11 +3,6 @@
 // parallel build; the #ifdef blocks below are the tour's actual content —
 // they mark exactly what changes in parallel.
 //
-// Mesh: ../data/circular_offset.msh (meshes/offset_disc.py) — an off-centre
-// disk M (attribute 1) inside a larger disk Ω centred on the origin
-// (attribute 2 is the surrounding region). Boundary attribute 1 is the
-// internal circle ∂M, attribute 2 the outer circle ∂Ω.
-//
 // Part A. Moving fields between the parent mesh and the submesh.
 //
 //   The injection is built from a space on the parent mesh and its "shadow"
@@ -59,7 +54,7 @@
 // round-off or solver tolerance; with -vis, φ and u are sent to GLVis.
 //
 // Options (defaults in brackets):
-//   -m    mesh file [../data/circular_offset.msh]: the off-centre
+//   -m    mesh file [../data/offset_disc_2d.msh]: the off-centre
 //         disk M (attribute 1) inside the larger disk (attribute 2).
 //   -o    finite element order [2].
 //   -rt   relative tolerance of the solves [1e-12]: the MINRES block
@@ -69,13 +64,22 @@
 //
 // Sample runs:  ./submesh_injection -o 2 -vis
 //               mpiexec -np 4 ./submesh_injection -o 2   (parallel build)
+//
+// Mesh requirements: 2-D (the coefficients use x and y only). Default
+// ../data/offset_disc_2d.msh (meshes/offset_disc.py): an off-centre disk M
+// (attribute 1, the submesh domain) inside a larger disk Omega centred on the
+// origin (attribute 2 is the surrounding region). Boundary attribute 1 is the
+// internal circle dM, attribute 2 the outer circle dOmega (Dirichlet). M must
+// not touch the Dirichlet boundary (checked at run time). Nondimensional,
+// lengths of order 1.
 // -----------------------------------------------------------------------------
 
 #include <cmath>
 #include <memory>
 
-#include "mfem.hpp"
 #include "AdGIA.hpp"
+#include "mfem.hpp"
+#include "visualisation.hpp"
 
 using namespace std;
 using namespace mfem;
@@ -115,7 +119,7 @@ int main(int argc, char *argv[]) {
   Hypre::Init();
 #endif
 
-  const char *mesh_file = "../data/circular_offset.msh";
+  const char *mesh_file = "../data/offset_disc_2d.msh";
   int order = 2;
   real_t rel_tol = 1e-12;
   bool visualization = false;
@@ -172,6 +176,7 @@ int main(int argc, char *argv[]) {
     cout << "\nGlobal parent true dofs: " << n_parent_glob
          << ",  global submesh true dofs: " << n_sub_glob << endl;
   }
+  // (every rank prints its own sizes: deliberate, to show the partition)
   cout << "  rank " << Mpi::WorldRank() << ": " << m << " parent / " << n
        << " submesh true dofs" << endl;
 #else
@@ -421,29 +426,13 @@ int main(int argc, char *argv[]) {
   }
 
   if (visualization) {
-    char vishost[] = "localhost";
-    int visport = 19916;
-
-    socketstream phi_sock(vishost, visport);
-#ifdef MFEM_USE_MPI
-    phi_sock << "parallel " << Mpi::WorldSize() << " " << Mpi::WorldRank()
-             << "\n";
-#endif
-    phi_sock.precision(8);
-    phi_sock << "solution\n"
-             << mesh << phi << "window_title 'phi on the parent mesh'"
-             << flush;
-    phi_sock << "keys Rjlbc\n" << flush;
-
-    socketstream u_sock(vishost, visport);
-#ifdef MFEM_USE_MPI
-    u_sock << "parallel " << Mpi::WorldSize() << " " << Mpi::WorldRank()
-           << "\n";
-#endif
-    u_sock.precision(8);
-    u_sock << "solution\n"
-           << patch << u << "window_title 'u on the submesh'" << flush;
-    u_sock << "keys Rjlbc\n" << flush;
+    // Every nonempty rank sends its piece (the submesh can leave ranks
+    // empty; GLVisWindow skips them).
+    examples::GLVisWindow phi_win("phi on the parent mesh",
+                                  examples::DefaultKeys(dim));
+    phi_win.Send(mesh, phi);
+    examples::GLVisWindow u_win("u on the submesh", examples::DefaultKeys(dim));
+    u_win.Send(patch, u);
   }
 
   return 0;

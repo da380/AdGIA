@@ -18,8 +18,7 @@ namespace AdGIA {
 
 /**
  * @brief Rotational feedback for a loaded mixed self-gravitating
- * problem (Yu, Al-Attar, Syvret & Lloyd 2025, §2.3–2.4 and Appendix A3;
- * doc/planning/sea_level_plan.md, WP2).
+ * problem (Yu, Al-Attar, Syvret & Lloyd 2025, §2.3–2.4 and Appendix A3).
  *
  * Surface loading perturbs the inertia tensor; conservation of angular
  * momentum perturbs the rotation, whose centrifugal potential
@@ -43,8 +42,7 @@ namespace AdGIA {
  * load-independent. A Solve() then costs one base solve, a dense
  * @f$N_\omega\times N_\omega@f$ solve, and one final composed solve
  * that leaves the problem's fields at the full solution. This replaces
- * the successively-refined @f$\omega@f$ iteration the paper mentions
- * (kept here as the test-side cross-check).
+ * the successively-refined @f$\omega@f$ iteration the paper mentions.
  *
  * The equilibrium principal moments are DATA, not derived from the
  * model: the traditional theory assumes @f$C_1 \le C_2 < C_3@f$, which
@@ -54,8 +52,8 @@ namespace AdGIA {
  * isotropic-inertia caveat for 3-D models).
  *
  * The component claims the problem's tidal-potential slot
- * (SetTidalPotential); a physical tide alongside the feedback is a
- * later composition. After any change to the problem's operator
+ * (SetTidalPotential): the tidal slot is occupied, so composing a
+ * physical tide with the feedback is unsupported. After any change to the problem's operator
  * (material, mesh, options), call InvalidateResponses().
  */
 class RotationalFeedback {
@@ -111,6 +109,8 @@ class RotationalFeedback {
   mfem::DenseMatrix D_;                        ///< inertia matrix + fluid block
   CentrifugalPotential psi_;                   ///< the solved amplitude
   std::vector<std::unique_ptr<CentrifugalPotential>> psi_unit_;
+  /// Interpolants of the unit potentials on the scalar space.
+  std::vector<std::unique_ptr<mfem::GridFunction>> psi_interp_;
   mfem::DenseMatrix S_;                        ///< D + P + T(psi_k, Y_j)
   bool cached_ = false;
   mfem::Vector omega_;

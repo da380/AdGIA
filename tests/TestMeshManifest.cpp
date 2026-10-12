@@ -214,7 +214,7 @@ TEST(MeshManifest, Marker) {
 }
 
 TEST(MeshManifest, GeneratedManifest) {
-  const MeshManifest m("../data/elastogravity_three_layer_3d.json");
+  const MeshManifest m("../data/earth_innercore_3d.json");
   ASSERT_EQ(m.Layers().size(), 4u);
   EXPECT_EQ(m.Layers()[0].name, "inner_core");
   EXPECT_EQ(m.InterfaceNamed("surface").attribute, m.SurfaceAttribute());

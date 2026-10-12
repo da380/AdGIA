@@ -1,41 +1,39 @@
 """A body with a non-spherical shape given by a formula: the aspherical
 meshes, in MFEM's own format.
 
-The body is a unit ball (disc in 2D) whose surface, and every sphere
-inside it, is pushed along the radius by
+The body is a unit ball (disc in 2-D, radius 1) whose surface, and every
+sphere inside it, is pushed along the radius by
 
     h(r, theta, phi) = eps * r * [ P2(cos theta) + beta * sin^2(theta) * cos(2 phi) ]
 
-an oblate part and an elliptical equatorial part. In 2D the mesh lies in
-the plane theta = pi/2, so only the elliptical part is seen. gmsh meshes
-the sphere; the shape is applied to the nodes when the mesh is written
-for MFEM, and the export checks that no element folds.
+an oblate part and an elliptical equatorial part (eps and beta are
+dimensionless; h is in units of the radius). In 2-D the mesh lies in the
+plane theta = pi/2, so only the elliptical part is seen. gmsh meshes the
+sphere; the shape is applied to the nodes when the mesh is written for
+MFEM, and the export checks that no element folds. Order-2 elements.
 
-With --buffer a shell is appended outside the body, out to radius 1.2,
-and the displacement is tapered to zero across it so that the outer
-boundary stays a sphere, as the DtN and multipole conditions need. The
-taper is quadratic in the shell and starts at the surface, which the
-displacement declares as a knot: the mapping is continuous there but
-kinked, and a kink is allowed only on a boundary the mesh honours.
+Variants (--dim 2|3):
 
-Domain attribute 1 is the body (and 2 the buffer); boundary attribute 1
-is the body's surface (and 2 the outer sphere). Order-2 elements, coarse
-enough to build in seconds. Files: aspherical_{2d,3d}.mesh and
-aspherical_buffer_{2d,3d}.mesh.
-
-With --fluid-core the body has two layers, a core below the radius r_c
-(--rc, default 3483/6371, the Earth's core-mantle boundary) and a mantle
-above it, always with the buffer. The shape stretches both, so the core
-boundary is aspherical too and stays on element faces. Domain attributes
-1 core, 2 mantle, 3 buffer; boundary attributes 1 core boundary, 2
-surface, 3 outer sphere, as in layered_earth.py. The manifest's meta
-records eps, beta, buffer and r_c, and marks the core fluid through
-"fluid_layers": [1] (planetmodel reads a layer's fluidity from a material
-model, which a bare geometry has not got; MeshManifest marks every layer
-the meta list names fluid, in addition to those its layers[].fluid
-does). Files: aspherical_fluid_core_buffer_{2d,3d}.mesh, and with
---spherical the same meshes unstretched (eps = 0, identical topology),
-spherical_fluid_core_buffer_{2d,3d}.mesh.
+  default         the body alone. Domain attribute 1, boundary 1 (the
+                  surface). Files aspherical_{2d,3d}.mesh.
+  --buffer        a buffer shell appended out to radius 1.2, the
+                  displacement tapered quadratically to zero across it so
+                  the outer boundary stays a sphere (as the DtN and
+                  multipole conditions need); the surface is declared a
+                  knot of the displacement. Domain attributes 1 body, 2
+                  buffer; boundary 1 surface, 2 outer sphere. Files
+                  aspherical_buffer_{2d,3d}.mesh.
+  --fluid-core    two layers, a core below radius --rc (default the
+                  Earth's CMB, 3483/6371) and a mantle, always with the
+                  buffer; the shape stretches both, so the core boundary
+                  is aspherical and on element faces. Domain attributes 1
+                  core, 2 mantle, 3 buffer; boundary 1 core boundary, 2
+                  surface, 3 outer sphere. The manifest meta records eps,
+                  beta, buffer and r_c and marks the core fluid through
+                  "fluid_layers": [1]. Files
+                  aspherical_fluid_core_buffer_{2d,3d}.mesh; with
+                  --spherical the same meshes unstretched (eps = 0, same
+                  topology), spherical_fluid_core_buffer_{2d,3d}.mesh.
 
 `--all` builds all eight: the four single-layer meshes and the four
 fluid-core ones.
@@ -45,21 +43,18 @@ Try them with the examples, e.g. from a build's examples/:
     ./poisson_dtn -m ../data/aspherical_buffer_2d.mesh -o 2 -mth 1
     ./elastogravity_layered -m ../data/aspherical_buffer_2d.mesh -o 2 -s 2
     ./slipping_interface -m ../data/aspherical_fluid_core_buffer_2d.mesh
-(love_numbers is not among them: it reads harmonics off the body's surface,
-which must be a sphere, and says so.)
 """
 import numpy as np
 
 from planetmodel import CallableDisplacement, Geometry, Skeleton
-from planetmodel.mesh3d import (MeshSpec, Shell, UniformInterfaces,
-                                build_layered_mesh, export_mfem_mesh)
+from planetmodel.mesh3d import MeshSpec, Shell, UniformInterfaces
 
-from common import parser, report, sizes
+from common import CMB, build_mfem, parser, sizes
 
 EPS = 0.05     # amplitude of the shape, relative to the radius
 BETA = 0.5     # elliptical part relative to the oblate part
 BUFFER = 0.2   # thickness of the buffer shell relative to the body's radius
-RC = 3483.0 / 6371.0  # radius of the fluid core (--fluid-core)
+RC = CMB       # radius of the fluid core (--fluid-core), in body radii
 
 SIZING = {2: (0.1, 0.2, 1.0), 3: (0.25, 0.5, 2.5)}
 # The two-layer body: in 3D a tenth finer, which keeps gmsh's slivers
@@ -111,15 +106,7 @@ def build(dim: int, buffer: bool, args) -> None:
         name = f"aspherical_{dim}d{suffix}"
 
     # The reference (spherical) mesh, then the MFEM file with the nodes moved.
-    reference = build_layered_mesh(spec, args.out / f"{name}_reference",
-                                   verbose=args.verbose)
-    exported = export_mfem_mesh(reference, args.out / name, delivery="physical")
-    report(reference)
-    print(f"{exported.mesh_path.name}: nodes moved by the shape; "
-          f"smallest Jacobian ratio {exported.quality.get('min_ratio', float('nan')):.3f}")
-    print(f"  manifest: {exported.manifest_path}")
-    for p in (reference.msh_path, reference.manifest_path):
-        p.unlink()
+    build_mfem(spec, name, args, "nodes moved by the shape")
 
 
 def build_fluid_core(dim: int, spherical: bool, args) -> None:
@@ -148,39 +135,43 @@ def build_fluid_core(dim: int, spherical: bool, args) -> None:
     kind = "spherical" if spherical else "aspherical"
     name = f"{kind}_fluid_core_buffer_{dim}d{args.name}"
 
-    reference = build_layered_mesh(spec, args.out / f"{name}_reference",
-                                   verbose=args.verbose)
-    exported = export_mfem_mesh(reference, args.out / name, delivery="physical")
-    report(reference)
     what = "nodes as meshed (eps = 0)" if spherical else "nodes moved by the shape"
-    print(f"{exported.mesh_path.name}: {what}; smallest Jacobian ratio "
-          f"{exported.quality.get('min_ratio', float('nan')):.3f}")
-    print(f"  manifest: {exported.manifest_path}")
-    for p in (reference.msh_path, reference.manifest_path):
-        p.unlink()
+    build_mfem(spec, name, args, what)
 
 
 def main() -> None:
     p = parser(__doc__)
     p.add_argument("--dim", type=int, default=2, choices=(2, 3),
-                   help="2 for a disc, 3 for a ball")
+                   help="2 for a disc, 3 for a ball (default %(default)s)")
     p.add_argument("--buffer", action="store_true",
-                   help="add a buffer shell, with the shape tapered off across it")
+                   help="BOOLEAN switch (default off): add a buffer shell "
+                        "reaching to radius 1.2, with the shape tapered "
+                        "off across it. Unlike equilibrium_bodies.py, "
+                        "where --buffer is the shell's thickness")
     p.add_argument("--fluid-core", action="store_true",
-                   help="two layers, fluid core and mantle, with the buffer")
+                   help="two layers, fluid core and mantle, with the "
+                        "buffer (default off)")
     p.add_argument("--spherical", action="store_true",
                    help="with --fluid-core: leave the body spherical "
-                        "(eps = 0), the counterpart of the aspherical mesh")
+                        "(eps = 0), the counterpart of the aspherical "
+                        "mesh (default off)")
     p.add_argument("--rc", type=float, default=RC,
-                   help="core radius with --fluid-core (default %(default).6f)")
+                   help="core radius with --fluid-core, in units of the body's "
+                        "radius (default %(default).6f, the Earth's CMB)")
     p.add_argument("--all", action="store_true",
-                   help="build all eight meshes")
+                   help="build all eight meshes (single-layer and fluid-core, 2-D "
+                        "and 3-D), ignoring --dim, --buffer, --fluid-core "
+                        "and --spherical")
     p.add_argument("--eps", type=float, default=EPS,
-                   help="amplitude of the shape (default %(default)s)")
+                   help="dimensionless amplitude eps of the shape, the "
+                        "displacement being eps times the radius "
+                        "(default %(default)s)")
     p.add_argument("--beta", type=float, default=BETA,
-                   help="elliptical part (default %(default)s)")
+                   help="dimensionless weight beta of the elliptical part relative "
+                        "to the oblate part (default %(default)s)")
     p.add_argument("--name", default="",
-                   help="suffix on the file names, for parameter sweeps")
+                   help="suffix appended to the file names, for parameter sweeps "
+                        "(default: none)")
     args = p.parse_args()
 
     if args.all:

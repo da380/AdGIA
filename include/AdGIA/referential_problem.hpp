@@ -310,7 +310,7 @@ class ReferentialElasticRheology : public Rheology {
  * potential perturbation @f$\zeta^1@f$ on the ball. The reference body is
  * fixed; the physics of shape lives in the equilibrium mapping
  * @f$\varphi_e@f$ (a Diffeomorphism on the ball, tapering to the identity
- * at the DtN sphere — asserted, not enforced) and the referential fields.
+ * at the DtN sphere — assumed, not checked) and the referential fields.
  *
  * **Weak form** (doc/gravitating_elasticity.md §3.1, with
  * @f$a_e = J_e F_e^{-1} F_e^{-T}@f$, @f$\mathbf{g}_0 = \nabla\zeta^0@f$):
@@ -401,8 +401,7 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
    * fluid term belongs to the mixed formulation's fluid-density unknown.
    * The centrifugal potential's force fits the same door (its
    * degree-zero @f$r^2@f$ part is not an interior harmonic, so pass its
-   * gradient as plain analytic data), which is where rotational
-   * feedbacks will later enter (Maitra & Al-Attar 2024). Registered as
+   * gradient as plain analytic data). Registered as
    * time-dependent; call before the first AssembleForce().
    */
   void SetTidalLoad(mfem::VectorCoefficient& grad_psi);
@@ -446,13 +445,9 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
 
   /**
    * @brief The TRADITIONAL rotational-feedback border, referential
-   * form — the phase-A gate instrument of
-   * doc/planning/referential_sea_level_plan.md (decision 2): valid
-   * where the traditional theory is (the elastic model's inertia
-   * tensor isotropic, i.e. spherical models; the paper's eq. 20 —
-   * see doc/planning/generalised_rotation_note.md for the failure in
-   * closed form and the generalised theory that replaces this).
-   * The @f$\omega@f$ columns are the centrifugal volume loads
+   * form. The traditional @f$\omega@f$ equation is well defined only
+   * when the model's inertia tensor is isotropic (Yu et al. 2025,
+   * \S 2.4). The @f$\omega@f$ columns are the centrifugal volume loads
    * @f$\int\tilde\rho\,\nabla\psi_k\cdot v\,dV@f$ (analytic gradients
    * at @f$\varphi_e = \mathrm{id}@f$; the mapped composition is the
    * generalised leg's business), the water cross data collapse to the
@@ -474,14 +469,12 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
   mfem::Coefficient& SolutionCentrifugalPotential();
 
   /**
-   * @brief The GENERALISED rotational door (phase B of
-   * doc/planning/referential_sea_level_plan.md; the derivation is
-   * doc/planning/generalised_rotation_note.md, "The secular
-   * reduction"): the secular limit of the Maitra & Al-Attar linearised
-   * Euler equation reduces, for @f$\Omega@f$ along a principal axis of
-   * the model's inertia tensor, to the traditional row with D built
-   * from the MODEL'S own principal moments and the displacement pinned
-   * by the Tisserand gauge — the mapped-rotation null basis makes the
+   * @brief The GENERALISED rotational door: the traditional border
+   * with D built from the model's own (or input) principal moments,
+   * the displacement pinned by the Tisserand gauge (mass-weighted,
+   * solid-restricted with fluids) and @f$\Omega@f$ along a principal
+   * axis (Maitra & Al-Attar 2024, \S 3.8). The mapped-rotation null
+   * basis makes the
    * mass-weighted representative exactly
    * @f$\int\tilde\rho\,\varphi_e\times u\,dV = 0@f$. This overload
    * assembles ModelInertiaTensor(), verifies the principal-axis and
@@ -507,8 +500,7 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
    * mantle Tisserand frame — because a fluid region's relative
    * angular momentum is pure relabelling gauge, while the
    * @f$\omega@f$-row integrals are relabelling-invariant and stay
-   * whole-body (doc/planning/generalised_rotation_note.md, "The
-   * fluid-core wrinkle"). The metric is assembled at solver setup,
+   * whole-body. The metric is assembled at solver setup,
    * after all SetFluid() configuration. */
   void SetTisserandGauge(bool on);
 
@@ -647,8 +639,8 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
  protected:
   void SetupSolver(mfem::OperatorHandle& A) override;
   bool SolveLinearSystem(const mfem::Vector& B, mfem::Vector& X) override;
-  /** @brief The plain block solve (the pre-water SolveLinearSystem
-   * body); the bordered wrap and its column solves call it. */
+  /** @brief The plain block solve (the plain block solve without
+   * borders); the bordered wrap and its column solves call it. */
   bool SolveUnbordered(const mfem::Vector& B, mfem::Vector& X);
 
  protected:
@@ -751,20 +743,28 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
   std::unique_ptr<mfem::SumOperator> A_zeta_sea_;
   std::vector<std::unique_ptr<mfem::Coefficient>> sea_coefs_;
   mfem::Vector sea_czeta_;
+  // Time-invariant true-dof ones of the zeta space (set by
+  // BuildWaterBorder) and the mass-row data form, reassembled per
+  // AssembleForce.
+  mfem::Vector sea_ones_;
+  std::unique_ptr<mfem::LinearForm> sea_sd_form_;
   mfem::real_t sea_m_ = 0.0, sea_Sd_ = 0.0, phi_g_ = 0.0;
   std::unique_ptr<BorderedElimination> border_elim_;
   void BuildWaterZetaMass();
   void BuildWaterBorder();
 
-  // The traditional rotation border (SetRotation; the phase-A
-  // instrument): unit centrifugal potentials and their analytic
-  // gradients, the u-row columns, the water cross data on the zeta
-  // row, the omega-row data read off the raw surface loads.
+  // The traditional rotation border (SetRotation): unit centrifugal
+  // potentials and their analytic gradients, the u-row columns, the
+  // water cross data on the zeta row, the omega-row data read off the
+  // raw surface loads.
   bool rot_enabled_ = false;
   mfem::real_t rot_Omega_ = 0.0;
   mfem::DenseMatrix rot_D_;
   std::vector<std::unique_ptr<mfem::Coefficient>> rot_psi_;
   std::vector<std::unique_ptr<mfem::VectorCoefficient>> rot_grad_psi_;
+  // True-dof interpolants of the unit potentials (time-invariant;
+  // filled on first use by AssembleForce).
+  std::vector<mfem::Vector> rot_psi_true_;
   std::vector<mfem::Vector> rot_tcol_;       // u columns (+rho grad psi_k)
   std::vector<mfem::Vector> rot_cpsi_zeta_;  // water psi columns (zeta row)
   mfem::Vector rot_mpsi_, rot_r_, omega_;
@@ -862,6 +862,8 @@ class LinearQuasiStaticReferentialSelfGravitatingSlipProblem
    * body force on the fluid displacement row, and a solid-row-only
    * load under-drives a fluid core by tens of percent. Welded
    * referential and maxwell solve tides (the base class). */
+  // Deliberately hides the (non-virtual) base method: the slip classes
+  // refuse tidal loads, and the front door aborts.
   void SetTidalLoad(mfem::VectorCoefficient&) {
     MFEM_ABORT(
         "SetTidalLoad: not yet supported by the slipping classes (the "
@@ -925,7 +927,7 @@ class LinearQuasiStaticReferentialSelfGravitatingSlipProblem
    */
   void SetFluidGauge(mfem::Coefficient& mu_gauge, mfem::real_t epsilon);
 
-  /** @brief The solid-everywhere preconditioner experiment for the
+  /** @brief Solid-everywhere preconditioner mode for the
    * slipping organisations: the Krylov operator keeps the CLEAN fluid
    * block (physics + the AL constraint penalty, no gauge term) while
    * the fluid-block preconditioner stays on the
@@ -1027,7 +1029,7 @@ class LinearQuasiStaticReferentialSelfGravitatingSlipProblem
   bool BrokenZetaEnabled() const { return broken_zeta_; }
 
   /**
-   * @brief DIAGNOSTIC (the interface-shift study): override the field
+   * @brief Diagnostic: override the field
    * @f$\mathbf{b} = F^{-T}\nabla\zeta^0@f$ used in the broken-@f$\zeta@f$
    * scalar-jump constraint kernels (Kvz, Pb) by an externally supplied
    * coefficient — e.g. the analytically composed physical gravity,
@@ -1040,7 +1042,7 @@ class LinearQuasiStaticReferentialSelfGravitatingSlipProblem
     b_override_ = b;
   }
 
-  /** @brief DIAGNOSTIC (interface-shift study): scale the whole
+  /** @brief Diagnostic: scale the whole
    * @f$G_\Sigma@f$ gravity-interface block family by @p s (0 drops it
    * symmetrically — the solve then targets a DIFFERENT physical
    * problem; only solver-structure comparisons are meaningful). */
@@ -1093,7 +1095,7 @@ class LinearQuasiStaticReferentialSelfGravitatingSlipProblem
 
   /** @brief Diagnostic (broken mode, after a Solve): the assembled
    * broken solver block @f$(i, j)@f$ applied to a true-dof vector —
-   * the relabelled identity's per-block probes, localising a
+   * per-block probes for localising a
    * non-covariant assembly term to its block. Slots: 0 the solid
    * displacement, 1 the fluid displacement, 2 @f$\zeta_o@f$, 3
    * @f$\zeta_f@f$. The blocks carry the constraint penalties
@@ -1110,8 +1112,7 @@ class LinearQuasiStaticReferentialSelfGravitatingSlipProblem
 
   /** @brief Diagnostic (broken mode, after a Solve): one stored
    * interface kernel applied to a true-dof vector — the second level of
-   * the relabelled identity's probes, separating the constraint kernels
-   * by their mapping ingredients. Kernels: "Bn" the normal-jump
+   * the per-block probes, separating the constraint kernels by their mapping ingredients. Kernels: "Bn" the normal-jump
    * @f$\nu\cdot\,\cdot\;\nu\cdot\,\cdot@f$ (solid u slot; the Nanson
    * @f$\nu@f$ alone), "Pb" the scalar-jump @f$b\otimes b@f$ mass (solid
    * u slot; the mapped @f$b = F^{-T}\nabla\zeta^0@f$), "Kvz" the mixed

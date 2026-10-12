@@ -87,29 +87,29 @@ real_t BarotropicDensityGradientCoefficient::Eval(ElementTransformation& T,
   return (gr_ * gp_) / g2;
 }
 
-void MatrixDeltaCoefficient::SetTime(mfem::real_t t) {
+void MatrixDeltaCoefficient::SetTime(real_t t) {
   d_.SetTime(t);
-  mfem::MatrixCoefficient::SetTime(t);
+  MatrixCoefficient::SetTime(t);
 }
 
-void MatrixDeltaCoefficient::SetMatrix(const mfem::DenseMatrix& M) {
+void MatrixDeltaCoefficient::SetMatrix(const DenseMatrix& M) {
   MFEM_VERIFY(M.Height() == M_.Height() && M.Width() == M_.Width(),
               "MatrixDeltaCoefficient::SetMatrix: dimensions must match.");
   M_ = M;
 }
 
-void MatrixDeltaCoefficient::EvalDelta(mfem::DenseMatrix& M,
-                                       mfem::ElementTransformation& T,
-                                       const mfem::IntegrationPoint& ip) {
+void MatrixDeltaCoefficient::EvalDelta(DenseMatrix& M,
+                                       ElementTransformation& T,
+                                       const IntegrationPoint& ip) {
   M = M_;
   d_.SetTime(GetTime());
   M *= d_.EvalDelta(T, ip);
 }
 
-void MatrixDeltaCoefficient::Eval(mfem::DenseMatrix& /*M*/,
-                                  mfem::ElementTransformation& /*T*/,
-                                  const mfem::IntegrationPoint& /*ip*/) {
-  mfem::mfem_error("MatrixDeltaCoefficient::Eval");
+void MatrixDeltaCoefficient::Eval(DenseMatrix& /*M*/,
+                                  ElementTransformation& /*T*/,
+                                  const IntegrationPoint& /*ip*/) {
+  mfem_error("MatrixDeltaCoefficient::Eval");
 }
 
 }  // namespace AdGIA

@@ -22,7 +22,7 @@ real_t GlobalDot(FiniteElementSpace& fes, const Vector& x, const Vector& y) {
 #ifdef MFEM_USE_MPI
   if (auto* pfes = dynamic_cast<ParFiniteElementSpace*>(&fes)) {
     real_t global = 0.0;
-    MPI_Allreduce(&d, &global, 1, MPI_DOUBLE, MPI_SUM, pfes->GetComm());
+    MPI_Allreduce(&d, &global, 1, MPITypeMap<real_t>::mpi_type, MPI_SUM, pfes->GetComm());
     d = global;
   }
 #endif
@@ -144,18 +144,16 @@ void SobolevRieszMap::Mult(const Vector& dual, Vector& g) const {
   Vector rhs(dual);
   EliminateEssential(rhs);
   g.SetSize(dual.Size());
-  Vector x(dual.Size());
   for (int k = 0; k < order_; k++) {
-    x = 0.0;
-    cg_->Mult(rhs, x);
+    g = 0.0;
+    cg_->Mult(rhs, g);
     MFEM_VERIFY(cg_->GetConverged(),
                 "SobolevRieszMap: the Helmholtz solve did not converge.");
     if (k + 1 < order_) {
-      M_.Ptr()->Mult(x, rhs);
+      M_.Ptr()->Mult(g, rhs);
       EliminateEssential(rhs);
     }
   }
-  g = x;
 }
 
 }  // namespace AdGIA

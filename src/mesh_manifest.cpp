@@ -106,12 +106,7 @@ MeshManifest::MeshManifest(const std::string& path) : path_(path) {
   const auto slash = path.find_last_of('/');
   directory_ = slash == std::string::npos ? "" : path.substr(0, slash + 1);
 
-  std::ifstream in(path);
-  MFEM_VERIFY(in.good(), "MeshManifest: cannot open " << path << ".");
-  std::stringstream buffer;
-  buffer << in.rdbuf();
-  const std::string text = buffer.str();
-  const Json root_json = JsonReader(text, path).Read();
+  const Json root_json = ReadJsonFile(path);
   const Record root(root_json, "manifest", path);
 
   const std::string& schema = root.String("schema");
@@ -166,7 +161,8 @@ MeshManifest::MeshManifest(const std::string& path) : path_(path) {
     f.name = r.String("name");
     f.radius = r.Number("radius");
     const auto between = r.Integers("between_layers");
-    MFEM_VERIFY(between.size() == 2 && between[0] < n_layers &&
+    MFEM_VERIFY(between.size() == 2 && between[0] >= -1 &&
+                    between[0] < n_layers && between[1] >= -1 &&
                     between[1] < n_layers,
                 "MeshManifest: " << path << ": " << Indexed("interfaces", i)
                                  << ".between_layers is not a pair of layers.");
@@ -416,7 +412,13 @@ int MeshManifest::OuterAttribute() const {
 }
 
 real_t MeshManifest::SurfaceRadius() const {
-  return interfaces_[SurfaceAttribute() - interfaces_.front().attribute].radius;
+  const int attribute = SurfaceAttribute();
+  for (const Interface& f : interfaces_) {
+    if (f.attribute == attribute) {
+      return f.radius;
+    }
+  }
+  MFEM_ABORT("MeshManifest: " << path_ << " lists no surface of the body.");
 }
 
 real_t MeshManifest::OuterRadius() const { return layers_.back().r_outer; }

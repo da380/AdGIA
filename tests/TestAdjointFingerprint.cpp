@@ -1,5 +1,5 @@
 /*
-  Gate GA1b (WP8.4 opening): the sea-level reciprocity theorems of
+  Sea-level reciprocity theorems of
   Al-Attar, Syvret, Crawford, Mitrovica & Lloyd (2024,
   doc/Elasticity/ggad434.pdf) as certificates on the water-loaded mixed
   solve — the elastic fingerprint problem that SetWaterLoad implements
@@ -25,7 +25,7 @@
      with psi from the solved rotational feedback).
 
   The pairings go through the POSTPROCESSED sea-level fields
-  (SeaLevelOperator), i.e. the route tier in the WP7.6 sense: the
+  (SeaLevelOperator), i.e. the readout route: the
   algebraic solve is symmetric to solver grade, and the residual is the
   projection/quadrature gap of the readout. Thresholds encode
   measurements (see each leg).
@@ -43,6 +43,7 @@
 #include <functional>
 #include <limits>
 #include <memory>
+#include <numbers>
 #include <vector>
 
 #include "AdGIA.hpp"
@@ -56,6 +57,10 @@ namespace {
 
 constexpr double kRhoW = 0.02;
 constexpr double kOmega = 0.1;
+
+// Surface gravity of the unit ball, g0 = 4 pi G rho / 3.
+const double kG0 =
+    4.0 * std::numbers::pi * self_grav_test::kG * self_grav_test::kRho / 3.0;
 
 // Gaussian melt cap centred at the unit direction n (s = angular width).
 double MeltCap(const Vector& x, const Vector& n) {
@@ -141,15 +146,11 @@ struct Fixture {
     moments[0] = 1.2;
     moments[1] = 1.3;
     moments[2] = 2.0;
-    const double g0 =
-        4.0 * M_PI * self_grav_test::kG * self_grav_test::kRho / 3.0;
-    w = std::make_unique<ConstantCoefficient>(kRhoW / g0);
+    w = std::make_unique<ConstantCoefficient>(kRhoW / kG0);
   }
 
   VectorFunctionCoefficient GradPhi0() {
-    const double g0 =
-        4.0 * M_PI * self_grav_test::kG * self_grav_test::kRho / 3.0;
-    return VectorFunctionCoefficient(3, [g0](const Vector& x, Vector& v) {
+    return VectorFunctionCoefficient(3, [g0 = kG0](const Vector& x, Vector& v) {
       v = x;
       v *= g0;
     });
@@ -252,10 +253,10 @@ TEST(AdjointFingerprint, RotationWithStructureReciprocity) {
   EXPECT_LT(ReciprocityDefect(f, rheology, true), 1e-4);
 }
 
-// Gate GA2: the full-physics kernels — Maxwell viscoelasticity with the
+// The full-physics kernels — Maxwell viscoelasticity with the
 // water border AND the rotational border in the solve (frozen
 // shorelines, so C-dagger = C0 and no ocean-function playback arises;
-// the production first-order path) — FD-gated for a final-time
+// the production first-order path), FD-checked for a final-time
 // DISPLACEMENT observation and a final-time POTENTIAL observation. The
 // potential observation is the gate on AddPotentialForce's mass-like
 // border bookkeeping (Yu eq. 58): the datum's omega-row pairings and
@@ -263,7 +264,6 @@ TEST(AdjointFingerprint, RotationWithStructureReciprocity) {
 TEST(AdjointFingerprint, FullPhysicsKernels) {
   const int order = 2, n_steps = 12;
   const real_t t1 = 1.5;  // Maxwell times
-  const real_t kOm_ = kOmega;
   Fixture f(order);
   auto kappa0 = ConstantCoefficient(self_grav_test::kKappa);
   auto mu0 = ConstantCoefficient(self_grav_test::kMu);
@@ -308,7 +308,7 @@ TEST(AdjointFingerprint, FullPhysicsKernels) {
         f.fes_u.get(), f.fes_phi.get(), rheology, f.rho,
         self_grav_test::kG, self_grav_test::kDtNDegree);
     p->SetWaterLoad(*f.w, data, f.surface);
-    p->SetRotation(kOm_, f.moments);
+    p->SetRotation(kOmega, f.moments);
     p->SetRelTol(1e-11);
     return p;
   };
@@ -318,13 +318,12 @@ TEST(AdjointFingerprint, FullPhysicsKernels) {
   // psi(omega))/g + Phi_g/g with g = g0 on the unit surface): the
   // discrete functional whose exact adjoint the slots build. h is a
   // third cap window.
-  const real_t g0 = 4.0 * M_PI * self_grav_test::kG * self_grav_test::kRho /
-                    3.0;
+  const real_t g0 = kG0;
   auto n3 = UnitDir(0.1, -0.6, 0.79);
   auto h_sl = FunctionCoefficient(
       [n3](const Vector& x) { return MeltCap(x, n3); });
   auto h_sl_u = VectorFunctionCoefficient(
-      3, [n3, g0](const Vector& x, Vector& v) {
+      3, [n3](const Vector& x, Vector& v) {
         // -(1/g) h grad Phi0 = -h g0 x / g0 = -h x on the unit surface.
         v = x;
         v *= -MeltCap(x, n3);
@@ -342,7 +341,7 @@ TEST(AdjointFingerprint, FullPhysicsKernels) {
   Vector sl_omega(3);
   {
     for (int k = 0; k < 3; k++) {
-      CentrifugalPotential psi_k(3, kOm_);
+      CentrifugalPotential psi_k(3, kOmega);
       psi_k.SetUnit(k);
       ProductCoefficient hpsi(h_sl, psi_k);
       LinearForm lf(f.fes_phi.get());
@@ -448,7 +447,7 @@ TEST(AdjointFingerprint, FullPhysicsKernels) {
   auto sweep_phi = make_sweep(force_phi);
   auto sweep_sl = make_sweep(force_sl);
 
-  // FD: one rerun per sign and direction, both functionals sampled.
+  // FD: one rerun per sign and direction, all three functionals sampled.
   const real_t eps = 1e-3;
   Coefficient* base_of[3] = {&eta0, &eta0, &mu0};
   Coefficient* chi_of[3] = {&chi_blob3, &chi_all, &chi_blob3};
@@ -496,11 +495,11 @@ TEST(AdjointFingerprint, FullPhysicsKernels) {
   gate(sweep_sl, &Measured::J_sl, "full-physics SL observation");
 }
 
-// The C† playback gate (WP8.4's migrating-forward backbone, David's
-// norm: migration is standard in deglacial work): a forward whose
-// ocean function is PRESCRIBED and MOVING, C(x, t), so the problem is
-// exactly linear with time-dependent coefficients and the FD side is
-// sharp (no shoreline-feedback floor — the solution-fed Picard forward
+// The C† playback check (shoreline migration is standard in deglacial
+// configurations, so the adjoint must replay the moving ocean function):
+// a forward whose ocean function is PRESCRIBED and MOVING, C(x, t), so the
+// problem is exactly linear with time-dependent coefficients and the FD
+// side is sharp (no shoreline-feedback floor — the solution-fed Picard forward
 // adds only the theory-small delta-C terms on top of this machinery).
 // The forward steps with the force hook refreshing the water blocks at
 // every assembly (the viscoelastic-migration interleave mechanism);
@@ -510,14 +509,12 @@ TEST(AdjointFingerprint, FullPhysicsKernels) {
 TEST(AdjointFingerprint, PlaybackKernels) {
   const int order = 2, n_steps = 12;
   const real_t t1 = 1.5;  // Maxwell times
-  const real_t kOm_ = kOmega;
   Fixture f(order);
   auto kappa0 = ConstantCoefficient(self_grav_test::kKappa);
   auto mu0 = ConstantCoefficient(self_grav_test::kMu);
   auto eta0 = ConstantCoefficient(self_grav_test::kMu);  // tau = 1
   auto tau0 = RatioCoefficient(eta0, mu0);
-  const real_t g0 =
-      4.0 * M_PI * self_grav_test::kG * self_grav_test::kRho / 3.0;
+  const real_t g0 = kG0;
 
   // The prescribed moving ocean: a smooth cap boundary sweeping north
   // over the run. The weight amplitude is CRANKED far above the
@@ -558,7 +555,7 @@ TEST(AdjointFingerprint, PlaybackKernels) {
         f.fes_u.get(), f.fes_phi.get(), rheology, f.rho,
         self_grav_test::kG, self_grav_test::kDtNDegree);
     mp->prob->SetWaterLoad(mp->w, data, f.surface);
-    mp->prob->SetRotation(kOm_, f.moments);
+    mp->prob->SetRotation(kOmega, f.moments);
     mp->prob->SetRelTol(1e-11);
     return mp;
   };
@@ -663,7 +660,7 @@ TEST(AdjointFingerprint, PlaybackKernels) {
 
   // Thresholds encode measurements: played eta rows 0.9617 (blob,
   // the spatial floor) / 0.99951 (all) and mu blob 1.152 — the
-  // full-physics gate's grades — while the frozen control's eta-all
+  // full-physics kernels' grades — while the frozen control's eta-all
   // sits at 0.9944: eleven times the playback's deviation, and above
   // an absolute 3e-3 floor the played row never approaches.
   EXPECT_NEAR(played[0], 1.0, 1.5e-1) << "playback eta blob";
@@ -676,7 +673,7 @@ TEST(AdjointFingerprint, PlaybackKernels) {
       << "the frozen-C control's absolute error floor";
 }
 
-// Gate GA4: the ice kernels on the moving-ocean configuration — the
+// The ice kernels on the moving-ocean configuration — the
 // universal data-load pairing delta J = -g int int dsigma SL1+ dS dt
 // (SeaLevelLoadKernel), FD-gated for an ice-RATE direction and an
 // INITIAL-THICKNESS direction through the frozen-C0 load law
@@ -691,15 +688,13 @@ TEST(AdjointFingerprint, PlaybackKernels) {
 TEST(AdjointFingerprint, IceKernels) {
   const int order = 2, n_steps = 12;
   const real_t t1 = 1.5;
-  const real_t kOm_ = kOmega;
   const real_t rho_i = 0.045;
   Fixture f(order);
   auto kappa0 = ConstantCoefficient(self_grav_test::kKappa);
   auto mu0 = ConstantCoefficient(self_grav_test::kMu);
   auto eta0 = ConstantCoefficient(self_grav_test::kMu);
   auto tau0 = RatioCoefficient(eta0, mu0);
-  const real_t g0 =
-      4.0 * M_PI * self_grav_test::kG * self_grav_test::kRho / 3.0;
+  const real_t g0 = kG0;
   auto grad_phi0 = f.GradPhi0();
 
   // The prescribed moving ocean (fraction and weight).
@@ -760,7 +755,6 @@ TEST(AdjointFingerprint, IceKernels) {
 
   const real_t dt = t1 / n_steps;
   auto make_moving = [&](Coefficient& data) {
-    auto mp = std::make_unique<MovingProblem>(ocean_weight);
     auto rheology =
         IsotropicMaxwellRheology::Maxwell(3, kappa0, mu0, tau0);
     // rheology must outlive the problem: build per call, keep together.
@@ -775,7 +769,7 @@ TEST(AdjointFingerprint, IceKernels) {
         f.fes_u.get(), f.fes_phi.get(), op->rh, f.rho, self_grav_test::kG,
         self_grav_test::kDtNDegree);
     op->prob->SetWaterLoad(op->w, data, f.surface);
-    op->prob->SetRotation(kOm_, f.moments);
+    op->prob->SetRotation(kOmega, f.moments);
     op->prob->SetRelTol(1e-11);
     return op;
   };

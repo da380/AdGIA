@@ -10,11 +10,12 @@ viscosity, say).
 ## Running
 
 The build puts a launcher for each script in `<build>/earth_data/`
-(`surface_to_netcdf`, `ice_ng_to_surface`, `topography_grid`): each
+(`surface_to_netcdf`, `ice_ng_to_surface`, `topography_grid`,
+`plot_fingerprint_kernel`): each
 starts the script of the source tree with the Python found at
 configuration — the shared poetry environment of the repository root, or
 the one `EARTH_DATA_PYTHON` names. The environment is made once (see
-INSTALL.md, "The Python environment"), and a build configured before it
+INSTALL.md, "Prerequisites", item 5), and a build configured before it
 existed is configured again so the launchers pick it up:
 
 ```
@@ -25,8 +26,9 @@ cd <build> && cmake .       # regenerates the launchers
 ./earth_data/topography_grid --lmax 24
 ```
 
-`--extras maps` on the install adds cartopy and pyshtools for the map
-figures. When no environment is found at configuration the launchers
+`--extras maps` on the install adds cartopy and pyshtools, which the map
+figures need (`plot_fingerprint_kernel` requires them; `surface_to_netcdf
+--plot` falls back on plain matplotlib without cartopy). When no environment is found at configuration the launchers
 fall back on `python3` and refuse to run, with this recipe in their
 message. A script writes where it is started (or to `-o`), so run the
 launchers from the build tree; every script's `-h` and docstring give
@@ -65,3 +67,15 @@ its options, defaults and a sample run.
   committed grid instead, so this tool is only needed for a
   re-dated or re-banded one (`meshes/README.md`, "The coastline
   mesh").
+
+- `plot_fingerprint_kernel.py` — the reciprocity-kernel figure of
+  `examples/sea_level_fingerprint.cpp -kernel`: takes one or two kernel
+  CSVs (typically the 1-D model and a `-lateral` 3-D run at the same
+  observation site), grids them as `surface_to_netcdf.py` does (at half
+  a degree by default), masks them to the ice sheets of an ICE-NG model
+  at a chosen date (pyslfp) and draws a global map plus Greenland and
+  Antarctica zooms with the observation site starred, through pyslfp's
+  cartopy maps. With two inputs the second column is the difference
+  (second minus first) on its own scale, or `--side-by-side` shows both
+  kernels. `--obs-lat` and `--obs-lon` (degrees, default Boston) place
+  the star. Needs the `maps` extra.

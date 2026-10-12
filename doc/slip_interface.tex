@@ -73,9 +73,15 @@ qualify, a general tangential slip need not); on an interface that is
 not a level surface the construction generally fails. Tangential slip
 is therefore not gauge in general (\texttt{doc/gauged\_fluid.md},
 section ``Tangential slip and the welded space''). The slipping
-formulation of this note is the general one: it allows a tangential
+formulation of this note allows a tangential
 jump and enforces only normal continuity, and allowing a slip that is
-not needed costs nothing in correctness. The welded (continuous-space)
+not needed costs nothing in correctness at $N^2 = 0$; at $N^2 \neq 0$ it
+wanders in the same stratification band as the welded formulation.
+\emph{Status.} For coupled elasto-gravity problems with fluid regions the
+general method is the Maxwell relaxation of the fluid (\texttt{SetFluid}'s
+default treatment); the slipping and welded formulations are finite
+idealisations of that dissipative completion and serve as instruments
+(\texttt{doc/static\_fluid\_core.tex}). The welded (continuous-space)
 gauged formulation is used where the slip it suppresses is absent or
 removable, as for spherically symmetric models, where the two agree to
 discretisation level (\S\ref{sec:verif}). Whenever the broken space is
@@ -1415,7 +1421,7 @@ rectangular constraint --- does not apply, and the near-kernel
 reappears wherever the scheme needs solves with $A$. KKT pays for a
 full-rank interface constraint, as above; for selection over a
 near-kernel, the penalty with iterated refinement is the appropriate
-regularisation, and it is the production path for the gauge
+regularisation, and it is the gauge-fixing path
 (\texttt{doc/gauge\_penalty\_iteration.tex}).
 
 \section{Implementation}
@@ -1454,7 +1460,7 @@ with the cross-rank pairing and extension operators.
   penalty, assembled covariantly as
   \texttt{ElasticTensorIntegrator(C, map)} with the pulled-back
   deviatoric tensor and the rheology's equilibrium mapping. The
-  base-class \texttt{SetGaugedFluid()} is refused (the fluid has its own
+  base-class \texttt{SetFluid()} (gauge-penalty form) is refused (the fluid has its own
   space here).
 \item \texttt{SetConstraint(theta, iterations)}: the penalty $\theta$
   (default $100$) and the number of AL sweeps or KKT gauge refinements

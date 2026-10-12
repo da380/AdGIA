@@ -1,5 +1,5 @@
 /*
-  Gate GA3: the eta kernel's 1-D cross-check against the Love-number
+  The eta kernel's 1-D cross-check against the Love-number
   closed form — an INDEPENDENT route, not a finite difference of the
   same discretisation.
 
@@ -35,7 +35,7 @@
      (self-consistent, but it exercises the production pattern of
      radial inversions — a 3-D kernel paired with 1-D directions).
 
-  The run is the heaviest adjoint gate (3-D gravitating,
+  The run is the heaviest adjoint test (3-D gravitating,
   near-incompressible); the order and step count encode the measured
   cost/grade trade recorded in the comments.
 */
@@ -44,7 +44,6 @@
 
 #include <cmath>
 #include <memory>
-#include <numbers>
 
 #include "AdGIA.hpp"
 #include "mfem.hpp"
@@ -54,7 +53,6 @@ using namespace AdGIA;
 
 namespace {
 
-constexpr real_t kPi = std::numbers::pi_v<real_t>;
 constexpr real_t kGconst = 1.0;
 constexpr real_t kRho = 1.0;
 constexpr real_t kKappa = 1000.0;
@@ -73,21 +71,18 @@ void RadialY20(const Vector& x, Vector& v) {
   v *= y / r;
 }
 
-}  // namespace
-
 struct LoveRun {
   real_t sanity = 0.0;      // (J0/J1) / (f(0)/f(t1))
   real_t closed = 0.0;      // Directional(all) / dJ_closed
   real_t radial_fd = 0.0;   // Directional(radial) / FD   (0 if skipped)
 };
 
-static LoveRun LoveGate(int order, int n_steps, bool with_fd) {
+// Fills `out`; a void function so that the dimension check can abort it.
+void LoveGate(int order, int n_steps, bool with_fd, LoveRun& out) {
   const real_t t1 = 3.0;  // Maxwell times; near the degree's tau_l
-  LoveRun out;
 
-  Mesh smesh("../data/coupled_poisson.msh", 1, 1);
-  EXPECT_EQ(smesh.Dimension(), 3);
-  Mesh& parent = smesh;
+  Mesh parent("../data/ball_buffer_coarse_3d.msh", 1, 1);
+  ASSERT_EQ(parent.Dimension(), 3);
   Array<int> body_marker(parent.attributes.Max());
   body_marker = 0;
   body_marker[0] = 1;
@@ -132,9 +127,8 @@ static LoveRun LoveGate(int order, int n_steps, bool with_fd) {
   g_dual.Assemble();
 
   const real_t dt = t1 / n_steps;
-  // One forward run; returns (J at 0+, J at t1), optionally recording.
-  auto run_forward = [&](Coefficient& eta, ForwardTrajectory* keep,
-                         real_t* J0_out) {
+  // One forward run; returns J at t1.
+  auto run_forward = [&](Coefficient& eta) {
     auto tau = RatioCoefficient(eta, mu0);
     auto rheology = IsotropicMaxwellRheology::Maxwell(3, kappa0, mu0, tau);
     auto prob = LinearQuasiStaticMixedSelfGravitatingProblem(
@@ -148,17 +142,8 @@ static LoveRun LoveGate(int order, int n_steps, bool with_fd) {
     m = 0.0;
     real_t t = 0.0, dt_step = dt;
     EXPECT_TRUE(visco.SolveElastic(m, t));
-    if (J0_out) {
-      *J0_out = g_dual * prob.Displacement();
-    }
-    if (keep) {
-      keep->Record(m, t);
-    }
     for (int n = 1; n <= n_steps; n++) {
       ode.Step(m, t, dt_step);
-      if (keep) {
-        keep->Record(m, t);
-      }
     }
     EXPECT_TRUE(visco.SolveElastic(m, t));
     return g_dual * prob.Displacement();
@@ -233,15 +218,16 @@ static LoveRun LoveGate(int order, int n_steps, bool with_fd) {
     for (const real_t s : {eps, -eps}) {
       auto one_plus = SumCoefficient(1.0, chi_radial, 1.0, s);
       auto eta_p = ProductCoefficient(eta0, one_plus);
-      fd += (s > 0 ? 1.0 : -1.0) * run_forward(eta_p, nullptr, nullptr);
+      fd += (s > 0 ? 1.0 : -1.0) * run_forward(eta_p);
     }
     fd /= 2.0 * eps;
     out.radial_fd = K_eta.Directional(1) / fd;
   }
-  return out;
 }
 
-// GATE A (GA3 proper), at order 3: measured sanity 1.0004 and
+}  // namespace
+
+// Closed-form check at order 3: measured sanity 1.0004 and
 // closed-form ratio 1.0037 (n = 12; ~80 s) — the adjoint eta kernel
 // against the correspondence principle at the half-percent grade.
 // Order 2 is unusable here: the relaxed state is badly resolved
@@ -249,16 +235,18 @@ static LoveRun LoveGate(int order, int n_steps, bool with_fd) {
 // (closed-form ratio 1.17 measured) — the example's order caveat,
 // seen through the adjoint.
 TEST(Adjoint, LoveNumberClosedForm) {
-  auto r = LoveGate(3, 12, false);
+  LoveRun r;
+  ASSERT_NO_FATAL_FAILURE(LoveGate(3, 12, false, r));
   EXPECT_NEAR(r.sanity, 1.0, 5e-3);
   EXPECT_NEAR(r.closed, 1.0, 2e-2);
 }
 
-// GATE B: the radial-profile FD leg at order 2 (self-consistent, so
+// Radial-profile FD check at order 2 (self-consistent, so
 // the order-2 structure drift cancels; measured 1.1e-3 at n = 24,
 // and 1.1e-2 at order 3 where the smaller directional value exposes
 // the same absolute floors — order 2 is the sharper instrument here).
 TEST(Adjoint, LoveNumberRadialProfile) {
-  auto r = LoveGate(2, 24, true);
+  LoveRun r;
+  ASSERT_NO_FATAL_FAILURE(LoveGate(2, 24, true, r));
   EXPECT_NEAR(r.radial_fd, 1.0, 5e-3);
 }

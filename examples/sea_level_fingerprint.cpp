@@ -4,9 +4,8 @@
 // An elastic sea-level fingerprint: the gravitationally self-consistent
 // ocean response to melting an ice cap, solved MONOLITHICALLY — the
 // sea-level equation folded into the elastic operator
-// (LinearQuasiStaticMixedSelfGravitatingProblem::SetWaterLoad;
-// doc/planning/sea_level_plan.md, "The WP3 derivation") rather than by
-// the fixed-point iteration of pseudo-spectral codes. The water-load
+// (LinearQuasiStaticMixedSelfGravitatingProblem::SetWaterLoad) rather
+// than by the fixed-point iteration of pseudo-spectral codes. The water-load
 // feedback is a symmetric boundary modification of the system plus a
 // rank-one border carrying the uniform term and mass conservation, so
 // self-consistency costs one extra inner solve, with no outer loop.
@@ -22,7 +21,7 @@
 // ice cap on the continent, and a melt that unloads the +x hemisphere
 // of the cap through the smooth factor (1 + tanh(x/melt_width))/2
 // (regular at the pole), so the fingerprint carries non-zonal structure.
-// The default mesh, data/sea_level_fingerprint.msh
+// The default mesh, data/fingerprint_ring_3d.msh
 // (meshes/fingerprint_coastline.py), is refined in a ring about this
 // state's shoreline circle; change the state's options there and here
 // together, or run on any ball-in-buffer mesh through -m.
@@ -36,10 +35,10 @@
 // chain (the first run prints the exact commands):
 //
 //   ./sea_level_fingerprint -earth -m ../data/earth_coastlines.msh
-//   <build>/postprocess/ice_ng_to_surface fingerprint_nodes.csv \
+//   <build>/earth_data/ice_ng_to_surface fingerprint_nodes.csv \
 //       --field sea_level --dates 0 --length-scale 6.371e6 \
 //       -o fingerprint_state.csv
-//   <build>/postprocess/ice_ng_to_surface fingerprint_nodes.csv \
+//   <build>/earth_data/ice_ng_to_surface fingerprint_nodes.csv \
 //       --field ice --dates 0 --length-scale 6.371e6 \
 //       -o fingerprint_ice.csv
 //   ./sea_level_fingerprint -earth -m ../data/earth_coastlines.msh \
@@ -57,8 +56,7 @@
 // projected. Every piece of the geometry and load is an option.
 //
 // KERNEL (-kernel): the reciprocity reading of the same solve
-// (Al-Attar, Syvret, Crawford, Mitrovica & Lloyd 2024,
-// doc/Elasticity/ggad434.pdf; gate GA1b of the adjoint plan). By the
+// (Al-Attar, Syvret, Crawford, Mitrovica & Lloyd 2024). By the
 // self-adjointness of the fingerprint operator, the sensitivity kernel
 // of a sea-level observation at a point x_B with respect to the direct
 // surface load is K(x) = G(x_B, x) = G(x, x_B): ONE fingerprint solve
@@ -84,28 +82,42 @@
 // The kernels are raw L2 fields (the cap is the smoothing; no Sobolev
 // metric is applied), exported like the fingerprint.
 //
-// Output: the melt load and the sea-level change SL1 on the surface (the fingerprint: a
-// far-field rise of roughly the eustatic value, depressed — possibly
-// below zero — near the melted cap where gravitational attraction is
-// lost and the ground rebounds), the uniform term Phi_g, the eustatic
-// equivalent, the ocean area and the mass-conservation certificate. The
-// fingerprint is exported with SeaLevelOperator::WriteSurfaceField;
-// grid and map it with
-//    <build>/postprocess/surface_to_netcdf sea_level_fingerprint.csv --plot
-// (cartopy/pyshtools-ready NetCDF; see postprocess/README.md). GLVis
-// shows the body displacement and the fingerprint on the surface shell.
+// Output: the melt load and the sea-level change SL1 on the surface (the
+// fingerprint: a far-field rise of roughly the eustatic value, depressed
+// — possibly below zero — near the melted cap where gravitational
+// attraction is lost and the ground rebounds), the uniform term Phi_g,
+// the eustatic equivalent, the ocean area and the mass-conservation
+// certificate. The fingerprint is exported with
+// SeaLevelOperator::WriteSurfaceField; grid and map it with
+//    <build>/earth_data/surface_to_netcdf sea_level_fingerprint.csv --plot
+// (cartopy/pyshtools-ready NetCDF; see earth_data/README.md). GLVis shows
+// the body displacement and the fingerprint on the surface shell.
 //
-// 3-D only: the sea-level equation is not wired for 2-D (2-D elastic
-// solves with gravity remain useful; a 2-D ocean is not).
+// 3-D only: the sea-level equation is not wired for 2-D (checked).
 //
 // One source serves the serial and the parallel build; the only genuine
 // differences are the partitioning and typed field copies.
 //
+// Mesh requirements. A 3-D unit ball in a buffer: domain attribute 1 is
+// the body (unit radius) and 2 the buffer; boundary attribute 1 is the
+// ball's surface and 2 the outer sphere (layout of meshes/
+// ball_with_buffer.py). On the body submesh the surface is the highest
+// boundary attribute. The default ../data/fingerprint_ring_3d.msh
+// (meshes/fingerprint_coastline.py) is order 2 and refined about the
+// simple state's shoreline circle, so it is tied to the simple state's
+// default options; ../data/earth_coastlines.msh (meshes/
+// earth_coastlines.py) is refined along the real coastlines, for -earth.
+// Any ball-in-buffer mesh with this layout works. Lengths are in units
+// of the planet radius (--length-scale 6.371e6 m for the sampled
+// stacks); the model (G, rho, kappa, mu, densities, thicknesses) is
+// nondimensional.
+//
 // Options (defaults in brackets):
-//   -m       mesh file [../data/sea_level_fingerprint.msh, the 3-D ball
+//   -m       mesh file [../data/fingerprint_ring_3d.msh, the 3-D ball
 //            refined about the simple state's shoreline ring].
 //   -o       finite element order [2].
 //   -r       uniform mesh refinements [0].
+//   -rt      relative solver tolerance [1e-11].
 //   -Omega   equilibrium rotation rate about e3 [0: rotational feedback
 //            off]; with it the angular-velocity border joins the solve
 //            and psi(omega) enters the fingerprint.
@@ -119,9 +131,10 @@
 //   -cap-width     ice-cap angular width (rad) [0.35].
 //   -melt    melted fraction of the cap [0.5].
 //   -melt-width    smoothing width of the hemispheric unloading [0.15].
-//   -shore   shoreline smoothing width of the ocean fraction [0.02;
-//            1e-4 with -earth, whose flotation field is in rho_w x
-//            planet-radius units]; a sharp indicator (small width)
+//   -shore   shoreline smoothing width of the ocean fraction [< 0: 0.02
+//            in the simple geography, 1e-4 with -earth, whose flotation
+//            field is in rho_w x planet-radius units]; a sharp indicator
+//            (small width)
 //            costs quadrature accuracy in the shoreline-crossing
 //            boundary elements.
 //   -mig / -no-mig   shoreline migration (Picard on the ocean function
@@ -130,7 +143,8 @@
 //   -earth / -no-earth   real present-day geography from ICE-7G [off];
 //            without -state and -ice it writes the node CSV and prints
 //            the two sampling commands above.
-//   -state -ice    the sampled sea-level and ice-thickness CSVs.
+//   -state -ice    the sampled sea-level and ice-thickness CSVs (given
+//            together or not at all).
 //   -melt-region   greenland | west-antarctica [greenland]; -melt is
 //            the melted fraction of the sheet, -melt-width the window's
 //            edge smoothing in radians (sharper than the simple
@@ -150,8 +164,8 @@
 //   -vis / -no-vis   GLVis windows on or off [on].
 //
 // The fixed-point route of pseudo-spectral codes is not repeated here;
-// the field-level identity monolithic == fixed point is the rung-0 gate
-// of tests/TestSeaLevelCoupling.cpp.
+// the field-level identity monolithic == fixed point is tested in
+// tests/TestSeaLevelCoupling.cpp.
 //
 // Sample runs (with mpiexec -np N in front in a parallel build):
 //    ./sea_level_fingerprint
@@ -200,13 +214,9 @@ double g_cap_amp = 1.0;
 double g_cap_width = 0.35;
 double g_melt = 0.5;
 double g_melt_width = 0.15;
-double g_shore = 0.02;
-int g_dim = 2;
+double g_shore = -1.0;  // < 0: unset; resolved after parsing
 
-double G0() {
-  return g_dim == 2 ? 2.0 * std::numbers::pi * kG * kRho
-                    : 4.0 * std::numbers::pi * kG * kRho / 3.0;
-}
+double G0() { return 4.0 * std::numbers::pi * kG * kRho / 3.0; }
 
 // Colatitude from the pole (+z).
 double Colatitude(const Vector& x) {
@@ -248,7 +258,7 @@ double IceChange(const Vector& x) {
 }
 
 // The melt load sigma_data = rho_i (1 - C0) dI (the frozen-shoreline
-// reduction of the load law; with -migrate the orchestrator rebuilds
+// reduction of the load law; with -mig the orchestrator rebuilds
 // the C-dependent version itself).
 double MeltLoad(const Vector& x) {
   return (1.0 - OceanFraction(x)) * g_rho_i * IceChange(x);
@@ -376,11 +386,12 @@ int main(int argc, char* argv[]) {
   Hypre::Init();
 #endif
 
-  const char* mesh_file = "../data/sea_level_fingerprint.msh";
+  const char* mesh_file = "../data/fingerprint_ring_3d.msh";
   int order = 2;
   int ref_levels = 0;
   double Omega = 0.0;
   double C1 = 1.2, C2 = 1.3, C3 = 2.0;
+  double rel_tol = 1e-11;
   bool migrate = false;
   bool earth = false;
   const char* state_csv = "";
@@ -398,6 +409,8 @@ int main(int argc, char* argv[]) {
   args.AddOption(&order, "-o", "--order", "Finite element order.");
   args.AddOption(&ref_levels, "-r", "--refine",
                  "Uniform mesh refinements before partitioning.");
+  args.AddOption(&rel_tol, "-rt", "--solver-tolerance",
+                 "Relative solver tolerance.");
   args.AddOption(&Omega, "-Omega", "--rotation-rate",
                  "Equilibrium rotation rate about e3 (0: no rotational "
                  "feedback).");
@@ -425,7 +438,8 @@ int main(int argc, char* argv[]) {
                  "Shoreline migration (Picard on the ocean function; "
                  "off = frozen shorelines).");
   args.AddOption(&g_shore, "-shore", "--shoreline-width",
-                 "Shoreline smoothing width of the ocean fraction.");
+                 "Shoreline smoothing width of the ocean fraction (< 0: "
+                 "0.02, or 1e-4 with -earth).");
   args.AddOption(&earth, "-earth", "--earth", "-no-earth", "--no-earth",
                  "Real present-day geography (ICE-7G at the nodes); "
                  "without -state and -ice, write the node CSV and print "
@@ -464,17 +478,19 @@ int main(int argc, char* argv[]) {
     }
     return 1;
   }
+  if (IsRoot()) {
+    args.PrintOptions(std::cout);
+  }
 
   Mesh smesh(mesh_file, 1, 1);
   for (int l = 0; l < ref_levels; l++) {
     smesh.UniformRefinement();
   }
-  g_dim = smesh.Dimension();
-  const int dim = g_dim;
+  const int dim = smesh.Dimension();
   if (dim != 3) {
     if (IsRoot()) {
-      std::cout << "the sea-level equation is 3-D only: use the ball mesh "
-                   "(../data/coupled_poisson.msh)\n";
+      std::cout << "the sea-level equation is 3-D only: use a ball-in-buffer "
+                   "mesh (the default is ../data/fingerprint_ring_3d.msh)\n";
     }
     return 1;
   }
@@ -484,13 +500,12 @@ int main(int argc, char* argv[]) {
 #else
   Mesh& parent = smesh;
 #endif
-  Array<int> body_marker(parent.attributes.Max());
-  body_marker = 0;
-  body_marker[0] = 1;
+  // CreateFromDomain takes a LIST of attributes (not a marker).
+  Array<int> body_attr({1});
 #ifdef MFEM_USE_MPI
-  ParSubMesh body(ParSubMesh::CreateFromDomain(parent, body_marker));
+  ParSubMesh body(ParSubMesh::CreateFromDomain(parent, body_attr));
 #else
-  SubMesh body(SubMesh::CreateFromDomain(parent, body_marker));
+  SubMesh body(SubMesh::CreateFromDomain(parent, body_attr));
 #endif
   H1_FECollection fec(order, dim);
 #ifdef MFEM_USE_MPI
@@ -508,14 +523,18 @@ int main(int argc, char* argv[]) {
   sea.SetDensities(g_rho_w, g_rho_i);
 
   g_greenland = std::string(melt_region) != "west-antarctica";
-  if (earth && g_shore == 0.02) {
-    // The analytic default is far wider than the sampled state's
-    // rho_w x length units (planet radii): it would smear C0 to 1/2
-    // everywhere. ice_age_loading's default; -shore still overrides.
-    g_shore = 1e-4;
+  if (g_shore < 0.0) {
+    // The analytic default (0.02) is far wider than the sampled state's
+    // rho_w x length units (planet radii) and would smear C0 to 1/2
+    // everywhere: -earth takes ice_age_loading's default instead.
+    g_shore = earth ? 1e-4 : 0.02;
   }
-  const bool have_stacks =
-      !std::string(state_csv).empty() && !std::string(ice_csv).empty();
+  const bool has_state = !std::string(state_csv).empty();
+  const bool has_ice = !std::string(ice_csv).empty();
+  MFEM_VERIFY(has_state == has_ice,
+              "-state and -ice must be given together (the two sampled "
+              "stacks of the real-geography chain).");
+  const bool have_stacks = has_state && has_ice;
   if (earth && !have_stacks) {
     // Step 1 of the real-geography chain: the node set, then the exact
     // sampling commands (pyslfp downloads and caches the data).
@@ -526,10 +545,10 @@ int main(int argc, char* argv[]) {
       std::cout
           << "wrote " << nodes_csv << " (surface nodes)\n"
           << "sample the present-day ICE-7G state at these nodes:\n"
-          << "  <build>/postprocess/ice_ng_to_surface " << nodes_csv
+          << "  <build>/earth_data/ice_ng_to_surface " << nodes_csv
           << " --field sea_level --dates 0 \\\n"
           << "      --length-scale 6.371e6 -o fingerprint_state.csv\n"
-          << "  <build>/postprocess/ice_ng_to_surface " << nodes_csv
+          << "  <build>/earth_data/ice_ng_to_surface " << nodes_csv
           << " --field ice --dates 0 \\\n"
           << "      --length-scale 6.371e6 -o fingerprint_ice.csv\n"
           << "then melt a sheet:\n"
@@ -594,9 +613,9 @@ int main(int argc, char* argv[]) {
     sigma_body = std::make_unique<EarthMeltLoad>(*c0_body, *dice_body);
     w_body = std::make_unique<EarthOceanWeight>(*c0_body);
     sl0_surf = std::make_unique<GridFunctionCoefficient>(
-        const_cast<GridFunction*>(&state_stack->Field(0)));
+        &state_stack->Field(0));
     i0_surf = std::make_unique<GridFunctionCoefficient>(
-        const_cast<GridFunction*>(&ice_stack->Field(0)));
+        &ice_stack->Field(0));
     c0_surf = std::make_unique<FieldFlotation>(*sl0_surf, *i0_surf);
     dice_surf = std::make_unique<EarthIceChange>(*i0_surf);
     sigma_surf = std::make_unique<EarthMeltLoad>(*c0_surf, *dice_surf);
@@ -641,17 +660,13 @@ int main(int argc, char* argv[]) {
   if (Omega != 0.0) {
     // Rotational feedback inside the same bordered solve; the moments
     // are data (a spherical model's own would be degenerate).
-    Vector moments(dim == 2 ? 1 : 3);
-    if (dim == 2) {
-      moments[0] = C3;
-    } else {
-      moments[0] = C1;
-      moments[1] = C2;
-      moments[2] = C3;
-    }
+    Vector moments(3);
+    moments[0] = C1;
+    moments[1] = C2;
+    moments[2] = C3;
     prob.SetRotation(Omega, moments);
   }
-  prob.SetRelTol(1e-11);
+  prob.SetRelTol(rel_tol);
   if (migrate) {
     if (!mig->Solve(0.0)) {
       if (IsRoot()) {
@@ -689,9 +704,7 @@ int main(int argc, char* argv[]) {
   // Diagnostics over the same ocean function the solve used (the
   // field-projected indicator differs near the shoreline at
   // interpolation grade).
-  ConstantCoefficient one(1.0);
-  ProductCoefficient ocean_area_ind(*ocean_diag, one);
-  const double area = sea.SurfaceIntegral(ocean_area_ind);
+  const double area = sea.SurfaceIntegral(*ocean_diag);
   const double melted_mass = -sea.SurfaceIntegral(*melt_diag);
   const double eustatic = melted_mass / (g_rho_w * area);
   GridFunctionCoefficient slc(&sea.SeaLevelChangeField());
@@ -707,7 +720,7 @@ int main(int argc, char* argv[]) {
                       : std::string(", 1-D moduli"))
               << "\n  (K(x) = dSL(obs)/dzeta(x): the sea-level field of "
                  "one fingerprint solve\n   loaded by the unit-mass cap "
-                 "— ggad434 reciprocity; over ice sheets, scale\n   by "
+                 "— reciprocity; over ice sheets, scale\n   by "
                  "rho_i for sensitivity to thickness change)\n";
   }
   if (IsRoot() && !kernel) {
@@ -734,22 +747,19 @@ int main(int argc, char* argv[]) {
       for (int k = 0; k < prob.AngularVelocity().Size(); k++) {
         std::cout << " " << prob.AngularVelocity()[k];
       }
-      std::cout << (dim == 2 ? "   (spin)\n" : "   (wander_1 wander_2 spin)\n");
+      std::cout << "   (wander_1 wander_2 spin)\n";
     }
   }
 
   // The fingerprint (or kernel) as data: nodal CSV for the
-  // postprocess tools.
+  // earth_data tools.
   const std::string out_name =
       std::string(out_csv).empty()
           ? (kernel ? "sea_level_kernel.csv" : "sea_level_fingerprint.csv")
           : std::string(out_csv);
   sea.WriteSurfaceField(sea.SeaLevelChangeField(), out_name);
   if (IsRoot()) {
-    if (dim != 3) {
-      std::cout << "  wrote " << out_name
-                << " (x,y,value rows along the circle)\n";
-    } else if (kernel) {
+    if (kernel) {
       std::cout << "  wrote " << out_name
                 << " — the figure (ice-masked maps and zooms, two models "
                    "side by side):\n"
@@ -757,26 +767,24 @@ int main(int argc, char* argv[]) {
                 << out_name << " [<3-D run's csv>]\n";
     } else {
       std::cout << "  wrote " << out_name << " — map it with\n"
-                << "    <build>/postprocess/surface_to_netcdf " << out_name
+                << "    <build>/earth_data/surface_to_netcdf " << out_name
                 << " --plot\n";
     }
   }
 
   if (visualization) {
     GLVisWindow wu("displacement", DefaultKeys(dim));
-    wu.Send(body, const_cast<GridFunction&>(prob.Displacement()));
-    if (dim == 3) {
-      GLVisWindow ws("sea-level change", DefaultKeys(2));
-      ws.Send(sea.SurfaceMesh(), sea.SeaLevelChangeField());
-      GridFunction c(&sea.SurfaceSpace());
-      sea.OceanFunction(c);
-      GLVisWindow wc("ocean function", DefaultKeys(2));
-      wc.Send(sea.SurfaceMesh(), c);
-      GridFunction load(&sea.SurfaceSpace());
-      load.ProjectCoefficient(*melt_diag);
-      GLVisWindow wl("melt load", DefaultKeys(2));
-      wl.Send(sea.SurfaceMesh(), load);
-    }
+    wu.Send(body, prob.Displacement());
+    GLVisWindow ws("sea-level change", DefaultKeys(2));
+    ws.Send(sea.SurfaceMesh(), sea.SeaLevelChangeField());
+    GridFunction c(&sea.SurfaceSpace());
+    sea.OceanFunction(c);
+    GLVisWindow wc("ocean function", DefaultKeys(2));
+    wc.Send(sea.SurfaceMesh(), c);
+    GridFunction load(&sea.SurfaceSpace());
+    load.ProjectCoefficient(*melt_diag);
+    GLVisWindow wl("melt load", DefaultKeys(2));
+    wl.Send(sea.SurfaceMesh(), load);
   }
   return 0;
 }

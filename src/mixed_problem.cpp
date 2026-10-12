@@ -5,14 +5,13 @@
 
 #include "AdGIA/mixed_problem.hpp"
 
-#include "AdGIA/centrifugal.hpp"
-
 #include <algorithm>
 #include <cmath>
 #include <numbers>
 #include <random>
 
 #include "AdGIA/bilininteg.hpp"
+#include "AdGIA/centrifugal.hpp"
 #include "AdGIA/detail/fem_factory.hpp"
 #include "AdGIA/mesh.hpp"
 
@@ -372,7 +371,7 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveLoadPotential(
   if (A_phiphi_ == A_lap_.get()) {
     ok = SolvePotential(B_phi_, Phi);
   } else {
-    const Operator* saved = A_phiphi_;
+    auto* saved = A_phiphi_;
     A_phiphi_ = A_lap_.get();
     SetupPotentialSolver();
     ok = SolvePotential(B_phi_, Phi);
@@ -427,7 +426,7 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::ComputeBackgroundPotential(
     if (A_phiphi_ == A_lap_.get()) {
       ok = SolvePotential(B, Phi0);
     } else {
-      const Operator* saved = A_phiphi_;
+      auto* saved = A_phiphi_;
       A_phiphi_ = A_lap_.get();
       SetupPotentialSolver();
       ok = SolvePotential(B, Phi0);
@@ -490,7 +489,7 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetupCoupling() {
   auto add_interfaces = [&](MixedBilinearForm& form) {
     for (auto& f : fluids_) {
       if (!f.interface_potential_coupling) {
-        continue;  // buoyancy-only (Winkler) interface: no (F3)
+        continue;  // buoyancy-only (Winkler) interface: no potential coupling
       }
       auto minus_rho = std::make_unique<ProductCoefficient>(
           -1.0, InterfaceDensity(f));
@@ -813,7 +812,7 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::BuildWaterPhiPhi() {
   sea_phiphi_form_->FormSystemMatrix(empty, S_sea_);
   sea_coefs_.push_back(std::move(minus_w));
   A_sea_sum_ = std::make_unique<SumOperator>(
-      const_cast<Operator*>(sea_phiphi_base_), 1.0, S_sea_.Ptr(), 1.0,
+      sea_phiphi_base_, 1.0, S_sea_.Ptr(), 1.0,
       false, false);
   A_phiphi_ = A_sea_sum_.get();
   SetupPotentialSolver();
@@ -926,6 +925,7 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::BuildBorderCrossData() {
   // The water-rotation cross data, when both features are on: the
   // columns c^psi_k = int w tau' psi_k dS, the couplings
   // m^psi_k = int w psi_k dS and Pw_kj = int w psi_k psi_j dS.
+  rot_cache_version_ = -1;
   if (!sea_enabled_ || !rot_enabled_) {
     return;
   }
@@ -1000,11 +1000,13 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::AssembleForce(real_t t) {
   MakeCompatible(B_phi_);
   if (sea_enabled_) {
     // The mass-row data int sigma_data dS at this time.
-    auto lf = detail::MakeLinearForm(shadow_phi_.get());
-    lf->AddBoundaryIntegrator(new BoundaryLFIntegrator(*sea_sigma_data_),
-                              sea_marker_);
-    lf->Assemble();
-    real_t sd = lf->Sum();
+    if (!sea_mass_form_) {
+      sea_mass_form_ = detail::MakeLinearForm(shadow_phi_.get());
+      sea_mass_form_->AddBoundaryIntegrator(
+          new BoundaryLFIntegrator(*sea_sigma_data_), sea_marker_);
+    }
+    sea_mass_form_->Assemble();
+    real_t sd = sea_mass_form_->Sum();
 #ifdef MFEM_USE_MPI
     if (pfes_phi_) {
       real_t g = 0.0;
@@ -1063,8 +1065,15 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetBackgroundPotential(
     Coefficient& phi0) {
   ComputeBackgroundPotential(&phi0);
   if (!fluids_.empty()) {
-    // The fluid mass term may depend on grad Phi0.
+    // The fluid mass term may depend on grad Phi0. SetupFluidMass
+    // resets A_phiphi_ to the plain assembled block, so the water
+    // machinery (which sums its boundary mass onto A_phiphi_ and
+    // caches border and cross data built from grad Phi0) must be
+    // rebuilt afterwards.
     SetupFluidMass();
+  }
+  if (sea_enabled_) {
+    RefreshWaterLoad();
   }
   operator_dirty_ = true;
 }
@@ -1122,8 +1131,8 @@ namespace {
 
 // Extreme eigenvalues of the symmetric tridiagonal (alpha, beta) by Sturm
 // bisection.
-real_t SturmCount(const std::vector<real_t>& alpha,
-                  const std::vector<real_t>& beta, real_t x) {
+int SturmCount(const std::vector<real_t>& alpha,
+               const std::vector<real_t>& beta, real_t x) {
   // Number of eigenvalues < x.
   int count = 0;
   real_t q = alpha[0] - x;
@@ -1195,11 +1204,10 @@ real_t LinearQuasiStaticMixedSelfGravitatingProblem::PotentialBlockMinEigenvalue
     A_phiphi_->Mult(V[k], w);
     deflate(w);
     alpha.push_back(Dot(w, V[k]));
-    for (size_t j = 0; j < V.size(); j++) {  // full reorthogonalisation
-      w.Add(-Dot(w, V[j]), V[j]);
-    }
-    for (size_t j = 0; j < V.size(); j++) {
-      w.Add(-Dot(w, V[j]), V[j]);
+    for (int pass = 0; pass < 2; pass++) {  // full reorthogonalisation
+      for (const auto& vj : V) {
+        w.Add(-Dot(w, vj), vj);
+      }
     }
     const real_t b = std::sqrt(Dot(w, w));
     if (b <= 1e-14 * std::abs(alpha[0]) || k == lanczos_steps - 1) {
@@ -1275,7 +1283,7 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetupSchur(OperatorHandle& A)
 
 void LinearQuasiStaticMixedSelfGravitatingProblem::SetupMinres(OperatorHandle& A) {
   block_op_ = std::make_unique<BlockOperator>(offsets_);
-  // The solid-everywhere preconditioner experiment: the Krylov operator
+  // The solid-everywhere preconditioner mode: the Krylov operator
   // keeps the CLEAN displacement block while prec_ (built by
   // SetupDefaultCG on the handle passed in) sits on A + eps_prec Q;
   // MINRES ignores the exact gauge kernel, the near-gauge modes move
@@ -1284,7 +1292,7 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetupMinres(OperatorHandle& A
                       GaugePreconditionerOnly() ? A_.Ptr() : A.Ptr());
   block_op_->SetBlock(0, 1, const_cast<Operator*>(C_op_));
   block_op_->SetBlock(1, 0, const_cast<Operator*>(Ct_op_));
-  block_op_->SetBlock(1, 1, const_cast<Operator*>(A_phiphi_));
+  block_op_->SetBlock(1, 1, A_phiphi_);
 
   block_prec_ = std::make_unique<BlockDiagonalPreconditioner>(offsets_);
   block_prec_->SetDiagonalBlock(0, prec_.get());
@@ -1412,11 +1420,11 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetupKKTGauge() {
   block_op_kkt4_->SetBlock(0, 2, Auu);
   block_op_kkt4_->SetBlock(0, 3, const_cast<Operator*>(C_op_));
   block_op_kkt4_->SetBlock(1, 2, const_cast<Operator*>(Ct_op_));
-  block_op_kkt4_->SetBlock(1, 3, const_cast<Operator*>(A_phiphi_));
+  block_op_kkt4_->SetBlock(1, 3, A_phiphi_);
   block_op_kkt4_->SetBlock(2, 0, Auu);
   block_op_kkt4_->SetBlock(2, 1, const_cast<Operator*>(C_op_));
   block_op_kkt4_->SetBlock(3, 0, const_cast<Operator*>(Ct_op_));
-  block_op_kkt4_->SetBlock(3, 1, const_cast<Operator*>(A_phiphi_));
+  block_op_kkt4_->SetBlock(3, 1, A_phiphi_);
 
   // Null pairs: each coupled-system pair appears in the primal slots
   // and, independently, in the multiplier slots (v shares A's kernel).
@@ -1534,7 +1542,7 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveLinearSystem(
   if (!sea_enabled_ && !rot_enabled_) {
     return SolveUnbordered(B_in, X);
   }
-  // The bordered solve (WP3/WP4 of doc/planning/sea_level_plan.md):
+  // The bordered solve:
   // with y = (Phi_g[, omega]) the system is
   //   [K  B; B^T  Db] [x; y] = [b; r],
   // K the (water-modified) operator, the border columns
@@ -1557,22 +1565,45 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveLinearSystem(
   }
   if (rot_enabled_) {
     EnsureOperator();
-    auto psig = detail::MakeGridFunction(fes_phi_);
-    Vector Psi(fes_phi_->GetTrueVSize());
-    for (int k = 0; k < nw; k++) {
-      psig->ProjectCoefficient(*rot_psi_[k]);
-      psig->GetTrueDofs(Psi);
-      Bu[ns + k].SetSize(fes_->GetTrueVSize());
-      C_op_->Mult(Psi, Bu[ns + k]);
-      Bphi[ns + k].SetSize(fes_phi_->GetTrueVSize());
-      Bphi[ns + k] = 0.0;
+    // The rotation columns and the psi-psi fluid block do not depend on the
+    // load: rebuilt only when the operator or the water data change.
+    if (rot_cache_version_ != OperatorVersion()) {
+      rot_Bu_.assign(nw, Vector());
+      rot_Bphi_.assign(nw, Vector());
+      rot_TT_.SetSize(nw);
+      rot_TT_ = 0.0;
+      auto psig = detail::MakeGridFunction(fes_phi_);
+      std::vector<Vector> Psi(nw, Vector(fes_phi_->GetTrueVSize()));
+      for (int k = 0; k < nw; k++) {
+        psig->ProjectCoefficient(*rot_psi_[k]);
+        psig->GetTrueDofs(Psi[k]);
+        rot_Bu_[k].SetSize(fes_->GetTrueVSize());
+        C_op_->Mult(Psi[k], rot_Bu_[k]);
+        rot_Bphi_[k].SetSize(fes_phi_->GetTrueVSize());
+        rot_Bphi_[k] = 0.0;
+        if (!fluids_.empty()) {
+          M_fluid_.Ptr()->Mult(Psi[k], rot_Bphi_[k]);
+        }
+      }
       if (!fluids_.empty()) {
-        M_fluid_.Ptr()->Mult(Psi, Bphi[ns + k]);
+        // psi_k . M_F psi_j is symmetric: each pair evaluated once.
+        for (int k = 0; k < nw; k++) {
+          for (int j = k; j < nw; j++) {
+            rot_TT_(k, j) = rot_TT_(j, k) = Dot(Psi[k], rot_Bphi_[j]);
+          }
+        }
       }
       if (sea_enabled_) {
-        Bu[ns + k] -= rot_cpsi_u_[k];
-        Bphi[ns + k] -= rot_cpsi_phi_[k];
+        for (int k = 0; k < nw; k++) {
+          rot_Bu_[k] -= rot_cpsi_u_[k];
+          rot_Bphi_[k] -= rot_cpsi_phi_[k];
+        }
       }
+      rot_cache_version_ = OperatorVersion();
+    }
+    for (int k = 0; k < nw; k++) {
+      Bu[ns + k] = rot_Bu_[k];
+      Bphi[ns + k] = rot_Bphi_[k];
     }
   }
 
@@ -1592,8 +1623,7 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveLinearSystem(
         r[ns + k] += border_rot_add_[k];
       }
       for (int j = 0; j < nw; j++) {
-        Db(ns + k, ns + j) =
-            rot_D_(k, j) + TidalTidalCoupling(*rot_psi_[k], *rot_psi_[j]);
+        Db(ns + k, ns + j) = rot_D_(k, j) + rot_TT_(k, j);
         if (sea_enabled_) {
           Db(ns + k, ns + j) -= rot_Pw_(k, j);
         }
@@ -1646,8 +1676,8 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveLinearSystem(
   }
   BorderedElimination::State xs = {X, Phi_true_};
   Vector y;
-  // (With the sea border alone this is the WP3 Sherman-Morrison,
-  // Phi_g = (c.x0 - Sd)/(m + c.y), entry for entry.)
+  // (With the sea border alone this reduces to Sherman-Morrison,
+  // Phi_g = (c.x0 - Sd)/(m + c.y).)
   ok = border_elim_->Eliminate(columns, Db, r, OperatorVersion(), RelTol(),
                                xs, y) &&
        ok;
@@ -1661,8 +1691,8 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveLinearSystem(
   }
   X = xs[0];
   Phi_true_ = xs[1];
-  // The column solves distributed their own potentials; redistribute
-  // the combined one (the WP3 lesson).
+  // The column solves distributed their own potentials, so redistribute
+  // the combined field.
   DistributePotential(Phi_true_);
   return ok;
 }
@@ -1822,7 +1852,7 @@ class BorderedBlockPreconditioner : public Solver {
   void Mult(const Vector& x, Vector& out) const override {
     const Vector x2(const_cast<real_t*>(x.GetData()), n2_);
     Vector out2(out.GetData(), n2_);
-    const_cast<Solver&>(P2_).Mult(x2, out2);
+    P2_.Mult(x2, out2);
     if (rank_ == 0 && nb_ > 0) {
       Vector xb(const_cast<real_t*>(x.GetData()) + n2_, nb_);
       Vector ob(out.GetData() + n2_, nb_);
@@ -2033,7 +2063,7 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveBorderedMonolithic(
 #endif
   const int ns = sea_enabled_ ? 1 : 0;
   phi_g_ = sea_enabled_ ? y[0] : 0.0;
-  for (int k = 0; k < static_cast<int>(omega_.Size()); k++) {
+  for (int k = 0; k < omega_.Size(); k++) {
     omega_[k] = y[ns + k];
   }
   if (rot_enabled_) {

@@ -4,9 +4,7 @@
 #include "TestCommon.hpp"
 
 /*
-  WP7 phase-B gates of the generalised rotational theory
-  (doc/planning/generalised_rotation_note.md) — the demonstration
-  deliverable of the plan's decision 3: the traditional theory's
+  Checks of the generalised rotational theory: the traditional theory's
   rigid-gauge sensitivity, shown quantitatively on a model with an
   anisotropic inertia tensor.
 
@@ -21,7 +19,7 @@
      triaxial-density model the shift is O(1) of omega; on the
      spherical model it vanishes at quadrature grade. This is the
      existence argument of Yu et al. §2.4 made concrete.
-  3. The Tisserand gauge (the mass-weighted gauge, F4) pins the
+  3. The Tisserand gauge (the mass-weighted gauge) pins the
      representative: at the gauged solution the relative angular
      momentum int rho x cross u dV vanishes, so the omega of the
      generalised theory is the row's value at THE representative — no
@@ -226,7 +224,7 @@ TEST(GeneralisedRotation, GaugeShiftMatchesClosedForm) {
   EXPECT_GT(dw.Norml2(), 0.05 * p.AngularVelocity().Norml2());
 
   // 3. The Tisserand gauge pins the representative. Two certificates:
-  // (a) with the mass-weighted gauge (F4) the solution carries no
+  // (a) with the mass-weighted gauge the solution carries no
   // relative angular momentum, measured against the O(1) rigid scale
   // |I b| (the momentum a rigid rotation of that size carries);
   // (b) re-pinning after an arbitrary rigid shift recovers the same
@@ -279,9 +277,8 @@ TEST(GeneralisedRotation, GaugeShiftMatchesClosedForm) {
 }
 
 TEST(GeneralisedRotation, FluidRelabellingCertificate) {
-  // G8c phase 1 (generalised_rotation_note.md, "The fluid-core
-  // wrinkle"): on the two-layer ball's fluid core with its radial
-  // density, (a) a compactly-supported fluid relabelling rho v = curl W
+  // Fluid-core relabelling: on the two-layer ball's fluid core with its
+  // radial density, (a) a compactly-supported fluid relabelling rho v = curl W
   // leaves the omega row invariant (the row of v vanishes) while
   // carrying relative angular momentum 2 int W dV — so the whole-body
   // Tisserand condition is gauge-dependent on fluid-core models; (b)
@@ -383,10 +380,8 @@ TEST(GeneralisedRotation, FluidRelabellingCertificate) {
 }
 
 TEST(GeneralisedRotation, FluidCoreMantleTisserand) {
-  // G8c phase 2 (generalised_rotation_note.md, "The fluid-core
-  // wrinkle"; David's decision: fix via the mantle): on a fluid-core
-  // model the Tisserand gauge restricts its metric to the SOLID
-  // attributes — the mantle frame — because the core's relative
+  // On a fluid-core model the Tisserand gauge restricts its metric to the
+  // SOLID attributes — the mantle frame — because the core's relative
   // angular momentum is pure relabelling gauge. The generalised door
   // here is the input-moments form (the radial model's own moments are
   // rightly degenerate): SetRotation(Omega, moments) +
@@ -456,11 +451,11 @@ TEST(GeneralisedRotation, FluidCoreMantleTisserand) {
   };
 
   // Mantle-restricted momentum and inertia by quadrature (attribute 2).
-  auto mantle_h = [&](const GridFunction& u, double& trace) {
+  auto mantle_h = [&](const GridFunction& u, double* trace_out = nullptr) {
     VectorGridFunctionCoefficient uc(const_cast<GridFunction*>(&u));
     Vector h(3), x(3), uv(3);
     h = 0.0;
-    trace = 0.0;
+    double trace = 0.0;
     for (int e = 0; e < body.GetNE(); e++) {
       if (body.GetAttribute(e) != 2) {
         continue;
@@ -480,15 +475,17 @@ TEST(GeneralisedRotation, FluidCoreMantleTisserand) {
         trace += w * 2.0 * (x * x);
       }
     }
+    if (trace_out) {
+      *trace_out = trace;
+    }
     return h;
   };
 
   auto p_g = solve(1e-2, true);
   auto p_u = solve(1e-2, false);
   double tr_m = 0.0;
-  const Vector h_g = mantle_h(p_g->Displacement(), tr_m);
-  double tr_dummy = 0.0;
-  const Vector h_u = mantle_h(p_u->Displacement(), tr_dummy);
+  const Vector h_g = mantle_h(p_g->Displacement(), &tr_m);
+  const Vector h_u = mantle_h(p_u->Displacement());
   // (i) The mantle frame is pinned (measured 7.1e-9 at o1: the mantle
   // density is constant, so the restricted metric is assembled
   // exactly), and the pinning is active (the ungauged twin measured

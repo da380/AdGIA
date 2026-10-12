@@ -16,6 +16,10 @@ of pyslfp solves, not an analytic sensitivity kernel
 
 The case must exist (love_numbers/run.py); its unmapped run of each
 method, beside the case, is the eps = 0 point, run here if missing.
+Results written here carry their settings under "perturbation_settings";
+an existing file whose settings differ from the current ones (or, for
+files from love_numbers/run.py, whose "run_settings" differ) is reported
+and reused unless --force is given.
 
 For each eps of the ladder this script builds the perturbed model's
 exact radial profiles and pyslfp reference beside the base case, runs
@@ -81,6 +85,35 @@ def prepare(root: Path, model_name: str, eps: float, lmax: int,
     return out
 
 
+def stamp(results: Path, settings: dict) -> None:
+    """Record the run's settings in its results file."""
+    try:
+        payload = json.loads(results.read_text())
+        payload["perturbation_settings"] = settings
+        results.write_text(json.dumps(payload, indent=2) + "\n")
+    except (OSError, ValueError, TypeError) as err:
+        print(f"  warning: could not record settings in {results}: {err}")
+
+
+def check_settings(results: Path, settings: dict) -> None:
+    """Warn when an existing results file was made with other settings
+    (only the keys both records hold are compared)."""
+    try:
+        payload = json.loads(results.read_text())
+    except (OSError, ValueError):
+        return
+    have = payload.get("perturbation_settings") or payload.get("run_settings")
+    if have is None:
+        print(f"  warning: {results} records no settings; it may not "
+              "match the current options (--force to rerun)")
+        return
+    diff = {k: (have[k], v) for k, v in settings.items()
+            if k in have and have[k] != v}
+    if diff:
+        print(f"  warning: {results} was made with other settings "
+              f"(file, now): {diff}; --force to rerun")
+
+
 def run(command: list[str], *, dry: bool) -> None:
     print("  $ " + shlex.join(command), flush=True)
     if not dry:
@@ -115,25 +148,46 @@ def main() -> None:
                    choices=("referential", "slip_broken"),
                    default=["referential"],
                    help="mapped methods to run")
-    p.add_argument("--order", type=int, default=2)
-    p.add_argument("--lmax", type=int, default=4)
-    p.add_argument("--lmin", type=int, default=0)
-    p.add_argument("--dtn-degree", type=int, default=16)
-    p.add_argument("--np", type=int, default=8)
+    p.add_argument("--order", type=int, default=2,
+                   help="finite-element order (default 2)")
+    p.add_argument("--lmax", type=int, default=4,
+                   help="highest degree (default 4)")
+    p.add_argument("--lmin", type=int, default=0,
+                   help="lowest degree (default 0)")
+    p.add_argument("--dtn-degree", type=int, default=16,
+                   help="Dirichlet-to-Neumann operator degree; the highest "
+                        "degree is used if larger (default 16)")
+    p.add_argument("--np", type=int, default=8,
+                   help="MPI ranks (default 8)")
     p.add_argument("--interface", type=int, default=1,
-                   help="which interior interface shifts (1 = innermost)")
-    p.add_argument("--rel-tol", type=float, default=1e-10)
+                   help="which interior interface shifts; only 1 (the "
+                        "innermost, the model's single shiftable interface) "
+                        "is supported (default 1)")
+    p.add_argument("--rel-tol", type=float, default=1e-10,
+                   help="relative tolerance of the linear solver "
+                        "(default 1e-10)")
     p.add_argument("--out", type=Path, default=None, metavar="DIR",
                    help="where the shifted profiles, references and "
                         "results go (default: beside the case)")
-    p.add_argument("--programs", type=Path, default=None)
-    p.add_argument("--mpiexec", default="mpiexec")
+    p.add_argument("--programs", type=Path, default=None,
+                   help="directory of the drivers (default: found in a "
+                        "build tree)")
+    p.add_argument("--mpiexec", default="mpiexec",
+                   help="MPI launcher (default mpiexec)")
     p.add_argument("--program-args", default="",
                    help="further arguments of love_benchmark, as one "
                         "string (say \"-theta 1e3 -al 16\")")
-    p.add_argument("--force", action="store_true")
-    p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--force", action="store_true",
+                   help="rerun the solves and remake the shifted profiles "
+                        "and references even where they exist")
+    p.add_argument("--dry-run", action="store_true",
+                   help="print the driver commands without running them")
     args = p.parse_args()
+    if args.interface != 1:
+        raise SystemExit(f"--interface {args.interface}: the 1-D reference "
+                         "shifts only the model's single shiftable "
+                         "interface (interface 1); other values are not "
+                         "supported")
 
     if args.dry_run and not (args.case / "case.json").exists():
         model_name = args.case.parent.name  # runs/<model>/h<h>
@@ -172,6 +226,13 @@ def main() -> None:
             results = args.case / f"results_o{args.order}_{tag}.json"
             if eps or (not results.exists() and root != args.case):
                 results = root / f"results_o{args.order}_{tag}.json"
+            settings = {"order": args.order, "lmin": args.lmin,
+                        "lmax": args.lmax, "dtn_degree": args.dtn_degree,
+                        "rel_tol": args.rel_tol,
+                        "interface": args.interface if eps else None,
+                        "program_args": args.program_args}
+            if results.exists() and not args.force:
+                check_settings(results, settings)
             if not results.exists() or args.force:
                 command = [args.mpiexec, "-np", str(args.np),
                            str(programs / "love_benchmark"),
@@ -191,6 +252,8 @@ def main() -> None:
                                 str(root / f"shift_{eps:+g}" /
                                     "radial_profiles.txt")]
                 run(command, dry=args.dry_run)
+                if not args.dry_run:
+                    stamp(results, settings)
             if not args.dry_run:
                 love[m][eps] = love_from(results)
 

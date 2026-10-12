@@ -16,14 +16,33 @@ form: quasi-static deformation of a self-gravitating, elastic or
 viscoelastic body, with fluid regions, laterally varying and anisotropic
 structure, general (non-hydrostatic, non-natural) reference states and
 slipping fluid–solid interfaces; the sea-level equation solved
-monolithically with the elastic operator, rotational feedbacks, shoreline
-migration, and ice histories read from the ICE-NG models — in serial and
-in parallel (MPI). Current work is on benchmarking against independent
-reference solutions (`benchmarks/`, `doc/benchmarks.tex`) and on solver
-performance; next are the first- and second-order adjoints and the
-referential sea-level leg. The library is under active development and
-is not yet user-facing: interfaces move, and the documents below — not
-this page — are the working contract.
+monolithically with the elastic operator, on the mixed and the referential
+problems; rotational feedbacks (the traditional border and the generalised
+Tisserand door); shoreline migration and the mesh refinement that follows
+the shoreline; and ice histories read from the ICE-NG models — in serial
+and in parallel (MPI). The first-order adjoints are in as well: static,
+viscoelastic and gravitating, with the water and rotation feedbacks,
+giving kernels for viscosity, ice load and moduli, each checked by
+reciprocity and finite differences (`adjoint.hpp`). Next are the interface
+(lithospheric-thickness) kernels, the second-order adjoints, checkpointing
+beyond store-all and a production interface for inversion; the shape stage
+of the equilibrium-figures programme and nonlinear forward models lie
+further out. Benchmarking against independent reference solutions
+(`benchmarks/`, `doc/benchmarks.tex`) and solver performance continue. The
+library is under active development and is not yet user-facing:
+interfaces move, and the documents below — not this page — are the working
+contract.
+
+**Fluid regions.** For coupled elasto-gravity problems with fluid regions,
+the Maxwell relaxation of the fluid (`SetFluid`'s default treatment) is the
+general method — any geometry, any stratification, any number of regions.
+The gauge-penalty treatment is clean only for neutrally stratified fluids:
+at N² ≠ 0 its semi-convergence is Rayleigh–Taylor growth, and answers are
+defined only to the stratification band. For hydrostatic (spherical)
+models Dahlen's mixed formulation is the practical workhorse; the slipping
+and welded formulations are finite idealisations of the dissipative
+completion and serve as instruments. The full account is
+`doc/static_fluid_core.tex`, "The status of the formulations".
 
 ## Quick start
 
@@ -69,17 +88,29 @@ includes them all), are
 - coupling of forms between a mesh and its `SubMesh`es through a signed dof
   injection, and the dof pairing of sibling SubMeshes (`submesh.hpp`);
 - a linear quasi-static problem interface with traction and clamped
-  reference implementations and the gauge penalty of gauged fluid regions
-  (`quasi_static_problem.hpp`); elastic and generalised Maxwell rheologies,
+  reference implementations and the treatment of fluid regions by
+  `SetFluid` — Maxwell relaxation by default, the gauge penalty for
+  neutrally stratified fluids (`quasi_static_problem.hpp`); elastic and generalised Maxwell rheologies,
   isotropic or anisotropic, composite by region, with optional
   state-dependent relaxation (`rheology.hpp`, `relaxation_law.hpp`); and a
   viscoelastic time-dependent operator with explicit, implicit and
   exponential time stepping (`viscoelastic.hpp`);
 - the self-gravitating problems, which implement the same interface so the
   viscoelastic layer runs on them unchanged: the mixed (Eulerian-potential)
-  problem with Dahlen or gauged fluid regions (`mixed_problem.hpp`), and the
+  problem with Dahlen fluid regions or fluid regions treated by `SetFluid`
+  (Maxwell relaxation or gauge penalty) (`mixed_problem.hpp`), and the
   fully referential problem about a general reference state, with its
   slipping-interface variant (`referential_problem.hpp`);
+- bordered systems (`bordered.hpp`): block elimination of the scalar
+  unknowns appended to a problem's system — the uniform sea-level term and
+  the rotation vector — through a dense condensed border system, with the
+  border-column solves cached across repeated solves;
+- the adjoints (`adjoint.hpp`): the adjoint force (point-in-time and
+  continuous terms), the forward trajectory store, kernel accumulators and
+  the adjoint driver for static and viscoelastic problems, gravitating,
+  with the water-load and rotation feedbacks; kernels for viscosity, ice
+  load and moduli, and observation duals for displacement, potential,
+  sea-level and rotation functionals;
 - background states for the referential problems (`background.hpp`): the
   hydrostatic state of a radial model, its relabelled description, and
   minimum-norm and minimum-deviatoric equilibrium stress fields for
@@ -88,7 +119,7 @@ includes them all), are
   (`equilibrium_figures.hpp`);
 - the sea-level machinery (`sea_level.hpp`, `rotation.hpp`,
   `centrifugal.hpp`): the water-load feedback and its uniform-term and
-  angular-velocity borders on the mixed problem (`SetWaterLoad`,
+  angular-velocity borders on the mixed and the referential problems (`SetWaterLoad`,
   `SetRotation`, with elimination and monolithic solve routes),
   shoreline migration (`ShorelineMigration`), the surface layer
   (`SeaLevelOperator`: surface fields, sea-level postprocessing, the
@@ -125,7 +156,8 @@ tree are of two kinds.
 | `doc/quasi_static_models.tex` (PDF beside it) | every problem class: model, assumptions, discretisation, solvers, verification |
 | `doc/gravitating_elasticity.md` | the linearised theory of self-gravitating, pre-stressed elasticity behind the referential classes and the background module |
 | `doc/self_gravitation.md` | the mixed problem with Dahlen fluid regions: weak form, fluid–solid interface conditions and CMB approximations, solvers, null space, 2-D caveats, verification |
-| `doc/gauged_fluid.md` | the gauged treatment of fluid regions |
+| `doc/gauged_fluid.md` | the gauge-penalty treatment of fluid regions: why tangential slip is not gauge, the Adams–Williamson equivalence, the penalty window |
+| `doc/static_fluid_core.tex` (PDF) | the static fluid-core problem and the status of the formulations: Maxwell relaxation, gauge penalty, Dahlen, slipping and welded |
 | `doc/slip_interface.tex` (PDF) | the slipping fluid–solid interface: derivation, discretisation, constraint enforcement, implementation, verification |
 | `doc/gauge_penalty_iteration.tex` (PDF) | gauge penalties and their iterated (Tikhonov) refinement |
 | `doc/equilibrium_figures.tex` (PDF) | equilibrium states and hydrostatic figures by constrained optimisation: the feasibility functionals, their derivatives, Sobolev gradients, the advection route |
@@ -149,14 +181,9 @@ tree are of two kinds.
 
 ## Installation
 
-MFEM must be built first — a parallel MFEM, with hypre and METIS, for
-the MPI build; AdGIA needs nothing beyond MFEM's core, and
-`.github/ci/install_mfem.sh serial|parallel <prefix>` builds the
-reference versions (MFEM v4.10, hypre 3.1.0) on a workstation as well
-as in CI. `INSTALL.md` is the reference for the build: the minimal MFEM
-recipes, the serial and parallel configure lines, every option with its
-default, how the MPI launcher for the tests is chosen, and
-installation.
+MFEM must be built first, and the Python tooling set up once; `INSTALL.md`
+is the reference for both, for the serial and parallel configure lines,
+every option with its default and installation.
 
 ## Examples
 
@@ -170,37 +197,13 @@ and describes each one.
 
 ### Meshes
 
-The gmsh meshes the examples and tests read are not in the repository. They
-are generated into the build's `data/` directory, at build time, by the
-Python scripts in `meshes/`, which use the
-[planetmodel](https://pypi.org/project/planetmodel/) package to drive gmsh.
-The scripts are short and meant to be copied and changed; `meshes/README.md`
-lists them, the files they write and the attribute conventions. Each mesh
-file comes with a JSON manifest beside it saying which attribute is which
-layer or interface and at what radius. `meshes/aspherical_body.py` shows how
-a body gets a non-spherical shape from a formula, with and without a buffer
-shell, and any example accepts the result through `-m`.
-
-Generation is on whenever examples or tests are built (`GENERATE_MESHES`,
-default follows those two options). It needs a Python 3.12 or later that can
-import `planetmodel.mesh3d` (planetmodel 1.2.3 or later) and `mfem.ser`
-(PyMFEM, through which the aspherical meshes are written). CMake uses the one
-named by `MESHES_PYTHON` if given, otherwise the Python it finds, and if that
-does not qualify it creates a virtual environment `meshes-venv` under the
-build directory and installs `planetmodel[meshing,mfem]>=1.2.3` into it (about
-100 MB, once per build directory). A fresh build spends a few minutes
-generating meshes, most of it on the 3-D ones; later builds regenerate a mesh
-only when its script changes.
-
-The scripts also run by hand, through the poetry project of the repository root:
-the generated meshes are deliberately coarse, and every script takes
-`--scale` for a higher-resolution version — written over the canned mesh
-in the build's `data/` or kept beside it (`meshes/README.md`, "By
-hand"). That includes the coastline-refined Earth of
-`earth_coastlines.py`, generated by default from a committed ICE-7G
-topography grid; a sharper or re-dated grid comes from the
-post-processing tools and pyslfp (`meshes/README.md`, "The coastline
-mesh").
+The gmsh meshes the examples and tests read are not in the repository: they
+are generated into the build's `data/` directory at build time by the short
+Python scripts in `meshes/`, each with a JSON manifest saying which
+attribute is which layer or interface. `meshes/README.md` lists the scripts,
+the files they write, the attribute conventions, higher-resolution
+regeneration and the coastline-refined Earth; `INSTALL.md` gives the
+Python requirements.
 
 ## License
 

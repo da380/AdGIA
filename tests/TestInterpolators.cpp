@@ -106,7 +106,7 @@ TEST_P(InterpolatorTests, DeformationGradientInterpolator) {
   b.Mult(u, F);
 
   auto error = F.ComputeL2Error(*FF);
-  EXPECT_TRUE(error < 1.e-8);
+  EXPECT_LT(error, 1.e-8);
 }
 
 // sym A, lower triangle column by column (SymmetricComponentOrder).
@@ -122,7 +122,7 @@ TEST_P(InterpolatorTests, StrainInterpolator) {
   b.Mult(u, E);
 
   auto error = E.ComputeL2Error(*EF);
-  EXPECT_TRUE(error < 1.e-8);
+  EXPECT_LT(error, 1.e-8);
 }
 
 // dev sym A, with the last diagonal component dropped (it is fixed by the

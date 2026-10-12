@@ -68,7 +68,7 @@ void RunCase(int dim, const std::string& label) {
     return std::exp(0.5 * x[0]) * (1.0 + 0.3 * x[1]) +
            (dim == 3 ? 0.7 * x[2] * x[0] : 0.0);
   });
-  VectorFunctionCoefficient u(dim, [dim](const Vector& x, Vector& v) {
+  VectorFunctionCoefficient u(dim, [](const Vector& x, Vector& v) {
     v = x;
     v *= std::cos(x[0]) + 0.2 * x[1];
     v[0] += 0.3 * x[1];

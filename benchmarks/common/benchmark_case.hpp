@@ -264,19 +264,17 @@ struct CaseOptions {
                    "space), 'referential' (welded gauged referential: bare "
                    "moduli from p0, S_e = -p0 I), 'maxwell' (the welded "
                    "referential problem with the fluid treated by MAXWELL "
-                   "RELAXATION — the secular route, "
-                   "doc/static_fluid_core.tex), 'slip' (broken "
+                   "RELAXATION, the secular route), 'slip' (broken "
                    "displacement pair, single-valued zeta) or "
-                   "'slip_broken' (broken zeta as well; "
-                   "doc/slip_interface.tex). The referential methods need "
-                   "a case with the p0 field.");
+                   "'slip_broken' (broken zeta as well). The referential "
+                   "methods need a case with the p0 field.");
     args.AddOption(&mx_beta0, "-mxbeta", "--maxwell-beta0",
                    "Maxwell method: the physical-phase dt/tau (< 0: the "
                    "library default, which resolves the N^2 < 0 plateau; "
                    "10-30 is cheaper on neutral/stable models).");
     args.AddOption(&map_amplitude, "-map", "--map-amplitude",
                    "Amplitude of the interior relabelling of the "
-                   "relabelled 3-D benchmark (relabelling.hpp): the same "
+                   "relabelled 3-D benchmark: the same "
                    "spherical physical problem described from laterally "
                    "relabelled coordinates, so the reference stays exact "
                    "while every mapped code path acts. Referential "
@@ -288,8 +286,8 @@ struct CaseOptions {
                    "discrete change-of-variables mode) instead of the "
                    "exact analytic mapping.");
     args.AddOption(&map_shift, "-map-shift", "--map-shift",
-                   "Degree-0 interface shift eps (relabelling.hpp, the "
-                   "perturbation family): the named reference "
+                   "Degree-0 interface shift eps (the perturbation "
+                   "family): the named reference "
                    "interface moves radially by eps, the physical model "
                    "being the perturbed spherical one — pair with "
                    "-profiles of THAT model. Methods referential and "
@@ -348,7 +346,7 @@ struct CaseOptions {
     args.AddOption(&gauged, "-gauged", "--gauged", "-dahlen", "--dahlen",
                    "Gauged fluid treatment: the fluid layers join the "
                    "displacement SubMesh with their bulk modulus and a gauge "
-                   "shear penalty (doc/gauged_fluid.md), instead of Dahlen's "
+                   "shear penalty, instead of Dahlen's "
                    "interface and fluid-mass terms.");
     args.AddOption(&gauge_eps, "-geps", "--gauge-epsilon",
                    "Gauge penalty factor epsilon (gauged fluid).");
@@ -473,6 +471,27 @@ class Case {
                 "-method must be dahlen, gauged, referential, maxwell, "
                 "slip or slip_broken.");
     eulerian = method == "dahlen" || method == "gauged";
+    const bool slip_method = method == "slip" || method == "slip_broken";
+    MFEM_VERIFY(!eulerian || (options.map_amplitude == 0.0 &&
+                              options.map_shift == 0.0 &&
+                              std::string(options.profiles).empty()),
+                "-map, -map-shift and -profiles apply to the referential "
+                "methods only; -method " << method << " ignores them.");
+    MFEM_VERIFY(eulerian || options.map_amplitude != 0.0 ||
+                    options.map_shift != 0.0 ||
+                    std::string(options.profiles).empty(),
+                "-profiles is read only by a mapped run (-map or "
+                "-map-shift).");
+    MFEM_VERIFY(options.gauge_kkt == 0 || method == "gauged",
+                "-gauge-kkt applies to -method gauged only (given "
+                    << method << ").");
+    MFEM_VERIFY(!options.kkt || slip_method,
+                "-kkt applies to the slip methods only (given " << method
+                                                                << ").");
+    MFEM_VERIFY(options.gauge_prec_eps <= 0.0 || !eulerian ||
+                    options.solver != 0,
+                "-gpe needs block MINRES: it cannot be combined with -s 0 "
+                "(Schur-complement CG).");
 
     // The displacement regions and the material on them: the solid
     // layers, and for the welded treatments of the fluid (gauged,
@@ -624,7 +643,7 @@ class Case {
       }
       // A solid layer with fluid all around it turns freely in a
       // spherical model; with the gauged fluid the penalty owns those
-      // modes and they must not be projected (doc/gauged_fluid.md).
+      // modes and they must not be projected.
       if (method == "dahlen") {
         for (const int attribute : solid_attributes) {
           bool enclosed = true;
@@ -805,11 +824,11 @@ class Case {
   const InterfaceAnalysis& Surface() const { return analyses[surface]; }
   bool HasFluid() const { return fluid_attributes.Size() > 0; }
 
-  // What the method supports: the referential family is driven by
-  // surface loads only (Solve() refuses a tide), and its potential is
-  // meaningful (an observable) on the displacement region, not by layer.
+  // What the method supports: the slip classes carry no tidal force;
+  // referential and maxwell take the tidal gradient. The referential
+  // potential is meaningful (an observable) on the displacement region,
+  // not by layer.
   bool SupportsTide() const {
-    // The slipping classes carry no tidal force on the fluid row yet.
     return method != "slip" && method != "slip_broken";
   }
   bool SupportsProfiles() const { return eulerian; }
@@ -1034,9 +1053,12 @@ class Case {
        << Mpi::WorldSize() << ",\n  \"order\": " << options_.order
        << ",\n  \"dtn_degree\": " << options_.dtn_degree
        << ",\n  \"rel_tol\": " << Num(options_.rel_tol)
-       << ",\n  \"solver\": \""
-       << (options_.solver == 0 ? "schur_cg" : "block_minres")
-       << "\",\n  \"method\": \"" << method
+       << (eulerian ? std::string(",\n  \"solver\": \"") +
+                          (options_.solver == 0 ? "schur_cg"
+                                                : "block_minres") +
+                          "\""
+                    : std::string())
+       << ",\n  \"method\": \"" << method
        << "\",\n  \"fluid_treatment\": \""
        // dahlen keeps Dahlen's fluid; the gauged Eulerian and the welded
        // referential methods gauge it; maxwell relaxes it; the slip pair
@@ -1072,11 +1094,9 @@ class Case {
                      Num(options_.mx_beta0 > 0.0
                              ? options_.mx_beta0
                              : MaxwellRelaxationOptions().dt_over_tau)
-               : method != "dahlen"
-                   ? ",\n  \"gauge_epsilon\": " + Num(options_.gauge_eps) +
-                         ",\n  \"gauge_refinements\": " +
-                         std::to_string(options_.gauge_refinements)
-                   : std::string())
+               : method == "dahlen"
+                   ? std::string()
+                   : GaugeEntries())
        << ",\n  \"elements\": " << elements
        << ",\n  \"displacement_unknowns\": " << displacement_unknowns
        << ",\n  \"potential_unknowns\": " << potential_unknowns
@@ -1095,6 +1115,25 @@ class Case {
   }
 
  private:
+  // The gauge entries of the header: only those the chosen treatment
+  // consumes (the penalty and its refinements are inert under the KKT gauge
+  // and under the preconditioner-only mode).
+  std::string GaugeEntries() const {
+    if (options_.gauge_kkt > 0) {
+      return ",\n  \"gauge_kkt\": " + std::to_string(options_.gauge_kkt);
+    }
+    if (options_.gauge_prec_eps > 0.0) {
+      return ",\n  \"gauge_prec_epsilon\": " + Num(options_.gauge_prec_eps) +
+             ",\n  \"gauge_plateau\": " + Num(options_.gauge_plateau);
+    }
+    std::string out = ",\n  \"gauge_epsilon\": " + Num(options_.gauge_eps);
+    if (method == "gauged" || method == "referential") {
+      out += ",\n  \"gauge_refinements\": " +
+             std::to_string(options_.gauge_refinements);
+    }
+    return out;
+  }
+
   std::unique_ptr<ParGridFunction> OnSolid(const ParGridFunction& f) {
     spaces_.push_back(std::make_unique<ParFiniteElementSpace>(
         solid.get(), f.ParFESpace()->FEColl()));
@@ -1112,8 +1151,7 @@ class Case {
     return g;
   }
 
-  // The welded referential and the two slipping methods
-  // (doc/gravitating_elasticity.md, doc/slip_interface.tex): bare moduli
+  // The welded referential and the two slipping methods: bare moduli
   // from the hydrostatic pressure p0, S_e = -p0 I, phi_e = id.
   void BuildReferential(const CaseOptions& options) {
     const bool root = Mpi::Root();
@@ -1179,8 +1217,7 @@ class Case {
       // points sit O(h^2) off the analytic radius), which slows the
       // augmented-Lagrangian sweeps and pollutes the Love numbers. The
       // per-SubMesh interpolant is side-consistent by construction
-      // (benchmarks/perturbation/README.md; doc/benchmarks.tex, "The
-      // perturbation family").
+      // (benchmarks/perturbation/README.md).
       bool interp = options.map_interp;
       if (shifted && !interp) {
         if (root) {
@@ -1200,7 +1237,6 @@ class Case {
       } else {
         map_use = xi_analytic_.get();
       }
-      map_use_ = map_use;
       // Seatbelts: identity on and outside the DtN sphere (the layer's
       // convention) and on every interface (this benchmark's own: the
       // physical problem must stay the referenced spherical one and the
@@ -1233,7 +1269,7 @@ class Case {
                     "-map: the relabelling must be the identity on the "
                     "sphere and on every unshifted interface (deviations "
                         << d_out << ", " << d_itf << ").");
-        if (Mpi::Root()) {
+        if (root) {
           if (shifted) {
             std::cout << "Interface shift: eps " << options.map_shift
                       << " at interface " << options.map_shift_interface
@@ -1333,7 +1369,7 @@ class Case {
     Diffeomorphism* phi_e = id_map_.get();
     if (mapped) {
       // The pulled-back constitutive state: C~ and S~ from the composed
-      // (bare) tensors, phi_e the relabelling (doc/mappings.md).
+      // (bare) tensors, phi_e the relabelling.
       C_rel_ = std::make_unique<RelabelledElasticTensorCoefficient>(
           dim, *C_bare_, *map_use);
       S_rel_ = std::make_unique<PullbackStressCoefficient>(dim, *S_e_,
@@ -1599,7 +1635,6 @@ class Case {
   std::unique_ptr<RadialProfiles> profiles_, base_profiles_;
   std::unique_ptr<CallableDiffeomorphism> xi_analytic_;
   std::unique_ptr<MultiMeshDiffeomorphism> xi_interp_;
-  Diffeomorphism* map_use_ = nullptr;
   std::unique_ptr<TransformedFunctionCoefficient> comp_rho_, comp_kappa_,
       comp_mu_, comp_p0_;
   std::unique_ptr<JacobianCoefficient> map_jac_;

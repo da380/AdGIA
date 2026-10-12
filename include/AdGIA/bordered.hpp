@@ -1,7 +1,14 @@
-#ifndef ADGIA_BORDERED_HPP
-#define ADGIA_BORDERED_HPP
+/**
+ * @file bordered.hpp
+ * @brief BorderedElimination: block elimination of a bordered linear system
+ * through the condensed (dense) border system, with the column solves cached
+ * across repeated solves at a frozen operator.
+ */
+
+#pragma once
 
 #include <functional>
+#include <utility>
 #include <vector>
 
 #include "mfem.hpp"
@@ -12,7 +19,7 @@ namespace AdGIA {
  * @brief Block elimination for bordered systems
  * @f$[K\ B;\ B^T\ D_b]\,[x;y] = [b;r]@f$: the base solve, then one
  * solve per border column and a dense reduction
- * (doc/planning/sea_level_plan.md, "The condensed system").
+ * to the condensed border system.
  *
  * The problem class supplies the base solve and the (parallel-safe)
  * dot product; a column — and the state @f$x@f$ — is a fixed number of
@@ -21,8 +28,8 @@ namespace AdGIA {
  * class-side conventions (compatibility fixes, masked coefficients)
  * stay inside its solve callback. The columns are load-independent and
  * are cached across solves, keyed on the operator version and the
- * tolerance they were built at (the viscoelastic stepping economy:
- * doc/planning/solvers.md, "Bordered solves").
+ * tolerance they were built at, which serves repeated solves at a frozen
+ * operator (such as the steps of a viscoelastic time integration).
  */
 class BorderedElimination {
  public:
@@ -54,8 +61,8 @@ class BorderedElimination {
    * for solves at this tolerance or looser.
    * @param x In: @f$x_0@f$; out: the corrected state.
    * @param y Out: the border unknowns (sized here).
-   * @return Whether every column solve converged (cached columns count
-   * as converged).
+   * @return Whether every column solve converged (for cached columns, the
+   * outcome when they were built).
    */
   bool Eliminate(const std::vector<State>& columns,
                  const mfem::DenseMatrix& Db, const mfem::Vector& r,
@@ -69,11 +76,14 @@ class BorderedElimination {
   Solve solve_;
   Dot dot_;
   std::vector<State> Y_;
+  // B^T Y, cached with Y_ (the same key); the per-solve part of the
+  // condensed matrix is only D_b - B^T Y.
+  mfem::DenseMatrix BtY_;
+  // Whether every cached column solve converged.
+  bool cache_ok_ = true;
   int cache_version_ = -1;
   int cache_nb_ = -1;
   mfem::real_t cache_tol_ = 0.0;
 };
 
 }  // namespace AdGIA
-
-#endif

@@ -1,4 +1,4 @@
-"""A unit disc with a WIDE buffer annulus: data/elastogravity_2d_wide.msh.
+"""A unit disc with a WIDE buffer annulus: data/disc_buffer_wide_2d.msh.
 
 As disc_with_buffer.py, but the buffer extends to radius 2.0 instead of
 1.2. The wide buffer exists for equilibrium mappings that are strongly
@@ -32,7 +32,7 @@ def main() -> None:
     sizing = UniformInterfaces(*sizes(args, 0.08, 0.2, 0.8))
 
     spec = MeshSpec(body, sizing, dimension=2, order=2, shells=[buffer])
-    report(build_layered_mesh(spec, args.out / "elastogravity_2d_wide",
+    report(build_layered_mesh(spec, args.out / "disc_buffer_wide_2d",
                               verbose=args.verbose))
 
 

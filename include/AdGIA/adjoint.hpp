@@ -1,9 +1,9 @@
 /**
  * @file adjoint.hpp
- * @brief The common adjoint structure (doc/planning/adjoint_note.md): the
- * adjoint force (continuous- and point-in-time terms), the forward
- * trajectory store, kernel accumulators, and the adjoint driver for the
- * static and quasi-static viscoelastic rungs.
+ * @brief The common adjoint structure: the adjoint force (continuous-
+ * and point-in-time terms), the forward trajectory store, kernel
+ * accumulators, and the adjoint driver for static and quasi-static
+ * viscoelastic problems (Yu et al. 2025, §3).
  */
 
 #pragma once
@@ -21,9 +21,25 @@
 namespace AdGIA {
 
 /**
+ * @brief The slot data of one observation's dual: any subset of the
+ * displacement rows (AddForce layout), the potential rows
+ * (PotentialForceSlot layout), and the border rows — the uniform-term
+ * and angular-velocity components (BorderForceSlot). A sea-level
+ * observation J = int h SL1 dS populates all four:
+ * u = -(1/g) h grad(Phi0) dual, phi = -(1/g) h dual,
+ * uniform = (1/g) int h dS, omega_k = -(1/g) int h psi_k dS.
+ */
+struct AdjointLoad {
+  const mfem::Vector* u = nullptr;
+  const mfem::Vector* phi = nullptr;
+  mfem::real_t uniform = 0.0;
+  const mfem::Vector* omega = nullptr;
+};
+
+/**
  * @brief The adjoint force: the data of the objective functional's
- * derivatives, carried as two kinds of terms that are handled differently
- * (doc/planning/adjoint_note.md, "The common structure").
+ * derivatives, carried as two kinds of terms that are handled
+ * differently.
  *
  * POINT-IN-TIME terms are observations J depending on the state at one
  * forward time t: each carries the dual h of J with respect to the
@@ -41,28 +57,13 @@ namespace AdGIA {
  * All times are FORWARD times; the driver owns the reversal. Observation
  * times must coincide with nodes of the forward trajectory's time grid
  * (the driver verifies). Two slots are served: the DISPLACEMENT dual
- * (every rung) and the POTENTIAL dual (D_phi J, for problems exposing
- * PotentialForceSlot — the gravitating rungs); an observation touching
- * both rows is added as two terms at the same time, which is exact by
- * linearity. The water and rotation slots of the full dictionary are
- * added by those rungs' specialisations.
+ * (every problem) and the POTENTIAL dual (D_phi J, for problems
+ * exposing PotentialForceSlot — the gravitating classes); an
+ * observation touching both rows is added as two terms at the same
+ * time, which is exact by linearity. The water and rotation slots of
+ * the full dictionary are added through AdjointLoad's uniform and
+ * omega parts (BorderForceSlot).
  */
-/**
- * @brief The slot data of one observation's dual: any subset of the
- * displacement rows (AddForce layout), the potential rows
- * (PotentialForceSlot layout), and the border rows — the uniform-term
- * and angular-velocity components (BorderForceSlot). A sea-level
- * observation J = int h SL1 dS populates all four:
- * u = -(1/g) h grad(Phi0) dual, phi = -(1/g) h dual,
- * uniform = (1/g) int h dS, omega_k = -(1/g) int h psi_k dS.
- */
-struct AdjointLoad {
-  const mfem::Vector* u = nullptr;
-  const mfem::Vector* phi = nullptr;
-  mfem::real_t uniform = 0.0;
-  const mfem::Vector* omega = nullptr;
-};
-
 class AdjointForce {
  public:
   /** @brief A point-in-time observation at forward time @p t with dual
@@ -112,7 +113,7 @@ class AdjointForce {
 
  private:
   struct Observation {
-    mfem::real_t t;
+    mfem::real_t t = 0.0;
     mfem::Vector du, dphi, omega;  // empty: slot unused
     mfem::real_t uniform = 0.0;
   };
@@ -126,12 +127,12 @@ class AdjointForce {
 
 /**
  * @brief The forward trajectory store: the checkpoint interface of the
- * adjoint sweep (doc/planning/adjoint_note.md, "The trajectory store").
+ * adjoint sweep.
  *
  * The quasi-static state is the internal-variable vector m alone — the
  * displacement is slaved to (m, load(t)) through one elastic solve — so
  * the store records m (and the time) per step and recovers the fields on
- * demand. With @p keep_fields (the store-all policy of the first rungs)
+ * demand. With @p keep_fields (the store-all policy)
  * the displacement is memoised at Record() and no re-solves happen; without
  * it, Displacement() re-solves through the forward operator — the seed of
  * the revolve-style schedules, and a measured identity against the
@@ -178,8 +179,8 @@ class ForwardTrajectory {
 /**
  * @brief One pairing of forward and adjoint fields, as the driver hands it
  * to the kernel accumulators. The internal-variable entries are
- * PER-BRANCH (the general linear Prony series; empty on the static
- * rung); @p mdag is also empty for the impulsive terms at observation
+ * PER-BRANCH (the general linear Prony series; empty for static
+ * problems); @p mdag is also empty for the impulsive terms at observation
  * times, where the adjoint factor is the purely elastic response and
  * the internal variables are bounded.
  */
@@ -214,8 +215,8 @@ class KernelAccumulator {
 /**
  * @brief The pointwise kernel density of the isotropic generalised
  * Maxwell parameterisation (kappa, mu_inf, {mu_k, eta_k}), for one
- * (forward, adjoint) pairing and one branch
- * (doc/planning/adjoint_note.md, "The kernels" and "The rheology axis"):
+ * (forward, adjoint) pairing and one branch (Yu et al. 2025, §3.6,
+ * in the library's (kappa, mu, eta) parameter convention):
  *
  *   Kappa:      - div(u) div(u+)
  *   MuLongTerm: - 2 dev eps(u) : dev eps(u+)
@@ -339,38 +340,42 @@ class IsotropicKernel : public KernelAccumulator {
 /**
  * @brief The sea-level (data-load) kernel accumulator: everything the
  * ice and initial-sea-level kernels need, read off the adjoint sea
- * level (doc/planning/adjoint_note.md, "The kernels"). From the
- * adjoint identity, the derivative of J with respect to the DATA
- * surface load is
+ * level. From the adjoint identity, the derivative of J with respect
+ * to the DATA surface load is, in the LIBRARY's load and readout
+ * conventions,
  *
- *     delta J = -g int int delta sigma(x, t) SL1+(x, reversed t) dS dt
+ *     delta J = +g int int delta sigma(x, t) SL1+(x, reversed t) dS dt
  *
- * (Yu et al. 2025, eq. 63 rearranged): the kernel of any sigma_data
- * route is -g times the adjoint sea level, with the observation
- * impulses' singular parts contributing atoms read from the
- * generalized fingerprint solves. Per sweep pairing the accumulator
- * computes SL1+ of the adjoint state (displacement, potential, uniform
- * term and, with rotation, psi(omega+)) through SeaLevelOperator, and
+ * (Yu et al. 2025, eq. 63; the paper's own conventions carry the
+ * opposite overall sign): the kernel of any sigma_data route is +g
+ * times the adjoint sea level, with the observation impulses'
+ * singular parts contributing atoms read from the generalized
+ * fingerprint solves. Per sweep pairing the accumulator computes SL1+
+ * of the adjoint state (displacement, potential, uniform term and,
+ * with rotation, psi(omega+)) through SeaLevelOperator, and
  * accumulates:
  *
  *  - DIRECTIONAL derivatives along registered time-aware delta-sigma
- *    coefficients (the FD-gate quantities; an ice-history direction
- *    delta-I enters through the load law as
+ *    coefficients (an ice-history direction delta-I enters through
+ *    the load law as
  *    delta sigma = rho_i (1 - C(t)) delta I(t) - rho_i (1 - C0)
  *    delta I(0), etc.);
  *  - the QUELLED ice kernels of the rate parameterisation (eq. 84),
- *    when enabled: the I0 kernel field
- *    D_I0(x) = rho_i g int (C(t) - C0) SL1+ dt (live only when the
- *    ocean function moves) and the Idot stack — the per-node fields
- *    -rho_i g (1 - C(t_n)) SL1+_n whose backward cumulative
- *    time-integral (Finalize()) is D_Idot(x, t_n), with only finite
- *    jumps at the observation times (the raw kernel's atoms are kept
- *    separately: decision 4 — the raw derivative stays exportable).
+ *    when enabled, again in library signs: the I0 kernel field
+ *    D_I0(x) = -rho_i g int (C(t) - C0) SL1+ dt (live only when the
+ *    ocean function moves) and the Idot stack — the per-node
+ *    integrands +rho_i g (1 - C(t_n)) SL1+_n whose backward
+ *    cumulative time-integral (Finalize()) is D_Idot(x, t_n). The
+ *    adjoint state jumps at an observation time, so each node keeps
+ *    the forward-right (arrived) and forward-left (post-jump) values
+ *    and the trapezoid pairs each interval with the value valid on
+ *    its side; the raw derivative's singular atoms are kept
+ *    separately and stay exportable.
  *
  * The accumulator is a specialisation piece of the mixed gravitating
  * class (it reads Potential(), UniformPotentialTerm(),
- * SolutionCentrifugalPotential()); the referential twin follows the
- * same pattern on zeta when those rungs open.
+ * SolutionCentrifugalPotential()); a referential twin would follow
+ * the same pattern on zeta.
  */
 class SeaLevelLoadKernel : public KernelAccumulator {
  public:
@@ -431,7 +436,12 @@ class SeaLevelLoadKernel : public KernelAccumulator {
   // AddPair as finite jumps. Finalize() turns it into the backward
   // cumulative integral.
   std::vector<mfem::real_t> times_;
+  // Per node: the forward-left (post-jump) integrand in idot_ and the
+  // forward-right (arrived) one in idot_right_; they coincide away
+  // from observation times. Finalize() replaces idot_ by the backward
+  // cumulative integral and discards idot_right_.
   std::vector<std::unique_ptr<mfem::GridFunction>> idot_;
+  std::vector<std::unique_ptr<mfem::GridFunction>> idot_right_;
   std::vector<mfem::real_t> atoms_t_;
   std::vector<std::unique_ptr<mfem::GridFunction>> atoms_;
   bool finalized_ = false;
@@ -440,14 +450,13 @@ class SeaLevelLoadKernel : public KernelAccumulator {
 /**
  * @brief The adjoint driver: runs the time-reversed adjoint problem
  * against a recorded forward trajectory and feeds every registered
- * kernel accumulator (doc/planning/adjoint_note.md, "The adjoint
- * driver"). Two configurations:
+ * kernel accumulator. Two configurations:
  *
- * - STATIC (rung 1): the adjoint of a solved static problem. The adjoint
+ * - STATIC: the adjoint of a solved static problem. The adjoint
  *   problem is the same problem with zero external load (caller-built,
  *   sharing the space and rheology); each point term costs one solve,
  *   whose displacement pairs with the given forward one.
- * - QUASI-STATIC (rung 2): the adjoint evolution on a zero-external-load
+ * - QUASI-STATIC: the adjoint evolution on a zero-external-load
  *   twin of the forward problem, wrapped in its own ViscoelasticOperator.
  *   The sweep walks the forward grid in reversed time: between
  *   observations it steps with the exponential trapezoid scheme and pairs
@@ -486,10 +495,9 @@ class AdjointSolver {
    * migrating/moving-ocean forward is the canonical use: set the
    * adjoint water coefficient's time and call RefreshWaterLoad(), so
    * the adjoint runs as the linear problem with the forward's
-   * time-dependent coefficients played back in reverse
-   * (doc/planning/adjoint_note.md, "The migrating-forward adjoint");
-   * the nonlinear tangent adjoint's trajectory feed (R2) will ride the
-   * same hook. Static adjoints ignore it.
+   * time-dependent coefficients played back in reverse. A
+   * state-linearised (tangent) adjoint's trajectory feed would ride
+   * the same hook. Static adjoints ignore it.
    */
   void SetTimeSync(std::function<void(mfem::real_t)> sync) {
     time_sync_ = std::move(sync);

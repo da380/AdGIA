@@ -128,7 +128,7 @@ class GLVisWindow {
   bool first_ = true, failed_ = false;
 };
 
-// GLVis keys for a first view (those of elastogravity_layered): 2-D
+// GLVis keys for a first view (the keys the examples share): 2-D
 // fields from above, no lighting, mesh boundary and colour bar; 3-D ones
 // turned and cut open.
 inline std::string DefaultKeys(int dim) {

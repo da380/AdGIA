@@ -1,4 +1,4 @@
-"""A unit ball with a buffer shell around it: data/coupled_poisson.msh.
+"""A unit ball with a buffer shell around it: data/ball_buffer_coarse_3d.msh.
 
 The body is the unit ball and the buffer extends to radius 2. The mesh is
 deliberately coarse so that it builds quickly and the runs on it are
@@ -30,7 +30,7 @@ def main() -> None:
     sizing = UniformInterfaces(*sizes(args, 0.45, 0.9, 4.5))
 
     spec = MeshSpec(body, sizing, dimension=3, order=2, shells=[buffer])
-    report(build_layered_mesh(spec, args.out / "coupled_poisson",
+    report(build_layered_mesh(spec, args.out / "ball_buffer_coarse_3d",
                               verbose=args.verbose))
 
 

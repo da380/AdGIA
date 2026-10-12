@@ -18,8 +18,8 @@
            the observables are the surface coefficients of every degree to
            l + 4.
 
-Profiles: "local" (default) keeps every run to minutes on a laptop (3-D
-only on the coarsest balls); "server" adds finer 3-D meshes and the 3-D
+Profiles: "local" (default) keeps the runs small (3-D only on the
+coarsest balls); "server" adds finer 3-D meshes and the 3-D
 lateral study.
 
     ./study radial
@@ -105,23 +105,37 @@ def find_program(given: Path | None) -> Path:
 
 class Runner:
     def __init__(self, a, out: Path):
-        self.program = find_program(a.programs)
+        if a.dry_run:
+            try:
+                self.program = find_program(a.programs)
+            except SystemExit:
+                self.program = Path("<viscoelastic_sphere>")
+        else:
+            self.program = find_program(a.programs)
         self.mpiexec = a.mpiexec
         self.out = out
         self.meshes = a.out / "meshes"
         self.jobs = a.jobs
         self.dry = a.dry_run
+        self._announced: set[Path] = set()
 
     def case_dir(self, case: dict, mesh: tuple) -> tuple[Path, Path]:
         """Write the case (with its mesh) once; a changed case clears its
         results."""
         o, h = mesh
         case = dict(case)
+        d = self.out / "runs" / f"{case['name']}_h{h:g}"
+        cpath = d / "case.json"
+        if self.dry:
+            # no mesh is built and nothing is written
+            if cpath not in self._announced:
+                self._announced.add(cpath)
+                print(f"  would write {cpath} (mesh built on demand) "
+                      "and compute its exact reference where one exists")
+            return d, cpath
         case["mesh"] = str(mesh_path(self.meshes, case["dim"],
                                      case["radii"], h, 2))
-        d = self.out / "runs" / f"{case['name']}_h{h:g}"
         d.mkdir(parents=True, exist_ok=True)
-        cpath = d / "case.json"
         text = json.dumps(case, indent=1)
         if not cpath.exists() or cpath.read_text() != text:
             cpath.write_text(text)
@@ -132,6 +146,8 @@ class Runner:
 
     def exact(self, d: Path, cpath: Path) -> Path:
         rpath = d / "reference.json"
+        if self.dry:
+            return rpath
         if not rpath.exists():
             rpath.write_text(json.dumps(
                 sref.reference(sref.SphereCase(cpath)), indent=1))
@@ -240,6 +256,8 @@ def study_radial(R: Runner, prof: dict, np_: int) -> list[dict]:
             meta.append((ref, dict(model=model, dim=dim, degree=degree,
                                    order=o, h=h, case=c["name"])))
     R.parallel(jobs, max(j[2] for j in jobs))
+    if R.dry:
+        return []
     return [record(res, ref, **m) for res, (ref, m) in
             zip(_in_order(R, jobs), meta)]
 
@@ -290,6 +308,8 @@ def study_lateral(R: Runner, prof: dict, np_: int) -> list[dict]:
         R.parallel([(cp, ro, n) for cp, ro, _, _, _ in runs]
                    + [(cp, co, n) for cp, _, co, _, _ in runs], n)
         R.parallel([(cp, t, n) for cp, _, _, tr, _ in runs for t in tr], n)
+        if R.dry:
+            continue
         for cp, ro, co, tr, meta in runs:
             ref = R.run(cp, ro, n)
             if ref is None:
@@ -356,7 +376,6 @@ def figures_radial(recs, out: Path) -> None:
 
 
 def figures_lateral(recs, out: Path) -> None:
-    plt = _plt()
     allok = [r for r in recs if r.get("ok") and r["scheme"] not in
              ("coupling", "check") and r.get("error", 1e9) < 10]
     for model, dim in sorted({(r.get("model", "lateral"), r["dim"])
@@ -409,17 +428,33 @@ def _lateral_figure(ok, model, dim, out: Path) -> None:
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("study", choices=("radial", "lateral", "all"))
-    p.add_argument("--profile", choices=sorted(PROFILES), default="local")
-    p.add_argument("--out", type=Path, default=Path("."))
-    p.add_argument("--programs", type=Path)
-    p.add_argument("--mpiexec", default="mpiexec")
-    p.add_argument("--jobs", type=int, default=None)
-    p.add_argument("--np", type=int, default=None)
-    p.add_argument("--figures-only", action="store_true")
-    p.add_argument("--dry-run", action="store_true")
+    class Fmt(argparse.RawDescriptionHelpFormatter,
+              argparse.ArgumentDefaultsHelpFormatter):
+        pass
+
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=Fmt)
+    p.add_argument("study", choices=("radial", "lateral", "all"),
+                   help="the study to run")
+    p.add_argument("--profile", choices=sorted(PROFILES), default="local",
+                   help="run sizes: local (np 2, jobs 10) or server "
+                        "(np 8, jobs 96, finer meshes, 3-D lateral study)")
+    p.add_argument("--out", type=Path, default=Path("."),
+                   help="output root (must be in a build tree or outside "
+                        "the repository)")
+    p.add_argument("--programs", type=Path, default=None,
+                   help="viscoelastic_sphere executable or its directory; "
+                        "found in a build tree when not given")
+    p.add_argument("--mpiexec", default="mpiexec", help="MPI launcher")
+    p.add_argument("--jobs", type=int, default=None,
+                   help="cores to use at once, runs x ranks; the "
+                        "profile's value when not given")
+    p.add_argument("--np", type=int, default=None,
+                   help="ranks per run; the profile's value when not given")
+    p.add_argument("--figures-only", action="store_true",
+                   help="redraw figures from the saved summary.json")
+    p.add_argument("--dry-run", action="store_true",
+                   help="print the driver commands; writes nothing, builds "
+                        "no meshes and computes no references")
     a = p.parse_args()
     prof = PROFILES[a.profile]
     a.jobs = a.jobs or prof["jobs"]
@@ -428,7 +463,8 @@ def main() -> None:
     for study in (("radial", "lateral") if a.study == "all"
                   else (a.study,)):
         d = a.out / study
-        d.mkdir(parents=True, exist_ok=True)
+        if not a.dry_run:
+            d.mkdir(parents=True, exist_ok=True)
         summary = d / "summary.json"
         if not a.figures_only:
             print(f"== {study}", flush=True)

@@ -116,8 +116,8 @@ int main(int argc, char* argv[]) {
   Mpi::Init(argc, argv);
   Hypre::Init();
 
-  RunCase("../data/elastogravity_two_layer_2d.msh", 1, 2, "2d-o2");
-  RunCase("../data/elastogravity_three_layer_3d.msh", 2, 2, "3d-o2");
+  RunCase("../data/earth_fluidcore_2d.msh", 1, 2, "2d-o2");
+  RunCase("../data/earth_innercore_3d.msh", 2, 2, "3d-o2");
 
   if (Mpi::Root()) {
     if (num_fails == 0) {

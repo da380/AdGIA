@@ -1,6 +1,7 @@
-"""The unit disc: data/disk.msh.
+"""The unit disc: data/disc_2d.msh.
 
-One layer and one boundary. Domain attribute 1 is the disc and boundary
+One layer and one boundary; lengths and element sizes are in units of
+the radius. Domain attribute 1 is the disc and boundary
 attribute 1 its circle. Order-3 elements, refined towards the boundary.
 
 Used by: transformed_diffusion.
@@ -22,7 +23,7 @@ def main() -> None:
     sizing = UniformInterfaces(*sizes(args, 0.045, 0.09, 0.2))
 
     spec = MeshSpec(disc, sizing, dimension=2, order=3)
-    report(build_layered_mesh(spec, args.out / "disk", verbose=args.verbose))
+    report(build_layered_mesh(spec, args.out / "disc_2d", verbose=args.verbose))
 
 
 if __name__ == "__main__":

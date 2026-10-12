@@ -1,8 +1,7 @@
 // ============================================================================
 // disc_benchmark.cpp
 //
-// Rung 0 of the no-gravity disc family (doc/planning/no_gravity_analytics.md):
-// a fluid disc (bulk modulus only) inside a solid annulus, no gravity, no
+// The no-gravity exact-reference family: a fluid disc (bulk modulus only) inside a solid annulus, no gravity, no
 // pre-stress, loaded degree by degree on the outer circle. The exact
 // solution is closed form (disc_reference.py): for l >= 1 the interface is
 // exactly traction-free and welded == slip identically, so the run is a
@@ -33,21 +32,23 @@
 //           augmented-Lagrangian iterations interleaved with the gauge
 //           source (examples/sliding_fluid_ellipse.cpp is the template).
 //
-// One source serves the serial and the parallel build. Results go to a
-// JSON file for benchmarks/disc/check.py, which compares both methods
-// against disc_reference.py, absolute and (later rungs) in the interface
-// derivative.
+// Results go to a JSON file for benchmarks/disc/check.py, which compares
+// both methods against disc_reference.py, absolute and in the interface
+// derivative. The default mesh, earth_fluidcore_2d.msh, is generated
+// by meshes/layered_earth.py.
 //
-// Sample runs (with mpiexec -np N in front in a parallel build):
+// Sample runs (with mpiexec -np N in front):
 //    ./disc_benchmark -o 2 -ref 1 -out results.json
 //    ./disc_benchmark -lmax 6 -nal 12 -theta 1e3
 // ============================================================================
 
+#include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "AdGIA.hpp"
@@ -58,7 +59,6 @@ using namespace AdGIA;
 
 namespace {
 
-#ifdef MFEM_USE_MPI
 using MeshType = ParMesh;
 using SubMeshType = ParSubMesh;
 using SpaceType = ParFiniteElementSpace;
@@ -69,16 +69,6 @@ bool Root() { return Mpi::Root(); }
 double Dot(const Vector& a, const Vector& b) {
   return InnerProduct(MPI_COMM_WORLD, a, b);
 }
-#else
-using MeshType = Mesh;
-using SubMeshType = SubMesh;
-using SpaceType = FiniteElementSpace;
-using FieldType = GridFunction;
-using FormType = BilinearForm;
-using LinearFormType = LinearForm;
-bool Root() { return true; }
-double Dot(const Vector& a, const Vector& b) { return InnerProduct(a, b); }
-#endif
 
 constexpr double kRCmb = 3483.0 / 6371.0;
 
@@ -120,8 +110,12 @@ void TangentialPattern(const Vector& x, Vector& f) {
 // Boundary attributes whose element centres sit at radius in
 // (r_min, r_max) — on the given (sub)mesh, rank-unified.
 Array<int> RadialBdrMarker(Mesh& mesh, double r_min, double r_max) {
-  Array<int> marker(mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max()
-                                               : 0);
+  // Ranks may hold different boundary attributes: size the marker by the
+  // global maximum.
+  int n_attributes = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  MPI_Allreduce(MPI_IN_PLACE, &n_attributes, 1, MPI_INT, MPI_MAX,
+                MPI_COMM_WORLD);
+  Array<int> marker(n_attributes);
   marker = 0;
   for (int i = 0; i < mesh.GetNBE(); i++) {
     auto* tr = mesh.GetBdrElementTransformation(i);
@@ -132,14 +126,10 @@ Array<int> RadialBdrMarker(Mesh& mesh, double r_min, double r_max) {
       marker[mesh.GetBdrAttribute(i) - 1] = 1;
     }
   }
-#ifdef MFEM_USE_MPI
   Array<int> global(marker.Size());
   MPI_Allreduce(marker.GetData(), global.GetData(), marker.Size(), MPI_INT,
                 MPI_MAX, MPI_COMM_WORLD);
   return global;
-#else
-  return marker;
-#endif
 }
 
 // U (and V, l >= 1) of the field on the circle marked in `marker`:
@@ -216,12 +206,10 @@ void WriteJson(const std::string& path, const std::string& method, int order,
 }  // namespace
 
 int main(int argc, char* argv[]) {
-#ifdef MFEM_USE_MPI
   Mpi::Init(argc, argv);
   Hypre::Init();
-#endif
 
-  const char* mesh_file = "../../data/elastogravity_two_layer_2d.msh";
+  const char* mesh_file = "../../data/earth_fluidcore_2d.msh";
   const char* method = "slip";
   const char* out_file = "results.json";
   int order = 2;
@@ -250,7 +238,7 @@ int main(int argc, char* argv[]) {
                  "Augmented-Lagrangian / gauge refinement iterations.");
   args.AddOption(&rel_tol, "-rt", "--rel-tol", "Inner CG relative tolerance.");
   args.AddOption(&P0, "-P0", "--pressure",
-                 "Rung 1: uniform surface pressure of the pre-stressed "
+                 "Uniform-pressure leg: surface pressure of the pre-stressed "
                  "reference state (S_e = -P0 I, bare moduli, B_Sigma with "
                  "pi = P0 on the slip side; unmapped runs only).");
   args.AddOption(&shift, "-shift", "--shift",
@@ -264,6 +252,9 @@ int main(int argc, char* argv[]) {
     }
     return 1;
   }
+  MFEM_VERIFY(std::string(method) == "welded" ||
+                  std::string(method) == "slip",
+              "-method must be welded or slip (given " << method << ").");
   const bool slip = std::string(method) == "slip";
   const int dim = 2;
 
@@ -272,12 +263,8 @@ int main(int argc, char* argv[]) {
   for (int i = 0; i < refinements; i++) {
     smesh.UniformRefinement();
   }
-#ifdef MFEM_USE_MPI
   MeshType mesh(MPI_COMM_WORLD, smesh);
   smesh.Clear();
-#else
-  MeshType& mesh = smesh;
-#endif
 
   H1_FECollection fec(order, dim);
   ConstantCoefficient c_kappa_s(kappa_s), c_mu_s(mu_s);
@@ -300,12 +287,12 @@ int main(int argc, char* argv[]) {
   auto C_dev = IsotropicElasticTensorCoefficient::FromBulkModulus(
       dim, zero, c_eps_mu);
 
-  // Rung 1 (P0 != 0): the pre-stressed reference state. Bare moduli
+  // Uniform-pressure leg (P0 != 0): the pre-stressed reference state. Bare moduli
   // lam_b = lam_eff - P0, mu_b = mu_eff + P0 (the model's physical
   // moduli are effective), the geometric term S_e = -P0 I, and
   // B_Sigma with pi = P0 on the slip side. Not combined with -shift.
   MFEM_VERIFY(P0 == 0.0 || shift == 0.0,
-              "rung 1 (-P0) and the shift leg (-shift) do not combine yet");
+              "-P0 and -shift do not combine");
   ConstantCoefficient c_lam_bs(kappa_s - mu_s - P0), c_mu_bs(mu_s + P0);
   ConstantCoefficient c_lam_bf(kappa_f - P0), c_mu_bf(P0), c_P0(P0);
   IsotropicElasticTensorCoefficient C_bare_s(dim, c_lam_bs, c_mu_bs);
@@ -370,7 +357,6 @@ int main(int argc, char* argv[]) {
     }
     q.Assemble();
     q.Finalize();
-#ifdef MFEM_USE_MPI
     std::unique_ptr<HypreParMatrix> A(a.ParallelAssemble());
     std::unique_ptr<HypreParMatrix> Q(q.ParallelAssemble());
     HypreBoomerAMG prec(*A);
@@ -378,13 +364,6 @@ int main(int argc, char* argv[]) {
     prec.SetSystemsOptions(dim);
     NullSpaceProjector P(MPI_COMM_WORLD);
     CGSolver cg(MPI_COMM_WORLD);
-#else
-    SparseMatrix* A = &a.SpMat();
-    SparseMatrix* Q = &q.SpMat();
-    GSSmoother prec(*A);
-    NullSpaceProjector P;
-    CGSolver cg;
-#endif
     {
       FieldType g(&fes);
       Vector t;
@@ -529,7 +508,6 @@ int main(int argc, char* argv[]) {
   b_form.Assemble();
   b_form.Finalize();
 
-#ifdef MFEM_USE_MPI
   auto J = NewSubMeshPairingTrueDofMatrix(inj_s, inj_f);
   std::unique_ptr<HypreParMatrix> Jt(J->Transpose());
   std::unique_ptr<HypreParMatrix> As(a_s.ParallelAssemble());
@@ -556,30 +534,6 @@ int main(int argc, char* argv[]) {
   prec1.SetSystemsOptions(dim);
   NullSpaceProjector P(MPI_COMM_WORLD);
   CGSolver cg(MPI_COMM_WORLD);
-#else
-  auto J = NewSubMeshPairingMatrix(inj_s, inj_f);
-  std::unique_ptr<SparseMatrix> Jt(Transpose(*J));
-  const SparseMatrix* As = &a_s.SpMat();
-  const SparseMatrix* Af = &a_f.SpMat();
-  const SparseMatrix* Qf = &q_f.SpMat();
-  const SparseMatrix* B = &b_form.SpMat();
-  std::unique_ptr<SparseMatrix> BJ(mfem::Mult(*B, *J));
-  std::unique_ptr<SparseMatrix> JtB(mfem::Mult(*Jt, *B));
-  std::unique_ptr<SparseMatrix> JtBJ(mfem::Mult(*JtB, *J));
-  std::unique_ptr<SparseMatrix> A00(Add(1.0, *As, theta, *B));
-  std::unique_ptr<SparseMatrix> A11(Add(1.0, *Af, theta, *JtBJ));
-  std::unique_ptr<SparseMatrix> A01, A10;
-  if (P0 != 0.0) {
-    auto BS = NewSlipInterfaceMatrix(*fes_s, *J, cmb, c_P0, id_map);
-    A00.reset(Add(1.0, *A00, 1.0, *BS.ss));
-    A11.reset(Add(1.0, *A11, 1.0, *BS.ff));
-    A01.reset(Add(-theta, *BJ, 1.0, *BS.sf));
-    A10.reset(Add(-theta, *JtB, 1.0, *BS.fs));
-  }
-  GSSmoother prec0(*A00), prec1(*A11);
-  NullSpaceProjector P;
-  CGSolver cg;
-#endif
 
   Array<int> offsets({0, ns, nf});
   offsets.PartialSum();
@@ -647,6 +601,7 @@ int main(int argc, char* argv[]) {
   solver.iterative_mode = true;
 
   auto surf = RadialBdrMarker(solid, 0.9, 1.1);
+  Vector qf(nf), js(ns), Bj(ns), tmp(nf);  // scratch of the AL loop
 
   for (L = lmin; L <= lmax; L++) {
     VectorFunctionCoefficient traction(dim, Traction);
@@ -672,7 +627,6 @@ int main(int argc, char* argv[]) {
     for (int k = 0; k < n_al; k++) {
       rhs = F;
       rhs -= w;
-      Vector qf(nf);
       Qf->Mult(U.GetBlock(1), qf);
       rhs.GetBlock(1) += qf;
       solver.Mult(rhs, U);
@@ -680,7 +634,6 @@ int main(int argc, char* argv[]) {
       its += cg.GetNumIterations();
       // w <- w + theta C U, with C the unscaled penalty matrix
       // (C U = (-B j; J^T B j) for j = J u_f - u_s).
-      Vector js(ns), Bj(ns), tmp(nf);
       J->Mult(U.GetBlock(1), js);
       js -= U.GetBlock(0);
       B->Mult(js, Bj);

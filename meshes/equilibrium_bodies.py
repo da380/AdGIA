@@ -1,8 +1,10 @@
 """Aspherical layered Earth models for the equilibrium-figures example:
-the flattened_* and cmb_topo_* meshes, in MFEM's own format.
+the earth_*_flat_*, earth_*_cmbtopo_* and earth_*_cmbbump_* meshes, in MFEM's own format.
 
-The layerings and radii are those of layered_earth.py (ICB 1230 km, CMB
-3483 km, surface 6371 km, buffer shell 0.2), and two shapes make a
+The layerings, radii and element sizes are those of layered_earth.py
+(common.py: ICB 1230 km, CMB 3483 km, surface 6371 km, in units of the
+surface radius; sizes common.SIZING), with a buffer shell of relative
+thickness --buffer (default 0.2), and the shapes below make a
 radial density non-barotropic without any hand-inserted lateral term —
 the geometry itself denies the model a static state, and the density
 restoration of examples/equilibrium_density.cpp has to generate the
@@ -35,10 +37,10 @@ centre, buffer last; interfaces from the centre, outer last). The
 manifest's meta records the shape parameters and marks the fluid layer
 ("fluid_layers", as in aspherical_body.py). Order-2 elements.
 
-Files: {flattened,cmb_topo,cmb_bump}_{two,three}_layer_{2,3}d.mesh;
+Files: earth_{fluidcore,innercore}_{flat,cmbtopo,cmbbump}_{2,3}d.mesh;
 `--all` builds the twelve of them.
 
-Used by: equilibrium_density (its -shape flat|cmb defaults).
+Used by: equilibrium_density (its -shape flat|cmb|bump defaults).
 
 Try, from a build's examples/ directory:
     ./equilibrium_density -dim 2
@@ -48,16 +50,12 @@ Try, from a build's examples/ directory:
 """
 import numpy as np
 
-from planetmodel import CallableDisplacement, Geometry, Skeleton
-from planetmodel.mesh3d import (MeshSpec, Shell, UniformInterfaces,
-                                build_layered_mesh, export_mfem_mesh)
+from planetmodel import CallableDisplacement
+from planetmodel.mesh3d import MeshSpec, Shell, UniformInterfaces
 
-from common import parser, report, sizes
+from common import (SIZING, SURFACE, build_mfem, geometry, hat_knots, parser,
+                    radial_hat, sizes)
 
-EARTH_RADIUS_KM = 6371.0
-ICB = 1230.0 / EARTH_RADIUS_KM
-CMB = 3483.0 / EARTH_RADIUS_KM
-SURFACE = 1.0
 BUFFER = 0.2  # default --buffer; the taper caps the safe flattening at
               # about buffer / 2 (the smoothstep's peak slope)
 
@@ -65,27 +63,6 @@ FLATTENING = 0.1   # default --flattening
 AMPLITUDE = 0.05   # default --amplitude of the CMB topography
 DEGREE = 4         # default --degree of its oscillation
 WIDTH = 0.5        # default --width (radians) of the CMB bump
-
-# Element sizes as in layered_earth.py, so the spherical and the
-# aspherical runs of the example are comparable; --scale multiplies
-# them (smaller is finer).
-SIZING = {
-    2: (0.085, 0.17, 0.85),
-    3: (0.135, 0.27, 1.35),
-}
-
-
-def geometry(layers: int) -> Geometry:
-    """The skeleton and names of the two- or three-layer Earth."""
-    if layers == 2:
-        return Geometry(Skeleton([0.0, CMB, SURFACE]),
-                        layer_names=["fluid_core", "mantle"],
-                        interface_names=["cmb", "surface"])
-    if layers == 3:
-        return Geometry(Skeleton([0.0, ICB, CMB, SURFACE]),
-                        layer_names=["inner_core", "outer_core", "mantle"],
-                        interface_names=["icb", "cmb", "surface"])
-    raise ValueError(f"--layers must be 2 or 3, got {layers}")
 
 
 def taper(r, buffer):
@@ -117,12 +94,9 @@ def cmb_shape(layers: int, dim: int, a: float, degree: int):
     """h = a w(r) X(angle): the hat w peaks at the CMB and vanishes at
     the ICB (the centre in the two-layer model) and the surface, so
     only the CMB is displaced; every kink of w is an interface."""
-    inner = ICB if layers == 3 else 0.0
 
     def h(r, theta, phi):
-        up = (r - inner) / (CMB - inner)
-        down = (SURFACE - r) / (SURFACE - CMB)
-        w = np.clip(np.minimum(up, down), 0.0, 1.0)
+        w = radial_hat(r, layers)
         if dim == 2:
             pattern = np.cos(degree * phi)
         else:
@@ -130,8 +104,8 @@ def cmb_shape(layers: int, dim: int, a: float, degree: int):
                 np.cos(theta))
         return a * w * pattern
 
-    knots = [ICB, CMB, SURFACE] if layers == 3 else [CMB, SURFACE]
-    return CallableDisplacement(h, knots=knots, name="cmb topography")
+    return CallableDisplacement(h, knots=hat_knots(layers),
+                                name="cmb topography")
 
 
 def bump_shape(layers: int, dim: int, a: float, width: float):
@@ -139,12 +113,9 @@ def bump_shape(layers: int, dim: int, a: float, width: float):
     topographic bump on the CMB, centred on the +x axis (gamma the
     angular distance from it — the cosine form is smooth and periodic),
     with the same radial hat w as the oscillatory topography."""
-    inner = ICB if layers == 3 else 0.0
 
     def h(r, theta, phi):
-        up = (r - inner) / (CMB - inner)
-        down = (SURFACE - r) / (SURFACE - CMB)
-        w = np.clip(np.minimum(up, down), 0.0, 1.0)
+        w = radial_hat(r, layers)
         if dim == 2:
             cosg = np.cos(phi)
         else:
@@ -152,28 +123,27 @@ def bump_shape(layers: int, dim: int, a: float, width: float):
         g = np.exp(-2.0 * (1.0 - cosg) / (width * width))
         return a * w * g
 
-    knots = [ICB, CMB, SURFACE] if layers == 3 else [CMB, SURFACE]
-    return CallableDisplacement(h, knots=knots, name="cmb bump")
+    return CallableDisplacement(h, knots=hat_knots(layers), name="cmb bump")
 
 
 def build(shape: str, layers: int, dim: int, args) -> None:
-    words = {2: "two", 3: "three"}
+    words = {2: "fluidcore", 3: "innercore"}
     if shape == "flat":
         displacement = flattened_shape(dim, args.flattening, args.buffer)
         meta = {"flattening": args.flattening}
-        stem = "flattened"
+        stem = "flat"
     elif shape == "cmb":
         displacement = cmb_shape(layers, dim, args.amplitude, args.degree)
         meta = {"amplitude": args.amplitude, "degree": args.degree}
-        stem = "cmb_topo"
+        stem = "cmbtopo"
     else:
         displacement = bump_shape(layers, dim, args.amplitude, args.width)
         meta = {"amplitude": args.amplitude, "width": args.width}
-        stem = "cmb_bump"
+        stem = "cmbbump"
     meta["buffer"] = args.buffer
     meta["fluid_layers"] = [2] if layers == 3 else [1]
 
-    name = f"{stem}_{words[layers]}_layer_{dim}d{args.name}"
+    name = f"earth_{words[layers]}_{stem}_{dim}d{args.name}"
     body = geometry(layers).stretched(displacement)
     sizing = UniformInterfaces(*sizes(args, *SIZING[dim]))
     spec = MeshSpec(body, sizing, dimension=dim, order=2,
@@ -181,18 +151,8 @@ def build(shape: str, layers: int, dim: int, args) -> None:
                     outer_boundary="spherical", meta=meta)
 
     # The reference (spherical) mesh, then the MFEM file with the nodes
-    # moved, as in aspherical_body.py.
-    reference = build_layered_mesh(spec, args.out / f"{name}_reference",
-                                   verbose=args.verbose)
-    exported = export_mfem_mesh(reference, args.out / name,
-                                delivery="physical")
-    report(reference)
-    print(f"{exported.mesh_path.name}: nodes moved by the {stem} shape; "
-          f"smallest Jacobian ratio "
-          f"{exported.quality.get('min_ratio', float('nan')):.3f}")
-    print(f"  manifest: {exported.manifest_path}")
-    for p in (reference.msh_path, reference.manifest_path):
-        p.unlink()
+    # moved.
+    build_mfem(spec, name, args, f"nodes moved by the {stem} shape")
 
 
 def main() -> None:
@@ -200,28 +160,39 @@ def main() -> None:
     p.add_argument("--shape", choices=("flat", "cmb", "bump"),
                    default="flat",
                    help="flattened interfaces, oscillatory CMB "
-                        "topography, or a single Gaussian CMB bump")
-    p.add_argument("--layers", type=int, default=3, choices=(2, 3),
-                   help="2 for fluid core + mantle, 3 with a solid inner core")
-    p.add_argument("--dim", type=int, default=2, choices=(2, 3),
-                   help="2 for a disc, 3 for a ball")
-    p.add_argument("--flattening", type=float, default=FLATTENING,
-                   help="flattening of the flat shape (default %(default)s)")
-    p.add_argument("--amplitude", type=float, default=AMPLITUDE,
-                   help="amplitude of the CMB topography (default %(default)s)")
-    p.add_argument("--degree", type=int, default=DEGREE,
-                   help="angular degree of the CMB topography "
+                        "topography, or a single Gaussian CMB bump "
                         "(default %(default)s)")
+    p.add_argument("--layers", type=int, default=3, choices=(2, 3),
+                   help="number of layers: 2 for fluid core + mantle, 3 "
+                        "with a solid inner core (default %(default)s)")
+    p.add_argument("--dim", type=int, default=2, choices=(2, 3),
+                   help="2 for a disc, 3 for a ball (default %(default)s)")
+    p.add_argument("--flattening", type=float, default=FLATTENING,
+                   help="dimensionless flattening f of the flat shape, "
+                        "the displacement being f times the radius "
+                        "(default %(default)s)")
+    p.add_argument("--amplitude", type=float, default=AMPLITUDE,
+                   help="peak radial displacement of the CMB topography "
+                        "or bump, in units of the surface radius "
+                        "(default %(default)s)")
+    p.add_argument("--degree", type=int, default=DEGREE,
+                   help="angular degree (a number of waves) of the cmb "
+                        "topography (default %(default)s)")
     p.add_argument("--width", type=float, default=WIDTH,
-                   help="angular width (radians) of the CMB bump "
+                   help="angular width of the CMB bump, in radians "
                         "(default %(default)s)")
     p.add_argument("--buffer", type=float, default=BUFFER,
-                   help="buffer-shell thickness; the flattening taper "
-                        "needs about 2 f of room (default %(default)s)")
+                   help="buffer-shell THICKNESS in units of the surface "
+                        "radius (the shell reaches to 1 + this); the "
+                        "flattening taper needs about 2 f of room "
+                        "(default %(default)s). Unlike aspherical_body.py, "
+                        "where --buffer is a yes/no switch")
     p.add_argument("--name", default="",
-                   help="suffix on the file names, for parameter sweeps")
+                   help="suffix appended to the file names, for parameter sweeps "
+                        "(default: none)")
     p.add_argument("--all", action="store_true",
-                   help="build the twelve meshes the example uses")
+                   help="build the twelve meshes (3 shapes x 2 layerings x 2 "
+                        "dimensions), ignoring --shape, --layers and --dim")
     args = p.parse_args()
 
     if args.all:
