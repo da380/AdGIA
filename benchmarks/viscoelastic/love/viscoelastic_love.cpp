@@ -403,10 +403,9 @@ int main(int argc, char* argv[]) {
   }
   if (with_tide) {
     if (root) std::cout << "\nTide: h by degree\n";
-    // The load run's operator is gone but its effective modulus is still
-    // assembled in the problem, and a fresh operator assumes the
-    // unrelaxed one: restore it before starting from rest.
-    problem.ClearRelaxationWeights();
+    // A fresh ViscoelasticOperator clears any effective modulus the load
+    // run left assembled in the problem; only the solution needs
+    // resetting here.
     c.ResetSolution();
     tidal = evolve(false);
   }

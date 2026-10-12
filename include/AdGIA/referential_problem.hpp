@@ -521,7 +521,7 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
    */
   void SetVacuumExtension(const mfem::Array<int>& buffer_marker,
                           mfem::Coefficient& mu_gauge, mfem::real_t epsilon,
-                          int refinements = 3);
+                          int refinements = 0);
 
   /** @brief As the base, but the Deviatoric form is assembled
    * covariantly through the rheology's equilibrium mapping when the

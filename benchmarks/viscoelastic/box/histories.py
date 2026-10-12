@@ -104,6 +104,14 @@ class History:
                 "pieces": [p.to_json() for p in self.pieces],
                 "breakpoints": self.breakpoints()}
 
+    def tag(self) -> str:
+        """The history as a case-name token: the name plus every
+        parameter, so two differently parameterised histories can never
+        share a case name (and so a cached result can never be reused
+        across them)."""
+        return "_".join([self.name] + [f"{k}{v:g}"
+                                       for k, v in sorted(self.params.items())])
+
     @staticmethod
     def from_json(d: dict) -> "History":
         pieces = [Piece(start=p["start"],

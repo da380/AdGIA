@@ -193,6 +193,9 @@ class DensityFeasibility {
   const MinimumDeviatoricEquilibriumStress& Stress() const {
     return *stress_;
   }
+  /** @brief Non-const access, for consumers that must feed the
+   * generator to a MatrixCoefficient (whose Eval is non-const). */
+  MinimumDeviatoricEquilibriumStress& Stress() { return *stress_; }
 
   /** @brief Solver iterations of the two Poisson solves. */
   int PotentialIterations() const { return phi_iterations_; }

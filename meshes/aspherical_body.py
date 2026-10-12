@@ -146,7 +146,7 @@ def main() -> None:
     p.add_argument("--buffer", action="store_true",
                    help="BOOLEAN switch (default off): add a buffer shell "
                         "reaching to radius 1.2, with the shape tapered "
-                        "off across it. Unlike equilibrium_bodies.py, "
+                        "off across it. Unlike layered_earth.py, "
                         "where --buffer is the shell's thickness")
     p.add_argument("--fluid-core", action="store_true",
                    help="two layers, fluid core and mantle, with the "

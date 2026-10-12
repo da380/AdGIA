@@ -181,6 +181,11 @@ ViscoelasticOperator::ViscoelasticOperator(LinearQuasiStaticProblem& problem,
   const auto& rh = problem_.Rheology();
   MFEM_VERIFY(rh.SpaceDim() == dim,
               "ViscoelasticOperator: rheology/mesh dimension mismatch.");
+  // The operator assumes the problem carries the UNRELAXED modulus. A
+  // previous operator may have left its effective modulus assembled in
+  // the problem's stiffness; restore the assumption here (a no-op on a
+  // clean problem).
+  problem_.ClearRelaxationWeights();
 
   parallel_ = detail::IsParallel(*ufes_);
 #ifdef MFEM_USE_MPI

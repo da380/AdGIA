@@ -365,7 +365,10 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveLoadPotential(
               "SolveLoadPotential: the field must be on PotentialSpaceOnBody().");
   EnsureOperator();
   // With the plain Laplace-DtN operator: the fluid mass term is part of the
-  // body's response, not of the load's own potential.
+  // body's response, not of the load's own potential. The swap rebuilds
+  // only the CG wrapper and its pointer wiring — the preconditioner is
+  // the shifted-Laplacian AMG, shared by every potential operator, so
+  // no multigrid setup is paid here.
   Vector Phi;
   bool ok;
   if (A_phiphi_ == A_lap_.get()) {
@@ -1393,7 +1396,10 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::EnableGaugeKKT(
   kkt_mgw_ = mgw_prec;
   // Unit-scale penalty: the base then assembles Q_ itself and
   // A_solve_ = A + Q, whose preconditioner the KKT diagonal slots
-  // reuse; zero refinements (the KKT solve needs none).
+  // reuse; zero refinements (the KKT solve needs none). The gauge
+  // form is assembled WITHOUT an equilibrium mapping by design: the
+  // gauge-KKT path is an unmapped instrument of this class, and no
+  // mapped configuration reaches it.
   GaugePenaltyOptions o;
   o.epsilon = 1.0;
   o.refinements = 0;

@@ -142,22 +142,24 @@ function(meshes_add script)
     set(MESHES_OUTPUTS ${MESHES_OUTPUTS} ${outputs} PARENT_SCOPE)
 endfunction()
 
-meshes_add(unit_disc.py        disc_2d)
-meshes_add(earth_coastlines.py earth_coastlines
-                               DEPENDS ice7g_topography_lmax64.npz)
-meshes_add(fingerprint_coastline.py fingerprint_ring_3d)
-meshes_add(unit_ball.py        ball_3d)
+meshes_add(homogeneous_body.py disc_2d ARGS --preset disc)
+meshes_add(homogeneous_body.py ball_3d ARGS --preset ball)
+meshes_add(homogeneous_body.py disc_buffer_2d ARGS --preset disc-buffer)
+meshes_add(homogeneous_body.py disc_buffer_wide_2d
+                               ARGS --preset disc-buffer-wide)
+meshes_add(homogeneous_body.py ball_buffer_coarse_3d
+                               ARGS --preset ball-buffer-coarse)
 meshes_add(offset_disc.py      offset_disc_2d)
-meshes_add(disc_with_buffer.py disc_buffer_2d)
-meshes_add(disc_with_wide_buffer.py disc_buffer_wide_2d)
-meshes_add(ball_with_buffer.py ball_buffer_coarse_3d)
+meshes_add(earth_coastlines.py earth_coastlines
+                               ARGS --field earth
+                               DEPENDS ice7g_topography_lmax64.npz)
+meshes_add(earth_coastlines.py fingerprint_ring_3d ARGS --field analytic)
 meshes_add(layered_earth.py    earth_fluidcore_2d
                                earth_innercore_2d
                                earth_fluidcore_3d
                                earth_innercore_3d
-                               ARGS --all)
-meshes_add(equilibrium_bodies.py
-                               earth_fluidcore_flat_2d
+                               ARGS --all --shape none)
+meshes_add(layered_earth.py    earth_fluidcore_flat_2d
                                earth_fluidcore_flat_3d
                                earth_innercore_flat_2d
                                earth_innercore_flat_3d
@@ -169,7 +171,7 @@ meshes_add(equilibrium_bodies.py
                                earth_fluidcore_cmbbump_3d
                                earth_innercore_cmbbump_2d
                                earth_innercore_cmbbump_3d
-                               MFEM ARGS --all)
+                               MFEM ARGS --all --shape shaped)
 meshes_add(aspherical_body.py  aspherical_2d aspherical_buffer_2d
                                aspherical_3d aspherical_buffer_3d
                                aspherical_fluid_core_buffer_2d

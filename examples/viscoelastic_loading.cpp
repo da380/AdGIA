@@ -41,11 +41,11 @@
 // loads the top boundary over |x - W/2| < a (3-D: also |y - W/2| < a) for
 // 0 <= t < t_load, then switches off. The reported quantity is the vertical
 // displacement at the surface point directly under the load's centre. The
-// switch-off is not treated specially: the step that ends at t_load is
-// taken with the load already off at its end, so the jump is spread over
-// that one step (an O(dt) error in the history near t_load; see
-// ViscoelasticOperator::InvalidateDisplacement for resolving a load jump
-// exactly at a step boundary).
+// switch-off is resolved exactly when t_load lies on the output grid
+// (true at the defaults): the step ending there sees the load's left
+// limit and the next starts from the right limit through
+// ViscoelasticOperator::InvalidateDisplacement(). Off the grid the jump
+// is spread over one step (an O(dt) error in the history near t_load).
 //
 // Outputs: the history on the screen; viscoelastic_loading.csv (python3
 // plot_csv.py viscoelastic_loading.csv); with -vis (the default), a GLVis
@@ -285,12 +285,24 @@ int main(int argc, char* argv[]) {
   traction_marker = 0;
   traction_marker[top_attr - 1] = 1;
 
+  // The load is right-continuous at the switch-off: on for t < t_load.
+  // While the step that ENDS at t_load is taken (and its output is
+  // read), load_left_limit keeps the load on at t = t_load, so that
+  // step sees the left limit; the loop then clears the flag and calls
+  // ViscoelasticOperator::InvalidateDisplacement() so the next step
+  // starts from the right limit — the jump convention of the box
+  // benchmark driver.
+  bool load_left_limit = false;
+  const bool* left = &load_left_limit;
   VectorFunctionCoefficient traction(
-      dim, [dim, W, a, p0, t_load](const Vector& x, real_t t, Vector& f) {
+      dim,
+      [dim, W, a, p0, t_load, left](const Vector& x, real_t t, Vector& f) {
         f = 0.0;
         const bool in_x = std::abs(x(0) - 0.5 * W) < a;
-        const bool in_patch = dim == 2 ? in_x : (in_x && std::abs(x(1) - 0.5 * W) < a);
-        if (t < t_load && in_patch) {
+        const bool in_patch =
+            dim == 2 ? in_x : (in_x && std::abs(x(1) - 0.5 * W) < a);
+        const bool on = t < t_load || (*left && t <= t_load);
+        if (on && in_patch) {
           f(dim - 1) = -p0;
         }
       });
@@ -428,9 +440,13 @@ int main(int argc, char* argv[]) {
     dc.Save();
   }
 
+  const real_t jump_tol = 1e-9 * t_final;
   for (int step = 1; step <= n_steps; step++) {
+    const real_t t_target = step * t_final / n_steps;
+    // A step ending exactly at the switch-off sees the load's left
+    // limit (exact when t_load lies on the output grid, the default).
+    load_left_limit = std::abs(t_target - t_load) <= jump_tol;
     if (use_adaptive) {
-      const real_t t_target = step * t_final / n_steps;
       adaptive.Integrate(m, t, t_target, dt);
     } else {
       ode.Step(m, t, dt);
@@ -455,6 +471,13 @@ int main(int argc, char* argv[]) {
       dc.SetCycle(step);
       dc.SetTime(t);
       dc.Save();
+    }
+
+    if (load_left_limit) {
+      // The output at t_load carried the left limit; subsequent
+      // assembles see the right limit from a clean displacement.
+      load_left_limit = false;
+      visco.InvalidateDisplacement();
     }
   }
 

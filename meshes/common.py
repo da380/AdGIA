@@ -29,7 +29,7 @@ from pathlib import Path
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 
-# The Earth model shared by layered_earth.py, equilibrium_bodies.py and
+# The Earth model shared by layered_earth.py and
 # aspherical_body.py. Radii are in units of the Earth's radius (6371 km):
 # the inner-core boundary at 1230 km, the core-mantle boundary at
 # 3483 km, the surface at 6371 km.
@@ -154,7 +154,7 @@ class SeaLevelBand:
     The field is a wrapped lat-lon grid (poles and the 360-degree
     column included, so plain bilinear interpolation covers the
     sphere) in ANGULAR units — earth_coastlines.py feeds it the
-    distance to the real coastline, fingerprint_coastline.py the
+    distance to the real coastline, earth_coastlines.py --field analytic the
     angular distance to an analytic shoreline circle. The size is
     `size` wherever |field| < band and |r - radius| < depth_width (the
     plateau), and grows towards `far_size` at the rate `gradation`

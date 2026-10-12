@@ -2730,6 +2730,11 @@ void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::EnableBrokenZeta(
   MFEM_VERIFY(fes_zeta_outer && theta_zeta > 0.0,
               "EnableBrokenZeta: an outer scalar space and a positive "
               "penalty are required.");
+  // EnableKKT refuses the broken organisation; the refusal must hold
+  // in either call order.
+  MFEM_VERIFY(!kkt_,
+              "EnableBrokenZeta: the KKT enforcement supports the "
+              "single-valued organisation only.");
   MFEM_VERIFY(fes_zeta_outer->FEColl() == fes_zeta_->FEColl() &&
                   fes_zeta_outer->GetVDim() == 1,
               "EnableBrokenZeta: the outer space must be a scalar shadow "

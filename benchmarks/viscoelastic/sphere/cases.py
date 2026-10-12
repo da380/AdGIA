@@ -151,12 +151,13 @@ def make_case(model_name: str, *, dim: int = 2, degree: int = 2,
     history = history or hist.heaviside()
     lmax = lmax if lmax is not None else (
         degree + 4 if model_name.startswith("lateral") else degree)
+    # Every result-changing parameter appears in the name (see the box
+    # twin): histories with parameters, the amplitude, the contrast for
+    # every model, lmax and the output grid.
     tag = name or "_".join([model_name, f"{dim}d", f"l{degree}",
-                            history.name]
-                           + ([f"C{contrast:g}"]
-                              if model_name in ("lateral", "lateral_weak",
-                                                "channel")
-                              else []))
+                            history.tag(), f"A{amplitude:g}",
+                            f"C{contrast:g}", f"L{lmax}",
+                            f"t{t_final:g}x{n_times}"])
     return {"schema": "viscoelastic_sphere/1", "name": tag,
             "model": model_name, "dim": dim, "radii": radii, "mesh": None,
             "layers": layers,

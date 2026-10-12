@@ -79,9 +79,25 @@ def prepare(root: Path, model_name: str, eps: float, lmax: int,
     model = perturbed(model_name, eps, time_scale)
     if force or not (out / "radial_profiles.txt").exists():
         make_case.write_radial_profiles(model, out / "radial_profiles.txt")
-    if force or not (out / "reference.json").exists():
+    # Remake the reference when its recorded settings do not match the
+    # run's: a reused reference at a different lmax would silently
+    # mis-grade every derivative.
+    settings = {"lmax": lmax, "per_layer": 17, "eps": eps,
+                "time_scale": time_scale}
+    ref_path = out / "reference.json"
+    stale = True
+    if not force and ref_path.exists():
+        try:
+            stale = json.loads(
+                ref_path.read_text()).get("prepared_with") != settings
+        except ValueError:
+            stale = True
+        if stale:
+            print(f"  remaking {ref_path}: settings changed")
+    if force or stale:
         ref = make_case.reference(model, lmax, per_layer=17)
-        (out / "reference.json").write_text(json.dumps(ref, indent=1))
+        ref["prepared_with"] = settings
+        ref_path.write_text(json.dumps(ref, indent=1))
     return out
 
 

@@ -82,7 +82,7 @@
 // buffer (attribute 2) for the DtN condition. The surface of the body is
 // the LAST (largest-numbered) boundary attribute of the body submesh, where
 // the load acts. Default ../data/disc_buffer_2d.msh (meshes/
-// disc_with_buffer.py). Nondimensional, with the density fixed at rho = 1.
+// homogeneous_body.py --preset disc-buffer). Nondimensional, with the density fixed at rho = 1.
 // ============================================================================
 #include <cmath>
 #include <iomanip>

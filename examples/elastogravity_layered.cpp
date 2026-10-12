@@ -23,7 +23,7 @@
 //
 // Meshes (../data):
 //   disc_buffer_2d.msh, ball_buffer_coarse_3d.msh          uniform, 2-D and 3-D
-//                   (meshes/disc_with_buffer.py, meshes/ball_with_buffer.py)
+//                   (meshes/homogeneous_body.py --preset disc-buffer, meshes/homogeneous_body.py --preset ball-buffer-coarse)
 //   aspherical_buffer_2d.mesh, aspherical_buffer_3d.mesh         uniform
 //                   (meshes/aspherical_body.py)
 //   earth_fluidcore_2d.msh, earth_innercore_2d.msh,
@@ -96,7 +96,7 @@
 //
 // The buffer (to r = 1.2 for the layered meshes) carries the potential
 // only; the displacement lives on the solid SubMesh of the body. The
-// uniform meshes (disc_with_buffer.py, ball_with_buffer.py,
+// uniform meshes (homogeneous_body.py presets disc-buffer, ball-buffer-coarse,
 // aspherical_body.py) have the body as attribute 1 and the buffer as 2,
 // the surface being the body's outer boundary. Dimensional parameters are
 // in SI units and are nondimensionalised internally.

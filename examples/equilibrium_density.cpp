@@ -47,7 +47,7 @@
 // earth_{fluidcore,innercore}_{2,3}d.msh meshes, and -m overrides
 // with any layered mesh of the same conventions (meshes/README.md:
 // the layering is recognised from the attribute count;
-// equilibrium_bodies.py makes the aspherical ones and takes
+// layered_earth.py --shape flat|cmbtopo|cmbbump makes the aspherical ones and takes
 // --flattening, --amplitude, --degree, --width and --scale for
 // variants). With an inner core, the
 // enclosed solid's force and torque balance joins the constraints
@@ -173,14 +173,14 @@
 // as a stressed halo in the mantle. Both stress windows share the
 // fluid p_rms scale and are elementwise — |dev T| genuinely jumps at
 // the CMB and ICB, which a continuous field renders as an interface
-// artefact (refine the mesh, equilibrium_bodies.py --scale, for a
+// artefact (refine the mesh, layered_earth.py --scale, for a
 // finer image).
 //
 // One source serves the serial and the parallel build, as in
 // equilibrium_stress.cpp; the barotropy scatter is gathered to the root.
 //
 // Mesh requirements. The default mesh is chosen by -dim, -ic and -shape
-// from ../data (meshes/equilibrium_bodies.py for the aspherical ones,
+// from ../data (meshes/layered_earth.py --shape ... for the aspherical ones,
 // meshes/layered_earth.py for -shape sphere); -m overrides it with any
 // layered mesh of the same conventions, and the layering is recognised
 // from the number of domain attributes:
@@ -278,7 +278,7 @@
 //                                              geometric signal (measured)
 //    ./equilibrium_density -m ../data/earth_innercore_flat_2d_f20.mesh
 //                                              a hand-built variant
-//                                              (equilibrium_bodies.py)
+//                                              (layered_earth.py --shape flat)
 // ============================================================================
 
 #include <algorithm>
@@ -1172,9 +1172,7 @@ int main(int argc, char* argv[]) {
 
     // The fluid piece: the certificate's own map.
     {
-      // Stress() is const but MatrixCoefficient::Eval is not.
-      InfeasibilityCoefficient eta_c(
-          &const_cast<MinimumDeviatoricEquilibriumStress&>(J.Stress()));
+      InfeasibilityCoefficient eta_c(&J.Stress());
       SpaceType map_fes(&fluid, &l2_map);
       GridType map_f(&map_fes);
       map_f.ProjectCoefficient(eta_c);

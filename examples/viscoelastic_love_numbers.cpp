@@ -92,7 +92,7 @@
 // surface of the ball is the LAST (largest-numbered) boundary attribute of
 // the body submesh, and the sphere's radius is read from the mesh (the load
 // is analysed on that boundary). Default ../data/ball_buffer_coarse_3d.msh
-// (meshes/ball_with_buffer.py: ball of radius 1, buffer to r = 2). The
+// (meshes/homogeneous_body.py --preset ball-buffer-coarse: ball of radius 1, buffer to r = 2). The
 // units are nondimensional: G and rho are options (default 1), the moduli
 // are in the same units.
 // ============================================================================

@@ -7,6 +7,7 @@
 
 #include "AdGIA/json.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
@@ -135,6 +136,9 @@ MeshManifest::MeshManifest(const std::string& path) : path_(path) {
 
   const auto& layers = root.Member("layers", Json::Type::Array).array;
   MFEM_VERIFY(!layers.empty(), "MeshManifest: " << path << " lists no layers.");
+  // Which layers carried an explicit per-layer "fluid" flag, for the
+  // consistency check against meta.fluid_layers below.
+  std::vector<bool> fluid_explicit;
   for (std::size_t i = 0; i < layers.size(); i++) {
     const Record r(layers[i], Indexed("layers", i), path);
     Layer l;
@@ -143,9 +147,11 @@ MeshManifest::MeshManifest(const std::string& path) : path_(path) {
     l.r_inner = r.Number("r_inner");
     l.r_outer = r.Number("r_outer");
     l.in_geometry = r.Bool("in_geometry");
-    if (r.Optional("fluid")) {
+    const bool fluid_given = r.Optional("fluid");
+    if (fluid_given) {
       l.fluid = r.Bool("fluid");
     }
+    fluid_explicit.push_back(fluid_given);
     MFEM_VERIFY(l.attribute == static_cast<int>(i) + 1,
                 "MeshManifest: " << path << ": layers are not numbered from "
                                  << "the centre.");
@@ -250,11 +256,26 @@ MeshManifest::MeshManifest(const std::string& path) : path_(path) {
   }
 
   if (HasMeta("fluid_layers")) {
+    // The list and any explicit per-layer flags must agree: a
+    // contradiction means a malformed manifest, not a preference.
     for (const int a : MetaIntegers("fluid_layers")) {
       MFEM_VERIFY(a >= 1 && a <= n_layers && layers_[a - 1].in_geometry,
                   "MeshManifest: " << path << ": meta.fluid_layers names "
                                    << a << ", not a layer of the body.");
+      MFEM_VERIFY(!fluid_explicit[a - 1] || layers_[a - 1].fluid,
+                  "MeshManifest: " << path << ": meta.fluid_layers names "
+                                   << a << ", whose layer entry says "
+                                   << "fluid: false.");
       layers_[a - 1].fluid = true;
+    }
+    for (int a = 1; a <= n_layers; a++) {
+      if (fluid_explicit[a - 1] && layers_[a - 1].fluid) {
+        const auto& list = MetaIntegers("fluid_layers");
+        const bool listed = std::find(list.begin(), list.end(), a) != list.end();
+        MFEM_VERIFY(listed, "MeshManifest: " << path << ": layer " << a
+                                             << " says fluid: true but "
+                                             << "meta.fluid_layers omits it.");
+      }
     }
   }
 }

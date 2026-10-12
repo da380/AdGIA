@@ -15,7 +15,7 @@
 // - The system is solved as one block system (CG with a block-diagonal
 //   preconditioner), with the cross terms assembled by
 //   (Par)SubMeshMixedBilinearForm.
-// - Mesh: ../data/ball_buffer_coarse_3d.msh, made by meshes/ball_with_buffer.py.
+// - Mesh: ../data/ball_buffer_coarse_3d.msh, made by meshes/homogeneous_body.py --preset ball-buffer-coarse.
 //   The mesh is deliberately coarse (relative L2 errors of order 0.2 to 0.5)
 //   so that it builds and runs quickly; halve the sizes in that script for a
 //   converged run.
@@ -29,7 +29,7 @@
 //   attribute 2 is the outer sphere r = 2 (psi2 = 0 there); on the
 //   submesh, boundary attribute 1 is the sphere r = 1 (psi1 = 0 there).
 //   The default ../data/ball_buffer_coarse_3d.msh is made by
-//   meshes/ball_with_buffer.py. Nondimensional.
+//   meshes/homogeneous_body.py --preset ball-buffer-coarse. Nondimensional.
 // - The exact solution is known in closed form (psi1Exact, psi2Exact
 //   below, with f1, f2 made from them); the program prints the relative
 //   L2 errors of ψ1, of ψ2 and of ψ2 restricted to the submesh. With
@@ -37,7 +37,7 @@
 //
 // Options (defaults in brackets):
 //   -m    mesh file [../data/ball_buffer_coarse_3d.msh]: the two-sphere mesh
-//         from meshes/ball_with_buffer.py (deliberately coarse; halve
+//         from meshes/homogeneous_body.py --preset ball-buffer-coarse (deliberately coarse; halve
 //         the sizes there for a converged run).
 //   -rt   relative tolerance of the block CG solve [1e-10].
 //   -o    finite element order [1]; raise it (with a finer mesh) to

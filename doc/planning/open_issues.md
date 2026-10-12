@@ -564,23 +564,6 @@ is recorded for the gauged method, for the tidal histories, or for degree
 
 **See:** `benchmarks/viscoelastic/love/README.md`.
 
-### A new `ViscoelasticOperator` inherits stale relaxation weights
-
-**Status:** open (library).
-
-A `ViscoelasticOperator` constructed on a problem that a previous operator
-has used does not clear the relaxation weights the previous operator left
-in the problem's stiffness: the new operator assumes the unrelaxed
-operator but the problem still assembles the old effective moduli. The
-viscoelastic Love-number driver works around this by calling
-`problem.ClearRelaxationWeights()` before the tidal run. Fix in the
-library: clear (or verify) the weights when an operator is constructed or
-first stepped.
-
-**See:** `doc/viscoelasticity.md` §3 "Driving the operator";
-`src/viscoelastic.cpp` (`UseUnrelaxedOperator`);
-`benchmarks/viscoelastic/love/viscoelastic_love.cpp` (tidal run).
-
 ### Exponential trapezoid: order reduction under stiff stress control
 
 **Status:** open (characterised, not analysed).
@@ -737,19 +720,6 @@ its degree-4 point; the gap predates the combined-degree mode.
 
 ## Known code and build defects
 
-### `viscoelastic_loading`: the load switch-off
-
-**Status:** open.
-
-The step ending at `t_load` is taken with the load already off at its end,
-so the jump is spread over one step (an O(dt) error in the history near
-`t_load`; the example's header says so). Fix: make the load test inclusive
-at `t_load` and call `ViscoelasticOperator::InvalidateDisplacement()` at
-the jump, as the box benchmark driver does.
-
-**See:** `examples/viscoelastic_loading.cpp`; `doc/viscoelasticity.md`
-§3 "Driving the operator".
-
 ### Build system
 
 **Status:** open.
@@ -760,50 +730,24 @@ the jump, as the box benchmark driver does.
 - `CMakeLists.txt:215`: the Doxygen install copies `<build>/doc` into
   `share/<project>/html`, nesting `html/doc/html`; probably meant
   `<build>/doc/html`.
-- `meshes/make_all.py` omits `disc_with_wide_buffer.py` and
-  `aspherical_body.py --all`.
-- ~~the postprocess poetry environment~~ resolved 11 Oct 2026: the three
-  poetry projects merged into one at the repository root (pyproject.toml
-  there; `postprocess/` renamed `earth_data/`), and launchers configured
-  without the environment now refuse to run with the fix in their
-  message.
 
-**See:** `CMakeLists.txt`; `meshes/make_all.py`; `meshes/README.md`.
+**See:** `CMakeLists.txt`.
 
 ### Code questions from the library comment pass
 
-**Status:** open; each needs a decision (all are code changes, none made).
+**Status:** open; the remaining two need a decision.
 
-1. **`SetVacuumExtension` default** (`referential_problem.hpp`):
-   `refinements = 3`, but `doc/gauge_penalty_iteration.tex` ("When it must
-   fail: the spectral condition") shows refinement diverges for the
-   ball-wide buffer. Default to 0?
-2. **`EnableBrokenZeta` after `EnableKKT`**: `EnableKKT` refuses broken ζ,
-   but `EnableBrokenZeta` does not check `kkt_`; in that order the broken
-   organisation runs silently. Refuse both ways?
-3. **`EnableGaugeKKT` is never covariant**: it calls `SetGaugedFluid`
-   with `map = nullptr`. Intended?
-4. **`ClearGaugedFluid()`** does not reset `gauge_lambda_eps_` /
-   `gauge_Cdev_` (harmless: reassigned on the next `SetGaugedFluid`).
-5. **`SphericalMeshHelper`** (`src/mesh.cpp:243, 252`) checks sphericity
-   with `assert` only (skipped in release builds): `MFEM_VERIFY`?
-6. **`PoissonDtNOperator`** creates `bdr_comm_` with `MPI_Comm_split`
-    and never frees it.
-7. **Manifest fluid rule** (`src/mesh_manifest.cpp:256`): a layer listed
-    in `meta.fluid_layers` is fluid even when `layers[].fluid` is false
-    (the two are combined). Should the list apply only where
-    `layers[].fluid` is null?
-8. **Doxygen and out-of-class definitions**: the "no matching class
+1. **Doxygen and out-of-class definitions**: the "no matching class
     member" warnings in `src/` are silenced with `/// @cond` around five
     constructor and three `Coefficients` definitions (their types are
     unqualified under `using namespace mfem`); qualifying the types
     (`mfem::`) would let Doxygen list them instead.
-9. **Small documentation questions**: the use to name for
+2. **Small documentation questions**: the use to name for
     `DomainLFDeformationGradientIntegrator` (only tests use it; the
     comment says a prescribed-stress source); the reason
     `RelabelledBackground` requires ξ to be the identity at and outside
-    the surface; the equation number cited in `coefficient.hpp:81`
-    (Al-Attar & Tromp 2014, eq. 2.8) for the fluid mass term.
+    the surface. (The `coefficient.hpp` Al-Attar & Tromp citation was
+    softened to drop its unverified equation number.)
 
 ---
 

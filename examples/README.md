@@ -288,7 +288,7 @@ geometry and load an option, and `-Omega` adding the rotational
 feedback to the same bordered solve; frozen shorelines (first-order
 exact). The default mesh, `data/fingerprint_ring_3d.msh`, is refined
 in a ring about this state's shoreline circle
-(`meshes/fingerprint_coastline.py`). `-earth` swaps in the real
+(`meshes/earth_coastlines.py --field analytic`). `-earth` swaps in the real
 present-day geography — ICE-7G topography and ice sampled at the
 surface nodes by the `ice_ng_to_surface` chain (the first run prints
 the exact commands) — and melts Greenland or West Antarctica
@@ -514,7 +514,7 @@ viscous interface traction is O(sqrt J). The relaxed fluid goes quiet
 while the aspherical solid keeps its unavoidable share; the run prints
 the fluid/mantle/core ||dev T|| split and the datum. The stress maps
 are elementwise, since |dev T| genuinely jumps at the CMB and ICB —
-refine the mesh (equilibrium_bodies.py --scale) for a finer image.
+refine the mesh (layered_earth.py --scale) for a finer image.
 `./equilibrium_density -vis`, `./equilibrium_density -shape cmb`,
 `./equilibrium_density -blob 0.5 -vis`, `./equilibrium_density -no-ic`
 

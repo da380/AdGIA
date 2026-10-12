@@ -47,7 +47,7 @@ earth-data tools; see INSTALL.md), made once:
 ```
 cd <repo>
 poetry install                       # planetmodel[meshing,mfem]>=1.2.4 among others
-poetry run python meshes/unit_disc.py -h    # any one script; -h lists its options
+poetry run python meshes/homogeneous_body.py -h    # any one script; -h lists its options
 poetry run python meshes/make_all.py --out /some/dir
 poetry run python meshes/layered_earth.py --all --scale 0.5 --out <build>/data
 ```
@@ -57,7 +57,7 @@ the four layered-Earth meshes over the canned ones in the build tree,
 and the examples and tests on them then run at that resolution; the
 build puts the coarse version back only when the script next changes.
 `make_all.py` forwards `--scale` to every script it runs, for a finer
-full set. `equilibrium_bodies.py` and `aspherical_body.py` also take
+full set. `layered_earth.py` and `aspherical_body.py` also take
 `--name`, a suffix on the file names, for keeping several versions side
 by side.
 
@@ -79,21 +79,21 @@ gitignored. Pass `--out <build>/data` to replace the canned meshes.
 
 | script | writes | read by (examples unless stated) |
 |---|---|---|
-| `unit_disc.py` | `disc_2d.msh` | transformed_diffusion |
-| `unit_ball.py` | `ball_3d.msh` | transformed_diffusion, anisotropic_elasticity |
+| `homogeneous_body.py --preset disc` | `disc_2d.msh` | transformed_diffusion |
+| `homogeneous_body.py --preset ball` | `ball_3d.msh` | transformed_diffusion, anisotropic_elasticity |
 | `offset_disc.py` | `offset_disc_2d.msh` | poisson_dtn, submesh_injection |
-| `disc_with_buffer.py` | `disc_buffer_2d.msh` | elastogravity_layered, equilibrium_stress, lateral_viscosity, love_numbers, referential_elastogravity; tests |
-| `disc_with_wide_buffer.py` | `disc_buffer_wide_2d.msh` (buffer out to radius 2, for strongly non-trivial equilibrium mappings) | prestress_loading |
-| `ball_with_buffer.py` | `ball_buffer_coarse_3d.msh` | coupled_poisson, elastogravity_layered, love_numbers, referential_elastogravity, viscoelastic_love_numbers; tests |
-| `layered_earth.py --all` | `earth_fluidcore_2d.msh` | elastogravity_layered, equilibrium_density, gauged_fluid_cavity, self_gravitating_relaxation, self_gravitating_solvers, sliding_fluid_ellipse; tests |
+| `homogeneous_body.py --preset disc-buffer` | `disc_buffer_2d.msh` | elastogravity_layered, equilibrium_stress, lateral_viscosity, love_numbers, referential_elastogravity; tests |
+| `homogeneous_body.py --preset disc-buffer-wide` | `disc_buffer_wide_2d.msh` (buffer out to radius 2, for strongly non-trivial equilibrium mappings) | prestress_loading |
+| `homogeneous_body.py --preset ball-buffer-coarse` | `ball_buffer_coarse_3d.msh` | coupled_poisson, elastogravity_layered, love_numbers, referential_elastogravity, viscoelastic_love_numbers; tests |
+| `layered_earth.py --all --shape none` | `earth_fluidcore_2d.msh` | elastogravity_layered, equilibrium_density, gauged_fluid_cavity, self_gravitating_relaxation, self_gravitating_solvers, sliding_fluid_ellipse; tests |
 | | `earth_innercore_2d.msh` | elastogravity_layered, equilibrium_density, self_gravitating_relaxation; tests |
 | | `earth_fluidcore_3d.msh` | equilibrium_density |
 | | `earth_innercore_3d.msh` | elastogravity_layered, equilibrium_density, gauged_fluid_cavity, self_gravitating_relaxation; tests |
-| `equilibrium_bodies.py --all` | `earth_{fluidcore,innercore}_flat_{2d,3d}.mesh` (every interface flattened, `--flattening`), `earth_{fluidcore,innercore}_cmbtopo_{2d,3d}.mesh` (oscillatory CMB topography, `--amplitude`, `--degree`), `earth_{fluidcore,innercore}_cmbbump_{2d,3d}.mesh` (one Gaussian CMB bump, `--amplitude`, `--width`) | equilibrium_density (its `-shape flat\|cmb\|bump` defaults) |
+| `layered_earth.py --all --shape shaped` | `earth_{fluidcore,innercore}_flat_{2d,3d}.mesh` (every interface flattened, `--flattening`), `earth_{fluidcore,innercore}_cmbtopo_{2d,3d}.mesh` (oscillatory CMB topography, `--amplitude`, `--degree`), `earth_{fluidcore,innercore}_cmbbump_{2d,3d}.mesh` (one Gaussian CMB bump, `--amplitude`, `--width`) | equilibrium_density (its `-shape flat\|cmb\|bump` defaults) |
 | `aspherical_body.py --all` | `aspherical_{2d,3d}.mesh`, `aspherical_buffer_{2d,3d}.mesh` | any example given `-m` (the script's docstring lists runs); `aspherical_buffer_3d.mesh`: `benchmarks/relabelling/aspherical_reference.cpp` and `benchmarks/campaign.py` |
 | | `aspherical_fluid_core_buffer_{2d,3d}.mesh` (fluid core and mantle, both stretched, buffer) and `spherical_fluid_core_buffer_{2d,3d}.mesh` (the same unstretched) | slipping_interface |
-| `earth_coastlines.py` | `earth_coastlines.msh` (the ball in a thin buffer, surface-refined along the real shorelines of the committed lmax-64 ICE-7G topography; see below) | ice_age_loading and sea_level_fingerprint through `-m` |
-| `fingerprint_coastline.py` | `fingerprint_ring_3d.msh` (the same ball, refined in a ring about the analytic shoreline of the fingerprint example's default state) | sea_level_fingerprint (its default mesh) |
+| `earth_coastlines.py --field earth` | `earth_coastlines.msh` (the ball in a thin buffer, surface-refined along the real shorelines of the committed lmax-64 ICE-7G topography; see below) | ice_age_loading and sea_level_fingerprint through `-m` |
+| `earth_coastlines.py --field analytic` | `fingerprint_ring_3d.msh` (the same ball, refined in a ring about the analytic shoreline of the fingerprint example's default state) | sea_level_fingerprint (its default mesh) |
 | `make_all.py` | runs every script above, the `--all` forms included: the set the build makes | |
 
 The benchmarks mesh
@@ -103,13 +103,13 @@ where listed.
 
 `common.py` holds what the scripts share: the command line (`--out DIR`,
 `--verbose`, `--scale`), the layered Earth's radii, element sizes and
-geometry (`layered_earth.py` and `equilibrium_bodies.py` build on the same
-ones), the sizing of a thin-buffer ball, the export of an aspherical
+geometry (`layered_earth.py` builds the spherical and aspherical layered
+models on them), the sizing of a thin-buffer ball, the export of an aspherical
 mesh to MFEM, and `SeaLevelBand`, the refinement of the coastline meshes.
 
 ## The coastline mesh
 
-`earth_coastlines.py` refines the ball along the real shorelines. The
+`earth_coastlines.py --field earth` refines the ball along the real shorelines. The
 shoreline is pre-processed at export: `earth_data/topography_grid.py`
 writes, beside the truncated topography, a `coast_rad` field — the
 great-circle distance to the coast of the near-native-resolution
@@ -123,7 +123,7 @@ coast and radially near the surface, and the size then grows at the
 bounded rate `--gradation` — bounded so that the advancing front
 cannot step over a fine band narrower than the background size, which
 is what loses whole coastlines. No polylines are isolated: it is one
-sizing field (`common.SeaLevelBand`, which `fingerprint_coastline.py`
+sizing field (`common.SeaLevelBand`, which `--field analytic`
 reuses for the analytic shoreline ring of the fingerprint example).
 
 The default grid is **committed beside the script**

@@ -83,7 +83,7 @@
 // Boundary attributes: the surface of the body (where the surface load acts)
 // is the LARGEST boundary attribute of the body submesh. The default
 // ../data/disc_buffer_wide_2d.msh is made by
-// meshes/disc_with_wide_buffer.py (unit disc, buffer to r = 2). All
+// meshes/homogeneous_body.py --preset disc-buffer-wide (unit disc, buffer to r = 2). All
 // quantities nondimensional: rho = 1, bare kappa = 2, bare mu = 1.
 // ============================================================================
 

@@ -189,11 +189,14 @@ def make_case(model_name: str, *, dim: int = 2, mode=(1,),
     load_spec["history"] = history.to_json()
     if times is None:
         times = output_times(t_final, n_times, history)
+    # Every result-changing parameter appears in the name, so a cached
+    # run can never be reused for different physics.
     tag = name or "_".join(
         [model_name, f"{dim}d", load]
         + ([f"n{'x'.join(str(m) for m in load_spec['mode'])}"]
            if kind == "slab" else [])
-        + [history.name])
+        + [history.tag(), f"C{contrast:g}", f"W{width:g}",
+           f"t{t_final:g}x{n_times}"])
     return {"schema": "viscoelastic_box/1", "name": tag, "model": model_name,
             "dim": dim,
             "geometry": geometry, "layers": layers, "load": load_spec,

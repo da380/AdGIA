@@ -56,8 +56,8 @@
 //         ../data/ball_3d.msh (there is no mesh option).
 //   -vis / -no-vis   GLVis windows on or off [on]; -no-vis runs headless.
 //
-// Mesh requirements: the unit disk (meshes/unit_disc.py -> disc_2d.msh) or the
-// unit ball (meshes/unit_ball.py -> ball_3d.msh), origin-centred, radius 1, a
+// Mesh requirements: the unit disk (meshes/homogeneous_body.py --preset disc -> disc_2d.msh) or the
+// unit ball (meshes/homogeneous_body.py --preset ball -> ball_3d.msh), origin-centred, radius 1, a
 // single body attribute and boundary attribute 1 (the Dirichlet boundary).
 // The twist is the identity at r = 1, so the boundary data are unchanged.
 // Nondimensional.
@@ -145,8 +145,8 @@ int main(int argc, char *argv[]) {
   // === 1. Set default options and parse command-line arguments ===
 
   // Default mesh files
-  string mesh_file2 = "../data/disc_2d.msh";  // 2D unit disk (meshes/unit_disc.py)
-  string mesh_file3 = "../data/ball_3d.msh";  // 3D unit ball (meshes/unit_ball.py)
+  string mesh_file2 = "../data/disc_2d.msh";  // 2D unit disk (meshes/homogeneous_body.py --preset disc)
+  string mesh_file3 = "../data/ball_3d.msh";  // 3D unit ball (meshes/homogeneous_body.py --preset ball)
   // Default finite element polynomial order
   int order = 2;
   // Default number of uniform mesh refinements

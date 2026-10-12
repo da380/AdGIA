@@ -22,7 +22,7 @@
 // of the cap through the smooth factor (1 + tanh(x/melt_width))/2
 // (regular at the pole), so the fingerprint carries non-zonal structure.
 // The default mesh, data/fingerprint_ring_3d.msh
-// (meshes/fingerprint_coastline.py), is refined in a ring about this
+// (meshes/earth_coastlines.py --field analytic), is refined in a ring about this
 // state's shoreline circle; change the state's options there and here
 // together, or run on any ball-in-buffer mesh through -m.
 //
@@ -101,9 +101,9 @@
 // Mesh requirements. A 3-D unit ball in a buffer: domain attribute 1 is
 // the body (unit radius) and 2 the buffer; boundary attribute 1 is the
 // ball's surface and 2 the outer sphere (layout of meshes/
-// ball_with_buffer.py). On the body submesh the surface is the highest
+// homogeneous_body.py --preset ball-buffer-coarse). On the body submesh the surface is the highest
 // boundary attribute. The default ../data/fingerprint_ring_3d.msh
-// (meshes/fingerprint_coastline.py) is order 2 and refined about the
+// (meshes/earth_coastlines.py --field analytic) is order 2 and refined about the
 // simple state's shoreline circle, so it is tied to the simple state's
 // default options; ../data/earth_coastlines.msh (meshes/
 // earth_coastlines.py) is refined along the real coastlines, for -earth.
