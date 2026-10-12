@@ -399,7 +399,8 @@ void LinearQuasiStaticProblemBase::SetFluid(
               "SetFluid: the Maxwell treatment is incompatible with "
               "SetGaugePreconditionerOnly.");
   MFEM_VERIFY(opts.dt_over_tau > 0.0 && opts.escalate >= 1.0 &&
-                  opts.beta_max >= opts.dt_over_tau && opts.max_steps > 0,
+                  opts.beta_max >= opts.dt_over_tau && opts.max_steps > 0 &&
+                  opts.prec_eps >= 0.0,
               "SetFluid: invalid Maxwell schedule options.");
   maxwell_opts_ = opts;
   if (opts.plateau_mode) {
@@ -737,6 +738,28 @@ bool LinearQuasiStaticProblemBase::MaxwellSolve() {
     }
   };
 
+  // Frozen preconditioner (prec_eps > 0): assemble the operator at the
+  // moderate frozen epsilon and build the preconditioner on it, then
+  // pin it for the whole continuation. The spike heuristic would
+  // otherwise rebuild on the current — ever worse conditioned —
+  // small-eps operator once the iteration count doubles.
+  const real_t reuse_saved = prec_reuse_;
+  if (o.prec_eps > 0.0) {
+    prec_stale_ = true;
+    if (fluid_op_.Epsilon() == o.prec_eps && !operator_dirty_ &&
+        !eps_only_dirty_) {
+      // A clean operator already at prec_eps gives EnsureOperator
+      // nothing to do: force one setup through the available path.
+      if (fluid_op_.HasUnitCache()) {
+        eps_only_dirty_ = true;
+      } else {
+        operator_dirty_ = true;
+      }
+    }
+    set_operator(o.prec_eps);
+    prec_reuse_ = infinity();
+  }
+
   const char* stop = "max_steps";
   real_t delta = infinity();
   long its_first = -1;
@@ -746,13 +769,15 @@ bool LinearQuasiStaticProblemBase::MaxwellSolve() {
       set_operator(1.0 / (1.0 + beta));
       aa_g.clear();
       aa_r.clear();
-      if (first) {
-        w.SetSize(X_.Size());
-        w = 0.0;
-        r.SetSize(X_.Size());
-        BuildMaxwellSolidDofs();
-        first = false;
-      }
+    }
+    if (first) {
+      // Outside the operator-change guard: with the frozen
+      // preconditioner the loop may open at eps_cur == 1/(1 + beta).
+      w.SetSize(X_.Size());
+      w = 0.0;
+      r.SetSize(X_.Size());
+      BuildMaxwellSolidDofs();
+      first = false;
     }
     // The step, with its tolerance validated against the increment it
     // measures (the stopping metric: the relative per-step SOLID
@@ -898,6 +923,7 @@ bool LinearQuasiStaticProblemBase::MaxwellSolve() {
   }
   maxwell_report_.steps =
       static_cast<int>(maxwell_report_.t_over_tau.size());
+  prec_reuse_ = reuse_saved;
   a_->RecoverFEMSolution(X_, rhs_, *u_);
   return ok;
 }

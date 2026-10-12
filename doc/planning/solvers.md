@@ -26,8 +26,12 @@ no win — "Near-incompressible and high-contrast effective operators"
 below), which orders the remaining work:
 
 1. the frozen moderate-ε preconditioner for the Maxwell continuation
-   ("The Maxwell endgame's own lever") — one measurement, hits the
-   production fluid treatment;
+   ("The Maxwell endgame's own lever") — **measured, no win locally
+   (12 October 2026)**: the default reuse already holds the
+   physical-phase preconditioner to the end of the continuation, and
+   freezing lower degrades cost and quality both; the knob
+   (`MaxwellRelaxationOptions::prec_eps`, `-mxpe`) stays for the
+   server h-ladder;
 2. the border-column cache per operator flavour ("Border-column cache
    against the stepper's modulus switches") — small, restores a
    measured −43 %;
@@ -471,16 +475,32 @@ deflation. The flag stays for h-ladder confirmation on the server
 profile (the local meshes are small, and the degradation grows
 with resolution).
 
-*The Maxwell endgame's own lever.* The escalation already reuses its
-AMG across ε changes until the iteration count spikes past
-`prec_reuse_` × baseline. The untested refinement: build the
-preconditioner DELIBERATELY at a moderate ε_prec (1e-2-ish) and keep
-it for the whole continuation — the solid-everywhere spectrum
-argument (above) bounds the preconditioned spectrum away from zero
-uniformly in the operator's ε, so the tiny-ε solves should cost
-near the moderate-ε rate rather than degrading until the spike
-heuristic fires. One measurement on the fluid_core continuation
-decides it.
+*The Maxwell endgame's own lever: measured, no win (12 Oct 2026).*
+The escalation already reuses its AMG across ε changes until the
+iteration count spikes past `prec_reuse_` × baseline; the proposed
+refinement was to build the preconditioner DELIBERATELY at a moderate
+ε_prec and hold it for the whole continuation
+(`MaxwellRelaxationOptions::prec_eps`, benchmark flag `-mxpe`; 0 keeps
+the heuristic). Measured at np 4, order 2, h = 0.3, l = 2: pinning at
+the physical-phase ε₀ = 1/(1 + β₀) = 0.25 is digit-identical to the
+default on BOTH `fluid_core` (2706 iterations, 32 steps) and `aw_core`
+(1583 iterations, 15 steps) — the spike heuristic never fires on these
+continuations, so the default reuse already holds the moderate-ε
+preconditioner to the end and there is no rebuild-on-a-degraded-operator
+cost to remove. Freezing deliberately lower is harmful both ways: at
+ε_prec = 1e-1–1e-3 on `fluid_core` the iterations rise to 2904–3080
+(+7–14 %) and the returned state degrades (solid increment
+1.26e-4 → ~2.5e-3, spurious 0.0044 → 0.0099). The spectrum bound is
+uniform only in the operator's ε ≤ ε_prec; the physical phase at
+ε₀ > ε_prec is the bad direction, its steps cost more iterations under
+the mismatched preconditioner, and the iteration-sensitive stopping
+rules (`iter_budget`, the solver floor) then end the escalation at
+step 16 instead of 32 — preconditioner quality feeds the returned
+physics through the stopping heuristics, not just the wall time. The
+knob stays for the server h-ladder (a spike that never fires at
+h = 0.3 may fire at production resolution); locally the endgame lever
+moves to the remaining candidates, the mixed (u, p) block
+preconditioner and deflation.
 
 **See:** `doc/benchmarks.tex`, "Box: viscosity contrasts", "Sphere: the
 integrators with lateral viscosity variations";

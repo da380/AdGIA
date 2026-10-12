@@ -110,6 +110,17 @@ struct MaxwellRelaxationOptions {
    * trajectory, so plateau_mode ignores it and steps plainly. */
   int anderson = 0;
   bool plateau_mode = false;     ///< stop at the physical plateau instead
+  /** @brief Frozen preconditioner: with prec_eps > 0 the displacement
+   * preconditioner is built once on the operator at
+   * @f$\epsilon = @f$ prec_eps (the fluid made moderately solid) and
+   * held for the whole continuation. The solid-everywhere spectrum
+   * bound is uniform in the operator's @f$\epsilon@f$, so the
+   * small-@f$\epsilon@f$ endgame solves are expected to run near the
+   * moderate-@f$\epsilon@f$ rate instead of degrading until the
+   * iteration-spike heuristic rebuilds on the current — ever worse
+   * conditioned — operator. 0 keeps the spike-heuristic reuse
+   * (SetPreconditionerReuse). */
+  mfem::real_t prec_eps = 0.0;
 };
 
 /** @brief The gauge penalty's form: Deviatoric (a fluid: dev-dev
