@@ -423,6 +423,36 @@ near-null-space rigid-mode vectors); a mixed (u, p) formulation of the
 solid with a pressure-robust block preconditioner; deflation of the
 relaxed region's near-null space.
 
+*Rigid-mode interpolation vectors: measured, no win (12 Oct 2026).*
+`SetElasticityNearNull()` attaches the rigid rotations as hypre GM-2
+interpolation vectors on top of the nodal-systems default (the
+byNODES-compatible equivalent of mfem's `SetElasticityOptions`;
+benchmark flag `-amg-rbm` in the love and box drivers). Measured at
+np 4: `fluid_core` h 0.3, referential, l = 2 — endpoints
+digit-identical, iterations 155 both ways, wall 7.8 → 11.7 s; box
+`contrast` C = 1e4 — 3593 → 3474 iterations, wall +20 %; box
+`gradient` C = 1e6 — 6231 → 6166 iterations, wall +10 %. fluid_core maxwell, l = 2 — the harshest small-μ
+configuration (the continuation drives the fluid's effective shear
+ε μ_c toward zero): 2706 → 2873 outer iterations, wall 15.5 → 25.4 s,
+the re-setup on every escalation operator pure cost. The nodal
+coarsening already captures what the rotations add on these
+operators, so AMG-side vector tuning is not the lever here; the
+remaining candidates are the mixed (u, p) block preconditioner and
+deflation. The flag stays for h-ladder confirmation on the server
+profile (the local meshes are small, and the degradation grows
+with resolution).
+
+*The Maxwell endgame's own lever.* The escalation already reuses its
+AMG across ε changes until the iteration count spikes past
+`prec_reuse_` × baseline. The untested refinement: build the
+preconditioner DELIBERATELY at a moderate ε_prec (1e-2-ish) and keep
+it for the whole continuation — the solid-everywhere spectrum
+argument (above) bounds the preconditioned spectrum away from zero
+uniformly in the operator's ε, so the tiny-ε solves should cost
+near the moderate-ε rate rather than degrading until the spike
+heuristic fires. One measurement on the fluid_core continuation
+decides it.
+
 **See:** `doc/benchmarks.tex`, "Box: viscosity contrasts", "Sphere: the
 integrators with lateral viscosity variations";
 `src/quasi_static_problem.cpp` (`SetupDefaultPreconditioner`).

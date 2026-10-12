@@ -737,11 +737,15 @@ its degree-4 point; the gap predates the combined-degree mode.
 
 **Status:** open; the remaining two need a decision.
 
-1. **Doxygen and out-of-class definitions**: the "no matching class
-    member" warnings in `src/` are silenced with `/// @cond` around five
-    constructor and three `Coefficients` definitions (their types are
-    unqualified under `using namespace mfem`); qualifying the types
-    (`mfem::`) would let Doxygen list them instead.
+1. **Residual Doxygen "no matching class member" warnings**: the
+    `@cond` blocks are gone and the once-hidden definitions are
+    `mfem::`-qualified and documented, but the configured Doxyfile
+    still reports 18 such warnings (e.g. `src/adjoint.cpp`,
+    `src/sea_level.cpp` around `IceHistory`/`SeaLevelChangeInfo`).
+    These are Doxygen resolution quirks — nested return types and
+    classes it fails to index at the definition site — not
+    qualification problems; candidate fixes are `\memberof` hints or
+    header reorganisation, neither obviously worth it.
 2. **Small documentation questions**: the use to name for
     `DomainLFDeformationGradientIntegrator` (only tests use it; the
     comment says a prescribed-stress source); the reason

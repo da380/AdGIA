@@ -106,6 +106,7 @@ int main(int argc, char* argv[]) {
   bool align = true;
   bool conform = true;
   real_t rtol = 1e-4, atol = 1e-10;
+  bool amg_rbm = false;
 
   OptionsParser args(argc, argv);
   args.AddOption(&case_file, "-c", "--case", "Case file (cases.py).");
@@ -116,6 +117,10 @@ int main(int argc, char* argv[]) {
   args.AddOption(&nz, "-nz", "--nz", "Elements along z.");
   args.AddOption(&scheme, "-scheme", "--scheme",
                  "exptrap (default), sdirk23, be, etd1, rk4 or adaptive.");
+  args.AddOption(&amg_rbm, "-amg-rbm", "--amg-rigid-rotations",
+                 "-no-amg-rbm", "--no-amg-rigid-rotations",
+                 "Rigid-rotation GM-2 interpolation vectors on the "
+                 "displacement AMG (off = the nodal-systems default).");
   args.AddOption(&rheology_mode, "-rheology", "--rheology",
                  "composite (one region per layer, by element centre) or "
                  "pointwise (layers looked up at every point).");
@@ -411,6 +416,9 @@ int main(int argc, char* argv[]) {
   } else {
     problem = std::make_unique<LinearQuasiStaticClampedProblem>(
         &fes, *rheology, bottom, traction, top);
+  }
+  if (amg_rbm) {
+    problem->SetElasticityNearNull();
   }
   problem->SetPrintLevel(IterativeSolver::PrintLevel().None());
 
