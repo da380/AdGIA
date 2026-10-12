@@ -352,9 +352,13 @@ composes after (the library verifies this). Maps via
 **`gia_kernels`**: the adjoint demonstrator — first-order GIA
 sensitivity kernels on an idealised, well-resolved configuration,
 everything analytic (homogeneous Maxwell planet, 1-D
-viscosity background, a smooth polar continent carrying a Gaussian ice
-blob melting linearly, a windowed point-like sea-level measure at a
-distant ocean site, present day = the final time). One forward run and
+viscosity background, rotational feedback on an idealised oblate
+dynamical figure, a smooth polar continent carrying a Gaussian ice
+blob OFF the rotation axis melting linearly — the off-axis unloading
+excites polar wander — a windowed point-like sea-level measure at an
+equatorial ocean site, present day = the final time; the SL
+observation is the strict four-slot dual: u, phi, uniform term and
+omega row). One forward run and
 one adjoint sweep (`adjoint.hpp`) give: the VISCOSITY kernel as a
 volume field (GLVis; `visc_kernel.mesh`/`.gf` for cutting-plane
 screenshots), lon-lat maps on depth shells, and the great-circle SLICE
@@ -362,16 +366,22 @@ through site and blob (`visc_kernel_slice.csv`); the quelled ICE-RATE
 kernels D_İ(x, t) at chosen epochs; and, with `-taylor`, the TAYLOR
 TEST (exact J(m₀ + s δm) vs the affine adjoint prediction for a
 sub-blob mantle viscosity perturbation and an ice-rate pattern).
-Defaults are kernel-honest: order 2 (the order-1 warning applies) and
-one refinement; the whole chain runs in ~36 s serial, the Taylor sweep
-a few minutes. Maps via
+Defaults are kernel-honest: order 2 (the order-1 warning applies) on
+`ball_buffer_3d.msh`, refined towards the surface; the whole chain
+runs in a few minutes on 8 ranks, the Taylor sweep a few times that.
+The viscosity kernel is exported as its L2 projection onto the H1
+space (the model has no material discontinuities, so the kernel is
+smooth and the continuous representative plots cleanly), optionally
+beside its Sobolev gradient (`-sl`, `-so`); the ice-kernel maps are
+masked by the exported ice footprint and all maps carry the analytic
+shoreline (`--mask-csv`/`--shore-csv`). Maps via
 `<build>/earth_data/plot_fingerprint_kernel ... --no-mask
 --global-only` (the printed hints give exact commands).
 Parallel runs export the SAME figure set (rank 0 reloads the gathered
 kernel and samples the shells and slice), so the finer figure runs are
 one command. `./gia_kernels -no-vis`,
 `./gia_kernels -taylor 3 -no-vis`,
-`mpiexec -np 8 ./gia_kernels -r 2 -no-vis`
+`mpiexec -np 8 ./gia_kernels -r 1 -no-vis`
 
 **`ice_age_loading`**: the ICE-7G deglaciation on a Maxwell planet —
 the surface exchange chain end to end. Step 1 (no `-ice`) exports the

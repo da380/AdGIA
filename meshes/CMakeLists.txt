@@ -147,6 +147,7 @@ meshes_add(homogeneous_body.py ball_3d ARGS --preset ball)
 meshes_add(homogeneous_body.py disc_buffer_2d ARGS --preset disc-buffer)
 meshes_add(homogeneous_body.py disc_buffer_wide_2d
                                ARGS --preset disc-buffer-wide)
+meshes_add(homogeneous_body.py ball_buffer_3d ARGS --preset ball-buffer)
 meshes_add(homogeneous_body.py ball_buffer_coarse_3d
                                ARGS --preset ball-buffer-coarse)
 meshes_add(offset_disc.py      offset_disc_2d)

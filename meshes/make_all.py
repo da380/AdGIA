@@ -24,6 +24,7 @@ SCRIPTS = [
     ["homogeneous_body.py", "--preset", "disc"],
     ["homogeneous_body.py", "--preset", "disc-buffer"],
     ["homogeneous_body.py", "--preset", "disc-buffer-wide"],
+    ["homogeneous_body.py", "--preset", "ball-buffer"],
     ["homogeneous_body.py", "--preset", "ball-buffer-coarse"],
     ["homogeneous_body.py", "--preset", "ball"],
     ["offset_disc.py"],
