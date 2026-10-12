@@ -33,8 +33,9 @@ below), which orders the remaining work:
    (`MaxwellRelaxationOptions::prec_eps`, `-mxpe`) stays for the
    server h-ladder;
 2. the border-column cache per operator flavour ("Border-column cache
-   against the stepper's modulus switches") — small, restores a
-   measured −43 %;
+   against the stepper's modulus switches") — **done 12 October 2026**,
+   merged with the unrelaxed/effective operator caching into the
+   modulus-flavour cache (alternation gate: 13 → 2 assemblies);
 3. the mixed (u, p) pressure-robust block preconditioner, prototyped
    on the box contrast case before any gravitating class ("Options"
    of the near-incompressible item; deflation is the fallback);
@@ -573,18 +574,15 @@ integrators on a homogeneous body" (cost), "Box: viscosity contrasts";
 
 ### Caching unrelaxed and effective operators
 
-**Status:** proposal (wait and see).
-
-Adjoint calculations will apply load jumps that need the unrelaxed moduli
-at every observation time, possibly many, interleaved with effective-
-modulus steps. That is the use case for caching both stiffness versions
-(matrix and preconditioner keyed by relaxation state) instead of
-reassembling on every switch (`UseUnrelaxedOperator`). Decide when the
-adjoint work starts.
+**Status:** DONE 12 October 2026 — the modulus-flavour cache; one
+mechanism with the border-column item, see "Border-column cache
+against the stepper's modulus switches" (which also records why the
+preconditioner stays shared rather than per-flavour).
 
 **See:** `doc/viscoelasticity.md` §3; `src/viscoelastic.cpp`
-(`UseUnrelaxedOperator`); `include/AdGIA/quasi_static_problem.hpp`
-(`SetPreconditionerReuse`).
+(`UseUnrelaxedOperator`, `SetEffectiveModulus`);
+`include/AdGIA/quasi_static_problem.hpp`
+(`RestoreRelaxationWeights`).
 
 ---
 
@@ -648,19 +646,48 @@ solve.
 
 ### Border-column cache against the stepper's modulus switches
 
-**Status:** open; see also "Caching unrelaxed and effective operators"
-above.
+**Status:** DONE 12 October 2026, together with "Caching unrelaxed and
+effective operators" — one mechanism, the modulus-flavour cache.
 
-The border-column cache is keyed on `OperatorVersion()`, so the
-exponential-trapezoid stepper's per-step switch between the unrelaxed
-and effective operators invalidates it each step (measured: the water
-history keeps the full −43 % economy because its passes share one
-operator era; the rotating stack keeps only −23 %). Caching the
-columns per operator *flavour* alongside the cached operators would
-restore the full economy for schemes that alternate.
+The problem base keeps the assembled operator state of the unrelaxed
+and the last relaxed stiffness in two slots
+(`RestoreRelaxationWeights()`; `ViscoelasticOperator` re-engages an
+unchanged weight set through it), so a stepper alternating between the
+two — effective steps interleaved with unrelaxed observation or
+adjoint impulse solves, the adjoint sweep against epoch-resolved
+observations being the production case — swaps cached matrices and
+operator versions instead of reassembling. The revived version revives
+every version-keyed cache; `BorderedElimination` keeps two column
+sets (most recently used first), so both flavours hold their columns.
+Any non-flavour mutation goes through `MarkOperatorDirty()` and drops
+the slots — a revived version never outlives the state it keyed.
+Steady-dt stepping alone never alternates (the trapezoid's end state
+is unrelaxed-consistent, so the plain history was already at two
+assemblies); the win is wherever observation solves break the step
+cache: the alternation gate
+(`TestSeaLevelViscoelastic.AlternationRestoresFlavors` + the par
+twin's section 4) runs water + rotation with a per-step invalidated
+observation solve at 2 assemblies against 13 before (wall 640 → 334 ms
+on the gate; mass row checked at every flip, fresh-problem identity at
+1e-8).
 
-**See:** `src/mixed_problem.cpp::SolveLinearSystem`;
-`tests/TestSeaLevelViscoelastic.cpp` (the iteration prints).
+THE PRECONDITIONER IS DELIBERATELY NOT PER-FLAVOUR: it keeps the
+shared-reuse policy. A first per-flavour version exposed a LATENT
+PRECONDITIONER FRAGILITY (now in `open_issues.md`): a fresh BoomerAMG
+built on the power-law EFFECTIVE traction operator (pure Neumann,
+small effective shear) returns NaN at np 2 — reachable in the
+pre-cache library through `SetPreconditionerReuse(1.0)`, and masked in
+production only because the reuse heuristic happens never to rebuild
+on that operator. Until the near-incompressible preconditioning item
+above lands, cross-flavour prec reuse is the behaviour-preserving
+choice; the slots carry explicit keep-alives (`prec_ref_slot_`, the
+referential fold hook) so the shared preconditioner's matrices
+survive slot swaps.
+
+**See:** `src/quasi_static_problem.cpp`
+(`StashFlavor`/`TryRestoreFlavor`/`ReleaseFlavorSlot`);
+`include/AdGIA/bordered.hpp`; `src/viscoelastic.cpp`
+(`SetEffectiveModulus`); `tests/TestSeaLevelViscoelastic(.Par).cpp`.
 
 ---
 

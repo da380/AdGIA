@@ -363,9 +363,15 @@ class ViscoelasticOperator : public mfem::TimeDependentOperator {
   std::function<void(mfem::real_t)> force_hook_;  ///< see SetForceHook
   mutable mfem::Vector d_, d_prev_, dual_, force_, zeta_;  ///< scratch
 
+  // The weight memo: the (scheme, dt, tau version) the beta_ VALUES
+  // hold. It survives UseUnrelaxedOperator() — only relax_engaged_
+  // flips — so a flip back to the same effective modulus re-engages
+  // the problem's cached flavour (RestoreRelaxationWeights) instead of
+  // recomputing and reassembling.
   mutable Scheme scheme_ = Scheme::None;
   mutable mfem::real_t effective_dt_ = -1.0;
   mutable long effective_version_ = -1;  ///< tau version the weights hold
+  mutable bool relax_engaged_ = false;   ///< weights active in the problem
   mutable long tau_version_ = 0;         ///< bumped by EvaluateRelaxationTimes
 
   // Exponential-trapezoid nodal weights (e, alpha, beta) per branch, valid

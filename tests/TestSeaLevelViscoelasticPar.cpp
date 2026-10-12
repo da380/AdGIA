@@ -236,6 +236,50 @@ void RunCase(int order, const std::string& label) {
     Check(std::isfinite(om) && om > 0.0 ? 0.0 : 1.0, 0.0,
           label + ": finite spin");
   }
+
+  // 4. Flavour-cache alternation (the adjoint-sweep pattern):
+  //    effective steps interleaved with unrelaxed observation solves
+  //    whose displacement the step cache does not cover. The problem's
+  //    modulus-flavour cache restores the assembled operators and
+  //    border columns, so the whole history assembles each flavour
+  //    exactly once; the mass row at every flip gates the restored
+  //    columns, and a fresh problem gates the restored solve.
+  auto pa = make_problem(maxwell, true);
+  {
+    ViscoelasticOperator visco(*pa);
+    ExponentialTrapezoidSolver ode;
+    ode.Init(visco);
+    Vector m(visco.Height());
+    m = 0.0;
+    double t = 0.0;
+    Check(visco.SolveElastic(m, t) ? 0.0 : 1.0, 0.0,
+          label + ": alternation elastic response");
+    const int n = 6;
+    double dt = 0.5 * kTauM;
+    for (int k = 0; k < n; k++) {
+      ode.Step(m, t, dt);
+      visco.InvalidateDisplacement();
+      Check(visco.SolveElastic(m, t) ? 0.0 : 1.0, 0.0,
+            label + ": alternation observation solve");
+      Check(mass_residual(*pa), 2e-3,
+            label + ": mass at every flavour flip");
+    }
+    Check(pa->NumAssemblies() == 2 ? 0.0 : 1.0, 0.0,
+          label + ": one assembly per flavour");
+    auto pf = make_problem(maxwell, true);
+    ViscoelasticOperator visco2(*pf);
+    Check(visco2.SolveElastic(m, t) ? 0.0 : 1.0, 0.0,
+          label + ": fresh-problem control solve");
+    ParGridFunction du(
+        static_cast<const ParGridFunction&>(pa->Displacement()));
+    du -= pf->Displacement();
+    const double rel =
+        GlobalNorm(du) /
+        (GlobalNorm(static_cast<const ParGridFunction&>(
+             pf->Displacement())) +
+         1e-30);
+    Check(rel, 1e-8, label + ": restored flavour equals fresh assembly");
+  }
 }
 
 }  // namespace

@@ -14,32 +14,44 @@ bool BorderedElimination::Eliminate(const std::vector<State>& columns,
   const int nb = static_cast<int>(columns.size());
   MFEM_VERIFY(static_cast<int>(x.size()) == nc_,
               "Eliminate: the state must have the configured components");
-  const bool cached =
-      cache_version_ == version && cache_nb_ == nb && tol >= cache_tol_;
-  if (!cached) {
-    bool ok = true;
-    Y_.assign(nb, State(nc_));
-    for (int j = 0; j < nb; j++) {
-      MFEM_VERIFY(static_cast<int>(columns[j].size()) == nc_,
-                  "Eliminate: every column must have the configured "
-                  "components");
-      ok = solve_(columns[j], Y_[j]) && ok;
-    }
-    BtY_.SetSize(nb);
-    for (int i = 0; i < nb; i++) {
+  // Most-recently-used first: a hit on the second entry is swapped to
+  // the front, a miss rebuilds the back entry and swaps it to the
+  // front, so two alternating operator versions each keep their
+  // column set.
+  if (!(cache_[0].version == version && cache_[0].nb == nb &&
+        tol >= cache_[0].tol)) {
+    if (cache_[1].version == version && cache_[1].nb == nb &&
+        tol >= cache_[1].tol) {
+      std::swap(cache_[0], cache_[1]);
+    } else {
+      Entry& e = cache_[1];
+      bool ok = true;
+      e.Y.assign(nb, State(nc_));
       for (int j = 0; j < nb; j++) {
-        real_t d = 0.0;
-        for (int c = 0; c < nc_; c++) {
-          d += dot_(columns[i][c], Y_[j][c]);
-        }
-        BtY_(i, j) = d;
+        MFEM_VERIFY(static_cast<int>(columns[j].size()) == nc_,
+                    "Eliminate: every column must have the configured "
+                    "components");
+        ok = solve_(columns[j], e.Y[j]) && ok;
       }
+      e.BtY.SetSize(nb);
+      for (int i = 0; i < nb; i++) {
+        for (int j = 0; j < nb; j++) {
+          real_t d = 0.0;
+          for (int c = 0; c < nc_; c++) {
+            d += dot_(columns[i][c], e.Y[j][c]);
+          }
+          e.BtY(i, j) = d;
+        }
+      }
+      e.ok = ok;
+      e.version = version;
+      e.nb = nb;
+      e.tol = tol;
+      std::swap(cache_[0], cache_[1]);
     }
-    cache_ok_ = ok;
-    cache_version_ = version;
-    cache_nb_ = nb;
-    cache_tol_ = tol;
   }
+  const std::vector<State>& Y_ = cache_[0].Y;
+  const DenseMatrix& BtY_ = cache_[0].BtY;
 
   // (Db - B^T Y) y = r - B^T x0.
   DenseMatrix S(nb);
@@ -61,7 +73,7 @@ bool BorderedElimination::Eliminate(const std::vector<State>& columns,
       x[c].Add(-y[j], Y_[j][c]);
     }
   }
-  return cache_ok_;
+  return cache_[0].ok;
 }
 
 }  // namespace AdGIA

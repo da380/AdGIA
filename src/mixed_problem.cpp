@@ -624,7 +624,7 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::AddRegionRotations(
   MFEM_VERIFY(added > 0, "AddRegionRotations: no new mode (empty region, or "
                          "its rotations are already in the null space).");
   SetupCoupledNullSpace();
-  operator_dirty_ = true;
+  MarkOperatorDirty();
 }
 
 void LinearQuasiStaticMixedSelfGravitatingProblem::SetupCoupledNullSpace() {
@@ -788,7 +788,7 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetWaterLoad(
   // AssembleForce.
   SetSurfaceLoad(sigma_data, surface_marker);
   BuildBorderCrossData();
-  operator_dirty_ = true;
+  MarkOperatorDirty();
 }
 
 void LinearQuasiStaticMixedSelfGravitatingProblem::BuildWaterPhiPhi() {
@@ -842,7 +842,7 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::RefreshWaterLoad() {
   BuildWaterPhiPhi();
   BuildWaterBorder();
   BuildBorderCrossData();
-  operator_dirty_ = true;
+  MarkOperatorDirty();
 }
 
 void LinearQuasiStaticMixedSelfGravitatingProblem::BuildSurfaceMassColumn(
@@ -914,7 +914,7 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetRotation(
     rot_psi_total_ = std::move(total);
   }
   BuildBorderCrossData();
-  operator_dirty_ = true;
+  MarkOperatorDirty();
 }
 
 Coefficient&
@@ -1031,14 +1031,14 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetMassWeightedGauge(bool on)
   }
   if (on != mass_gauge_) {
     mass_gauge_ = on;
-    operator_dirty_ = true;  // the solvers are rebuilt with the gauge
+    MarkOperatorDirty();  // the solvers are rebuilt with the gauge
   }
 }
 
 void LinearQuasiStaticMixedSelfGravitatingProblem::SetSolverType(SolverType type) {
   if (type != type_) {
     type_ = type;
-    operator_dirty_ = true;
+    MarkOperatorDirty();
   }
 }
 
@@ -1055,7 +1055,7 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetPreconditionerShift(
     real_t eps) {
   shift_ = eps;
   SetupPotentialPreconditioner();
-  operator_dirty_ = true;
+  MarkOperatorDirty();
 }
 
 void LinearQuasiStaticMixedSelfGravitatingProblem::SetInnerPrintLevel(
@@ -1078,7 +1078,7 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetBackgroundPotential(
   if (sea_enabled_) {
     RefreshWaterLoad();
   }
-  operator_dirty_ = true;
+  MarkOperatorDirty();
 }
 
 void LinearQuasiStaticMixedSelfGravitatingProblem::RegisterFields(

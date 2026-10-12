@@ -1597,7 +1597,7 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetWaterLoad(
   // surface integral (the mass-row data) is refreshed per
   // AssembleForce.
   SetSurfaceLoad(sigma_data, surface_marker);
-  operator_dirty_ = true;
+  MarkOperatorDirty();
 }
 
 void LinearQuasiStaticReferentialSelfGravitatingProblem::BuildWaterZetaMass() {
@@ -1676,7 +1676,7 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::RefreshWaterLoad() {
   BuildWaterZetaMass();
   BuildWaterBorder();
   BuildRotationCrossData();
-  operator_dirty_ = true;
+  MarkOperatorDirty();
 }
 
 void LinearQuasiStaticReferentialSelfGravitatingProblem::SetRotation(
@@ -1709,7 +1709,7 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetRotation(
   }
   BuildRotationColumns();
   BuildRotationCrossData();
-  operator_dirty_ = true;
+  MarkOperatorDirty();
 }
 
 Coefficient& LinearQuasiStaticReferentialSelfGravitatingProblem::
@@ -1761,7 +1761,7 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetTisserandGauge(
   // attributes (the mantle Tisserand frame).
   if (on != tisserand_gauge_) {
     tisserand_gauge_ = on;
-    operator_dirty_ = true;  // the solver is rebuilt with the gauge
+    MarkOperatorDirty();  // the solver is rebuilt with the gauge
   }
 }
 
@@ -1919,7 +1919,7 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetPrescribedVacuumExte
   ext_Ct_total_.reset(Transpose(*ext_C_total_));
   C_op_ = ext_C_total_.get();
   Ct_op_ = ext_Ct_total_.get();
-  operator_dirty_ = true;
+  MarkOperatorDirty();
 }
 
 #ifdef MFEM_USE_MPI
@@ -1969,7 +1969,7 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetPrescribedVacuumExte
   pext_Ct_total_.reset(pext_C_total_->Transpose());
   C_op_ = pext_C_total_.get();
   Ct_op_ = pext_Ct_total_.get();
-  operator_dirty_ = true;
+  MarkOperatorDirty();
 }
 #endif
 
@@ -2062,6 +2062,31 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::RegisterFields(DataColl
 // ---------------------------------------------------------------------------
 // Solver
 
+void LinearQuasiStaticReferentialSelfGravitatingProblem::OnFlavorStash(
+    int which) {
+  // The fold travels with the flavour; prec_A_aug_ (the live
+  // preconditioner's keep-alive) stays live — the preconditioner is
+  // shared across flavours.
+  MoveHandle(A_aug_, flavor_A_aug_[which]);
+}
+
+void LinearQuasiStaticReferentialSelfGravitatingProblem::OnFlavorRestore(
+    int which) {
+  // SetupSolver rebuilds the live fold from the restored matrix; the
+  // returned handle only bridges until then.
+  MoveHandle(flavor_A_aug_[which], A_aug_);
+}
+
+void LinearQuasiStaticReferentialSelfGravitatingProblem::OnFlavorRelease(
+    int which, bool prec_referent) {
+  if (prec_referent && !prec_A_aug_.Ptr()) {
+    // The live preconditioner was built on this slot's fold: keep it.
+    MoveHandle(flavor_A_aug_[which], prec_A_aug_);
+  } else {
+    flavor_A_aug_[which].Clear();
+  }
+}
+
 void LinearQuasiStaticReferentialSelfGravitatingProblem::SetupSolver(OperatorHandle& A) {
   // The solid-everywhere preconditioner mode
   // (SetGaugePreconditionerOnly): the preconditioner is built on the
@@ -2081,7 +2106,7 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetupSolver(OperatorHan
 #endif
        ) &&
       prec_ && !prec_stale_ && prec_reuse_ > 1.0 && !prec_A_aug_.Ptr() &&
-      A_aug_.Ptr()) {
+      !PreconditionerMatricesSlotted() && A_aug_.Ptr()) {
     prec_A_aug_ = A_aug_;
     prec_A_aug_.SetOperatorOwner(A_aug_.OwnsOperator());
     A_aug_.SetOperatorOwner(false);
@@ -2632,7 +2657,7 @@ void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::SetFluidExtension(
   MFEM_VERIFY(E.Height() == fes_f_->GetVSize() && E.Width() == fes_->GetVSize(),
               "SetFluidExtension: E must map solid vdofs to fluid vdofs.");
   Ef_ = std::make_unique<SparseMatrix>(E);
-  operator_dirty_ = true;
+  MarkOperatorDirty();
 }
 
 #ifdef MFEM_USE_MPI
@@ -2646,7 +2671,7 @@ void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::SetFluidExtension(
               "SetFluidExtension: E must map solid true dofs to fluid "
               "true dofs.");
   pEf_ = std::make_unique<HypreParMatrix>(E);
-  operator_dirty_ = true;
+  MarkOperatorDirty();
 }
 #endif
 
@@ -2662,7 +2687,7 @@ void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::
   // drops the per-sweep Tikhonov term (no operator bias to remove).
   fluid_gauge_eps_ = eps_prec;
   gauge_prec_only_ = true;
-  operator_dirty_ = true;
+  MarkOperatorDirty();
 }
 
 void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::SetFluidGauge(
@@ -2670,7 +2695,7 @@ void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::SetFluidGauge(
   MFEM_VERIFY(epsilon > 0.0, "SetFluidGauge: epsilon must be positive.");
   fluid_mu_gauge_ = &mu_gauge;
   fluid_gauge_eps_ = epsilon;
-  operator_dirty_ = true;
+  MarkOperatorDirty();
 }
 
 void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::SetConstraint(
@@ -2680,7 +2705,7 @@ void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::SetConstraint(
               "least one.");
   theta_ = theta;
   al_iterations_ = al_iterations;
-  operator_dirty_ = true;
+  MarkOperatorDirty();
 }
 
 void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::ConfigureFluidOperator(
@@ -2742,7 +2767,7 @@ void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::EnableBrokenZeta(
   fes_zo_ = fes_zeta_outer;
   theta_zeta_ = theta_zeta;
   broken_zeta_ = true;
-  operator_dirty_ = true;
+  MarkOperatorDirty();
 
 #ifdef MFEM_USE_MPI
   pfes_zo_ = dynamic_cast<ParFiniteElementSpace*>(fes_zo_);

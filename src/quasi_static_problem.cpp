@@ -191,7 +191,7 @@ void LinearQuasiStaticProblemBase::SetEssentialBoundary(
     const Array<int>& ess_bdr) {
   Array<int> marker(ess_bdr);
   fes_->GetEssentialTrueDofs(marker, ess_tdof_list_);
-  operator_dirty_ = true;
+  MarkOperatorDirty();
 }
 
 void LinearQuasiStaticProblemBase::AssembleForce(real_t t) {
@@ -217,21 +217,160 @@ void LinearQuasiStaticProblemBase::AddForce(const Vector& f) {
 
 void LinearQuasiStaticProblemBase::SetRelaxationWeights(
     const std::vector<Coefficient*>& beta) {
-  // Always reassemble: the same coefficient objects may carry new values.
+  // The same coefficient objects may carry new values, so the relaxed
+  // flavour always reassembles; the unrelaxed state does not depend on
+  // the weights and is stashed for ClearRelaxationWeights to restore.
+  if (!stiffness_->IsRelaxed()) {
+    StashFlavor(0);
+  }
+  ReleaseFlavorSlot(1);
   stiffness_->SetRelaxationWeights(beta);
+  relax_beta_ = beta;
   operator_dirty_ = true;
 }
 
 void LinearQuasiStaticProblemBase::ClearRelaxationWeights() {
-  if (stiffness_->IsRelaxed()) {
-    stiffness_->ClearRelaxationWeights();
+  if (!stiffness_->IsRelaxed()) {
+    return;
+  }
+  StashFlavor(1);
+  stiffness_->ClearRelaxationWeights();
+  if (!TryRestoreFlavor(0)) {
     operator_dirty_ = true;
   }
 }
 
+bool LinearQuasiStaticProblemBase::RestoreRelaxationWeights() {
+  if (stiffness_->IsRelaxed()) {
+    return true;  // engaged, and the caller promises the values unchanged
+  }
+  if (!flavor_[1].valid || relax_beta_.empty() ||
+      (fluid_op_.Active() &&
+       fluid_op_.Epsilon() != flavor_[1].gauge_eps)) {
+    return false;  // nothing restorable: fall back to SetRelaxationWeights
+  }
+  StashFlavor(0);
+  stiffness_->SetRelaxationWeights(relax_beta_);
+  if (!TryRestoreFlavor(1)) {
+    // StashFlavor may invalidate the slot it writes, never slot 1;
+    // unreachable after the checks above, but stay correct.
+    operator_dirty_ = true;
+  }
+  return true;
+}
+
+void LinearQuasiStaticProblemBase::MarkOperatorDirty() {
+  operator_dirty_ = true;
+  InvalidateFlavorSlots();
+}
+
+void LinearQuasiStaticProblemBase::MarkGaugeEpsilonDirty() {
+  eps_only_dirty_ = true;
+  InvalidateFlavorSlots();
+}
+
+void LinearQuasiStaticProblemBase::InvalidateFlavorSlots() {
+  ReleaseFlavorSlot(0);
+  ReleaseFlavorSlot(1);
+}
+
+void LinearQuasiStaticProblemBase::ReleaseFlavorSlot(int which) {
+  FlavorSlot& s = flavor_[which];
+  const bool referent = prec_ref_slot_ == which;
+  if (referent) {
+    // The live preconditioner was built on this slot's matrices: they
+    // move into the shared keep-alive (the AssembleOperator capture's
+    // home) instead of dying with the slot.
+    if (s.a_solve_form || s.A_solve.Ptr()) {
+      prec_form_ = std::move(s.a_solve_form);
+      MoveHandle(s.A_solve, prec_A_);
+      s.a.reset();
+      s.A.Clear();
+    } else {
+      prec_form_ = std::move(s.a);
+      MoveHandle(s.A, prec_A_);
+    }
+    prec_ref_slot_ = -1;
+  } else {
+    s.a.reset();
+    s.a_solve_form.reset();
+    s.A.Clear();
+    s.A_solve.Clear();
+  }
+  s.valid = false;
+  OnFlavorRelease(which, referent);
+}
+
+void LinearQuasiStaticProblemBase::MoveHandle(OperatorHandle& from,
+                                              OperatorHandle& to) {
+  to.Clear();
+  if (from.Ptr()) {
+    to.Reset(from.Ptr(), from.OwnsOperator());
+    from.SetOperatorOwner(false);
+  }
+  from.Clear();
+}
+
+void LinearQuasiStaticProblemBase::StashFlavor(int which) {
+  if (flavor_[which].valid || flavor_[which].a) {
+    ReleaseFlavorSlot(which);  // retained storage dies by the one rule
+  }
+  FlavorSlot& s = flavor_[which];
+  if (!a_ || operator_dirty_ || eps_only_dirty_) {
+    s.valid = false;  // no clean assembled state to keep
+    return;
+  }
+  // The shared preconditioner stays live (its reuse policy is
+  // flavour-blind); when it was built on the matrices being stashed
+  // and is not yet captured, the slot becomes its keep-alive.
+  if (prec_ && !prec_form_ && !prec_A_.Ptr() && prec_ref_slot_ < 0) {
+    prec_ref_slot_ = which;
+  }
+  s.a = std::move(a_);
+  s.a_solve_form = std::move(a_solve_form_);
+  MoveHandle(A_, s.A);
+  MoveHandle(A_solve_, s.A_solve);
+  s.version = operator_version_;
+  s.gauge_eps = fluid_op_.Active() ? fluid_op_.Epsilon() : -1.0;
+  s.valid = true;
+  OnFlavorStash(which);
+}
+
+bool LinearQuasiStaticProblemBase::TryRestoreFlavor(int which) {
+  FlavorSlot& s = flavor_[which];
+  if (!s.valid ||
+      (fluid_op_.Active() ? fluid_op_.Epsilon() : -1.0) != s.gauge_eps) {
+    if (s.valid) {
+      ReleaseFlavorSlot(which);
+    }
+    return false;
+  }
+  a_ = std::move(s.a);
+  a_solve_form_ = std::move(s.a_solve_form);
+  MoveHandle(s.A, A_);
+  MoveHandle(s.A_solve, A_solve_);
+  if (prec_ref_slot_ == which) {
+    prec_ref_slot_ = -1;  // the preconditioner's matrices are live again
+  }
+  // Reviving the version revives the version-keyed caches (border
+  // columns, unit responses) built against this flavour — valid
+  // because any other operator mutation drops the slots
+  // (MarkOperatorDirty).
+  operator_version_ = s.version;
+  s.valid = false;
+  operator_dirty_ = false;
+  eps_only_dirty_ = false;
+  OnFlavorRestore(which);
+  SetupSolver(HasGaugedFluid() ? A_solve_ : A_);
+  return true;
+}
+
 bool LinearQuasiStaticProblemBase::PreconditionerAwaitsCapture() const {
+  // A preconditioner whose matrices sit in a flavour slot is already
+  // kept alive there (prec_ref_slot_); the current matrices are not
+  // its referents.
   return a_ && prec_ && !prec_stale_ && prec_reuse_ > 1.0 && !prec_form_ &&
-         !prec_A_.Ptr();
+         !prec_A_.Ptr() && prec_ref_slot_ < 0;
 }
 
 void LinearQuasiStaticProblemBase::CapturePreconditionerMatrix(
@@ -419,7 +558,7 @@ void LinearQuasiStaticProblemBase::SetFluid(
   fluid_treatment_ = FluidTreatment::Maxwell;
   gauge_refinements_ = 0;
   maxwell_solid_tdofs_.SetSize(0);
-  operator_dirty_ = true;
+  MarkOperatorDirty();
 }
 
 void LinearQuasiStaticProblemBase::SetFluid(
@@ -429,7 +568,7 @@ void LinearQuasiStaticProblemBase::SetFluid(
                          map);
   fluid_treatment_ = FluidTreatment::Penalty;
   gauge_refinements_ = opts.refinements;
-  operator_dirty_ = true;
+  MarkOperatorDirty();
 }
 
 void LinearQuasiStaticProblemBase::ApplyGaugePenalty(const Vector& u_true,
@@ -452,7 +591,7 @@ void LinearQuasiStaticProblemBase::ClearFluid() {
   gauge_residuals_.clear();
   maxwell_solid_tdofs_.SetSize(0);
   maxwell_report_ = MaxwellRelaxationReport();
-  operator_dirty_ = true;
+  MarkOperatorDirty();
 }
 
 void LinearQuasiStaticProblemBase::SetGaugeEpsilon(real_t epsilon) {
@@ -464,9 +603,9 @@ void LinearQuasiStaticProblemBase::SetGaugeEpsilon(real_t epsilon) {
   fluid_op_.SetEpsilon(epsilon);
   if (fluid_op_.HasUnitCache()) {
     // Only the penalty scale changed: the cheap rescale path serves.
-    eps_only_dirty_ = true;
+    MarkGaugeEpsilonDirty();
   } else {
-    operator_dirty_ = true;
+    MarkOperatorDirty();
   }
 }
 
@@ -487,7 +626,7 @@ void LinearQuasiStaticProblemBase::SetGaugePreconditionerOnly(
   fluid_op_.SetEpsilon(eps_prec);  // verifies positivity
   gauge_refinements_ = 0;
   gauge_prec_only_ = true;
-  operator_dirty_ = true;
+  MarkOperatorDirty();
 }
 
 void LinearQuasiStaticProblemBase::SetGaugePlateauStop(real_t ratio,
@@ -751,9 +890,9 @@ bool LinearQuasiStaticProblemBase::MaxwellSolve() {
       // A clean operator already at prec_eps gives EnsureOperator
       // nothing to do: force one setup through the available path.
       if (fluid_op_.HasUnitCache()) {
-        eps_only_dirty_ = true;
+        MarkGaugeEpsilonDirty();
       } else {
-        operator_dirty_ = true;
+        MarkOperatorDirty();
       }
     }
     set_operator(o.prec_eps);
@@ -989,6 +1128,7 @@ void LinearQuasiStaticProblemBase::SetupDefaultPreconditioner(
     }
     prec_form_.reset();
     prec_A_.Clear();
+    prec_ref_slot_ = -1;  // the fresh preconditioner sits on live matrices
     prec_stale_ = false;
     prec_baseline_its_ = -1;
     prec_setups_++;
