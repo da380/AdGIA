@@ -19,6 +19,35 @@ The gauged, referential and slipping methods pay the fluid-gauge premium
 (about 7× Dahlen), the slipping methods in addition the interface
 constraint.
 
+## Where to start (the measured ordering, 12 October 2026)
+
+The AMG rigid-rotation route is measured out (four configurations,
+no win — "Near-incompressible and high-contrast effective operators"
+below), which orders the remaining work:
+
+1. the frozen moderate-ε preconditioner for the Maxwell continuation
+   ("The Maxwell endgame's own lever") — one measurement, hits the
+   production fluid treatment;
+2. the border-column cache per operator flavour ("Border-column cache
+   against the stepper's modulus switches") — small, restores a
+   measured −43 %;
+3. the mixed (u, p) pressure-robust block preconditioner, prototyped
+   on the box contrast case before any gravitating class ("Options"
+   of the near-incompressible item; deflation is the fallback);
+4. the Picard feedback inside the time stepper ("Picard feedback
+   inside the time stepper") — the stepping-economy lever for
+   production runs;
+5. the decisions already measured: combined-degree solves as the
+   campaign default, the monolithic border with a border-aware
+   refinement stop, the increment-relative stopping test;
+6. the calibration harness (below) once 1–4 exist;
+7. server-scale confirmations: the `-amg-rbm` h-ladder, the
+   strong/weak-scaling ladder, `prem_6`.
+
+Not pursued: partial assembly / matrix-free operators (they conflict
+with the AMG-on-assembled-matrices stack at production orders), and
+fluid-formulation changes in pursuit of conditioning.
+
 ---
 
 ## The slip constraint
@@ -612,6 +641,34 @@ restore the full economy for schemes that alternate.
 
 **See:** `src/mixed_problem.cpp::SolveLinearSystem`;
 `tests/TestSeaLevelViscoelastic.cpp` (the iteration prints).
+
+---
+
+## Automated solver calibration
+
+### A per-problem calibration harness
+
+**Status:** proposal (agreed 8 October 2026); queued behind the
+preconditioning and stepping items above.
+
+Applications are viscoelastic loops re-solving the same elastic system
+hundreds of times, so a ~20-solve one-off calibration amortises
+immediately. Sketch: `CalibrateSolver(t0, opts)` (its own header,
+driven through the public interface) draws its candidate set FROM the
+active configuration — the `FluidTreatment` slot makes the knobs
+discoverable: penalty ε grid with refinement counts derived from the
+measured contraction, Maxwell β₀ ∈ {3, 10, 30} and the inexact factor,
+the relative tolerance, preconditioner reuse, Anderson depth on/off —
+scored by wall time per solve under an observable-drift guard against
+the tightest candidate. Calibrate at BOTH the unrelaxed and the
+relaxed effective moduli, since the operator drifts over a time
+integration; apply the winner and report. This is also the natural
+home of per-problem decisions the measurements left open (the
+Anderson default, β₀ on non-neutral cores).
+
+**See:** `include/AdGIA/quasi_static_problem.hpp` (`SetFluid`,
+`SetPreconditionerReuse`, the Anderson options);
+`doc/static_fluid_core.tex`, "The Maxwell relaxation method".
 
 ---
 
