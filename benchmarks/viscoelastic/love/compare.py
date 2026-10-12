@@ -215,6 +215,7 @@ def plot_series(fe: dict, ref: dict, out: Path, title: str) -> None:
     fig, axes = plt.subplots(1, len(numbers), squeeze=False,
                              figsize=(4.3 * len(numbers), 3.9))
     horizon = ref.get("horizon")
+    tmax = max([0.0] + [h["time"] for h in fe["histories"]])
     for a, q in enumerate(numbers):
         ax = axes[0][a]
         for k, l in enumerate(degrees):
@@ -234,7 +235,7 @@ def plot_series(fe: dict, ref: dict, out: Path, title: str) -> None:
             relaxed = (ref.get("relaxed") or {}).get(q)
             if relaxed and relaxed[r] is not None:
                 ax.axhline(relaxed[r], color=colour, lw=0.9, ls=":")
-        if horizon and horizon < max(ft):
+        if horizon and horizon < tmax:
             ax.axvline(horizon, color=MUTED, lw=1.0, ls="--")
         ax.set_title(f"{LABELS[q]}(t)", loc="left")
         ax.set_xlabel("time after the load / Maxwell time")
@@ -269,7 +270,8 @@ def main() -> None:
     p.add_argument("--out", type=Path, default=None,
                    help="where the tables and figures go (default: beside "
                         "each results file)")
-    p.add_argument("--no-plots", action="store_true")
+    p.add_argument("--no-plots", action="store_true",
+                   help="write the error tables only, no figures")
     args = p.parse_args()
     ref = json.loads(args.reference.read_text())
     for path in args.results:

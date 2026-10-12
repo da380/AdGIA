@@ -1,4 +1,4 @@
-"""Interactive exploration of the 2-D disc problems (rung 2).
+"""Interactive exploration of the 2-D disc problems.
 
 Solves the per-degree radial problems of `disc_radial.py` for any
 combination of model, method and solver knobs, prints the observables
@@ -20,8 +20,8 @@ with the benchmarks Python):
   ./explore --p 12 --nel 20 20 10             # finer; fc wanders,
                                               # dahlen does not
   ./explore --eps-reg 1e-6                    # regulariser knob
-  ./explore --G 1e-12 --rung0                 # gravity off, against
-                                              # the rung-0 closed form
+  ./explore --G 1e-12 --no-gravity-reference  # gravity off, against
+                                              # the no-gravity closed form
   ./explore --out profiles.png                # save instead of show
 
 Outputs land where you run it (the build tree by convention).
@@ -83,9 +83,9 @@ def main() -> int:
                    help="fluid deviatoric regulariser")
     p.add_argument("--G", type=float, default=disc_models.G,
                    help="gravitational constant (1e-12 ~ gravity off)")
-    p.add_argument("--rung0", action="store_true",
-                   help="also print the rung-0 closed form (meaningful "
-                        "with --G tiny on --model fc)")
+    p.add_argument("--no-gravity-reference", action="store_true",
+                   help="also print the closed-form no-gravity response "
+                        "(meaningful with --G tiny on --model fc)")
     p.add_argument("--out", default=None,
                    help="save the figure here instead of showing it")
     args = p.parse_args()
@@ -135,14 +135,14 @@ def main() -> int:
                 b = sols[ms[j]].responses()["ur_a"]
                 print(f"  split {ms[i]}/{ms[j]}: "
                       f"{abs(a / b - 1.0):.3e}")
-    if args.rung0:
+    if args.no_gravity_reference:
         from disc_reference import DiscModel, solve as solve0
         m0 = DiscModel(lam=disc_models.KAPPA_MANTLE - disc_models.MU_MANTLE,
                        mu=disc_models.MU_MANTLE,
                        kappa_f=disc_models.KAPPA_CORE * args.kappa_scale,
                        c=model.c, a=1.0)
         ex = solve0(m0, args.l)
-        print(f"  rung-0 exact: ur_a {ex.responses['ur_a']:+.7f}"
+        print(f"  no-gravity exact: ur_a {ex.responses['ur_a']:+.7f}"
               + (f"  ut_a {ex.responses['ut_a']:+.7f}"
                  if args.l >= 1 else ""))
 

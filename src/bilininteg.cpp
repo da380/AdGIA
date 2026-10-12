@@ -1,8 +1,6 @@
 #include "AdGIA/bilininteg.hpp"
 
-#include <algorithm>
 #include <cmath>
-#include <cstddef>
 #include <numbers>
 
 namespace AdGIA {
@@ -87,6 +85,7 @@ void DomainVectorGradScalarIntegrator::AssembleElementMatrix2(
 #ifdef MFEM_THREAD_SAFE
   Vector test_shape, qv;
   DenseMatrix trial_dshape, part_elmat, qm, tm;
+  DenseMatrix F_, dtmp_;
 #endif
   test_shape.SetSize(test_dof);
   trial_dshape.SetSize(trial_dof, space_dim);
@@ -168,6 +167,8 @@ void DomainDivVectorScalarIntegrator::AssembleElementMatrix2(
   auto test_dshape = mfem::DenseMatrix();
   auto trial_shape = mfem::Vector();
   auto part_elmat = mfem::DenseMatrix();
+  auto F_ = mfem::DenseMatrix();
+  auto dtmp_ = mfem::DenseMatrix();
 #endif
   test_dshape.SetSize(test_dof, space_dim);
   trial_shape.SetSize(trial_dof);
@@ -229,6 +230,8 @@ void DomainDivVectorDivVectorIntegrator::AssembleElementMatrix2(
 #ifdef MFEM_THREAD_SAFE
   auto trial_dshape = DenseMatrix();
   auto test_dshape = DenseMatrix();
+  auto F_ = DenseMatrix();
+  auto dtmp_ = DenseMatrix();
 #endif
   trial_dshape.SetSize(trial_dof, space_dim);
 
@@ -239,6 +242,11 @@ void DomainDivVectorDivVectorIntegrator::AssembleElementMatrix2(
   }
 
   const auto* ir = IntRule ? IntRule : &GetRule(trial_fe, test_fe, Trans);
+
+  const auto test_dshape_vector =
+      Vector(test_dshape.GetData(), space_dim * test_dof);
+  const auto trial_dshape_vector =
+      Vector(trial_dshape.GetData(), space_dim * trial_dof);
 
   for (auto i = 0; i < ir->GetNPoints(); i++) {
     const auto& ip = ir->IntPoint(i);
@@ -266,10 +274,6 @@ void DomainDivVectorDivVectorIntegrator::AssembleElementMatrix2(
       }
     }
 
-    auto test_dshape_vector =
-        Vector(test_dshape.GetData(), space_dim * test_dof);
-    auto trial_dshape_vector =
-        Vector(trial_dshape.GetData(), space_dim * trial_dof);
     AddMult_a_VWt(w, test_dshape_vector, trial_dshape_vector, elmat);
   }
 }
@@ -296,12 +300,13 @@ void DomainVectorGradVectorIntegrator::AssembleElementMatrix2(
 
 #ifdef MFEM_THREAD_SAFE
   Vector qv, test_shape;
-  DenseMatrix trial_dshape, left_elmat, rigth_elmat_trans, part_elmat;
+  DenseMatrix trial_dshape, left_elmat, right_elmat_trans, part_elmat;
+  DenseMatrix F_, dtmp_;
 #endif
 
   qv.SetSize(space_dim);
-  rigth_elmat_trans.SetSize(space_dim * trial_dof, trial_dof);
-  rigth_elmat_trans = 0.;
+  right_elmat_trans.SetSize(space_dim * trial_dof, trial_dof);
+  right_elmat_trans = 0.;
 
   const auto& trial_nodes = trial_fe.GetNodes();
   for (auto i = 0; i < trial_dof; i++) {
@@ -309,7 +314,7 @@ void DomainVectorGradVectorIntegrator::AssembleElementMatrix2(
     Trans.SetIntPoint(&ip);
     QV->Eval(qv, Trans, ip);
     for (auto j = 0; j < space_dim; j++) {
-      rigth_elmat_trans(i + trial_dof * j, i) = qv(j);
+      right_elmat_trans(i + trial_dof * j, i) = qv(j);
     }
   }
 
@@ -348,7 +353,17 @@ void DomainVectorGradVectorIntegrator::AssembleElementMatrix2(
       left_elmat.AddMatrix(w, part_elmat, test_dof * j, 0);
     }
   }
-  MultABt(left_elmat, rigth_elmat_trans, elmat);
+  // right_elmat_trans has one nonzero per row, (i + trial_dof j, i), so the
+  // product with its transpose scales column i of left_elmat into column
+  // i + trial_dof j of elmat.
+  for (auto j = 0; j < space_dim; j++) {
+    for (auto i = 0; i < trial_dof; i++) {
+      const auto scale = right_elmat_trans(i + trial_dof * j, i);
+      for (auto r = 0; r < left_elmat.Height(); r++) {
+        elmat(r, i + trial_dof * j) = left_elmat(r, i) * scale;
+      }
+    }
+  }
 }
 
 const mfem::IntegrationRule& DomainVectorDivVectorIntegrator::GetRule(
@@ -374,6 +389,7 @@ void DomainVectorDivVectorIntegrator::AssembleElementMatrix2(
 #ifdef MFEM_THREAD_SAFE
   Vector qv, test_shape;
   DenseMatrix trial_dshape, part_elmat;
+  DenseMatrix F_, dtmp_;
 #endif
 
   qv.SetSize(space_dim);
@@ -919,7 +935,8 @@ void ReferentialGravityCouplingIntegrator::AssembleElementMatrix2(
 
 #ifdef MFEM_THREAD_SAFE
   DenseMatrix dshape_u_, gshape_u_, dshape_p_, gshape_p_, F_, a_, M_, agp_;
-  Vector g0v_, w_, beta_, gamma_, fw_;
+  DenseMatrix AGP_, FW_;
+  Vector g0v_, w_, beta_, gamma_, wg_;
 #endif
   dshape_u_.SetSize(dof_u, dim);
   gshape_u_.SetSize(dof_u, dim);
@@ -932,6 +949,10 @@ void ReferentialGravityCouplingIntegrator::AssembleElementMatrix2(
   w_.SetSize(dim);
   beta_.SetSize(dof_u);
   gamma_.SetSize(dim);
+  agp_.SetSize(dof_u, dim);
+  AGP_.SetSize(dof_u, dof_p);
+  FW_.SetSize(dof_p, dim);
+  wg_.SetSize(dof_p);
   const auto uidx = VectorIndex(dim, dof_u);
   elmat.SetSize(dof_u * dim, dof_p);
   elmat = 0.0;
@@ -963,33 +984,21 @@ void ReferentialGravityCouplingIntegrator::AssembleElementMatrix2(
     gshape_u_.Mult(w_, beta_);
     F_.MultTranspose(g0v_, gamma_);
 
-    // a_e grad(phi_a), once per point.
-    agp_.SetSize(dof_u, dim);
+    // a_e grad(phi_a), and its pairing with grad(psi_c), once per point.
     Mult(gshape_u_, a_, agp_);
+    MultABt(agp_, gshape_p_, AGP_);  // AGP(a,c) = a_e grad phi_a . grad psi_c
+    gshape_p_.Mult(w_, wg_);         // wg_c = w . grad psi_c
+    // f_k . grad psi_c: column k of F^{-1} dotted with the gradient.
+    Mult(gshape_p_, F_, FW_);
 
     // <a'(phi_a e_k) g0, grad psi_c>
     //   = M_ak (w . grad psi_c) - beta_a (f_k . grad psi_c)
     //     - gamma_k (a_e grad phi_a . grad psi_c).
-    fw_.SetSize(dim);
     for (auto c = 0; c < dof_p; c++) {
-      real_t wg = 0.0;
-      for (auto A = 0; A < dim; A++) {
-        wg += w_(A) * gshape_p_(c, A);
-      }
-      // f_k . grad psi_c: column k of F^{-1} dotted with the gradient.
-      for (auto k = 0; k < dim; k++) {
-        fw_(k) = 0.0;
-        for (auto A = 0; A < dim; A++) {
-          fw_(k) += F_(A, k) * gshape_p_(c, A);
-        }
-      }
       for (auto k = 0; k < dim; k++) {
         for (auto a = 0; a < dof_u; a++) {
-          real_t agg = 0.0;  // a_e grad phi_a . grad psi_c
-          for (auto A = 0; A < dim; A++) {
-            agg += agp_(a, A) * gshape_p_(c, A);
-          }
-          const auto val = M_(a, k) * wg - beta_(a) * fw_(k) - gamma_(k) * agg;
+          const auto val =
+              M_(a, k) * wg_(c) - beta_(a) * FW_(c, k) - gamma_(k) * AGP_(a, c);
           elmat(uidx(a, k), c) += wq * val;
         }
       }
@@ -1058,7 +1067,7 @@ void TransformedDiffusionIntegrator::AssembleElementMatrix2(
     QV->Eval(xis, Trans, ir);
   }
 
-  const auto* ir = GetIntegrationRule(trial_fe, test_fe, Trans);
+  const auto* ir = IntRule ? IntRule : &GetRule(trial_fe, test_fe, Trans);
 
   for (auto i = 0; i < ir->GetNPoints(); i++) {
     const auto& ip = ir->IntPoint(i);
@@ -1098,7 +1107,7 @@ void TransformedDiffusionIntegrator::AssembleElementMatrix2(
       // Form the matrix a = J F^{-1} F^{-T}
       auto J = F.Det();
       F.Invert();
-      MultABt(F, F, a);
+      MultAAt(F, a);
       a *= J;
     }
 
@@ -1157,7 +1166,7 @@ void StrainInterpolator::AssembleElementMatrix2(
     mfem::ElementTransformation& Trans, mfem::DenseMatrix& elmat) {
   using namespace mfem;
 
-  constexpr auto half = static_cast<real_t>(1) / static_cast<real_t>(2);
+  constexpr real_t half = 0.5;
 
   auto space_dim = in_fe.GetDim();
   auto in_dof = in_fe.GetDof();
@@ -1210,7 +1219,7 @@ void DeviatoricStrainInterpolator::AssembleElementMatrix2(
   elmat.SetSize(matrixIndex.Size(), vectorIndex.Size());
   elmat = 0.;
 
-  constexpr auto half = static_cast<real_t>(1) / static_cast<real_t>(2);
+  constexpr real_t half = 0.5;
   const auto space_dim_inverse = static_cast<real_t>(1) / space_dim;
 
   const auto& nodes = out_fe.GetNodes();
@@ -1313,21 +1322,21 @@ namespace {
 
 /// The covariant direction slot of the interface kernels:
 /// dir = P_T F^{-1} (1 - nu nu^T / |nu|^2). The deformed-face kernel
-/// sanitises its direction with ITS OWN tangential projector, and the
-/// pullback of that projector is nu-orthogonal projection BEFORE
-/// F^{-1} (F^{-1} maps nu-perp onto the referential tangent plane
-/// exactly, by Nanson). P_T F^{-1} alone agrees on the constraint set
-/// (nu . jump = 0) but is NOT invariant under face-fixing shears of F
-/// off it -- which broke the discrete change-of-variables identity
-/// through the slipping interface (doc/planning/open_issues.md;
-/// TestSlipInterface, InterfaceKernelsFaceShearCovariance). Unmapped
-/// kernels are untouched: there nu = n and the extra projector is
-/// contained in P_T.
+/// sanitises its direction with its own tangential projector, and the
+/// pullback of that projector is the nu-orthogonal projection applied
+/// before F^{-1} (F^{-1} maps nu-perp onto the referential tangent plane,
+/// by Nanson's formula). P_T F^{-1} alone agrees on the constraint set
+/// (nu . jump = 0) but is not invariant under face-fixing shears of F off
+/// it; the projected form is, which preserves the discrete
+/// change-of-variables identity through the slipping interface
+/// (doc/slip_interface.tex). Unmapped kernels are unchanged: there nu = n
+/// and the extra projector is contained in P_T.
 void SlipDirection(const mfem::DenseMatrix& PT, const mfem::DenseMatrix& Fi,
                    const mfem::Vector& nu, bool mapped,
                    mfem::DenseMatrix& dir) {
   using namespace mfem;
   const int dim = PT.Height();
+  MFEM_ASSERT(dim <= 3, "SlipDirection: space dimension at most 3.");
   dir.SetSize(dim);
   Mult(PT, Fi, dir);
   if (!mapped) {
@@ -1337,114 +1346,21 @@ void SlipDirection(const mfem::DenseMatrix& PT, const mfem::DenseMatrix& Fi,
   if (n2 <= 0.0) {
     return;
   }
-  DenseMatrix Pnu(dim), tmp(dim);
-  Pnu = 0.0;
+  // dir <- dir (1 - nu nu^T / n2), row by row.
+  real_t row[3];
   for (int i = 0; i < dim; i++) {
-    Pnu(i, i) = 1.0;
+    for (int k = 0; k < dim; k++) {
+      row[k] = dir(i, k);
+    }
     for (int j = 0; j < dim; j++) {
-      Pnu(i, j) -= nu[i] * nu[j] / n2;
-    }
-  }
-  Mult(dir, Pnu, tmp);
-  dir = tmp;
-}
-
-}  // namespace
-
-const mfem::IntegrationRule& SlipInterfacePressureIntegrator::GetRule(
-    const mfem::FiniteElement& el, const mfem::ElementTransformation& Trans) {
-  const auto order = 2 * el.GetOrder() + Trans.OrderW();
-  return mfem::IntRules.Get(el.GetGeomType(), order);
-}
-
-void SlipInterfacePressureIntegrator::AssembleElementMatrix(
-    const mfem::FiniteElement& el, mfem::ElementTransformation& Trans,
-    mfem::DenseMatrix& elmat) {
-  using namespace mfem;
-  const auto dim = Trans.GetSpaceDim();
-  const auto sdim = el.GetDim();
-  const auto dof = el.GetDof();
-
-#ifdef MFEM_THREAD_SAFE
-  Vector shape_, normal_, nu_;
-  DenseMatrix dshape_, gshape_, Jt_, JtJ_, F_, Fi_, PT_, dir_;
-#endif
-  shape_.SetSize(dof);
-  dshape_.SetSize(dof, sdim);
-  gshape_.SetSize(dof, dim);
-  elmat.SetSize(dim * dof);
-  elmat = 0.0;
-
-  DenseMatrix T(dof, dim);  // T(p, j) = gshape_p . dir_col_j
-
-  const auto* ir = IntRule ? IntRule : &GetRule(el, Trans);
-  for (auto q = 0; q < ir->GetNPoints(); q++) {
-    const auto& ip = ir->IntPoint(q);
-    Trans.SetIntPoint(&ip);
-    if (!BoundaryUnitNormal(Trans, normal_)) {
-      continue;
-    }
-
-    // Physical tangential gradients of the surface shapes:
-    // gshape = dshape (J^T J)^{-1} J^T, and the tangential projector
-    // P_T = J (J^T J)^{-1} J^T, with J the dim x (dim-1) surface
-    // Jacobian.
-    el.CalcShape(ip, shape_);
-    el.CalcDShape(ip, dshape_);
-    const DenseMatrix& Js = Trans.Jacobian();
-    JtJ_.SetSize(sdim);
-    MultAtB(Js, Js, JtJ_);
-    DenseMatrixInverse JtJinv(JtJ_);
-    DenseMatrix JtJi(sdim);
-    JtJinv.GetInverseMatrix(JtJi);
-    // Jt_ = (J^T J)^{-1} J^T
-    Jt_.SetSize(sdim, dim);
-    {
-      DenseMatrix JsT(sdim, dim);
-      for (int a = 0; a < sdim; a++) {
-        for (int b = 0; b < dim; b++) {
-          JsT(a, b) = Js(b, a);
-        }
+      real_t sum = 0.0;
+      for (int k = 0; k < dim; k++) {
+        sum += row[k] * ((k == j ? 1.0 : 0.0) - nu[k] * nu[j] / n2);
       }
-      Mult(JtJi, JsT, Jt_);
-    }
-    Mult(dshape_, Jt_, gshape_);
-    PT_.SetSize(dim);
-    Mult(Js, Jt_, PT_);
-
-    // Mapping data: nu = cof(F) n (identity: nu = n), and F^{-1}.
-    F_.SetSize(dim);
-    Fi_.SetSize(dim);
-    if (map_) {
-      map_->MapNormal(normal_, Trans, ip, nu_);
-      map_->EvalGradient(F_, Trans, ip);
-      CalcInverse(F_, Fi_);
-    } else {
-      nu_ = normal_;
-      Fi_ = 0.0;
-      for (int d = 0; d < dim; d++) {
-        Fi_(d, d) = 1.0;
-      }
-    }
-    SlipDirection(PT_, Fi_, nu_, map_ != nullptr, dir_);
-    Mult(gshape_, dir_, T);
-
-    const auto w = ip.weight * Trans.Weight() * pi_->Eval(Trans, ip);
-    for (int i = 0; i < dim; i++) {
-      for (int p = 0; p < dof; p++) {
-        const double row = w * nu_[i];
-        for (int j = 0; j < dim; j++) {
-          const double tv = row * T(p, j);
-          for (int qq = 0; qq < dof; qq++) {
-            elmat(p + i * dof, qq + j * dof) += tv * shape_[qq];
-          }
-        }
-      }
+      dir(i, j) = sum;
     }
   }
 }
-
-namespace {
 
 /// Shared surface machinery of the slip-interface kernels: physical
 /// tangential shape gradients gshape, tangential projector P_T, the
@@ -1457,7 +1373,8 @@ bool SlipSurfaceData(const mfem::FiniteElement& el,
                      mfem::DenseMatrix& gshape, mfem::Vector& normal,
                      mfem::Vector& nu, mfem::DenseMatrix& F,
                      mfem::DenseMatrix& Fi, mfem::DenseMatrix& PT,
-                     mfem::DenseMatrix& Jt, mfem::DenseMatrix& JtJ) {
+                     mfem::DenseMatrix& Jt, mfem::DenseMatrix& JtJ,
+                     mfem::DenseMatrix& JtJi) {
   using namespace mfem;
   const auto dim = Trans.GetSpaceDim();
   const auto sdim = el.GetDim();
@@ -1470,19 +1387,11 @@ bool SlipSurfaceData(const mfem::FiniteElement& el,
   const DenseMatrix& Js = Trans.Jacobian();
   JtJ.SetSize(sdim);
   MultAtB(Js, Js, JtJ);
-  DenseMatrixInverse JtJinv(JtJ);
-  DenseMatrix JtJi(sdim);
-  JtJinv.GetInverseMatrix(JtJi);
+  JtJi.SetSize(sdim);
+  CalcInverse(JtJ, JtJi);
+  // Jt = (J^T J)^{-1} J^T
   Jt.SetSize(sdim, dim);
-  {
-    DenseMatrix JsT(sdim, dim);
-    for (int a = 0; a < sdim; a++) {
-      for (int b = 0; b < dim; b++) {
-        JsT(a, b) = Js(b, a);
-      }
-    }
-    Mult(JtJi, JsT, Jt);
-  }
+  MultABt(JtJi, Js, Jt);
   gshape.SetSize(el.GetDof(), dim);
   Mult(dshape, Jt, gshape);
   PT.SetSize(dim);
@@ -1505,6 +1414,56 @@ bool SlipSurfaceData(const mfem::FiniteElement& el,
 
 }  // namespace
 
+const mfem::IntegrationRule& SlipInterfacePressureIntegrator::GetRule(
+    const mfem::FiniteElement& el, const mfem::ElementTransformation& Trans) {
+  const auto order = 2 * el.GetOrder() + Trans.OrderW();
+  return mfem::IntRules.Get(el.GetGeomType(), order);
+}
+
+void SlipInterfacePressureIntegrator::AssembleElementMatrix(
+    const mfem::FiniteElement& el, mfem::ElementTransformation& Trans,
+    mfem::DenseMatrix& elmat) {
+  using namespace mfem;
+  const auto dim = Trans.GetSpaceDim();
+  const auto sdim = el.GetDim();
+  const auto dof = el.GetDof();
+
+#ifdef MFEM_THREAD_SAFE
+  Vector shape_, normal_, nu_;
+  DenseMatrix dshape_, gshape_, Jt_, JtJ_, JtJi_, F_, Fi_, PT_, dir_, T_;
+#endif
+  shape_.SetSize(dof);
+  dshape_.SetSize(dof, sdim);
+  elmat.SetSize(dim * dof);
+  elmat = 0.0;
+
+  T_.SetSize(dof, dim);  // T(p, j) = gshape_p . dir_col_j
+
+  const auto* ir = IntRule ? IntRule : &GetRule(el, Trans);
+  for (auto q = 0; q < ir->GetNPoints(); q++) {
+    const auto& ip = ir->IntPoint(q);
+    if (!SlipSurfaceData(el, Trans, ip, map_, shape_, dshape_, gshape_, normal_,
+                         nu_, F_, Fi_, PT_, Jt_, JtJ_, JtJi_)) {
+      continue;
+    }
+    SlipDirection(PT_, Fi_, nu_, map_ != nullptr, dir_);
+    Mult(gshape_, dir_, T_);
+
+    const auto w = ip.weight * Trans.Weight() * pi_->Eval(Trans, ip);
+    for (int i = 0; i < dim; i++) {
+      for (int p = 0; p < dof; p++) {
+        const real_t row = w * nu_[i];
+        for (int j = 0; j < dim; j++) {
+          const real_t tv = row * T_(p, j);
+          for (int qq = 0; qq < dof; qq++) {
+            elmat(p + i * dof, qq + j * dof) += tv * shape_[qq];
+          }
+        }
+      }
+    }
+  }
+}
+
 const mfem::IntegrationRule& SlipInterfaceGravityIntegrator::GetRule(
     const mfem::FiniteElement& el, const mfem::ElementTransformation& Trans) {
   const auto order = 2 * el.GetOrder() + Trans.OrderW();
@@ -1522,30 +1481,33 @@ void SlipInterfaceGravityIntegrator::AssembleElementMatrix(
 
 #ifdef MFEM_THREAD_SAFE
   Vector shape_, normal_, nu_, gz_, b_, A_;
-  DenseMatrix dshape_, gshape_, Jt_, JtJ_, F_, Fi_, PT_, dir_;
+  DenseMatrix dshape_, gshape_, Jt_, JtJ_, JtJi_, F_, Fi_, PT_, dir_, T_;
 #endif
   shape_.SetSize(dof);
   dshape_.SetSize(dof, sdim);
   elmat.SetSize(dim * dof);
   elmat = 0.0;
 
-  DenseMatrix T(dof, dim);  // T(p, j) = gshape_p . dir_col_j
+  T_.SetSize(dof, dim);  // T(p, j) = gshape_p . dir_col_j
+  gz_.SetSize(dim);
+  b_.SetSize(dim);
+  A_.SetSize(dim);
+  const real_t eight_pi_g = 8.0 * kPi * G_;
+  const real_t four_pi_g = 4.0 * kPi * G_;
 
   const auto* ir = IntRule ? IntRule : &GetRule(el, Trans);
   for (auto q = 0; q < ir->GetNPoints(); q++) {
     const auto& ip = ir->IntPoint(q);
     if (!SlipSurfaceData(el, Trans, ip, map_, shape_, dshape_, gshape_, normal_,
-                         nu_, F_, Fi_, PT_, Jt_, JtJ_)) {
+                         nu_, F_, Fi_, PT_, Jt_, JtJ_, JtJi_)) {
       continue;
     }
     SlipDirection(PT_, Fi_, nu_, map_ != nullptr, dir_);
-    Mult(gshape_, dir_, T);
+    Mult(gshape_, dir_, T_);
 
     // b = F^{-T} grad zeta0 (identity map: b = grad zeta0), and
     // A = (|b|^2 / 8 pi G) nu - ((b.nu) / 4 pi G) b.
-    gz_.SetSize(dim);
     grad_zeta0_->Eval(gz_, Trans, ip);
-    b_.SetSize(dim);
     if (map_) {
       Fi_.MultTranspose(gz_, b_);
     } else {
@@ -1553,17 +1515,16 @@ void SlipInterfaceGravityIntegrator::AssembleElementMatrix(
     }
     const real_t b2 = b_ * b_;
     const real_t bnu = b_ * nu_;
-    A_.SetSize(dim);
     for (int d = 0; d < dim; d++) {
-      A_[d] = b2 * nu_[d] / (8.0 * kPi * G_) - bnu * b_[d] / (4.0 * kPi * G_);
+      A_[d] = b2 * nu_[d] / eight_pi_g - bnu * b_[d] / four_pi_g;
     }
 
     const auto w = ip.weight * Trans.Weight();
     for (int i = 0; i < dim; i++) {
-      const double row = w * A_[i];
+      const real_t row = w * A_[i];
       for (int p = 0; p < dof; p++) {
         for (int j = 0; j < dim; j++) {
-          const double tv = row * T(p, j);
+          const real_t tv = row * T_(p, j);
           for (int qq = 0; qq < dof; qq++) {
             elmat(p + i * dof, qq + j * dof) += tv * shape_[qq];
           }
@@ -1591,44 +1552,45 @@ void SlipInterfaceGravityScalarIntegrator::AssembleElementMatrix2(
   constexpr real_t kPi = std::numbers::pi_v<real_t>;
 
 #ifdef MFEM_THREAD_SAFE
-  Vector shape_, normal_, nu_, gz_, b_;
-  DenseMatrix dshape_, gshape_, Jt_, JtJ_, F_, Fi_, PT_, dir_, T_;
+  Vector shape_, normal_, nu_, gz_, b_, test_shape_;
+  DenseMatrix dshape_, gshape_, Jt_, JtJ_, JtJi_, F_, Fi_, PT_, dir_, T_;
 #endif
   shape_.SetSize(dof_z);
   dshape_.SetSize(dof_z, sdim);
   elmat.SetSize(dim * dof_v, dof_z);
   elmat = 0.0;
 
-  Vector test_shape(dof_v);
+  test_shape_.SetSize(dof_v);
   T_.SetSize(dof_z, dim);  // T(p, j) = gshape^zeta_p . dir_col_j
+  gz_.SetSize(dim);
+  b_.SetSize(dim);
+  const real_t four_pi_g = 4.0 * kPi * G_;
 
   const auto* ir = IntRule ? IntRule : &GetRule(trial_fe, test_fe, Trans);
   for (auto q = 0; q < ir->GetNPoints(); q++) {
     const auto& ip = ir->IntPoint(q);
     if (!SlipSurfaceData(trial_fe, Trans, ip, map_, shape_, dshape_, gshape_,
-                         normal_, nu_, F_, Fi_, PT_, Jt_, JtJ_)) {
+                         normal_, nu_, F_, Fi_, PT_, Jt_, JtJ_, JtJi_)) {
       continue;
     }
     SlipDirection(PT_, Fi_, nu_, map_ != nullptr, dir_);
     Mult(gshape_, dir_, T_);
-    test_fe.CalcShape(ip, test_shape);
+    test_fe.CalcShape(ip, test_shape_);
 
-    gz_.SetSize(dim);
     grad_zeta0_->Eval(gz_, Trans, ip);
-    b_.SetSize(dim);
     if (map_) {
       Fi_.MultTranspose(gz_, b_);
     } else {
       b_ = gz_;
     }
-    const real_t qcoef = (b_ * nu_) / (4.0 * kPi * G_);
+    const real_t qcoef = (b_ * nu_) / four_pi_g;
 
     const auto w = ip.weight * Trans.Weight() * qcoef;
     for (int p = 0; p < dof_z; p++) {
       for (int j = 0; j < dim; j++) {
-        const double tv = w * T_(p, j);
+        const real_t tv = w * T_(p, j);
         for (int qq = 0; qq < dof_v; qq++) {
-          elmat(qq + j * dof_v, p) += tv * test_shape[qq];
+          elmat(qq + j * dof_v, p) += tv * test_shape_[qq];
         }
       }
     }

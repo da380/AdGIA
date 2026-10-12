@@ -51,6 +51,7 @@ sys.path.insert(0, str(HERE))
 import histories as hist  # noqa: E402
 from meshes import outside_source  # noqa: E402
 
+# Loaded by path: this directory and box/ both have a reference.py.
 _spec = importlib.util.spec_from_file_location(
     "box_reference", HERE.parent / "box" / "reference.py")
 box = importlib.util.module_from_spec(_spec)

@@ -206,7 +206,7 @@ void RunCase(int dim, int order, bool rank0_partition,
     MPI_Barrier(MPI_COMM_WORLD);
     {
       IceHistory ice(sea, stacked);
-      Check(ice.NumTimes() - 2.0, 0.0, label + ": stack times");
+      Check(std::abs(ice.NumTimes() - 2.0), 0.0, label + ": stack times");
       GridFunctionCoefficient fc(&field);
       ParLinearForm lf(
           static_cast<ParFiniteElementSpace*>(&sea.SurfaceSpace()));
@@ -219,7 +219,7 @@ void RunCase(int dim, int order, bool rank0_partition,
           static_cast<ParFiniteElementSpace*>(&sea.SurfaceSpace()));
       li.AddDomainIntegrator(new DomainLFIntegrator(I));
       li.Assemble();
-      Check(GlobalSum(li.Sum()) - 2.0 * s0, 1e-10 * std::abs(s0),
+      Check(std::abs(GlobalSum(li.Sum()) - 2.0 * s0), 1e-10 * std::abs(s0),
             label + ": stack midpoint integral");
     }
     MPI_Barrier(MPI_COMM_WORLD);

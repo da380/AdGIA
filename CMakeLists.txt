@@ -50,10 +50,10 @@ if(USE_MPI)
                 "MPI launcher (taken from the compiler wrapper's directory)")
         endif()
     endif()
-    find_package(MPI REQUIRED)        
-    if (NOT CMAKE_CXX_COMPILER AND MFEM_CXX_COMPILER)  
-        set(CMAKE_CXX_COMPILER "${MFEM_CXX_COMPILER}")      
-    endif()
+    find_package(MPI REQUIRED)
+    # (CMAKE_CXX_COMPILER is always set after project(), so it cannot be
+    # defaulted from MFEM here; pass -DCMAKE_CXX_COMPILER at configure
+    # time to match MFEM's compiler, as INSTALL.md describes.)
 endif()
 
 
@@ -240,8 +240,10 @@ if (DOXYGEN_FOUND)
         DEPENDS "${MATHJAX_CONFIG_JS_DST}"
     )
 
-    install(DIRECTORY "${DOXYGEN_OUTPUT_DIRECTORY}"
-            DESTINATION "${CMAKE_INSTALL_DATADIR}/${PROJECT_NAME}/html"
+    # Install the generated html/ itself (installing the whole output
+    # directory would nest html/doc/html).
+    install(DIRECTORY "${DOXYGEN_OUTPUT_DIRECTORY}/html"
+            DESTINATION "${CMAKE_INSTALL_DATADIR}/${PROJECT_NAME}"
             COMPONENT Development
     )
 

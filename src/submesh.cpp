@@ -6,6 +6,8 @@
 
 #include "AdGIA/submesh.hpp"
 
+#include <algorithm>
+
 namespace AdGIA {
 
 namespace {
@@ -355,7 +357,7 @@ std::unique_ptr<mfem::SparseMatrix> detail::AssembleOnSubMesh(
   MixedBilinearForm helper(setup.parent_is_trial ? shadow : form.TrialFESpace(),
                            setup.parent_is_trial ? form.TestFESpace() : shadow,
                            &form);
-  // The borrowing constructor omits boundary-face integrators (MFEM 4.9).
+  // The borrowing constructor does not copy the boundary-face integrators.
   *helper.GetBFBFI() = *form.GetBFBFI();
   *helper.GetBFBFI_Marker() = *form.GetBFBFI_Marker();
 

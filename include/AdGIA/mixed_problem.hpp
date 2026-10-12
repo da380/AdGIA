@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "mfem.hpp"
+#include "AdGIA/bordered.hpp"
 #include "AdGIA/coefficient.hpp"
 #include "AdGIA/poisson.hpp"
 #include "AdGIA/quasi_static_problem.hpp"
@@ -55,9 +56,9 @@ namespace AdGIA {
  *   sign of @f$\mathbf{m}\cdot\nabla\Phi_0@f$ does that.
  * - @p interface_density: @f$\rho_F@f$ on those boundary elements; default
  *   @p density.
- * - @p interface_potential_coupling: when false, the interface coupling
- *   (F3) is dropped — both halves, so the operator stays symmetric — and
- *   the fluid presses on the solid through the buoyancy term (F2) alone
+ * - @p interface_potential_coupling: when false, the interface potential
+ *   coupling is dropped — both halves, so the operator stays symmetric —
+ *   and the fluid presses on the solid through the buoyancy term alone
  *   (a "Winkler foundation"). With @p density_gradient zero and a constant
  *   @p interface_density this reproduces, in steps, the approximate CMB
  *   conditions of the GIA literature (see doc/self_gravitation.md, "The
@@ -198,7 +199,7 @@ struct FluidRegion {
  * gauge shear penalty and the Tikhonov refinement of
  * LinearQuasiStaticProblemBase. Every operator of this class then extends
  * over the fluid on its own: the coupling and the gravity terms integrate
- * over the whole SubMesh, and the interface terms (F2)-(F3), the fluid mass
+ * over the whole SubMesh, and the interface terms (buoyancy and interface potential coupling), the fluid mass
  * term @f$M_F@f$ and its near-indefiniteness, and the 2-D constant-mode
  * inconsistency never arise, because the class sees no FluidRegions. The
  * refinement solves the regularised coupled system against the physical
@@ -213,7 +214,9 @@ struct FluidRegion {
  * meshed they cost @f$O(\epsilon)@f$ energy and the penalty handles them.
  */
 class LinearQuasiStaticMixedSelfGravitatingProblem
-    : public LinearQuasiStaticProblemBase {
+    : public LinearQuasiStaticProblemBase,
+      public PotentialForceSlot,
+      public BorderForceSlot {
  public:
   /** BlockCG runs CG on the same projected block system as BlockMINRES:
    * admissible because the assembled symmetric system is congruent to a
@@ -254,6 +257,12 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   void EnableGaugeKKT(const mfem::Array<int>& fluid_marker,
                       mfem::Coefficient& mu_gauge, bool mgw_prec = false);
 
+  /** @brief Diagnostic: relative physical residual
+   * @f$\|A(u,\phi) - f\| / \|f\|@f$ of the last gauge-KKT iterate (the
+   * constraint rows of the saddle), and the stationarity residual
+   * @f$\|Qu + Av\|@f$ relative to @f$\|Qu\|@f$, as a pair. */
+  std::pair<mfem::real_t, mfem::real_t> KKTResiduals() const;
+
   /**
    * @param fes_u Displacement space (vdim = dim) on a (Par)SubMesh of the
    * ball; not owned.
@@ -293,6 +302,38 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   mfem::LinearForm& ExternalPotentialLoad() { return *b_phi_; }
 
   /**
+   * @brief Superpose a dual vector on the potential rows
+   * (PotentialForceSlot): the AddForce() analogue, in the L-vector
+   * layout of the potential space on the PARENT mesh. Accumulates onto
+   * the assembled @f$\ell_\phi@f$ and is cleared by the next
+   * AssembleForce(); the 2-D compatibility treatment is applied to the
+   * increment as to the assembled load. The increment deliberately
+   * does NOT feed the border data (sea_Sd_, rot_r_): the bordered
+   * system is symmetric with the uniform term and @f$\omega@f$ among
+   * its unknowns, so the exact discrete adjoint of a potential
+   * observation loads only the potential block, and the continuum
+   * mass-like reading of the datum (Yu et al. 2025, eq. 58) is
+   * realised through the symmetric border columns automatically —
+   * feeding the rows double-counts (see the implementation
+   * comment).
+   */
+  void AddPotentialForce(const mfem::Vector& f) override;
+  mfem::FiniteElementSpace& PotentialForceSpace() override {
+    return *fes_phi_;
+  }
+
+  /**
+   * @brief Superpose data on the border rows (BorderForceSlot): the
+   * duals of the uniform-term and angular-velocity solution
+   * components, for adjoint loads of observations that read them
+   * (e.g. sea level, SL1 = -(u.grad Phi0 + phi + psi(omega))/g +
+   * Phi_g/g). Accumulates; cleared by AssembleForce(). Requires the
+   * respective border to be enabled.
+   */
+  void AddBorderForce(mfem::real_t uniform_row,
+                      const mfem::Vector* omega_rows) override;
+
+  /**
    * @brief Apply a (tidal) potential @f$\psi@f$ (registered as
    * time-dependent; interpolated on the potential space at each
    * AssembleForce()). Its load is @f$-c(\psi, v)@f$ on the displacement and
@@ -327,7 +368,8 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   /**
    * @brief Gravitationally self-consistent water load with a frozen
    * shoreline — the condensed sea-level equation
-   * (doc/planning/sea_level_plan.md, "The WP3 derivation").
+   * (derivation: doc/quasi_static_models.tex, "The sea-level equation,
+   * rotation, and shoreline migration").
    *
    * With the ocean weight @f$w = \rho_w C_0/g@f$ and the surface trace
    * @f$\tau = u\cdot\nabla\Phi_0 + \phi@f$, the load
@@ -350,8 +392,8 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
    * asymmetric). The uniform term of the
    * last solve is UniformPotentialTerm(); the sea-level change is the
    * postprocessing @f$SL_1 = -\tau/g + \Phi_g/g@f$
-   * (SeaLevelOperator). Shoreline migration is strictly second order
-   * (Crawford), so the frozen @f$C_0@f$ here is the first-order-exact
+   * (SeaLevelOperator). Shoreline migration is strictly second order, so
+   * the frozen @f$C_0@f$ here is the first-order-exact
    * production path.
    */
   void SetWaterLoad(mfem::Coefficient& ocean_weight,
@@ -373,8 +415,8 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   mfem::real_t UniformPotentialTerm() const { return phi_g_; }
 
   /**
-   * @brief Rotational feedback inside the solve (the WP4 composition of
-   * doc/planning/sea_level_plan.md): the angular-velocity border of the
+   * @brief Rotational feedback inside the solve (see doc/quasi_static_models.tex,
+   * "The sea-level equation, rotation, and shoreline migration"): the angular-velocity border of the
    * traditional theory, solved jointly with the water load's
    * @f$\Phi_g@f$ border by a small block elimination.
    *
@@ -407,8 +449,8 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
    * refinement) — instead of by block elimination: the per-column
    * solves disappear at the price of an indefinite outer iteration
    * whose cost is flat in the border count. Gated to agree with the
-   * elimination at solver grade; the elimination stays the default
-   * (doc/planning/solvers.md, "Bordered solves"). BlockMINRES/BlockCG
+   * elimination at solver grade; the elimination stays the default.
+   * BlockMINRES/BlockCG
    * solver types with the plain gauge, in 3-D only. */
   void SetMonolithicBorder(bool on = true) {
     MFEM_VERIFY(!on || dim_ == 3,
@@ -645,6 +687,10 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   mfem::Coefficient* rho_;
   mfem::real_t G_, four_pi_G_;
   int dtn_degree_;
+  // Declared before shift_coef_: the constructor initialises
+  // shift_coef_ from shift_, and members initialise in declaration
+  // order.
+  mfem::real_t shift_ = 1e-3;
   mfem::ConstantCoefficient one_, inv_four_pi_G_, shift_coef_;
   std::unique_ptr<mfem::ProductCoefficient> half_rho_, minus_half_rho_;
   std::unique_ptr<mfem::ScalarVectorProductCoefficient> minus_half_rho_grad_;
@@ -674,7 +720,7 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
       m_fluid_form_;
   mfem::OperatorHandle K_phi_, K_shift_, M_fluid_;
   std::unique_ptr<mfem::SumOperator> A_lap_, A_full_;
-  const mfem::Operator* A_phiphi_ = nullptr;
+  mfem::Operator* A_phiphi_ = nullptr;
   std::unique_ptr<mfem::Solver> prec_phi_;
   std::unique_ptr<mfem::CGSolver> cg_phi_;
   // 2-D: the constant is projected out, CG runs on P A_phiphi P with the
@@ -717,6 +763,8 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   std::unique_ptr<mfem::SumOperator> A_sea_sum_;
   mfem::Vector sea_cu_, sea_cphi_, sea_cphi_compat_;
   mfem::real_t sea_m_ = 0.0, sea_Sd_ = 0.0, phi_g_ = 0.0;
+  mfem::real_t border_r0_add_ = 0.0;   ///< AddBorderForce, uniform row
+  mfem::Vector border_rot_add_;        ///< AddBorderForce, omega rows
   mfem::Vector sea_yu_, sea_yphi_;
 
   // The rotational border (SetRotation): the unit centrifugal
@@ -732,19 +780,21 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   mfem::DenseMatrix rot_Pw_;   ///< int w psi_k psi_j dS
   mfem::Vector rot_mpsi_;     ///< int w psi_k dS
   mfem::Vector rot_r_;        ///< -int sigma psi_k dS per assembly
+  // Load-independent rotation border data, valid while
+  // rot_cache_version_ equals OperatorVersion(): the columns (with the
+  // water psi columns already subtracted) and the psi-psi fluid block.
+  std::vector<mfem::Vector> rot_Bu_, rot_Bphi_;
+  mfem::DenseMatrix rot_TT_;
+  int rot_cache_version_ = -1;
   mfem::Vector omega_;
-  // The border-column cache: the unit responses K^-1 B_j of the
-  // bordered elimination are load-independent, so across solves with an
-  // unchanged operator (viscoelastic steps at fixed effective modulus,
-  // Picard passes between refreshes) they are reused rather than
-  // re-solved — the dominant cost of the bordered solve. Valid while
-  // OperatorVersion() stands still and the demanded tolerance is no
-  // tighter than the one they were built at.
-  std::vector<mfem::Vector> border_Yu_, border_Yphi_;
+  // The shared elimination engine (bordered.hpp): it owns the
+  // border-column cache — the unit responses K^-1 B_j are
+  // load-independent, so across solves with an unchanged operator
+  // (viscoelastic steps at fixed effective modulus, Picard passes
+  // between refreshes) they are reused rather than re-solved, the
+  // dominant cost of the bordered solve.
+  std::unique_ptr<BorderedElimination> border_elim_;
   bool monolithic_border_ = false;
-  int border_cache_version_ = -1;
-  int border_cache_nb_ = 0;
-  mfem::real_t border_cache_tol_ = 0.0;
 
   /** @brief Rebuild the water-rotation cross data (both features on). */
   void BuildBorderCrossData();
@@ -753,7 +803,9 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   void BuildWaterPhiPhi();
   /** @brief (Re)build the Phi_g border vectors and the mass-row scale. */
   void BuildWaterBorder();
-  const mfem::Operator* sea_phiphi_base_ = nullptr;
+  mfem::Operator* sea_phiphi_base_ = nullptr;
+  /** The mass-row data form int sigma_data dS (built on first use). */
+  std::unique_ptr<mfem::LinearForm> sea_mass_form_;
   /** @brief The surface-mass column of density @p s: the tau'-pairing
    * vectors on the two rows. */
   void BuildSurfaceMassColumn(mfem::Coefficient& s, mfem::Vector& cu,
@@ -799,22 +851,14 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   std::unique_ptr<mfem::Solver> prec_vu_;       ///< MGW composite
   void SetupKKTGauge();
 
- public:
-  /** @brief Diagnostic: relative physical residual
-   * @f$\|A(u,\phi) - f\| / \|f\|@f$ of the last gauge-KKT iterate (the
-   * constraint rows of the saddle), and the stationarity residual
-   * @f$\|Qu + Av\|@f$ relative to @f$\|Qu\|@f$, as a pair. */
-  std::pair<mfem::real_t, mfem::real_t> KKTResiduals() const;
-
- private:
   std::unique_ptr<mfem::BlockVector> X_block_, B_block_;
   mfem::Vector rhs_s_, w_;
 
   // tolerances and statistics
   mfem::real_t inner_rel_tol_ = 1e-13;
   bool inner_tol_set_ = false;
-  mfem::real_t shift_ = 1e-3;
-  mfem::IterativeSolver::PrintLevel inner_print_level_;
+  mfem::IterativeSolver::PrintLevel inner_print_level_ =
+      mfem::IterativeSolver::PrintLevel();
   int outer_its_ = 0;
   mutable int inner_its_ = 0;
 };

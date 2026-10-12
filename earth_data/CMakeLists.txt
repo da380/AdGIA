@@ -3,11 +3,12 @@
 # <build>/earth_data/<script> starts the script of the source tree with
 # the shared Python environment, so outputs land in the build.
 # EARTH_DATA_PYTHON names a Python with numpy, scipy, netCDF4 and
-# pyslfp; when empty, the root poetry environment (ADGIA_POETRY_PYTHON,
+# pyslfp (plus cartopy and pyshtools, the `maps` extra, for
+# plot_fingerprint_kernel); when empty, the root poetry environment (ADGIA_POETRY_PYTHON,
 # found by the top-level CMakeLists) is used.
 
 set(EARTH_DATA_PYTHON "" CACHE FILEPATH
-    "Python interpreter with numpy, scipy, netCDF4 and pyslfp; the root poetry environment if empty")
+    "Python interpreter with numpy, scipy, netCDF4 and pyslfp (and cartopy, pyshtools for plot_fingerprint_kernel); the root poetry environment if empty")
 if(NOT EARTH_DATA_PYTHON)
     set(EARTH_DATA_PYTHON "${ADGIA_POETRY_PYTHON}")
 endif()
@@ -40,3 +41,4 @@ endfunction()
 earth_data_launcher(surface_to_netcdf)
 earth_data_launcher(ice_ng_to_surface)
 earth_data_launcher(topography_grid)
+earth_data_launcher(plot_fingerprint_kernel)

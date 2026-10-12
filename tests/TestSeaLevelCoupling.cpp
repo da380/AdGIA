@@ -4,9 +4,10 @@
 #include "TestCommon.hpp"
 
 /*
-  Rung-0 tests of the coupled water load (SetWaterLoad: the condensed
-  sea-level equation with frozen shoreline; doc/planning/sea_level_plan.md,
-  "The WP3 derivation") on the canned two-layer meshes, all-ocean
+  Tests of the coupled water load (SetWaterLoad: the condensed water
+  system with frozen shoreline; the derivation is in
+  doc/quasi_static_models.tex, the mixed class's sea-level section) on the
+  canned two-layer meshes, all-ocean
   (C0 = 1) with a small water density.
 
   1. Monolithic == fixed point: the pyslfp-style iteration — assumed sea
@@ -31,20 +32,16 @@ using namespace self_grav_test;
 
 constexpr double kRhoW = 0.02;
 
-// Degree-2, zero-mean surface pattern (2-D: cos 2theta; 3-D: the zonal
-// 3c^2 - 1), optionally with a mean part.
+// Degree-2, zero-mean surface pattern (the zonal 3c^2 - 1).
 double Degree2(const Vector& x) {
   const double r = x.Norml2();
-  if (x.Size() == 2) {
-    return (x[0] * x[0] - x[1] * x[1]) / (r * r);
-  }
   const double c = x[2] / r;
   return 3.0 * c * c - 1.0;
 }
 
 double G0(int dim) {
-  return dim == 2 ? 2.0 * std::numbers::pi * kG * kRho
-                  : 4.0 * std::numbers::pi * kG * kRho / 3.0;
+  MFEM_VERIFY(dim == 3, "the water load is 3-D only");
+  return 4.0 * std::numbers::pi * kG * kRho / 3.0;
 }
 
 // The iterated water load of the fixed-point instrument:
@@ -424,7 +421,8 @@ TEST(SeaLevelCouplingFluid, MonolithicMatchesFixedPoint) {
   }
   // Route-grade agreement (the operator's normal-projected q_g against
   // the instrument's full gradient), at the 3-D order-1 faceted-sphere
-  // grade of the WP3 hierarchy.
+  // grade of the measured route-grade hierarchy (o1 ~1e-4, o2 ~2e-6, 3-D o1
+  // faceted ~1e-3).
   EXPECT_NEAR(uniform, phi_g, 2e-3 * std::max(1.0, std::abs(phi_g)));
   GridFunction du(p->Displacement());
   du -= q->Displacement();

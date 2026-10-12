@@ -54,7 +54,6 @@ double MetricNorm2(FiniteElementSpace& fes, Args&&... args) {
   Map riesz(fes, std::forward<Args>(args)...);
   FunctionCoefficient f(Smooth);
   auto j = [&]() {
-#ifdef MFEM_USE_MPI
     if (auto* pfes = dynamic_cast<ParFiniteElementSpace*>(&fes)) {
       ParLinearForm lf(pfes);
       lf.AddDomainIntegrator(new DomainLFIntegrator(f));
@@ -63,7 +62,6 @@ double MetricNorm2(FiniteElementSpace& fes, Args&&... args) {
       lf.ParallelAssemble(J);
       return J;
     }
-#endif
     LinearForm lf(&fes);
     lf.AddDomainIntegrator(new DomainLFIntegrator(f));
     lf.Assemble();
@@ -80,7 +78,7 @@ int main(int argc, char* argv[]) {
   Mpi::Init(argc, argv);
   Hypre::Init();
 
-  const char* file = "../data/elastogravity_two_layer_2d.msh";
+  const char* file = "../data/earth_fluidcore_2d.msh";
 
   // Serial reference on every rank.
   double l2_s, s1_s, s2_s;

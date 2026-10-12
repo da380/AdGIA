@@ -108,7 +108,10 @@ and the relabelled solution pushed forward onto the deformed body.
 `./relabelled_elasticity -a 0.15 -o 3`
 
 **`adjoint_elasticity`**: first-order sensitivity kernels for static
-isotropic elasticity, and the kernel-versus-gradient distinction. The
+isotropic elasticity, and the kernel-versus-gradient distinction — the
+tutorial layer over the library's common adjoint structure
+(`adjoint.hpp`: `AdjointForce`, `AdjointSolver`, `IsotropicKernel`;
+regression-gated by `TestAdjoint`). The
 physical body is the inner layer of the two-layer disc alone (the rest
 of the mesh is the Sobolev extension buffer); the observable is the
 geodetic one, the linearised distance change between two surface
@@ -124,8 +127,8 @@ library's Riesz maps (`riesz.hpp`) — L2, and Sobolev metrics of order 1
 and 2 posed on the buffered mesh with outer Dirichlet conditions — with
 only the H2 representative mathematically right for continuous moduli.
 Conventions are stated in the header; the gravitating version, where
-the equilibrium state varies too, is deliberately left to a later
-example (Yu et al. 2025, `doc/Elasticity/ggae388.pdf`). Shows (`-vis`):
+the equilibrium state varies too, is `gia_kernels` and the `-kernel`
+mode of `ice_age_loading` (Yu et al. 2025, `doc/Elasticity/ggae388.pdf`). Shows (`-vis`):
 the forward and adjoint displacements and each modulus's sensitivity in
 the three metrics, on the physical sub-domain. `-vd`/`-va` add a smooth
 radial / harmonic-polynomial variation of the base moduli. `./adjoint_elasticity -r 1`
@@ -137,10 +140,12 @@ eta (Yu et al. 2025 specialised to the non-gravitating case). The
 adjoint is the same forward Maxwell machinery run in reversed time with
 zero load: the measurement's impulsive elastic response jumps the
 adjoint internal variable to `dev eps(u+_g)/tau`, which then relaxes
-freely; the kernels pair the stored forward trajectory at `t` with the
-adjoint one at `t1 - t` (store-all checkpointing — the dissipative
-forward field cannot be recovered by backward integration, the key
-practical difference from the seismological adjoint). The FD
+freely; the forward run records a `ForwardTrajectory` (store-all
+policy; the library's m-only re-solve policy is gated identical in
+`TestAdjoint`) and the `AdjointSolver` sweep pairs it with the adjoint
+fields as they are produced — the dissipative forward field cannot be
+recovered by backward integration, the key practical difference from
+the seismological adjoint. The FD
 verification table converges as O(dt^2) in `-n` down to a spatial floor
 that is O(h) in `-r` for the rows touching the viscous coupling (nodal
 mu/tau sampling; see the header). The same Riesz-map section as the
@@ -166,7 +171,7 @@ under a surface load or a tidal potential: a uniform solid of any shape,
 a fluid core under a mantle, or a solid inner core in a fluid outer core;
 Schur-CG and block-MINRES solvers compared, rigid-mode diagnostics. Shows
 (`-vis`): displacement and potential. `./elastogravity_layered -o 2 -vis`,
-`./elastogravity_layered -m ../data/elastogravity_three_layer_3d.msh -o 1 -vis`
+`./elastogravity_layered -m ../data/earth_innercore_3d.msh -o 1 -vis`
 
 **`referential_elastogravity`**: the general referential formulation
 beside the Eulerian one on the same problem: two formalisms, one answer,
@@ -175,8 +180,13 @@ potential perturbation.
 
 **`self_gravitating_solvers`**: one problem (a fluid core under a mantle,
 degree-2 load), the main linear-solver architectures of the library, with a
-table of cost and agreement (the KKT enforcement of the slipping interface
-is exercised by `slipping_interface -enforce kkt`). Shows: the solution, and the difference field
+table of cost and agreement: Dahlen (Schur CG and block MINRES), the gauged
+and welded referential gauge-penalty treatments, and the Maxwell
+architecture (the referential problem with the core an artificial Maxwell
+solid relaxed to the secular static state through `SetFluid`; the general
+fluid treatment, `doc/static_fluid_core.tex`), plus the slipping-interface
+solvers (the KKT enforcement of the slipping
+interface is exercised by `slipping_interface -enforce kkt`). Shows: the solution, and the difference field
 of the architecture that agrees least (rigid modes removed). Add `-no-slip`
 for a quicker run without the slipping-interface solvers.
 
@@ -184,7 +194,7 @@ for a quicker run without the slipping-interface solvers.
 self-gravitating disc or sphere by degree, one solve each; in 3-D beside
 the incompressible sphere's closed form. Shows: the load response at one
 degree (`-vl`); the CSV plots the Love numbers against degree.
-`./love_numbers`, `./love_numbers -m ../data/coupled_poisson.msh -o 2 -lmax 4 -kappa 100`
+`./love_numbers`, `./love_numbers -m ../data/ball_buffer_coarse_3d.msh -o 2 -lmax 4 -kappa 100`
 
 **`anisotropic_elasticity`**: radially anisotropic (transversely
 isotropic, as in PREM) elasticity with `ElasticTensorIntegrator`; with
@@ -248,7 +258,24 @@ angular-momentum-row residual; the equilibrium moments are data
 (`-C1 -C2 -C3`), not derived from the model. Shows: the displacement
 without and with feedback, and their difference.
 `./rotational_feedback`, `./rotational_feedback -Omega 0.3`,
-`./rotational_feedback -m ../data/coupled_poisson.msh -o 1`
+`./rotational_feedback -m ../data/ball_buffer_coarse_3d.msh -o 1`
+
+**`generalised_rotation`**: the generalised (Maitra & Al-Attar)
+rotational theory beside the traditional one on a triaxial body — the
+referential class's two doors: the traditional angular-velocity border and
+the generalised door (the model's own inertia plus the Tisserand gauge). The traditional omega depends on the arbitrary rigid
+representative of the displacement: the gauge sweep measures the shift
+under re-gauges u → u + b×x, matches it against the closed form
+D⁻¹[ad_b, I]Ω (exact), and shows the Tisserand-pinned row flat at
+machine precision, with a spherical control where the model's inertia
+is isotropic and the ambiguity vanishes. The generalised door
+(`SetRotation(Omega)`: the model's own inertia + the Tisserand gauge)
+removes the arbitrariness, and its omega equals the traditional one
+corrected by the closed-form gauge term of its representative — one
+formula connects the theories. Writes the sweep as a CSV curve
+(`-csv`, plot with `plot_csv.py`); shows the triaxial density and the
+generalised solution. 3-D only.
+`./generalised_rotation`, `./generalised_rotation -ez 0.2 -et 0.1`
 
 **`sea_level_fingerprint`**: the gravitationally self-consistent ocean
 response to melting an ice cap, solved monolithically — the sea-level
@@ -259,9 +286,9 @@ benchmark family's (smooth polar continent, ice cap, a melt unloading
 the +x hemisphere of the cap smoothly), with every piece of the
 geometry and load an option, and `-Omega` adding the rotational
 feedback to the same bordered solve; frozen shorelines (first-order
-exact). The default mesh, `data/sea_level_fingerprint.msh`, is refined
+exact). The default mesh, `data/fingerprint_ring_3d.msh`, is refined
 in a ring about this state's shoreline circle
-(`meshes/fingerprint_coastline.py`). `-earth` swaps in the real
+(`meshes/earth_coastlines.py --field analytic`). `-earth` swaps in the real
 present-day geography — ICE-7G topography and ice sampled at the
 surface nodes by the `ice_ng_to_surface` chain (the first run prints
 the exact commands) — and melts Greenland or West Antarctica
@@ -278,9 +305,73 @@ shoreline migration (Picard on the ocean function via
 off = frozen shorelines, first-order exact), printing the extra passes
 taken. 3-D only — the sea-level equation is not wired for 2-D (2-D
 elastic solves with gravity remain useful; a 2-D ocean is not).
+With `-kernel` the same solve runs in its reciprocity reading
+(Al-Attar et al. 2024, `doc/Elasticity/ggad434.pdf`; gate GA1b): the
+direct load becomes a unit-mass Gaussian cap at an observation site
+(`-obs-lat`/`-obs-lon`/`-obs-width`; Boston by default) and the
+exported sea-level field IS the raw L2 sensitivity kernel of that
+site's sea-level observation with respect to the direct load — over
+the ice sheets, its sensitivity to ice melt. `-lateral` adds a smooth
+degree-2 lateral variation of the moduli, so the classic 1-D-vs-3-D
+kernel comparison is two runs;
+`<build>/earth_data/plot_fingerprint_kernel` draws the pair as
+ice-masked global maps with Greenland/Antarctica zooms through
+pyslfp's cartopy wrapper — by default the kernel plus the 3-D−1-D
+DIFFERENCE on its own scale, since the structure signature is a small
+fraction of the kernel's spread (~0.4 % at 60 % lateral moduli — the
+elastic fingerprint's weak moduli sensitivity, made quantitative);
+`--side-by-side` draws the two kernels instead (the exact chain is
+printed by the run and spelled out in the header).
 `./sea_level_fingerprint`, `./sea_level_fingerprint -melt 1.0 -mig`,
 `./sea_level_fingerprint -earth -m ../data/earth_coastlines.msh` (then
 the printed sampling commands, then the same with `-state`/`-ice`)
+
+**`shoreline_refinement`**: in-C++ shoreline mesh refinement
+(`RefineToShoreline`, `mesh.hpp` — the MFEM `shaper` miniapp's pattern
+specialised to sea level). The ocean function drives conforming local
+tet bisection toward a band about the flotation threshold, with new
+nodes snapped back onto the bounding spheres; shorelines never migrate
+far enough to leave a sensibly chosen band, so this one pre-run pass
+replaces mid-run AMR. The geography is a wavy polar continent (a
+genuinely 2-D shoreline curve); after shaping, the example solves the
+elastic fingerprint of a melting polar blob on the refined mesh.
+Exports: `shoreline_h.csv` (the surface resolution map — the refined
+ring), `shoreline_sl.csv` (the fingerprint), `shoreline_refined.mesh`.
+Two separate knobs, two separate things: `-width` (radians) or
+`-band` (ocean-function units) set the refined zone's EXTENT, while
+`-hs` sets the target ELEMENT SIZE at the shoreline — passes continue
+until it is met (`-l` becomes a safety cap). A width below the current
+element size cannot show; to make the shoreline finer, set `-hs`.
+ORDERING: shoreline refinement goes FIRST, straight after load — tets
+lose their bisection marking under `UniformRefinement`, so `-r`
+composes after (the library verifies this). Maps via
+`<build>/earth_data/plot_fingerprint_kernel shoreline_h.csv --no-mask
+--global-only`. `./shoreline_refinement -no-vis`,
+`mpiexec -np 4 ./shoreline_refinement -l 3 -no-vis`
+
+**`gia_kernels`**: the adjoint demonstrator — first-order GIA
+sensitivity kernels on an idealised, well-resolved configuration,
+everything analytic (homogeneous Maxwell planet, 1-D
+viscosity background, a smooth polar continent carrying a Gaussian ice
+blob melting linearly, a windowed point-like sea-level measure at a
+distant ocean site, present day = the final time). One forward run and
+one adjoint sweep (`adjoint.hpp`) give: the VISCOSITY kernel as a
+volume field (GLVis; `visc_kernel.mesh`/`.gf` for cutting-plane
+screenshots), lon-lat maps on depth shells, and the great-circle SLICE
+through site and blob (`visc_kernel_slice.csv`); the quelled ICE-RATE
+kernels D_İ(x, t) at chosen epochs; and, with `-taylor`, the TAYLOR
+TEST (exact J(m₀ + s δm) vs the affine adjoint prediction for a
+sub-blob mantle viscosity perturbation and an ice-rate pattern).
+Defaults are kernel-honest: order 2 (the order-1 warning applies) and
+one refinement; the whole chain runs in ~36 s serial, the Taylor sweep
+a few minutes. Maps via
+`<build>/earth_data/plot_fingerprint_kernel ... --no-mask
+--global-only` (the printed hints give exact commands).
+Parallel runs export the SAME figure set (rank 0 reloads the gathered
+kernel and samples the shells and slice), so the finer figure runs are
+one command. `./gia_kernels -no-vis`,
+`./gia_kernels -taylor 3 -no-vis`,
+`mpiexec -np 8 ./gia_kernels -r 2 -no-vis`
 
 **`ice_age_loading`**: the ICE-7G deglaciation on a Maxwell planet —
 the surface exchange chain end to end. Step 1 (no `-ice`) exports the
@@ -295,21 +386,53 @@ Prints the eustatic equivalent, ocean-mean sea level, uniform term and
 displacement norm per step; writes the history CSV (`plot_csv.py`) and
 the endpoint fingerprint for the NetCDF/cartopy map chain. The body is
 the toy homogeneous planet, so the output is qualitative — real
-geography on a model rheology; resolved runs belong to the server. An
-the build's `data/earth_coastlines.msh` — the ball refined along the
-real coastlines and the shallow shelves, one sizing field with no
-coastline isolation — suits `-m`
-out of the box, and an optional step 0 rebuilds it from a sharper or
-re-dated topography (`meshes/README.md`, "The coastline mesh").
+geography on a model rheology; resolved runs belong to the server. The
+build's `data/earth_coastlines.msh` — the ball refined along the real
+coastlines and the shallow shelves, one sizing field with no coastline
+isolation — suits `-m` out of the box, and an optional step 0 rebuilds
+it from a sharper or re-dated topography (`meshes/README.md`, "The
+coastline mesh").
 `./ice_age_loading`, then the two printed `ice_ng_to_surface` calls,
 then `./ice_age_loading -ice ice_age_nodes_ice.csv -state
 ice_age_nodes_state.csv`
 
+With `-kernel` the run finishes with ONE adjoint sweep (the common
+adjoint structure, `adjoint.hpp`) giving the kernels of a present-day
+windowed sea-level observation at `-obs-lat`/`-obs-lon` (Boston by
+default): the 3-D VISCOSITY kernel as a GLVis volume field, and the
+quelled ICE-RATE kernels D_İ(x, t) of Yu et al. (2025, eq. 84) exported
+at `-nk` epochs for the ice-masked pyslfp maps
+(`<build>/earth_data/plot_fingerprint_kernel`, two epochs side by
+side) — the deglacial viscous-memory structure over the ice sheets.
+Use `-o 2`: order 1's internal variables make localised viscoelastic
+kernels unreliable (the run warns). The I₀ kernel vanishes identically
+under this chain's frozen C₀. The ice-kernel maps are masked by the ice
+extent AT EACH EPOCH (`--ice-dates`), drawn global-only (zooms are less
+relevant at deglacial times) and headlined with the observation
+(`--obs-label`). The viscosity kernel is also exported on `-nd`
+DEPTH SHELLS (serial runs; `--no-mask --global-only` maps: the
+shallow shell concentrates around the observation and the load, the
+deep shell spreads to continental scale). `-fluid-core` runs the
+three-layer planet (use `-m ../data/earth_innercore_3d.msh`):
+an inviscid outer core by the gauge-penalty fluid treatment (a
+uniform-density toy core; being compressible it is not neutrally
+stratified, so the penalty answer carries the usual stratification-band
+caveat — adequate for a demonstration figure), with μ = 0 there in the
+rheology; the Maxwell branch stays whole-mesh so the kernels remain
+valid. `-lateral-visc` gives the base model a smooth 3-D
+viscosity (1-D elastic and density, 3-D viscosity — the classic
+inversion setting). `-taylor <n>` runs the TAYLOR TEST: exact
+J(m₀ + s δm) against the affine prediction J₀ + s·dJ[δm] for a mantle
+viscosity blob and an ice-rate cap, written to
+`taylor_test.csv`/`taylor_remainder.csv` for `plot_csv.py` — the
+viscosity panel shows the genuine curvature (strong on the softening
+side), the ice panel exact linearity.
+
 ### Fluids and interfaces
 
 **`gauged_fluid_cavity`**: an elastic body with a fluid core under a
-surface pressure, no gravity: the gauged fluid (`SetGaugedFluid`) and its
-Tikhonov refinement. Shows: the displacement, and the fluid pressure,
+surface pressure, no gravity: the gauge-penalty fluid
+(`SetFluid` with `GaugePenaltyOptions`) and its Tikhonov refinement. Shows: the displacement, and the fluid pressure,
 which must be uniform (the fluid displacement itself is gauge).
 
 **`sliding_fluid_ellipse`**: a fluid core that slips along its boundary
@@ -391,7 +514,7 @@ viscous interface traction is O(sqrt J). The relaxed fluid goes quiet
 while the aspherical solid keeps its unavoidable share; the run prints
 the fluid/mantle/core ||dev T|| split and the datum. The stress maps
 are elementwise, since |dev T| genuinely jumps at the CMB and ICB —
-refine the mesh (equilibrium_bodies.py --scale) for a finer image.
+refine the mesh (layered_earth.py --scale) for a finer image.
 `./equilibrium_density -vis`, `./equilibrium_density -shape cmb`,
 `./equilibrium_density -blob 0.5 -vis`, `./equilibrium_density -no-ic`
 

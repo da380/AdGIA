@@ -1,8 +1,8 @@
 // ============================================================================
 // aspherical_reference.cpp
 //
-// Leg C of the relabelling family (doc/benchmarks.tex, "Leg C: an
-// aspherical reference body"; doc/mappings.md): the SAME spherical
+// The aspherical-reference benchmark (doc/benchmarks.tex; doc/mappings.md):
+// the SAME spherical
 // physical problem, described from an ASPHERICAL reference body whose
 // mesh comes from its own generator (meshes/aspherical_body.py), not
 // from the nodal image of the case's mesh — so the mapped machinery
@@ -43,9 +43,14 @@
 //        -c runs/homogeneous/h0.3/case.json -o 2
 // ============================================================================
 
+#include <algorithm>
+#include <cmath>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <memory>
+#include <sstream>
+#include <string>
 
 #include "benchmark_case.hpp"
 #include "reference_field.hpp"
@@ -65,20 +70,17 @@ class InverseShape : public Diffeomorphism {
 
   void Eval(Vector& V, ElementTransformation& T,
             const IntegrationPoint& ip) override {
-    Vector y(vdim);
-    T.Transform(ip, y);
-    Map(y, V);
+    T.Transform(ip, y_);
+    Map(y_, V);
   }
 
   void EvalGradient(DenseMatrix& F, ElementTransformation& T,
                     const IntegrationPoint& ip) override {
-    Vector y(vdim), x(vdim);
-    T.Transform(ip, y);
-    Map(y, x);
-    DenseMatrix FD(vdim);
-    ForwardGradient(x, FD);
+    T.Transform(ip, y_);
+    Map(y_, x_);
+    ForwardGradient(x_, FD_);
     F.SetSize(vdim);
-    CalcInverse(FD, F);
+    CalcInverse(FD_, F);
   }
 
   // The reference radius of the physical radius rt in the direction of
@@ -101,8 +103,8 @@ class InverseShape : public Diffeomorphism {
   }
 
  private:
-  void Angular(const Vector& y, real_t& s, real_t& s_th,
-               real_t& s_ph_over_sin) const {
+  // The angular factor s(theta, phi) of the stretch at the direction of y.
+  real_t Angular(const Vector& y) const {
     const real_t r = y.Norml2();
     const real_t ct = vdim == 3 ? y[2] / std::max(r, real_t(1e-300))
                                      : 0.0;
@@ -116,9 +118,7 @@ class InverseShape : public Diffeomorphism {
       s2p = 2.0 * y[0] * y[1] / rho2;
     }
     const real_t p2 = 0.5 * (3.0 * ct * ct - 1.0);
-    s = p2 + beta_ * st * st * c2p;
-    s_th = -3.0 * ct * st + 2.0 * beta_ * st * ct * c2p;
-    s_ph_over_sin = -2.0 * beta_ * st * s2p;
+    return p2 + beta_ * st * st * c2p;
   }
 
   void Map(const Vector& y, Vector& x) const {
@@ -128,9 +128,7 @@ class InverseShape : public Diffeomorphism {
       x = y;
       return;
     }
-    real_t s, s_th, s_ph;
-    Angular(y, s, s_th, s_ph);
-    const real_t r = Radius(rt, s);
+    const real_t r = Radius(rt, Angular(y));
     x = y;
     x *= r / rt;
   }
@@ -153,8 +151,7 @@ class InverseShape : public Diffeomorphism {
     if (r < 1e-300 || r >= 1.0 + B_) {
       return;
     }
-    real_t s, s_th, s_ph;
-    Angular(x, s, s_th, s_ph);
+    const real_t s = Angular(x);
     real_t h, hr, c1;  // h = c1 s, dh/dr = hr
     if (r <= 1.0) {
       h = eps_ * r * s;
@@ -166,7 +163,8 @@ class InverseShape : public Diffeomorphism {
       hr = -2.0 * eps_ * s * q / B_;
       c1 = eps_ * q * q;
     }
-    Vector er(x);
+    Vector& er = er_;
+    er = x;
     er /= r;
     const real_t Frr = 1.0 + hr, Ftt = 1.0 + h / r;
     // The pole-regular pieces of the off-diagonal row.
@@ -178,7 +176,8 @@ class InverseShape : public Diffeomorphism {
       c2p = (x[0] * x[0] - x[1] * x[1]) / rho2;
       s2p = 2.0 * x[0] * x[1] / rho2;
     }
-    Vector vt(dim);
+    Vector& vt = vt_;
+    vt.SetSize(dim);
     vt = 0.0;
     if (dim == 3) {
       const real_t A = ct * (2.0 * beta_ * c2p - 3.0);
@@ -204,6 +203,11 @@ class InverseShape : public Diffeomorphism {
   }
 
   real_t eps_, beta_, B_;
+  // Scratch of the evaluations (the mapping is evaluated at every
+  // quadrature point).
+  Vector y_, x_;
+  DenseMatrix FD_;
+  mutable Vector er_, vt_;
 };
 
 // One harmonic as a coefficient, Y_i of the direction; the index is
@@ -235,7 +239,9 @@ int main(int argc, char* argv[]) {
   const char* mesh_file = "../../data/aspherical_buffer_3d.mesh";
   const char* case_file = "case.json";
   const char* out_file = "aspherical_results.json";
-  double eps = 0.05, beta = 0.5, buffer = 0.2;
+  constexpr double kEpsDefault = 0.05, kBetaDefault = 0.5,
+                   kBufferDefault = 0.2;
+  double eps = kEpsDefault, beta = kBetaDefault, buffer = kBufferDefault;
   int order = 2, dtn_degree = 12, lmax = 4, lmin = 0;
   double rel_tol = 1e-10;
 
@@ -255,6 +261,13 @@ int main(int argc, char* argv[]) {
   args.AddOption(&lmin, "-lmin", "--min-degree", "Lowest degree.");
   args.AddOption(&lmax, "-lmax", "--max-degree", "Highest degree.");
   args.AddOption(&rel_tol, "-rt", "--rel-tol", "Solver tolerance.");
+  bool water = false;
+  args.AddOption(&water, "-water", "--water", "-no-water", "--no-water",
+                 "Certificates on an independently meshed aspherical "
+                 "body (no spherical reference): one WATER solve in place "
+                 "of the degree sweep, gated by internal certificates "
+                 "alone (monolithic == fixed point, the mass row, "
+                 "Phi_g).");
   args.Parse();
   if (!args.Good()) {
     if (root) args.PrintUsage(std::cout);
@@ -287,9 +300,9 @@ int main(int argc, char* argv[]) {
                              "authoritative.");
           value = recorded;
         };
-        adopt("eps", eps, 0.05);
-        adopt("beta", beta, 0.5);
-        adopt("buffer", buffer, 0.2);
+        adopt("eps", eps, kEpsDefault);
+        adopt("beta", beta, kBetaDefault);
+        adopt("buffer", buffer, kBufferDefault);
         if (root && mesh_manifest.HasMeta("eps")) {
           std::cout << "shape from the mesh manifest: eps " << eps
                     << ", beta " << beta << ", buffer " << buffer << "\n";
@@ -397,6 +410,131 @@ int main(int argc, char* argv[]) {
   problem.SetPrescribedVacuumExtension(fes_b, *Evac);
   problem.SetRelTol(rel_tol);
 
+  if (water) {
+    // The water solve on the genuinely aspherical body, certified
+    // internally. The physical weight and data compose with phi_e; the
+    // data load carries the Nanson factor (sigma per referential
+    // area), the feedback operator takes it as surface_jacobian.
+    Array<int> marker(body.bdr_attributes.Max());
+    marker = 0;
+    marker[0] = 1;
+    auto w_f = [](const Vector& x) {
+      const double r2 = x * x;
+      return 0.02 * (1.0 + 0.3 * x[2] * x[2] / r2);
+    };
+    auto s_f = [](const Vector& x) {
+      const double r2 = x * x;
+      const double c2 = x[2] * x[2] / r2;
+      return 0.02 * (2.0 * c2 - 1.0) + 0.01 * x[0] * x[1] / r2 + 0.01;
+    };
+    TransformedFunctionCoefficient w_comp(xi, w_f);
+    TransformedFunctionCoefficient s_comp(xi, s_f);
+    NansonAreaCoefficient nanson(xi);
+    ProductCoefficient sigma_ref(s_comp, nanson);
+    ProductCoefficient w_jac(w_comp, nanson);
+
+    // Monolithic.
+    problem.SetWaterLoad(w_comp, sigma_ref, marker, &nanson);
+    problem.AssembleForce(0.0);
+    MFEM_VERIFY(problem.Solve(), "the water solve failed");
+    const real_t phi_g = problem.UniformPotentialTerm();
+
+    // Surface integrals over the body's referential surface.
+    H1_FECollection sfec(order, dim);
+    ParFiniteElementSpace sfes(&body, &sfec);
+    auto surf_int = [&](Coefficient& f) {
+      ParLinearForm lf(&sfes);
+      lf.AddBoundaryIntegrator(new BoundaryLFIntegrator(f), marker);
+      lf.Assemble();
+      real_t v = lf.Sum();
+      MPI_Allreduce(MPI_IN_PLACE, &v, 1, MPITypeMap<real_t>::mpi_type,
+                    MPI_SUM, MPI_COMM_WORLD);
+      return v;
+    };
+    const real_t m = surf_int(w_jac);
+    const real_t Sd = surf_int(sigma_ref);
+
+    // The mass certificate at the monolithic solution (route grade).
+    GridFunctionCoefficient zc(
+        const_cast<GridFunction*>(&problem.PotentialOnBody()));
+    ProductCoefficient wz(w_jac, zc);
+    const real_t total = Sd - surf_int(wz) + phi_g * m;
+
+    // The fixed point on a fresh problem: sigma_w = w (c - zeta) J,
+    // the uniform from mass conservation each pass.
+    struct IteredZeta : public Coefficient {
+      Coefficient *w, *J;
+      std::unique_ptr<GridFunction> zeta;
+      real_t c = 0.0;
+      real_t Eval(ElementTransformation& T,
+                  const IntegrationPoint& ip) override {
+        if (!zeta) {
+          return 0.0;
+        }
+        return w->Eval(T, ip) * (c - zeta->GetValue(T, ip)) *
+               J->Eval(T, ip);
+      }
+    } itered;
+    itered.w = &w_comp;
+    itered.J = &nanson;
+    LinearQuasiStaticReferentialSelfGravitatingProblem fp(
+        &fes_u, &fes_zeta, rheology, rho_tilde, G, dtn_degree);
+    fp.SetPrescribedVacuumExtension(fes_b, *Evac);
+    fp.SetRelTol(rel_tol);
+    // The two surface loads are deliberately additive: the data load and
+    // the iterated water load.
+    fp.SetSurfaceLoad(sigma_ref, marker);
+    fp.SetSurfaceLoad(itered, marker);
+    real_t uniform = 0.0;
+    for (int it = 0; it < 20; it++) {
+      fp.AssembleForce(0.0);
+      MFEM_VERIFY(fp.Solve(), "the fixed-point solve failed");
+      GridFunctionCoefficient zfp(
+          const_cast<GridFunction*>(&fp.PotentialOnBody()));
+      ProductCoefficient wzfp(w_jac, zfp);
+      uniform = (surf_int(wzfp) - Sd) / m;
+      itered.zeta =
+          std::make_unique<GridFunction>(fp.PotentialOnBody());
+      itered.c = uniform;
+    }
+    GridFunction du(problem.Displacement());
+    du -= fp.Displacement();
+    // Relative difference of the displacements (true-dof norm: a
+    // same-space comparison).
+    Vector dut, ut;
+    du.GetTrueDofs(dut);
+    const_cast<GridFunction&>(problem.Displacement()).GetTrueDofs(ut);
+    real_t nd = InnerProduct(fes_u.GetComm(), dut, dut);
+    real_t nu = InnerProduct(fes_u.GetComm(), ut, ut);
+    const real_t du_rel = std::sqrt(nd / std::max(nu, real_t(1e-300)));
+
+    const real_t dg_rel =
+        std::abs(uniform - phi_g) / std::max(std::abs(phi_g), real_t(1e-12));
+    const bool pass = du_rel < 1e-3 && dg_rel < 5e-4 &&
+                      std::abs(total) < 5e-4 * std::abs(Sd) &&
+                      std::abs(phi_g) > 1e-8;
+    if (root) {
+      std::cout << "\naspherical water certificates (eps " << eps
+                << ", beta " << beta << ", order " << order << "):\n"
+                << "  Phi_g (monolithic)        " << phi_g << "\n"
+                << "  fixed point vs monolithic " << dg_rel
+                << "  (uniform " << uniform << ")\n"
+                << "  |du| / |u|                " << du_rel << "\n"
+                << "  mass certificate          " << total
+                << "  (scale " << Sd << ")\n"
+                << (pass ? "  CERTIFICATES HOLD\n" : "  FAILURE\n");
+      std::ofstream os(out_file);
+      os << "{\n  \"water\": true,\n  \"phi_g\": " << Num(phi_g)
+         << ",\n  \"uniform_fixed_point\": " << Num(uniform)
+         << ",\n  \"du_rel\": " << Num(du_rel)
+         << ",\n  \"mass_certificate\": " << Num(total)
+         << ",\n  \"pass\": " << (pass ? "true" : "false") << "\n}\n";
+    }
+    int ok = pass ? 0 : 1;
+    MPI_Bcast(&ok, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    return ok;
+  }
+
   // The load: the physical harmonic on the surface, pulled back with
   // its Nanson area factor (the direction is preserved by the radial
   // map, so Y at the referential point IS Y at the physical one).
@@ -440,7 +578,8 @@ int main(int argc, char* argv[]) {
     auto& b_c = problem.BackgroundGravity();
     real_t nums[2] = {0.0, 0.0}, dens[2] = {0.0, 0.0};
     Vector y(dim), x(dim), uh(dim), ur(dim), Y, bvec(dim);
-    DenseMatrix gradY, F(dim);
+    DenseMatrix gradY, F(dim), Fi(dim);
+    Vector gz(dim);
     // Body: u and phi.
     for (int e = 0; e < body.GetNE(); e++) {
       auto* T = body.GetElementTransformation(e);
@@ -456,9 +595,9 @@ int main(int argc, char* argv[]) {
         basis.EvalWithGradient(x, Y, gradY);
         // reference u at the physical point (layer 1).
         const real_t U =
-            reference.Eval(1, RadialReference::U, l, r_phys);
+            reference.Eval(1, RadialReference::Component::U, l, r_phys);
         const real_t V =
-            reference.Eval(1, RadialReference::V, l, r_phys);
+            reference.Eval(1, RadialReference::Component::V, l, r_phys);
         for (int d = 0; d < dim; d++) {
           ur[d] = V * gradY(d, i) +
                   (r_phys > 0 ? U * Y[i] * x[d] / r_phys : 0.0);
@@ -474,10 +613,8 @@ int main(int argc, char* argv[]) {
         // phi1 = zeta1 - b.u, b = F^{-T} grad zeta0 (the referential
         // gradient the class holds), vs the reference phi at x.
         const real_t zeta = zeta_body.GetValue(*T, ip);
-        Vector gz(dim);
         b_c.Eval(gz, *T, ip);
         xi.EvalGradient(F, *T, ip);
-        DenseMatrix Fi(dim);
         CalcInverse(F, Fi);
         Fi.MultTranspose(gz, bvec);
         real_t phi_h = zeta;
@@ -485,7 +622,7 @@ int main(int argc, char* argv[]) {
           phi_h -= bvec[d] * uh[d];
         }
         const real_t phi_r =
-            reference.Eval(1, RadialReference::Phi, l, r_phys);
+            reference.Eval(1, RadialReference::Component::Phi, l, r_phys);
         const real_t pr = phi_r * Y[i];
         nums[1] += w * (phi_h - pr) * (phi_h - pr);
         dens[1] += w * pr * pr;

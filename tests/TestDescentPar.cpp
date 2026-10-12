@@ -55,7 +55,7 @@ int main(int argc, char* argv[]) {
   Mpi::Init(argc, argv);
   Hypre::Init();
 
-  Mesh serial("../data/elastogravity_two_layer_2d.msh", 1, 1);
+  Mesh serial("../data/earth_fluidcore_2d.msh", 1, 1);
   ParMesh mesh(MPI_COMM_WORLD, serial);
   serial.Clear();
   L2_FECollection l2(1, 2);
@@ -171,9 +171,9 @@ int main(int argc, char* argv[]) {
     // emptiness is deterministic, not METIS's whim). SetConstraint and
     // Project are collective through the Riesz pairings, and a rank
     // with zero local control dofs must enter them with the rest —
-    // "constraint set" is a flag, never ell.Size() != 0 (the measured
-    // 8-rank deadlock of the density example).
-    Mesh full("../data/elastogravity_two_layer_2d.msh", 1, 1);
+    // "constraint set" is a flag, never ell.Size() != 0 (a rank
+    // skipping the collective would deadlock the others).
+    Mesh full("../data/earth_fluidcore_2d.msh", 1, 1);
     Array<int> partition(full.GetNE());
     int next = 0;
     for (int e = 0; e < full.GetNE(); e++) {

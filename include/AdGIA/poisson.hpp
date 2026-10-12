@@ -8,7 +8,6 @@
 
 #pragma once
 
-#include <cassert>
 #include <cmath>
 #include <memory>
 
@@ -41,8 +40,8 @@ namespace AdGIA {
  * \f[
  * u_{k} = \left\{
  * \begin{array}{c}
- * \int_{\partial \Omega} \cos k \theta \,u(b,\theta) \dd S && k < 0 \\
- * \int_{\partial \Omega} \sin k \theta \, u(b,\theta) \dd S && k > 0
+ * \int_{\partial \Omega} \cos k \theta \,u(b,\theta) \dd S && k > 0 \\
+ * \int_{\partial \Omega} \sin |k| \theta \, u(b,\theta) \dd S && k < 0
  * \end{array}
  * \right.
  * \f]
@@ -89,16 +88,17 @@ class PoissonDtNOperator : public mfem::Operator,
   /** @brief Flag indicating if the operator is used in a parallel context. */
   bool parallel_ = false;
   /** @brief Pointer to the parallel finite element space (if in parallel). */
-  mfem::ParFiniteElementSpace* pfes_;
+  mfem::ParFiniteElementSpace* pfes_ = nullptr;
   /** @brief MPI communicator used for parallel operations. */
-  MPI_Comm comm_;
+  MPI_Comm comm_ = MPI_COMM_NULL;
 
-  /** @brief Communicator for ranks owning the relevant boundary. */
-  MPI_Comm bdr_comm_;
+  /** @brief Communicator for ranks owning the relevant boundary; owned, and
+   * freed by the destructor. */
+  MPI_Comm bdr_comm_ = MPI_COMM_NULL;
   /** @brief Global rank of the root processor in bdr_comm_. */
-  int bdr_root_rank_;
+  int bdr_root_rank_ = 0;
   /** @brief True if this rank is part of the bdr_comm_. */
-  bool has_boundary_;
+  bool has_boundary_ = false;
 
 #endif
 
@@ -143,6 +143,13 @@ class PoissonDtNOperator : public mfem::Operator,
    */
   PoissonDtNOperator(MPI_Comm comm, mfem::ParFiniteElementSpace* fes,
                      int degree);
+
+  /** @brief Frees the boundary communicator. */
+  ~PoissonDtNOperator() override;
+
+  // The boundary communicator is owned, so the operator is not copyable.
+  PoissonDtNOperator(const PoissonDtNOperator&) = delete;
+  PoissonDtNOperator& operator=(const PoissonDtNOperator&) = delete;
 
 #endif
 
@@ -194,7 +201,7 @@ class PoissonDtNOperator : public mfem::Operator,
 
   mfem::real_t BoundaryRadius() const { return bdr_radius_; }
 
-  mfem::Vector Centroid() const { return x0_; }
+  const mfem::Vector& Centroid() const { return x0_; }
 };
 
 /**
@@ -243,12 +250,12 @@ class PoissonMultipoleOperator : public mfem::Operator,
   bool parallel_ = false;
   /** @brief Pointer to the parallel trial finite element space (if in
    * parallel). */
-  mfem::ParFiniteElementSpace* tr_pfes_;
+  mfem::ParFiniteElementSpace* tr_pfes_ = nullptr;
   /** @brief Pointer to the parallel test finite element space (if in parallel).
    */
-  mfem::ParFiniteElementSpace* te_pfes_;
+  mfem::ParFiniteElementSpace* te_pfes_ = nullptr;
   /** @brief MPI communicator used for parallel operations. */
-  MPI_Comm comm_;
+  MPI_Comm comm_ = MPI_COMM_NULL;
 #endif
 
 #ifndef MFEM_THREAD_SAFE
@@ -394,7 +401,6 @@ class PoissonMultipoleOperator : public mfem::Operator,
  * `SphericalMeshHelper` for the geometry of the spherical boundary, and
  * holds a `SurfaceHarmonics` basis for the harmonic expansions.
  */
-
 class PoissonLinearisedMultipoleOperator : public mfem::Operator,
                                            protected SphericalMeshHelper {
  private:
@@ -427,12 +433,12 @@ class PoissonLinearisedMultipoleOperator : public mfem::Operator,
   bool parallel_ = false;
   /** @brief Pointer to the parallel trial finite element space (if in
    * parallel). */
-  mfem::ParFiniteElementSpace* tr_pfes_;
+  mfem::ParFiniteElementSpace* tr_pfes_ = nullptr;
   /** @brief Pointer to the parallel test finite element space (if in parallel).
    */
-  mfem::ParFiniteElementSpace* te_pfes_;
+  mfem::ParFiniteElementSpace* te_pfes_ = nullptr;
   /** @brief MPI communicator used for parallel operations. */
-  MPI_Comm comm_;
+  MPI_Comm comm_ = MPI_COMM_NULL;
 #endif
 
 #ifndef MFEM_THREAD_SAFE

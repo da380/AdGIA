@@ -29,6 +29,11 @@ at the smallest of --targets:
     ./survey                       # both sweeps, then the figures
     ./survey --targets 1e-2 --contrasts 1 10 100
     ./survey --figures-only        # re-draw from the JSON already run
+
+Each JSON file records the settings of its run under "survey_settings"
+(targets, t-final, and the contrast or period); a file whose settings
+differ from the current options is reported and reused as it is.
+Delete it to rerun.
 """
 from __future__ import annotations
 
@@ -88,6 +93,24 @@ def run(command: list[str], *, dry: bool) -> None:
                        else None)
 
 
+def stamp(path: Path, settings: dict) -> None:
+    """Record the run's settings in its JSON file."""
+    payload = json.loads(path.read_text())
+    payload["survey_settings"] = settings
+    path.write_text(json.dumps(payload, indent=2) + "\n")
+
+
+def check(path: Path, settings: dict) -> None:
+    """Warn when an existing JSON file was made with other settings."""
+    have = json.loads(path.read_text()).get("survey_settings")
+    if have is None:
+        print(f"warning: {path} records no settings; it may not match "
+              "the current options (delete it to rerun)")
+    elif have != settings:
+        print(f"warning: {path} was made with other settings (file: "
+              f"{have}, now: {settings}); delete it to rerun")
+
+
 def solves(path: Path, target: float) -> dict[str, float | None]:
     """Scheme -> elastic solves to reach `target`, None if not reached;
     the adaptive rows collapse onto one 'Adaptive' entry."""
@@ -141,24 +164,38 @@ def main() -> None:
     p = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--out", type=Path, default=Path("survey"))
-    p.add_argument("--program", type=Path, default=None)
-    p.add_argument("--targets", type=float, nargs="+", default=[1e-3])
+    p.add_argument("--out", type=Path, default=Path("survey"),
+                   help="output directory (default: survey)")
+    p.add_argument("--program", type=Path, default=None,
+                   help="the viscoelastic_schemes executable (default: "
+                        "found in a build tree)")
+    p.add_argument("--targets", type=float, nargs="+", default=[1e-3],
+                   help="target relative errors of the displacement "
+                        "history (default: 1e-3); figures use the smallest")
     p.add_argument("--contrasts", type=float, nargs="+",
-                   default=[1.0, 10.0, 100.0, 1000.0])
+                   default=[1.0, 10.0, 100.0, 1000.0],
+                   help="relaxation-time contrasts tau_max/tau_min of the "
+                        "stiffness sweep (default: 1 10 100 1000)")
     p.add_argument("--periods", type=float, nargs="+",
                    default=[0.13, 0.42, 1.3, 4.2, 13.0, 42.0],
                    help="load periods, units of tau (regime sweep); "
                         "incommensurate with the checkpoint grid, and "
                         "the load runs with a phase offset, so no "
-                        "scheme can score stroboscopically")
-    p.add_argument("--t-final", type=float, default=4.0)
-    p.add_argument("--figures-only", action="store_true")
-    p.add_argument("--dry-run", action="store_true")
+                        "scheme can score stroboscopically "
+                        "(default: 0.13 0.42 1.3 4.2 13 42)")
+    p.add_argument("--t-final", type=float, default=4.0,
+                   help="simulated span, units of tau (default: 4)")
+    p.add_argument("--figures-only", action="store_true",
+                   help="redraw the figures from the JSON already present")
+    p.add_argument("--dry-run", action="store_true",
+                   help="print the commands without running them")
     args = p.parse_args()
     args.out = outside_source(args.out)
-    args.out.mkdir(parents=True, exist_ok=True)
-    program = find_program(args.program)
+    running = not (args.figures_only or args.dry_run)
+    if running:
+        args.out.mkdir(parents=True, exist_ok=True)
+    program = (Path("<viscoelastic_schemes>") if not running
+               else find_program(args.program))
     mesh = REPOSITORY / "data" / "beam-quad.mesh"
     targets = ",".join(f"{t:g}" for t in args.targets)
     target = min(args.targets)
@@ -166,7 +203,10 @@ def main() -> None:
     if not args.figures_only:
         for r in args.contrasts:
             f = args.out / f"stiffness_r{r:g}.json"
+            settings = {"targets": sorted(args.targets),
+                        "t_final": args.t_final, "contrast": r}
             if f.exists():
+                check(f, settings)
                 continue
             cmd = [str(program), "-m", str(mesh), "-tau-ratio",
                    f"{r:g}", "-targets", targets, "-tf",
@@ -175,14 +215,21 @@ def main() -> None:
                 cmd += ["-nref",  # steps per tau_min still ~1e-6 exact
                         str(int(25 * args.t_final * r))]
             run(cmd, dry=args.dry_run)
+            if running:
+                stamp(f, settings)
         for tp in args.periods:
             f = args.out / f"regime_tp{tp:g}.json"
+            settings = {"targets": sorted(args.targets),
+                        "t_final": args.t_final, "period": tp}
             if f.exists():
+                check(f, settings)
                 continue
             run([str(program), "-m", str(mesh), "-tp", f"{tp:g}",
                  "-ph", "1.0", "-targets", targets, "-tf",
                  f"{args.t_final:g}", "-steps", "1", "-out", str(f)],
                 dry=args.dry_run)
+            if running:
+                stamp(f, settings)
 
     if args.dry_run:
         return

@@ -1,13 +1,14 @@
 # The disc family (2-D)
 
-The 2-D testing ground of the slip programme
-(`doc/planning/no_gravity_analytics.md`): the machinery of the slipping
-interface against exact references, at a cost that allows resolution
-ladders as a matter of course. Rung 0 (this directory, gravity-free) is
-implemented, as are rung 1 (uniform pre-pressure) and rung 2's
-radial reference (gravity; the gravitating FE driver is pending).
+The 2-D testing ground of the slipping interface: its machinery against
+exact references, at a cost that allows resolution ladders as a matter of
+course. Three sub-families, in order of physics: the gravity-free disc and
+its interface-shift leg and uniform-pre-pressure leg (finite-element
+driver and checker), and the gravitating per-degree radial reference
+(Python: reference modules and the `explore` tool; a finite-element
+driver for the gravitating problem is not yet in this directory).
 
-## Rung 0: no gravity, no pre-stress
+## No gravity, no pre-stress
 
 A fluid disc (bulk modulus `kappa_f` only) inside a plane-strain solid
 annulus, loaded degree by degree with a normal traction
@@ -31,7 +32,7 @@ welded-slip gap measures the constraint machinery and nothing else.
 - `check.py` — runs the (order, refinement) ladder for both methods
   and checks: agreement with the reference converging down the
   ladder, and the welded-slip identity holding near solver tolerance
-  on every rung. At l = 1 comparisons use the translation-invariant
+  on every ladder step. At l = 1 comparisons use the translation-invariant
   U + V per circle.
 
 ```
@@ -39,7 +40,7 @@ cd <build>/benchmarks/disc
 ./check --orders 2 3 --refinements 0 1 --lmax 4
 ```
 
-The mesh is the canned `elastogravity_two_layer_2d.msh` (core
+The mesh is the canned `earth_fluidcore_2d.msh` (core
 attribute 1, mantle 2, vacuum buffer 3 — the buffer stays outside the
 displacement spaces), interface at r = 3483/6371.
 
@@ -57,26 +58,26 @@ responses against the exact interface derivative of the reference —
 the welded run isolates the mapped volume operators under a jumping
 F, the slip run adds the mapped constraint row on top.
 
-## Rung 1: uniform surface pressure
+## Uniform surface pressure
 
 `-P0 p` solves about the pre-stressed reference state S_e = -P0 I
 (uniform surface pressure, no gravity): bare moduli
 (lam - P0, mu + P0), the geometric stiffness everywhere, mu_b = P0 in
 the fluid, and B_Sigma with pi = P0 on the slip side
 (NewSlipInterfaceMatrix) — the first exact test of B_Sigma. The
-reference collapses in effective variables (the note, rung 1): the
-volume operator and interface conditions are the rung-0 ones, only
+reference collapses in effective variables: the
+volume operator and interface conditions are the gravity-free ones, only
 the loaded-surface rows change to the dead-traction amplitudes of
 delta P . N. `check --P0 0.3` runs the ladder. Not combined with
 `-shift` yet.
 
 Not yet here: the shift x P0 combination, and a gravitating FE driver
-for rung 2 (the radial reference below exists).
+(the radial reference below exists).
 
-## Rung 2: gravity, the per-degree radial reference
+## Gravity: the per-degree radial reference
 
-`doc/planning/disc_gravity_reference.md`. Two Python modules, with no
-FE side yet:
+Two Python modules and an exploration tool, with no finite-element side
+yet:
 
 - `disc_models.py` — the gravitating twins in benchmark units (G = 1,
   radius 1): `fluid_core_2d` (uniform fluid core, N^2 < 0) and
@@ -93,7 +94,8 @@ FE side yet:
   Eulerian mixed-class system with F1-F3, fluid displacement
   eliminated; at l = 0 it uses the welded full-fluid solve). Degrees
   l = 0 and l >= 2; l = 1 is pending.
-- `solve_degree_maxwell(model, l, ...)` — the secular time-stepping
+- `solve_degree_maxwell(model, l, ...)` — the Maxwell relaxation (the
+default `SetFluid` treatment of the library, here as a 1-D calculation), the secular time-stepping
   route: the core as an artificial Maxwell solid under a Heaviside
   load, backward Euler on the memory displacement, stopping on the
   SOLID displacement increment only (the fluid displacement does not
@@ -117,7 +119,7 @@ relabelling class, Dahlen exact because the reduction is the full
 static fluid there, Maxwell because relaxation has nothing to select
 at N^2 = 0); they agree to ~1e-10 at every degree, and every
 interface-form sign is pinned by it. The validation also checks the
-G -> 0 limit against rung 0 (`disc_reference.py`), strict p-ladder
+G -> 0 limit against the gravity-free reference (`disc_reference.py`), strict p-ladder
 convergence on `aw_core_2d`, and records the `fluid_core_2d` p-ladder
 drift, loosely bounded: on the non-neutral core the welded and slip
 solves wander within a ~0.3 % envelope under refinement (a resolution
@@ -128,3 +130,19 @@ splits between the methods there are not decompositions.
 cd benchmarks/disc
 python disc_radial.py
 ```
+
+### Exploring: `explore`
+
+`explore.py` (launcher `<build>/benchmarks/disc/explore`) solves the
+per-degree problems for any combination of model (`--model fc|aw`, with
+`--kappa-scale` to stiffen the fc core and shrink N^2), degree, methods
+(`welded`, `slip`, `dahlen`, `maxwell`, the last in `--maxwell-mode
+converge` or `plateau`), element order (`--p`), element counts (`--nel`),
+regulariser (`--eps-reg`) and gravity (`--G`, with `--no-gravity-reference` printing the
+gravity-free closed form beside it). It prints the observables and the
+splits between methods, with the Maxwell step and operator counts and the
+physical plateau, and plots the radial profiles — the quickest way to see
+the family's physics: all four methods coincide on the neutral core, while
+on the non-neutral one the welded and slipping solves wander under
+refinement, the Maxwell solve converges to its limit and the Dahlen solve
+stands still.

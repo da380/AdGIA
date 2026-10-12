@@ -5,7 +5,7 @@
 
 /*
   Gates for the viscoelastic composition of the sea-level machinery
-  (WP6 of doc/planning/sea_level_plan.md) on the canned two-layer
+  on the canned two-layer
   meshes, with the fingerprint-style analytical state and frozen
   shorelines. The composition is by design: SetWaterLoad()'s
   displacement block rides the registered stiffness integrators, so
@@ -41,8 +41,8 @@ constexpr double kTau = 1.0;  // Maxwell time, problem units
 constexpr double kMelt = 0.5;
 
 double G0(int dim) {
-  return dim == 2 ? 2.0 * std::numbers::pi * kG * kRho
-                  : 4.0 * std::numbers::pi * kG * kRho / 3.0;
+  MFEM_VERIFY(dim == 3, "the water load is 3-D only");
+  return 4.0 * std::numbers::pi * kG * kRho / 3.0;
 }
 
 double Colat(const Vector& x) {
@@ -183,7 +183,7 @@ TEST_P(SeaLevelViscoTest, InstantaneousMatchesElastic) {
 
 TEST_P(SeaLevelViscoTest, ConservesMassOverHistory) {
   const auto [dim, order] = GetParam();
-  if (dim == 3 && order > 1) {
+  if (order > 1) {
     GTEST_SKIP() << "covered at order 1";
   }
   Case c(dim, order);
@@ -201,8 +201,8 @@ TEST_P(SeaLevelViscoTest, ConservesMassOverHistory) {
   ASSERT_TRUE(visco.SolveElastic(m, t));
   const double u0 = L2Norm(p->Displacement());
   // Route-grade re-integration (pointwise coefficients against the
-  // assembled identity): ~1e-5 at order 1, ~1e-6 at order 2 (the WP3
-  // hierarchy); it grows mildly with the relaxing fields' amplitude.
+  // assembled identity): ~1e-5 at order 1, ~1e-6 at order 2 (the
+  // route-grade hierarchy); it grows mildly with the relaxing fields' amplitude.
   const double mass_tol = order == 1 ? 1e-4 : 2e-6;
   EXPECT_LT(std::abs(MassResidual(c, *p, grad_phi0, load)), mass_tol);
 
@@ -234,14 +234,10 @@ TEST_P(SeaLevelViscoTest, FullStackComposes) {
 
   auto p = c.Problem(true);
   p->SetWaterLoad(load.w, load.sigma_d, c.surface);
-  Vector moments(dim == 2 ? 1 : 3);
-  if (dim == 2) {
-    moments[0] = 2.0;
-  } else {
-    moments[0] = 1.2;
-    moments[1] = 1.3;
-    moments[2] = 2.0;
-  }
+  Vector moments(3);
+  moments[0] = 1.2;
+  moments[1] = 1.3;
+  moments[2] = 2.0;
   p->SetRotation(0.1, moments);
   ViscoelasticOperator visco(*p);
   ExponentialTrapezoidSolver ode;
@@ -255,10 +251,8 @@ TEST_P(SeaLevelViscoTest, FullStackComposes) {
     ode.Step(m, t, dt);
   }
   ASSERT_TRUE(visco.SolveElastic(m, t));
-  // 3-D order 1 sits at the faceted-sphere route grade (the WP3
-  // hierarchy: ~1e-3 there, ~1e-4 in 2-D).
-  EXPECT_LT(std::abs(MassResidual(c, *p, grad_phi0, load)),
-            dim == 3 ? 2e-3 : 1e-4);
+  // 3-D order 1 sits at the faceted-sphere route grade (~1e-3).
+  EXPECT_LT(std::abs(MassResidual(c, *p, grad_phi0, load)), 2e-3);
   const double om = p->AngularVelocity().Norml2();
   EXPECT_TRUE(std::isfinite(om));
   EXPECT_GT(om, 0.0);

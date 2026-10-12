@@ -2,8 +2,8 @@
 // viscoelastic_schemes.cpp
 //
 // Cost and accuracy of the time integrators of ViscoelasticOperator on one
-// problem: a clamped beam (data/beam-quad.mesh: attribute 1 clamped,
-// attribute 2 pulled) with a Maxwell or standard-linear-solid rheology and a
+// problem: a clamped beam (data/beam-quad.mesh: boundary attribute 1
+// clamped, boundary attribute 2 pulled) with a Maxwell or standard-linear-solid rheology and a
 // pull varying on the relaxation-time scale, p(t) = p0 (1 + 0.5 sin(2 t /
 // tau)) at the defaults (-tp sets the period in units of tau, -ph the
 // phase). Every scheme is run from t = 0 to t_final for a list of step sizes
@@ -51,6 +51,13 @@
 // lower left is better, the slope is the order); -out, the cost-to-target
 // table as JSON. No fields are shown: the beam's deformation is that of
 // viscoelasticity.cpp.
+//
+// Mesh requirements. Dimension-generic (taken from the mesh; the pull is
+// along the last coordinate). A single domain attribute: the body.
+// Boundary attribute 1 is clamped, boundary attribute 2 carries the
+// pull; other boundaries are free. The default ../data/beam-quad.mesh is
+// an MFEM beam. Units are nondimensional: lambda = mu = 1 in the
+// unrelaxed state, relaxation time -tau.
 //
 // Options (defaults in brackets):
 //   -m          mesh file [../data/beam-quad.mesh]; needs boundary
@@ -136,13 +143,16 @@
 // halving decisions). Run with mpiexec -np N in a parallel build.
 // ============================================================================
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <iostream>
 #include <memory>
 #include <numbers>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -358,8 +368,7 @@ int main(int argc, char* argv[]) {
   // final state.
   // The checkpoint solves are pure output and are taken out of the cost.
   const int n_check = 4;
-  auto run = [&](const std::string& name, ODESolver& ode, int n_steps,
-                 bool adaptive, real_t rtol, Vector& m_out, Vector& u_out,
+  auto run = [&](ODESolver& ode, int n_steps, bool adaptive, real_t rtol, Vector& m_out, Vector& u_out,
                  std::vector<Vector>& checks_out, Cost& cost,
                  int& steps_taken, int corrector = 1) {
     LinearQuasiStaticClampedProblem problem(&fes, rheology, ess_bdr, pull,
@@ -412,11 +421,13 @@ int main(int argc, char* argv[]) {
     cost.seconds = chrono::duration<double>(w1 - w0).count();
     m_out = m;
     problem.Displacement().GetTrueDofs(u_out);
-    if (!ok || !IsFinite(m) || !IsFinite(u_out)) {
+    // Global verdicts first, so every rank takes the same branch.
+    const bool finite_m = IsFinite(m);
+    const bool finite_u = IsFinite(u_out);
+    if (!ok || !finite_m || !finite_u) {
       m_out.SetSize(1);
       m_out = infinity();
     }
-    (void)name;
   };
 
   // Reference: RK4 at a small step (explicit, so every step costs four
@@ -436,8 +447,7 @@ int main(int argc, char* argv[]) {
     n_ref = std::max(n_ref, static_cast<int>(std::round(
                                 100.0 * t_final / load_period)));
     n_ref = ((n_ref + n_check - 1) / n_check) * n_check;
-    run("reference", rk4, n_ref, false, 0.0, m_ref, u_ref, checks_ref, c,
-        n);
+    run(rk4, n_ref, false, 0.0, m_ref, u_ref, checks_ref, c, n);
     if (Root()) {
       cout << "Reference: RK4, " << n_ref << " steps, " << c.solves
            << " solves, " << std::fixed << std::setprecision(2) << c.seconds
@@ -500,7 +510,8 @@ int main(int argc, char* argv[]) {
                     const Vector& m, const Vector& u,
                     const std::vector<Vector>& checks, const Cost& c) {
     // The metrics reduce over ranks; every rank calls them, root prints.
-    const bool finite = m.Size() > 1 && IsFinite(m);
+    const bool finite_m = IsFinite(m);
+    const bool finite = m.Size() > 1 && finite_m;
     const double e_m = finite ? RelMaxDiff(m, m_ref) : 0.0;
     const double e_u = finite ? history_error(u, checks) : 0.0;
     if (!Root()) {
@@ -555,8 +566,7 @@ int main(int argc, char* argv[]) {
       std::vector<Vector> checks;
       Cost c;
       int n;
-      run(sc.name, *ode, n_steps, false, 0.0, m, u, checks, c, n,
-          sc.corrector);
+      run(*ode, n_steps, false, 0.0, m, u, checks, c, n, sc.corrector);
       report(sc.name, "1/" + std::to_string(k), m, u, checks, c);
     }
   }
@@ -566,7 +576,7 @@ int main(int argc, char* argv[]) {
     std::vector<Vector> checks;
     Cost c;
     int n;
-    run("Adaptive", ode, 4, true, rtol, m, u, checks, c, n);
+    run(ode, 4, true, rtol, m, u, checks, c, n);
     std::ostringstream label;
     label << n << " st";
     report("Adaptive " + std::to_string(rtol).substr(0, 6), label.str(), m, u,
@@ -580,15 +590,16 @@ int main(int argc, char* argv[]) {
 
   // --- Cost to reach a target accuracy ------------------------------------
   if (!targets.empty()) {
-    if (Root())
+    if (Root()) {
       cout << "\nCost to reach a target relative error of the "
-            "displacement history (coarsest step, or loosest rtol, that "
-            "meets it):\n"
-         << std::left << std::setw(14) << "scheme" << std::right
-         << std::setw(9) << "target" << std::setw(9) << "dt/tau"
-         << std::setw(11) << "u-error" << std::setw(8) << "solves"
-         << std::setw(6) << "asm" << std::setw(5) << "pc" << std::setw(8)
-         << "its" << std::setw(9) << "time\n";
+              "displacement history (coarsest step, or loosest rtol, that "
+              "meets it):\n"
+           << std::left << std::setw(14) << "scheme" << std::right
+           << std::setw(9) << "target" << std::setw(9) << "dt/tau"
+           << std::setw(11) << "u-error" << std::setw(8) << "solves"
+           << std::setw(6) << "asm" << std::setw(5) << "pc" << std::setw(8)
+           << "its" << std::setw(9) << "time\n";
+    }
     struct TargetRow {
       std::string scheme, dt;
       double target, err;
@@ -629,9 +640,9 @@ int main(int argc, char* argv[]) {
           std::vector<Vector> checks;
           Cost c;
           int n;
-          run(sc.name, *ode, n_steps, false, 0.0, m, u, checks, c, n,
-              sc.corrector);
-          if (m.Size() > 1 && IsFinite(m)) {
+          run(*ode, n_steps, false, 0.0, m, u, checks, c, n, sc.corrector);
+          const bool finite_m = IsFinite(m);
+          if (m.Size() > 1 && finite_m) {
             const double err = history_error(u, checks);
             if (err <= target) {
               row(sc.name, target, "1/" + std::to_string(k), err, c);
@@ -652,7 +663,7 @@ int main(int argc, char* argv[]) {
           std::vector<Vector> checks;
           Cost c;
           int n;
-          run("Adaptive", ode, 4, true, rtol, m, u, checks, c, n);
+          run(ode, 4, true, rtol, m, u, checks, c, n);
           const double err = history_error(u, checks);
           if (err <= target) {
             std::ostringstream label;

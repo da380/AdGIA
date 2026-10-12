@@ -6,7 +6,7 @@
 // here), solved monolithically with the water-load feedback
 // (LinearQuasiStaticMixedSelfGravitatingProblem::SetWaterLoad), for
 // comparison with pyslfp's pseudo-spectral solution of the same problem
-// (run.py drives both sides; doc/planning/sea_level_plan.md, rung 1).
+// (run.py drives both sides).
 //
 // The initial state is analytic and smooth (the pyslfp testing trick),
 // axisymmetric about +z, in the case's non-dimensional units:
@@ -22,11 +22,11 @@
 //
 // run.py passes the same constants to the pyslfp side, so the two
 // solvers see one problem. Shorelines are frozen (first-order exact)
-// unless -mig runs the WP5 Picard loop (rung 3: against pyslfp's
+// unless -mig runs the Picard shoreline-migration loop (against pyslfp's
 // nonlinear solver, whose ocean-function updates are SHARP where ours
 // are smoothed over -shore — a convention difference that lives at the
 // shoreline and shrinks with the smoothing on the resolved ladder).
-// Rotation is off unless -Omega (WP4). The surface gravity entering the
+// Rotation is off unless -Omega. The surface gravity entering the
 // ocean weight w = rho_w C0 / g is the case's own (G M / a^2).
 // -no-water applies the same melt load WITHOUT the water feedback (a
 // plain elastic loading solve) — the control row of the timing sweep,
@@ -38,11 +38,15 @@
 // iterations, times, migration statistics).
 //
 // Options (defaults in brackets): the case options of
-// benchmark_case.hpp (-c, -o, ...; -method must stay dahlen) plus
+// benchmark_case.hpp (-c, -o, ...; -method dahlen or referential; the
+// referential method rides the welded referential class, where
+// tau = zeta^1 and the border collapses to the zeta row) plus
 //   -rhow / -rhoi   water and ice density, case units [0.2, 0.1834]
 //   -ocean-depth    [6.3e-4]      -cont-amp   [1.4e-3]
 //   -cont-width     [0.7]         -cap-amp    [4.7e-4]
 //   -cap-width      [0.35]        -melt       [0.5]
+//   -melt-width     smoothing width of the hemispheric unloading factor
+//                   H(x), case length units [0.15]
 //   -shore          smoothing width of the ocean fraction, in units of
 //                   rho_w*SL [1e-5]
 //   -Omega          rotation rate, case units [0: rotation off]
@@ -50,6 +54,11 @@
 //   -mig            shoreline migration (Picard on C; off = frozen C0)
 //   -mig-tol        migration stop, relative SL1 increment [1e-3]
 //   -mig-iters      migration pass cap [12]
+//   -mig-inexact    inexact-Picard factor, 0 = every pass at full
+//                   tolerance [0.1]
+//   -mig-inexact-max  loosest per-pass relative tolerance of the inexact
+//                   Picard [1e-3]
+//   -mig-verbose    per-pass migration trace [off]
 //   -feedback       border | monolithic | picard [border]: the bordered
 //                   solve by column elimination; the same system as ONE
 //                   MINRES with a block preconditioner whose border
@@ -66,8 +75,9 @@
 //                   counts are printed to measure exactly that.
 //   -picard-tol     picard stop: relative SL1 increment [1e-8]
 //   -picard-max     picard pass cap [30]
-//   -no-water       melt load without the water feedback (elastic
-//                   control; incompatible with -mig)
+//   -water/-no-water  water-load feedback [on]; off applies the melt
+//                   load without it (elastic control; incompatible
+//                   with -mig)
 //   -slcsv          the fingerprint CSV [sea_level.csv]
 //   -out            the scalars JSON [sea_level.json]
 //   -export-nodes   write the surface node CSV and exit (run.py --earth
@@ -279,8 +289,10 @@ int main(int argc, char* argv[]) {
                  "Per-pass migration trace (tolerances, increments, "
                  "Phi_g, guard events).");
   args.AddOption(&feedback, "-feedback", "--feedback",
-                 "border (monolithic) or picard (feedback as explicit "
-                 "loads around the plain elastic operator).");
+                 "border | monolithic | picard: the bordered solve, the "
+                 "same system as one block-preconditioned MINRES, or the "
+                 "feedback as explicit loads around the plain elastic "
+                 "operator.");
   args.AddOption(&picard_tol, "-picard-tol", "--picard-tolerance",
                  "Picard stop: relative SL1 increment.");
   args.AddOption(&picard_max, "-picard-max", "--picard-maximum",
@@ -309,15 +321,21 @@ int main(int argc, char* argv[]) {
     }
     return 1;
   }
-  MFEM_VERIFY(std::string(options.method) == "dahlen" && !options.gauged,
-              "sea_level_benchmark: the water load lives on the plain "
-              "Eulerian problem (-method dahlen).");
+  const bool referential = std::string(options.method) == "referential";
+  MFEM_VERIFY(referential ||
+                  (std::string(options.method) == "dahlen" &&
+                   !options.gauged),
+              "sea_level_benchmark: -method dahlen (the plain Eulerian "
+              "problem) or referential (the welded referential class).");
   MFEM_VERIFY(water || !migrate,
               "sea_level_benchmark: -mig needs the water load (-water)");
   const bool picard = std::string(feedback) == "picard";
   const bool monolithic = std::string(feedback) == "monolithic";
   MFEM_VERIFY(picard || monolithic || std::string(feedback) == "border",
               "-feedback is border, monolithic or picard");
+  MFEM_VERIFY(!referential || (!picard && !monolithic),
+              "sea_level_benchmark: -feedback picard/monolithic are "
+              "wired for the mixed class only (-feedback border).");
   MFEM_VERIFY(!picard || (water && !migrate),
               "sea_level_benchmark: -feedback picard iterates the water "
               "feedback (no -no-water, no -mig)");
@@ -331,6 +349,11 @@ int main(int argc, char* argv[]) {
 
   Case c(options);
   g_gravity = c.gravity;
+  // Both classes expose the same water/rotation surface by design; the
+  // dispatcher keeps every shared call site to one line.
+  auto on_problem = [&](auto&& f) -> decltype(auto) {
+    return referential ? f(*c.ref_problem) : f(*c.problem);
+  };
   if (monolithic) {
     // The same bordered system, solved as one MINRES with the probed
     // border Schur preconditioner instead of by column elimination.
@@ -425,16 +448,25 @@ int main(int argc, char* argv[]) {
     opt.inexact = mig_inexact;
     opt.inexact_max = mig_inexact_max;
     opt.verbose = mig_verbose;
-    mig = std::make_unique<ShorelineMigration>(*c.problem, grad_phi0,
-                                               *sl0_p, *ice_p, *dice_p,
-                                               g_rho_w, g_rho_i,
-                                               surface, opt);
+    mig = referential
+              ? std::make_unique<ShorelineMigration>(
+                    *c.ref_problem, grad_phi0, *sl0_p, *ice_p, *dice_p,
+                    g_rho_w, g_rho_i, surface, opt)
+              : std::make_unique<ShorelineMigration>(
+                    *c.problem, grad_phi0, *sl0_p, *ice_p, *dice_p,
+                    g_rho_w, g_rho_i, surface, opt);
   } else if (picard) {
     c.problem->SetSurfaceLoad(*picard_load, surface);
   } else if (water) {
-    c.problem->SetWaterLoad(*w_p, *sigma_p, surface);
+    on_problem([&](auto& p) -> int {
+      p.SetWaterLoad(*w_p, *sigma_p, surface);
+      return 0;
+    });
   } else {
-    c.problem->SetSurfaceLoad(*sigma_p, surface);
+    on_problem([&](auto& p) -> int {
+      p.SetSurfaceLoad(*sigma_p, surface);
+      return 0;
+    });
   }
   CentrifugalPotential psi_total(3, g_Omega);
   Vector moments(3);
@@ -444,12 +476,19 @@ int main(int argc, char* argv[]) {
   if (g_Omega != 0.0) {
     // The Case wires the Love machinery's tidal expansion; the
     // rotational physics owns that slot here (the border, or the
-    // picard loop's updated centrifugal potential).
-    c.problem->ClearTidalPotential();
+    // picard loop's updated centrifugal potential). The referential
+    // Case-wired tidal load sits at zero amplitudes and is inert, so
+    // only the Eulerian slot needs clearing.
+    if (!referential) {
+      c.problem->ClearTidalPotential();
+    }
     if (picard) {
       c.problem->SetTidalPotential(psi_total);
     } else {
-      c.problem->SetRotation(g_Omega, moments);
+      on_problem([&](auto& p) -> int {
+        p.SetRotation(g_Omega, moments);
+        return 0;
+      });
     }
   }
 
@@ -542,8 +581,11 @@ int main(int argc, char* argv[]) {
       }
     }
   } else {
-    c.problem->AssembleForce(0.0);
-    MFEM_VERIFY(c.problem->Solve(), "the coupled solve failed");
+    on_problem([&](auto& p) -> int {
+      p.AssembleForce(0.0);
+      MFEM_VERIFY(p.Solve(), "the coupled solve failed");
+      return 0;
+    });
   }
   const double solve_s = Seconds(t0);
 
@@ -553,12 +595,20 @@ int main(int argc, char* argv[]) {
   CentrifugalPotential psi(3, g_Omega);
   if (!picard) {
     if (g_Omega != 0.0) {
-      psi.SetAmplitudes(c.problem->AngularVelocity());
+      psi.SetAmplitudes(on_problem(
+          [](auto& p) -> const Vector& { return p.AngularVelocity(); }));
     }
-    sea.SeaLevelChangeFrom(c.problem->Displacement(), grad_phi0,
-                           c.problem->Potential(),
-                           c.problem->UniformPotentialTerm(),
-                           g_Omega != 0.0 ? &psi : nullptr);
+    if (referential) {
+      // tau = zeta^1 directly (the zeta-zeta collapse).
+      sea.SeaLevelChangeFrom(c.ref_problem->PotentialOnBody(), grad_phi0,
+                             c.ref_problem->UniformPotentialTerm(),
+                             g_Omega != 0.0 ? &psi : nullptr);
+    } else {
+      sea.SeaLevelChangeFrom(c.problem->Displacement(), grad_phi0,
+                             c.problem->Potential(),
+                             c.problem->UniformPotentialTerm(),
+                             g_Omega != 0.0 ? &psi : nullptr);
+    }
   }
   sea.WriteSurfaceField(sea.SeaLevelChangeField(), slcsv);
 
@@ -581,12 +631,16 @@ int main(int argc, char* argv[]) {
 
   if (Mpi::Root()) {
     std::ofstream os(out);
+    MFEM_VERIFY(os.good(), "sea_level_benchmark: cannot write " << out
+                                                              << ".");
     os << "{\n";
     os << "  \"gravity\": " << Num(c.gravity) << ",\n";
     os << "  \"radius\": " << Num(c.radius) << ",\n";
     os << "  \"phi_g\": "
        << Num(picard ? picard_uniform * g_gravity
-                     : c.problem->UniformPotentialTerm())
+                     : on_problem([](auto& p) {
+                         return p.UniformPotentialTerm();
+                       }))
        << ",\n";
     os << "  \"ocean_area\": " << Num(area) << ",\n";
     os << "  \"melted_mass\": " << Num(melted_mass) << ",\n";
@@ -597,7 +651,10 @@ int main(int argc, char* argv[]) {
     os << "  \"Omega\": " << Num(g_Omega) << ",\n";
     os << "  \"omega\": [";
     if (g_Omega != 0.0) {
-      const Vector& om = picard ? omega_p : c.problem->AngularVelocity();
+      const Vector& om =
+          picard ? omega_p : on_problem([](auto& p) -> const Vector& {
+            return p.AngularVelocity();
+          });
       for (int k = 0; k < om.Size(); k++) {
         os << Num(om[k]) << (k + 1 < om.Size() ? ", " : "");
       }
@@ -621,10 +678,12 @@ int main(int argc, char* argv[]) {
       os << "  \"mig_outer_iterations\": " << mig->TotalOuterIterations()
          << ",\n";
     }
-    os << "  \"iterations\": " << c.problem->TotalIterations() << ",\n";
+    os << "  \"iterations\": "
+       << on_problem([](auto& p) { return p.TotalIterations(); }) << ",\n";
     os << "  \"solve_seconds\": " << Num(solve_s) << "\n";
     os << "}\n";
-    std::cout << "sea level: phi_g " << c.problem->UniformPotentialTerm()
+    std::cout << "sea level: phi_g "
+              << on_problem([](auto& p) { return p.UniformPotentialTerm(); })
               << ", eustatic " << eustatic << ", ocean mean " << ocean_mean
               << ", wrote " << slcsv << " and " << out << "\n";
   }

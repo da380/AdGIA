@@ -21,8 +21,8 @@
  * Free functions: Interpolate (the nodal interpolant of a mapping on a
  * mesh's geometric space), MappedMesh (the element-by-element image mesh;
  * with Interpolate it realises the discrete change-of-variables identity),
- * and MaxIdentityDeviation (asserts the convention that mappings are the
- * identity on and outside the DtN sphere).
+ * and MaxIdentityDeviation (measures the deviation from the convention that
+ * mappings are the identity on and outside the DtN sphere).
  */
 
 #pragma once
@@ -102,6 +102,8 @@ class Diffeomorphism : public mfem::VectorCoefficient {
                  const mfem::IntegrationPoint& ip, mfem::Vector& nu);
 
  private:
+  // F_ and adj_ are mutable state shared by every evaluation on this object
+  // (not thread-safe by design).
   mfem::DenseMatrix F_, adj_;
 };
 
@@ -317,6 +319,7 @@ class TransformedFunctionCoefficient : public mfem::Coefficient {
  private:
   mfem::VectorCoefficient* xi_;
   std::function<mfem::real_t(const mfem::Vector&)> f_;
+  mfem::Vector y_;
 };
 
 /**

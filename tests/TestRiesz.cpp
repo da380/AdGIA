@@ -22,7 +22,7 @@ double Smooth(const Vector& x) { return 1.0 + x[0] + 0.5 * x[0] * x[1]; }
 }  // namespace
 
 TEST(Riesz, L2MapSolvesMassSystem) {
-  Mesh mesh("../data/elastogravity_two_layer_2d.msh", 1, 1);
+  Mesh mesh("../data/earth_fluidcore_2d.msh", 1, 1);
   L2_FECollection l2(2, 2);
   FiniteElementSpace fes(&mesh, &l2);
 
@@ -53,7 +53,7 @@ TEST(Riesz, L2MapSolvesMassSystem) {
 }
 
 TEST(Riesz, SobolevMapSatisfiesWeakFormAndDirichlet) {
-  Mesh mesh("../data/elastogravity_two_layer_2d.msh", 1, 1);
+  Mesh mesh("../data/earth_fluidcore_2d.msh", 1, 1);
   H1_FECollection h1(2, 2);
   FiniteElementSpace fes(&mesh, &h1);
 
@@ -95,7 +95,7 @@ TEST(Riesz, SobolevMapSatisfiesWeakFormAndDirichlet) {
 }
 
 TEST(Riesz, OrderTwoEqualsComposedChain) {
-  Mesh mesh("../data/elastogravity_two_layer_2d.msh", 1, 1);
+  Mesh mesh("../data/earth_fluidcore_2d.msh", 1, 1);
   H1_FECollection h1(2, 2);
   FiniteElementSpace fes(&mesh, &h1);
 
@@ -140,7 +140,7 @@ TEST(Riesz, OrderTwoEqualsComposedChain) {
 }
 
 TEST(Riesz, VectorSpacesGetComponentwiseMetric) {
-  Mesh mesh("../data/elastogravity_two_layer_2d.msh", 1, 1);
+  Mesh mesh("../data/earth_fluidcore_2d.msh", 1, 1);
   H1_FECollection h1(2, 2);
   FiniteElementSpace fes(&mesh, &h1, 2);
 

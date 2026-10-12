@@ -6,8 +6,11 @@ and the background-state module (`background.hpp`) are built: a
 general reference body, non-hydrostatic equilibrium stress, and
 fluid–solid interfaces that may slip. The mixed class of
 `doc/self_gravitation.md` is its hydrostatic, natural specialisation.
-Only the quasi-static linearised problem is treated; rotation enters
-solely through the centrifugal part of the background potential.
+Only the quasi-static linearised problem is treated. Rotation enters
+through the centrifugal part of the background potential and through the
+`u`-dependent rotational feedback, which the library carries as a border on
+the system (the traditional angular-velocity border and the generalised
+Tisserand door; `doc/quasi_static_models.tex`).
 
 Sources (the PDFs are in `doc/Elasticity/` where a file name is given):
 
@@ -109,8 +112,8 @@ while varying the map would make the map physical rather than a choice
 of description. The statement concerns the description of the
 equilibrium only. For *perturbations* about it, with the data held fixed
 on the reference, a tangential slip is in general not removable by
-relabelling (§5), and the slipping-interface formulation
-(`doc/slip_interface.tex`) is the general one.
+relabelling (§5), which is why the slipping-interface formulation
+(`doc/slip_interface.tex`) is kept as an instrument.
 
 ## 2. The linearised quasi-static problem
 
@@ -339,7 +342,9 @@ Structural remarks:
   part is not an interior harmonic — pass its gradient as plain
   analytic data; `TidalCrossCheck2D` checks exactly this piece), and
   the `u`-dependent rotational feedback `ψ′ = −(Ω×x)·(ω×x)` (Maitra &
-  Al-Attar 2024) will enter as an operator term on the same substrate.
+  Al-Attar 2024) enters as an operator term on the same substrate: the
+  traditional angular-velocity border, or the generalised Tisserand door
+  (`doc/quasi_static_models.tex`).
   The slipping subclasses refuse the tidal load for now: their fluid
   displacement row carries no tidal force, and a solid-row-only load
   under-drives a fluid core by tens of percent (measured).
@@ -464,20 +469,22 @@ remain exact.
 
 **Tangential slip is not gauge in general.** A tangential slip on a
 fluid–solid interface can be removed by relabelling only if it extends
-into the fluid as a divergence-free field tangent to the level surfaces.
-On an interface that is a level surface this restricts the slip: for a
-spherical core, rigid rotations of the core are such fields, but a
-general tangential slip need not be. On an interface that is not a level
-surface (an elliptical interface in a non-hydrostatic model, say) the
-level surfaces meet the interface and the construction generally fails.
-Hence:
+into the fluid as a divergence-free field tangent to the level surfaces;
+on a spherical core the rigid rotations are such fields, but a general
+slip is not, and on an interface that is not a level surface the
+construction generally fails. The full argument and the Adams–Williamson
+equivalence are in `doc/gauged_fluid.md` §2–3. Hence:
 
-- the slipping-interface formulation (§5.2) is the general one; allowing
-  slip that is not needed costs nothing in correctness;
 - the welded gauged formulation (§5.1) is used where the slip it
   suppresses is absent or removable by relabelling — as for the
   spherically symmetric models of the benchmarks, where the welded and
-  slipping formulations agree to discretisation level.
+  slipping formulations agree to discretisation level;
+- for aspherical or stratified fluids the default is the Maxwell
+  relaxation of `SetFluid`, which assumes neither; the slipping-interface
+  formulation (§5.2) is a finite idealisation of the dissipative completion
+  and serves as an instrument, in particular for the relabelling
+  decomposition (`doc/static_fluid_core.tex`, "The status of the
+  formulations").
 
 Which slips are removable in a general geometry is not characterised.
 
@@ -486,8 +493,9 @@ Which slips are removable in a general geometry is not characterised.
 The gauged treatment transfers to the referential class without further
 machinery: the fluid's inputs come from the background module (bare
 tensor with `μ_b = p⁰` via `BareElasticTensorCoefficient`,
-`S_e = −p⁰1`), and the base-class `SetGaugedFluid` penalty and
-refinement act on the fluid attributes unchanged. On a mapped problem the
+`S_e = −p⁰1`), and the base-class `SetFluid` (with `GaugePenaltyOptions`)
+penalty and refinement act on the fluid attributes unchanged; the default
+Maxwell treatment of `SetFluid` runs on the same classes too. On a mapped problem the
 referential class assembles the deviatoric penalty covariantly through
 `ElasticTensorIntegrator(C, map)` (see `doc/mappings.md`, "Pitfalls").
 Two tests in `TestReferentialProblem` verify it:
@@ -603,7 +611,7 @@ fluid regions. AW10 organise the solution set completely:
   larger. The bare tensor is held fixed in this comparison; holding the
   seismological moduli fixed instead would add the Maitra & Al-Attar
   (2021) conversion difference. Large ellipticities need taper room: the
-  `elastogravity_2d_wide` mesh (buffer to radius 2) and the
+  `disc_buffer_wide_2d` mesh (buffer to radius 2) and the
   parameter-blended ellipse taper `φ = (a(r)x, y/a(r))`, whose exact
   Jacobian `J = 1 + (a′/ar)(x² − y²)` degrades far more slowly than a
   displacement blend.
@@ -622,7 +630,9 @@ fluid regions. AW10 organise the solution set completely:
 The minimum-deviatoric field is also the object behind a
 hydrostatic-figure formulation (a body admits a valid static state
 exactly when the minimum-deviatoric field vanishes in its fluid regions);
-that solver is not implemented.
+the stage-1 density machinery (the feasibility functional and its
+derivative, `equilibrium_figures.hpp`, `doc/equilibrium_figures.tex`)
+exists, while the shape stage is not implemented.
 
 ### Dahlen's hydrostatic-region argument, and where it stops
 
@@ -663,8 +673,11 @@ the isolated `l = 0` gap is no longer quarantined. This is the
 equilibrium-theory counterpart of the loading-problem analysis in
 `doc/gauged_fluid.md`: the gauged and referential formulations, which
 keep the fluid's displacement and bulk modulus and never perform the
-elimination, are indifferent to all of this — there is no privileged
-degree anywhere in them.
+elimination, are indifferent to all of this in the sense that there is no
+privileged degree anywhere in them. That statement is about the degree-0
+hole, not about stratification: at N² ≠ 0 the gauge-penalty treatment is
+defined only to the stratification band, and the Maxwell relaxation of
+`SetFluid` is the general method (`doc/static_fluid_core.tex`).
 
 A corollary for model building (AW10, below their eq. 39): in a
 hydrostatic model, lateral density variations in the fluid core are
@@ -718,7 +731,7 @@ The problem-class names are built from axis slots —
 | gravity, referential: `a″` and `a′` terms | `ReferentialGravityIntegrator`, `ReferentialGravityCouplingIntegrator` | `ReferentialGravityMatchesFiniteDifference` |
 | vacuum extension of `u` | `NewRadialVacuumExtension` + `SetPrescribedVacuumExtension` (option (b)); `SetVacuumExtension` (option (a)) | `HydrostaticCrossCheck2D`, `HydrostaticCrossCheckBallWide2D` |
 | rigid modes | translations, `MappedRotation` | `TranslationsAreExactNullPairs`, `RotationResidualDecreasesWithOrder` |
-| welded gauged fluid | `SetGaugedFluid` (base class; covariant on mapped problems) | `FluidRelabellingNullPair`, `GaugedFluidCrossCheck2D` |
+| gauge-penalty fluid | `SetFluid(..., GaugePenaltyOptions)` (base class; covariant on mapped problems); the default Maxwell treatment is the same call without options | `FluidRelabellingNullPair`, `GaugedFluidCrossCheck2D` |
 | slipping interface: constraint, `B_Σ` | `LinearQuasiStaticReferentialSelfGravitatingSlipProblem`, `SlipInterfacePressureIntegrator`, `NewSlipInterfaceMatrix`, `BoundaryNormalNormalIntegrator`/`BoundaryNormalScalarIntegrator` (mapped) | `TestSlipInterface`, `TestSlipProblem` |
 | slipping interface: gravity | `NewRadialFluidExtension` (single-valued `ζ`); `EnableBrokenZeta`, `SlipInterfaceGravityIntegrator`, `SlipInterfaceGravityScalarIntegrator`, `NewSlipGravityInterfaceMatrix` (broken `ζ`) | `GravityHessianIdentity`, `BrokenZetaGravityIdentity`, `BrokenZetaHeadToHead` |
 | centrifugal term | part of `Φ₀` (absorbed into the background potential) | — |

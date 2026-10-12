@@ -5,6 +5,8 @@
 
 #include "AdGIA/mappings.hpp"
 
+#include <algorithm>
+
 namespace AdGIA {
 
 using namespace mfem;
@@ -95,14 +97,11 @@ RadialDiffeomorphism::RadialDiffeomorphism(int dim, Coefficient& f,
   MFEM_VERIFY(grad_f.GetVDim() == dim, "RadialDiffeomorphism: grad_f vdim.");
 }
 
-// Hidden from Doxygen, which cannot match the unqualified parameter types
-// of these overloaded constructors to their declarations.
-/// @cond
 RadialDiffeomorphism::RadialDiffeomorphism(
-    int dim, std::function<real_t(real_t)> f, std::function<real_t(real_t)> df)
+    int dim, std::function<mfem::real_t(mfem::real_t)> f,
+    std::function<mfem::real_t(mfem::real_t)> df)
     : Diffeomorphism(dim), fr_(std::move(f)), dfr_(std::move(df)), x_(dim),
       g_(dim) {}
-/// @endcond
 
 real_t RadialDiffeomorphism::Scalar(ElementTransformation& T,
                                     const IntegrationPoint& ip) {
@@ -217,9 +216,7 @@ void TaperedDiffeomorphism::EvalGradient(DenseMatrix& F,
   }
 }
 
-// Hidden from Doxygen, as for RadialDiffeomorphism above.
-/// @cond
-GridFunctionDiffeomorphism::GridFunctionDiffeomorphism(const GridFunction& h)
+GridFunctionDiffeomorphism::GridFunctionDiffeomorphism(const mfem::GridFunction& h)
     : Diffeomorphism(h.VectorDim()), h_(&h), x_(h.VectorDim()) {
   MFEM_VERIFY(
       h.VectorDim() == h.FESpace()->GetMesh()->SpaceDimension(),
@@ -228,15 +225,15 @@ GridFunctionDiffeomorphism::GridFunctionDiffeomorphism(const GridFunction& h)
 }
 
 GridFunctionDiffeomorphism::GridFunctionDiffeomorphism(
-    std::unique_ptr<FiniteElementCollection> fec,
-    std::unique_ptr<FiniteElementSpace> fes, std::unique_ptr<GridFunction> h)
+    std::unique_ptr<mfem::FiniteElementCollection> fec,
+    std::unique_ptr<mfem::FiniteElementSpace> fes,
+    std::unique_ptr<mfem::GridFunction> h)
     : Diffeomorphism(h->VectorDim()),
       owned_fec_(std::move(fec)),
       owned_fes_(std::move(fes)),
       owned_h_(std::move(h)),
       h_(owned_h_.get()),
       x_(vdim) {}
-/// @endcond
 
 void GridFunctionDiffeomorphism::Eval(Vector& V, ElementTransformation& T,
                                       const IntegrationPoint& ip) {
@@ -248,6 +245,32 @@ void GridFunctionDiffeomorphism::Eval(Vector& V, ElementTransformation& T,
 void GridFunctionDiffeomorphism::EvalGradient(DenseMatrix& F,
                                               ElementTransformation& T,
                                               const IntegrationPoint& ip) {
+  if (T.ElementType == ElementTransformation::BDR_ELEMENT) {
+    // The deformation gradient is a volume quantity: evaluate it on the
+    // adjacent element at the image of the boundary point (the Nanson
+    // coefficients evaluate maps on boundary elements; mfem's
+    // GetVectorGradient needs a square Jacobian). The idiom is
+    // GridFunction::GetVectorValue's boundary branch: boundary elements
+    // and boundary faces may be oriented differently, so the point goes
+    // through TransformBdrElementToFace.
+    // The face route works for INTERNAL boundary elements too (an
+    // interface carried as boundary elements, the house convention),
+    // where GetBdrFaceTransformations would return null; the factor is
+    // side-independent for a continuous map, so element 1 serves.
+    Mesh* mesh = h_->FESpace()->GetMesh();
+    int f, o;
+    mesh->GetBdrElementFace(T.ElementNo, &f, &o);
+    FaceElementTransformations* fet = mesh->GetFaceElementTransformations(f);
+    MFEM_VERIFY(fet != nullptr,
+                "GridFunctionDiffeomorphism: no face transformation for "
+                "the boundary element.");
+    const IntegrationPoint fip =
+        Mesh::TransformBdrElementToFace(fet->GetGeometryType(), o, ip);
+    fet->SetAllIntPoints(&fip);
+    ElementTransformation& T1 = fet->GetElement1Transformation();
+    EvalGradient(F, T1, T1.GetIntPoint());
+    return;
+  }
   T.SetIntPoint(&ip);
   F.SetSize(vdim);
   h_->GetVectorGradient(T, F);
@@ -258,10 +281,8 @@ void GridFunctionDiffeomorphism::EvalGradient(DenseMatrix& F,
 
 real_t TransformedFunctionCoefficient::Eval(ElementTransformation& T,
                                             const IntegrationPoint& ip) {
-  real_t data[3];
-  Vector y(data, 3);
-  xi_->Eval(y, T, ip);
-  return f_(y);
+  xi_->Eval(y_, T, ip);
+  return f_(y_);
 }
 
 void TransformedVectorFunctionCoefficient::Eval(Vector& V,
@@ -351,7 +372,7 @@ void SetDisplacement(GridFunction& h, Diffeomorphism& xi) {
 }  // namespace
 
 GridFunctionDiffeomorphism Interpolate(Diffeomorphism& xi, Mesh& mesh) {
-  int ordering;
+  int ordering = Ordering::byVDIM;
   auto fec = GeometricCollection(mesh, ordering);
   auto fes = std::make_unique<FiniteElementSpace>(
       &mesh, fec.get(), mesh.SpaceDimension(), ordering);
@@ -397,7 +418,7 @@ real_t MaxIdentityDeviation(Diffeomorphism& xi, Mesh& mesh,
 #ifdef MFEM_USE_MPI
 
 GridFunctionDiffeomorphism Interpolate(Diffeomorphism& xi, ParMesh& mesh) {
-  int ordering;
+  int ordering = Ordering::byVDIM;
   auto fec = GeometricCollection(mesh, ordering);
   auto fes = std::make_unique<ParFiniteElementSpace>(
       &mesh, fec.get(), mesh.SpaceDimension(), ordering);

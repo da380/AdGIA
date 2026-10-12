@@ -91,7 +91,7 @@ DenseMatrix MetricInverse(int dim, bool tracefree) {
   DenseMatrix G(nc);
   for (int c = 0; c < nc; c++) {
     for (int cp = 0; cp < nc; cp++) {
-      double s = 0.0;
+      real_t s = 0.0;
       for (int i = 0; i < dim; i++) {
         for (int j = 0; j < dim; j++) {
           s += E[c](i, j) * E[cp](i, j);
@@ -181,6 +181,11 @@ ViscoelasticOperator::ViscoelasticOperator(LinearQuasiStaticProblem& problem,
   const auto& rh = problem_.Rheology();
   MFEM_VERIFY(rh.SpaceDim() == dim,
               "ViscoelasticOperator: rheology/mesh dimension mismatch.");
+  // The operator assumes the problem carries the UNRELAXED modulus. A
+  // previous operator may have left its effective modulus assembled in
+  // the problem's stiffness; restore the assumption here (a no-op on a
+  // clean problem).
+  problem_.ClearRelaxationWeights();
 
   parallel_ = detail::IsParallel(*ufes_);
 #ifdef MFEM_USE_MPI
@@ -582,7 +587,8 @@ void ViscoelasticOperator::EvaluateRelaxationTimes(const Vector& d,
   LocalState s(dim);
   std::vector<Vector> mk(K);
   for (int k = 0; k < K; k++) {
-    mk[k] = Branch(m, k);
+    // Deliberately an alias of m (no copy), as Branch() returns.
+    mk[k].MakeRef(const_cast<Vector&>(m), BranchOffset(k), BranchSize(k));
   }
   // Index of the dropped diagonal component in the trace-free layout.
   const int last_diag = SymmetricComponentOrder::TraceFreeDropped(dim);
@@ -659,6 +665,7 @@ void ViscoelasticOperator::EvaluateRelaxationTimes(const Vector& d,
       expand_branch(k, q, s.m);
       const real_t* params = law_params_[k].GetData() + q * num_params_[k];
       const real_t F = law_[k]->Factor(params, s);
+      // Per node per evaluation, so checked in debug builds only.
       MFEM_ASSERT(F > 0.0, "relaxation law factor must be positive");
       itau_[k][q] = itau0_[k][q] / F;
     }
@@ -699,6 +706,9 @@ void ViscoelasticOperator::AddCoupledForce(int k, const Vector& zeta) const {
 
 bool ViscoelasticOperator::ElasticUpdate(const Vector& m, real_t t) const {
   problem_.AssembleForce(t);
+  if (force_hook_) {
+    force_hook_(t);
+  }
   for (int k = 0; k < NumBranches(); k++) {
     ApplyBranchModulus(k, Branch(m, k), zeta_);
     AddCoupledForce(k, zeta_);
@@ -743,17 +753,17 @@ void ViscoelasticOperator::SetEffectiveModulus(real_t dt, Scheme scheme) const {
               "ExponentialEulerSolver instead.");
   // Nodal weights beta_k: the effective modulus is C_inf + sum_k beta_k C_k
   // after eliminating m_k^{n+1}.
+  if (scheme == Scheme::ExponentialTrapezoid) {
+    EnsureTrapezoidWeights(dt);
+  }
   for (int k = 0; k < NumBranches(); k++) {
     GridFunction& beta_k = *beta_[k];
     const Array<int>& nodes = nodes_[k];
     for (int q = 0; q < nodes.Size(); q++) {
-      const real_t h = dt * itau_[k][q];
       if (scheme == Scheme::BackwardEuler) {
-        beta_k[nodes[q]] = 1.0 / (1.0 + h);
+        beta_k[nodes[q]] = 1.0 / (1.0 + dt * itau_[k][q]);
       } else {
-        real_t e, alpha, beta;
-        detail::ExponentialTrapezoidWeights(h, e, alpha, beta);
-        beta_k[nodes[q]] = 1.0 - beta;
+        beta_k[nodes[q]] = 1.0 - etw_beta_[k][q];
       }
     }
   }
@@ -761,6 +771,28 @@ void ViscoelasticOperator::SetEffectiveModulus(real_t dt, Scheme scheme) const {
   scheme_ = scheme;
   effective_dt_ = dt;
   effective_version_ = tau_version_;
+}
+
+void ViscoelasticOperator::EnsureTrapezoidWeights(real_t dt) const {
+  if (dt == etw_dt_ && etw_version_ == tau_version_) {
+    return;
+  }
+  const int K = NumBranches();
+  etw_e_.resize(K);
+  etw_alpha_.resize(K);
+  etw_beta_.resize(K);
+  for (int k = 0; k < K; k++) {
+    const int nd = nodes_[k].Size();
+    etw_e_[k].SetSize(nd);
+    etw_alpha_[k].SetSize(nd);
+    etw_beta_[k].SetSize(nd);
+    for (int q = 0; q < nd; q++) {
+      detail::ExponentialTrapezoidWeights(dt * itau_[k][q], etw_e_[k][q],
+                                          etw_alpha_[k][q], etw_beta_[k][q]);
+    }
+  }
+  etw_dt_ = dt;
+  etw_version_ = tau_version_;
 }
 
 void ViscoelasticOperator::UseUnrelaxedOperator() const {
@@ -781,17 +813,19 @@ bool ViscoelasticOperator::CacheMatches(const Vector& m, real_t t) const {
   int ok = cache_valid_ && m.Size() == cached_m_.Size() &&
            std::abs(t - cached_t_) <=
                rel * std::max<real_t>(1.0, std::abs(cached_t_));
-  if (ok) {
-    real_t scale = 0.0;
-    for (int j = 0; j < m.Size(); j++) {
-      scale = std::max(scale, std::abs(cached_m_[j]));
-    }
+  // The scale reduction is collective, so it runs on every rank whatever
+  // the rank-local verdict so far.
+  real_t scale = 0.0;
+  for (int j = 0; j < cached_m_.Size(); j++) {
+    scale = std::max(scale, std::abs(cached_m_[j]));
+  }
 #ifdef MFEM_USE_MPI
-    if (parallel_) {
-      MPI_Allreduce(MPI_IN_PLACE, &scale, 1, MPITypeMap<real_t>::mpi_type,
-                    MPI_MAX, comm_);
-    }
+  if (parallel_) {
+    MPI_Allreduce(MPI_IN_PLACE, &scale, 1, MPITypeMap<real_t>::mpi_type,
+                  MPI_MAX, comm_);
+  }
 #endif
+  if (ok) {
     const real_t tol = rel * scale;
     for (int j = 0; j < m.Size(); j++) {
       if (std::abs(m[j] - cached_m_[j]) > tol) {
@@ -847,6 +881,9 @@ void ViscoelasticOperator::ImplicitSolve(real_t dt, const Vector& m,
   for (int pass = 0;; pass++) {
     SetEffectiveModulus(dt, Scheme::BackwardEuler);
     problem_.AssembleForce(t);
+    if (force_hook_) {
+      force_hook_(t);
+    }
     for (int b = 0; b < NumBranches(); b++) {
       Vector mb = Branch(m, b);
       const int nd = nodes_[b].Size();
@@ -887,9 +924,9 @@ void ViscoelasticOperator::ImplicitSolve(real_t dt, const Vector& m,
       break;
     }
     // Corrector: times at the end state (d^{n+1}, m^{n+1}).
-    const std::vector<Vector> old_itau = itau_;
+    old_itau_ = itau_;
     EvaluateRelaxationTimes(d_, cached_m_);
-    if (RelaxationTimeChange(old_itau) < corrector_tol_) {
+    if (RelaxationTimeChange(old_itau_) < corrector_tol_) {
       break;
     }
   }
@@ -937,7 +974,7 @@ void ViscoelasticOperator::ExponentialTrapezoidStep(Vector& m, real_t& t,
 
   // ETD1 prediction of the step (times and strain frozen at the start),
   // kept for the error estimate.
-  const Vector m_start(m);
+  m_start_ = m;
   predictor_diff_ = m;
   m_scale_.SetSize(m.Size());
   for (int b = 0; b < NumBranches(); b++) {
@@ -949,14 +986,17 @@ void ViscoelasticOperator::ExponentialTrapezoidStep(Vector& m, real_t& t,
   for (int pass = 0;; pass++) {
     SetEffectiveModulus(dt, Scheme::ExponentialTrapezoid);
     problem_.AssembleForce(t + dt);
+    if (force_hook_) {
+      force_hook_(t + dt);
+    }
+    EnsureTrapezoidWeights(dt);
     for (int b = 0; b < NumBranches(); b++) {
-      Vector mb = Branch(m_start, b);
+      Vector mb = Branch(m_start_, b);
       const Array<int>& nodes = nodes_[b];
       const int nd = nodes.Size();
       dual_.SetSize(nd * nc_);
       for (int q = 0; q < nd; q++) {
-        real_t e, alpha, beta;
-        detail::ExponentialTrapezoidWeights(dt * itau_[b][q], e, alpha, beta);
+        const real_t e = etw_e_[b][q], alpha = etw_alpha_[b][q];
         for (int c = 0; c < nc_; c++) {
           dual_[c * nd + q] =
               e * mb[c * nd + q] + alpha * d_prev_[c * nd_ + nodes[q]];
@@ -972,12 +1012,12 @@ void ViscoelasticOperator::ExponentialTrapezoidStep(Vector& m, real_t& t,
 
     for (int b = 0; b < NumBranches(); b++) {
       Vector mb = Branch(m, b);
-      Vector m0 = Branch(m_start, b);
+      Vector m0 = Branch(m_start_, b);
       const Array<int>& nodes = nodes_[b];
       const int nd = nodes.Size();
       for (int q = 0; q < nd; q++) {
-        real_t e, alpha, beta;
-        detail::ExponentialTrapezoidWeights(dt * itau_[b][q], e, alpha, beta);
+        const real_t e = etw_e_[b][q], alpha = etw_alpha_[b][q],
+                     beta = etw_beta_[b][q];
         const int p = nodes[q];
         for (int c = 0; c < nc_; c++) {
           const int idx = c * nd + q, full = c * nd_ + p;
@@ -990,22 +1030,22 @@ void ViscoelasticOperator::ExponentialTrapezoidStep(Vector& m, real_t& t,
       break;
     }
     // Corrector: times at the midpoint state.
-    const std::vector<Vector> old_itau = itau_;
-    Vector m_mid(m);
-    m_mid += m_start;
-    m_mid *= 0.5;
-    Vector d_mid(d_);
-    d_mid += d_prev_;
-    d_mid *= 0.5;
-    EvaluateRelaxationTimes(d_mid, m_mid);
-    if (RelaxationTimeChange(old_itau) < corrector_tol_) {
+    old_itau_ = itau_;
+    m_mid_ = m;
+    m_mid_ += m_start_;
+    m_mid_ *= 0.5;
+    d_mid_ = d_;
+    d_mid_ += d_prev_;
+    d_mid_ *= 0.5;
+    EvaluateRelaxationTimes(d_mid_, m_mid_);
+    if (RelaxationTimeChange(old_itau_) < corrector_tol_) {
       break;
     }
   }
 
   for (int j = 0; j < m.Size(); j++) {
     predictor_diff_[j] = m[j] - predictor_diff_[j];
-    m_scale_[j] = std::max(std::abs(m_start[j]), std::abs(m[j]));
+    m_scale_[j] = std::max(std::abs(m_start_[j]), std::abs(m[j]));
   }
   t += dt;
   SetTime(t);
@@ -1128,7 +1168,9 @@ void AdaptiveExponentialTrapezoidSolver::Step(Vector& x, real_t& t,
     real_t t_trial = t;
     op_->ExponentialTrapezoidStep(trial_, t_trial, h);
     last_err_ = op_->ErrorEstimate(rtol_, atol_);
-    if (last_err_ <= 1.0 || h <= dt_min_) {
+    // A NaN estimate is a rejected step shrunk by the floor factor.
+    const bool nan_err = std::isnan(last_err_);
+    if ((!nan_err && last_err_ <= 1.0) || h <= dt_min_) {
       x = trial_;
       t = t_trial;
       accepted_++;
@@ -1136,10 +1178,15 @@ void AdaptiveExponentialTrapezoidSolver::Step(Vector& x, real_t& t,
     }
     rejected_++;
     h = std::max(dt_min_,
-                 h * std::max(shrink_, safety_ / std::sqrt(last_err_)));
+                 h * (nan_err ? shrink_
+                              : std::max(shrink_,
+                                         safety_ / std::sqrt(last_err_))));
+    MFEM_VERIFY(h > 0.0,
+                "AdaptiveExponentialTrapezoidSolver: step size underflow.");
   }
   const real_t factor =
-      last_err_ > 0.0
+      std::isnan(last_err_) ? shrink_
+      : last_err_ > 0.0
           ? std::min(grow_, std::max(shrink_, safety_ / std::sqrt(last_err_)))
           : grow_;
   dt = std::min(dt_max_, std::max(dt_min_, h * factor));

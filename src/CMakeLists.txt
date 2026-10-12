@@ -1,5 +1,6 @@
 target_sources(${PROJECT_NAME} PRIVATE null_space.cpp
                                        background.cpp
+                                       bordered.cpp
                                        equilibrium_figures.cpp
                                        riesz.cpp
                                        descent.cpp
@@ -17,6 +18,7 @@ target_sources(${PROJECT_NAME} PRIVATE null_space.cpp
                                        referential_problem.cpp
     mixed_problem.cpp
                                        viscoelastic.cpp
+                                       adjoint.cpp
                                        elastic_tensor.cpp
                                        rotation.cpp
                                        sea_level.cpp

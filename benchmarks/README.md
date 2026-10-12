@@ -19,6 +19,7 @@ READMEs here say how to run them.
 | `love_numbers/` | load and tidal Love numbers of spherically layered, self-gravitating elastic bodies, across formulations, solvers and CMB treatments, with the response as fields | the radial solver of [pyslfp](https://github.com/da380/pyslfp) |
 | `relabelling/` | the mapped (aspherical) machinery: the same spherical physics from relabelled coordinates, the discrete change-of-variables identity, an aspherical reference body | the same, exact under the relabelling |
 | `perturbation/` | derivatives of the response with respect to the model: the degree-0 interface-shift check | pyslfp on the perturbed models |
+| `disc/` | the 2-D testing ground of the slipping interface: the gravity-free disc (welded against slip, interface shift, uniform pre-pressure) and the gravitating per-degree radial reference with its `explore` tool | closed-form disc solutions; the 1-D hp-FEM radial reference |
 | `viscoelastic/` | the viscoelastic time stepping, in four sub-families: non-gravitating box and sphere problems, the stepper survey, Maxwell Love-number histories | exact modal/Talbot references; RK4 at a small step; pyslfp through the correspondence principle |
 | `sea_level/` | the monolithic sea-level solve (`SetWaterLoad`): elastic fingerprints, with rotation, shoreline-migration and timing legs, and `--earth` — the same comparison on the real ICE-7G geography and the coastline-refined mesh, melting Greenland or West Antarctica; not a campaign stage, run through its launchers | pyslfp's pseudo-spectral solution of the same problem |
 
@@ -57,6 +58,7 @@ and the MPI launcher of that build:
 | `love_numbers/` | `run`, `plot`, `cmb_report`, `make_case` |
 | `relabelling/` | `plot` |
 | `perturbation/` | `perturbation_check`, `plot` |
+| `disc/` | `check`, `explore` |
 | `viscoelastic/box/` | `cases`, `reference`, `compare`, `study` |
 | `viscoelastic/sphere/` | `meshes`, `cases`, `reference`, `study` |
 | `viscoelastic/love/` | `laplace_reference`, `compare`, `make_case` |
@@ -197,13 +199,22 @@ In brief (the measurements are in `doc/benchmarks.tex`):
   spread at coarse resolution is mesh error, not physics. The welded
   mapped assembly passes a solver-level change-of-variables identity to
   ~1e-6; the slipping-interface forms under a mapping are not verified.
-- For loading at l >= 1 the Dahlen path is the cheapest and as accurate
-  as anything here. The dearer formulations buy physics it cannot
-  represent: the compressible fluid at degree zero, non-neutral core
-  stratification, the slipping interface, and the referential family's
-  mapped machinery. The gauged and referential methods cost several
-  times the Dahlen path per load solve, the slipping methods one to two
-  orders of magnitude more.
+- For loading at l >= 1 on hydrostatic (spherical) models the Dahlen path
+  is the cheapest and as accurate as anything here: the practical
+  workhorse. The dearer formulations buy physics it cannot represent: the
+  compressible fluid at degree zero, the slipping interface, and the
+  referential family's mapped machinery. They do **not** buy non-neutral
+  core stratification: at N² ≠ 0 the gauged and referential
+  (gauge-penalty) methods are band-limited, their answers defined only to
+  the stratification band, and their semi-convergence there is
+  Rayleigh–Taylor growth. The general fluid method is the Maxwell
+  relaxation (`SetFluid`'s default treatment, method `maxwell`): any
+  geometry, any stratification, any number of fluid regions. The slipping
+  and welded formulations are finite idealisations of the dissipative
+  completion and serve as instruments (`doc/static_fluid_core.tex`, "The
+  status of the formulations"). The gauged and referential methods cost
+  several times the Dahlen path per load solve, the slipping methods one
+  to two orders of magnitude more.
 - The standard unmeshed-core CMB condition (`uniform`) is safe for
   loading at l >= 2 (h' within 0.1 %, l'_2 and k'_2 ~0.3 %), about ten
   times worse on tides and so on the rotational feedback, which runs

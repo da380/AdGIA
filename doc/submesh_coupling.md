@@ -156,7 +156,7 @@ distinct unknowns or where one space is extended into another:
 
 | Pairing | Spaces | Used by |
 |---|---|---|
-| solid × fluid displacement on the slipping interface Σ | solid and fluid SubMeshes | `LinearQuasiStaticReferentialSelfGravitatingSlipProblem` (the broken pair `(u_s, u_f)`; see `slip_interface.tex`) and `examples/sliding_fluid_ellipse.cpp` |
+| solid × fluid displacement on the slipping interface Σ | solid and fluid SubMeshes | `LinearQuasiStaticReferentialSelfGravitatingSlipProblem` (the broken pair `(u_s, u_f)`; see `doc/slip_interface.tex`) and `examples/sliding_fluid_ellipse.cpp` |
 | buffer × body displacement on ∂B | buffer shell and body SubMeshes | `NewRadialVacuumExtension` (trace rows of the vacuum extension, `referential_problem.hpp`) |
 | fluid × solid displacement on Σ | fluid and solid SubMeshes | `NewRadialFluidExtension` (trace rows of the fluid extension) |
 | potential shadows on the solid × outer/fluid regions | shadows of the ζ space | `EnableBrokenZeta` of the slip problem |

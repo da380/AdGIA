@@ -80,8 +80,12 @@ def main() -> None:
                    help="where perturbation_check wrote (default: the "
                         "case directory)")
     p.add_argument("--method", nargs="+",
-                   default=["referential", "slip_broken"])
-    p.add_argument("--order", type=int, default=2)
+                   default=["referential", "slip_broken"],
+                   help="methods to draw, one figure each (default: "
+                        "referential slip_broken)")
+    p.add_argument("--order", type=int, default=2,
+                   help="finite-element order of the runs to read "
+                        "(default 2)")
     args = p.parse_args()
     root = outside_source(args.out if args.out is not None else args.case)
 
@@ -138,7 +142,7 @@ def main() -> None:
                                  marker=shape[q], markersize=7,
                                  color=COLOURS[l % 8],
                                  markeredgecolor=SURFACE)
-                    bars.append((f"${q}'_{l}$", abs(d3 - d1) / abs(d1),
+                    bars.append((f"${q}'_{l}$", l, abs(d3 - d1) / abs(d1),
                                  COLOURS[l % 8]))
                     lo = d1 if lo is None else min(lo, d1, d3)
                     hi = d1 if hi is None else max(hi, d1, d3)
@@ -149,20 +153,19 @@ def main() -> None:
             handles = [plt.Line2D([], [], ls="none", marker=m,
                                   color=MUTED, label=f"${q}'$")
                        for q, m in shape.items()]
-            degrees = sorted({int(b[0].split("_")[1].strip("$"))
-                              for b in bars})
+            degrees = sorted({b[1] for b in bars})
             handles += [plt.Line2D([], [], ls="none", marker="o",
                                    color=COLOURS[l % 8],
                                    label=f"degree {l}") for l in degrees]
             axes[1].legend(handles=handles, fontsize=7, framealpha=0.9)
         if bars:
             y = range(len(bars))[::-1]
-            axes[2].barh(y, [b[1] for b in bars],
-                         color=[b[2] for b in bars], height=0.6)
+            axes[2].barh(y, [b[2] for b in bars],
+                         color=[b[3] for b in bars], height=0.6)
             axes[2].set_yticks(list(y), [b[0] for b in bars])
             axes[2].set_xscale("log")
             # bars on a log axis need an explicit floor to start from
-            axes[2].set_xlim(left=min(b[1] for b in bars) / 4)
+            axes[2].set_xlim(left=min(b[2] for b in bars) / 4)
             axes[2].grid(axis="y", visible=False)
 
         axes[0].set_title("agreement with pyslfp by degree (worst of "
@@ -188,6 +191,7 @@ def main() -> None:
         fig.tight_layout(rect=(0, 0, 1, 0.94))
         out = root / f"perturbation_{method}_o{args.order}.png"
         fig.savefig(out, dpi=180)
+        plt.close(fig)
         print(f"wrote {out}")
         drawn += 1
     if not drawn:

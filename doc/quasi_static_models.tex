@@ -20,7 +20,7 @@
 
 % --- notation ---------------------------------------------------------------
 \newcommand{\R}{\mathbb{R}}
-\newcommand{\eps}{\varepsilon}
+\newcommand{\eps}{\mathbf{a}repsilon}
 \newcommand{\dS}{\,\mathrm{d}S}
 \newcommand{\dV}{\,\mathrm{d}V}
 \newcommand{\tr}{\operatorname{tr}}
@@ -212,10 +212,13 @@ displacement-like field defined where used).
 All classes solve the \emph{linearised, quasi-static} equations of a
 (possibly self-gravitating, possibly pre-stressed) elastic body: the
 inertial term $\partial_t^2\vu$ and the Coriolis term are dropped, and
-rotation enters only through the centrifugal background, which for a
+rotation enters through the centrifugal background, which for a
 constant rotation vector $\bm{\Omega}$ is absorbed into the background
 potential, $\Phi_0 \to \Phi_0 + \psi_{\mathrm{c}}$ with
-$\psi_{\mathrm{c}}$ the centrifugal potential (AC18; MA24). Time enters only through the data (loads,
+$\psi_{\mathrm{c}}$ the centrifugal potential (AC18; MA24), and, where
+enabled, through the rotational doors that carry the secular rotational
+feedback (the generalised Tisserand-frame door of
+\S\ref{sec:rotation-door}). Time enters only through the data (loads,
 and, in the viscoelastic layer of \S\ref{sec:visco}, internal variables).
 Every class implements one small interface: at a time $t$,
 \code{AssembleForce}$(t)$ brings all time-dependent data to $t$ and
@@ -646,7 +649,8 @@ The clamped problem needs none of this: the essential conditions remove
 the rigid modes.
 
 \paragraph{Fluid regions without gravity.} The base class also accepts
-gauged fluid regions (\code{SetGaugedFluid}), used without gravity for
+gauge-penalty fluid regions (\code{SetFluid} with
+\code{GaugePenaltyOptions}), used without gravity for
 the cavity tests of \S\ref{sec:gauged-verif}; the machinery is described
 in \S\ref{sec:gauged}.
 
@@ -1483,7 +1487,7 @@ bias is removed by iterated Tikhonov refinement (following Maitra \&
 Al-Attar \cite{MaitraAlAttar2024}, \S3.7.3). It is selected in the mixed
 class by construction: \emph{no} \code{FluidRegion}s; the fluid attributes
 join the displacement SubMesh, the rheology gives them $\kappa_f$ with zero
-shear, the density covers them, and \code{SetGaugedFluid()} adds the
+shear, the density covers them, and \code{SetFluid(marker, mu, GaugePenaltyOptions\{\ldots\}, map)} adds the
 penalty. The machinery lives in the base class
 (\S\ref{sec:nograv}) and is reused by the referential and slip classes.
 
@@ -1532,8 +1536,10 @@ an aspherical body) the level surfaces meet the interface and the
 construction generally fails. Tangential slip is therefore \emph{not}
 gauge in general, and welding is a modelling restriction, exact where the
 slip it suppresses is absent or removable by relabelling. The slipping-%
-interface formulation of \S\ref{sec:slip} is the general one: allowing a
-slip that is not needed costs nothing in correctness. The welded gauged
+interface formulation of \S\ref{sec:slip} is the finite idealisation that admits it: allowing a
+slip that is not needed costs nothing in correctness (the status of this
+formulation among the fluid treatments is set out in
+\code{doc/static\_fluid\_core.tex}). The welded gauged
 formulation is used where it is exact, as for the spherically symmetric
 models of the benchmarks, where the welded and slipping formulations agree
 to discretisation level (\S\ref{sec:slip-verif}). A two-parameter fluid
@@ -1558,8 +1564,10 @@ this is
 \end{equation}
 Then the static $\kappa$-response coincides with Dahlen's secular
 response. For $N^2\neq0$ the static response is the ``frozen'' elastic one
-and differs from Dahlen's by $O(N^2)$; the penalty still regularises the
-nearly neutral case. Benchmarks at $l\ge1$ against Dahlen or \code{pyslfp} must
+and differs from Dahlen's by $O(N^2)$; the penalty regularises the
+nearly neutral case only up to the stratification band: at $N^2\neq0$ its
+semi-convergence is Rayleigh--Taylor growth, and answers are defined only to
+that band. Benchmarks at $l\ge1$ against Dahlen or \code{pyslfp} must
 use neutrally stratified cores (PREM's outer core is Adams--Williamson by
 construction; a uniform-density core is not).
 
@@ -1567,6 +1575,18 @@ construction; a uniform-density core is not).
 fluid never sees $\kappa_f$, while the gauged fluid carries it at every
 degree, restoring the compressible degree-0 physics
 (\S\ref{sec:cmb-deg0}).
+
+\paragraph{Fluid regions: the Maxwell relaxation.} The default treatment of
+fluid regions, \code{SetFluid(marker, mu\_scale)}, is not the gauge penalty
+but the Maxwell relaxation: the fluid is made an artificial Maxwell solid,
+the load is applied as a step, and the body relaxes until the solid stops
+moving, which computes the secular response on any geometry and for any
+stratification. Each step solves the gauge machinery's operator
+$A + \eps\mu Q$ at $\eps = 1/(1+\beta)$, with a continuation to the welded
+limit and a best-state return. It is the general method; the gauge-penalty
+treatment above is clean only for neutrally stratified fluids, and Dahlen's
+mixed formulation is the practical workhorse for hydrostatic models. The
+hierarchy and its evidence are in \code{doc/static\_fluid\_core.tex}.
 
 \paragraph{What changes against Dahlen.}
 \begin{center}
@@ -1819,7 +1839,7 @@ tolerates, the optimality system is the doubled saddle
 with the physical block operator $A$ of \S\ref{sec:mixed-solvers} in the
 constraint rows. It is available as \code{EnableGaugeKKT(fluid\_marker,
 mu\_gauge, mgw\_prec)} on the mixed class (block organisations only;
-internally the $A + Q$ assembly of \code{SetGaugedFluid()} at $\eps = 1$,
+internally the $A + Q$ assembly of \code{SetFluid} (gauge-penalty form) at $\eps = 1$,
 with no refinements, preconditions both displacement slots; with
 \code{mgw\_prec} the multiplier slot is preconditioned by the composite of
 Murphy, Golub \& Wathen \cite{MurphyGolubWathen2000}), and
@@ -1834,7 +1854,7 @@ block-diagonal preconditioners available, MINRES reaches mesh-level physics
 but does not converge algebraically at acceptable cost. A multiplier pays
 for a full-rank interface condition, such as the slip constraint
 (\code{doc/slip\_interface.tex}, section ``Constraint enforcement'');
-for selection over a near-kernel the penalty is the appropriate regularisation. The production gauge path is the
+for selection over a near-kernel the penalty is the appropriate regularisation. The gauge-fixing path is the
 $\eps$-penalty with iterated Tikhonov refinement of \S\ref{sec:tikhonov}.
 
 \subsection{Verification}
@@ -2243,6 +2263,96 @@ welded-gauged solver identity: the relabelled and unrelabelled problems
 give the same solution to solver tolerance (of order $10^{-7}$), which
 holds only because the penalty is covariant.
 
+\subsection{The sea-level terms: the \texorpdfstring{$\zeta\zeta$}{zeta-zeta} collapse}
+\label{sec:ref-sea}
+
+The sea-level machinery of \S\ref{sec:mixed-sea} ports to this class in
+a form that is simpler, not more complicated, because the change of
+variables \eqref{eq:zetaphi} is exactly the combination the water
+feedback is built from: $\tau = \vu\cdot\grad\Phi_0 + \phi = \zeta^1$ at
+the surface. The mixed class's four trace blocks
+($uu$/$u\phi$/$\phi u$/$\phi\phi$) collapse to a single boundary mass on
+the $\zeta\zeta$ block,
+\begin{equation}
+  -\int_{\partial M} \frac{\rho_w\tilde C}{\tilde g}\,
+    \zeta^1\,\chi\; J_\Sigma\dS,
+  \label{eq:zetazeta-water}
+\end{equation}
+the same fact that makes the surface mass load a potential-row load
+alone (\S\ref{sec:referential}, Loads). The conventions: the integral
+is the physical-surface form pulled back, so $J_\Sigma =
+J_e|F_e^{-T}\vn|$ is the equilibrium mapping's surface Jacobian
+($\sigma$ is per \emph{referential} area, so the data loads carry no
+factor while the feedback operator does); $\tilde g = |F_e^{-T}
+\grad\zeta^0|$ is the referential surface gravity; $\tilde C =
+C\circ\varphi_e$ is pointwise, never projected. For every current model
+the equilibrium mapping is the identity at the surface and
+\eqref{eq:zetazeta-water} is entry-for-entry the mixed term; the factors
+are carried for the mapped gates. The condensed system is otherwise the
+one of \S\ref{sec:mixed-sea}: the rank-one $\Phi_g$ border with the
+(referential) mass-conservation row, the rotation border with its
+columns through the tidal door (the centrifugal $r^2$ part is not an
+interior harmonic, so its gradient enters as analytic data composed
+with $\varphi_e$), the data loads on the ordinary surface-load slot,
+and $SL_1 = (-\zeta^1 - \psi + \Phi_g)/\tilde g$ as pure
+postprocessing. Both classes drive the same bordered-elimination
+engine (\code{bordered.hpp}): the base solve, one cached solve per
+border column, and the dense reduction.
+
+\paragraph{Rigid modes and the two feedbacks.} Under a linearised rigid
+motion $\vu \to \vu + \mathbf{a} + \vb\times\vx$ the Eulerian potential shifts,
+$\phi \to \phi - (\mathbf{a} + \vb\times\vx)\cdot\grad\Phi_0$, and
+\eqref{eq:zetaphi} makes $\zeta^1$ \emph{invariant}: the referential
+null space is $(\mathbf{a} + \vb\times\vx,\,0)$, rigid modes have no potential
+partners (\S\ref{sec:referential}). Two consequences fall out of the
+variables themselves. First, the water feedback
+\eqref{eq:zetazeta-water} and the $\Phi_g$ border are rigid-inert, so
+the projected solver and the sea-level terms coexist without
+interaction. Second, the traditional rotation row (Yu et al.\
+\cite{Yu2025} eq.~15) couples to $\vu$ \emph{not} through $\zeta^1$ —
+$\int_M \rho\,\vu\cdot\grad\psi'\dV$ is a volume term with no
+$\zeta$-representation — and is therefore rigid-sensitive unless the
+model's inertia tensor is isotropic (their eq.~20, \S2.4): the
+referential variables make the pathology of the traditional theory
+visible as the one feedback term that escapes the collapse. The
+generalised (Tisserand-frame) theory of Maitra \& Al-Attar
+\cite{MaitraAlAttar2024} replaces that row; its bordered form follows.
+
+\paragraph{The generalised rotational door.}\label{sec:rotation-door} The secular limit of the
+Maitra--Al-Attar linearised Euler equation, taken with $\bm{\Omega}$ along
+a principal axis of the model's equilibrium inertia tensor
+$I^{(0)}$, reproduces the traditional row \emph{verbatim} with
+$D = \operatorname{diag}(C_3-C_1,\, C_3-C_2,\, -C_3)$ built from the \emph{model's
+own} principal moments — the wander denominators come from the frame
+term $\mathrm{ad}_\Omega(I^{(0)}-\lambda)$, not from bare conservation
+— and with the displacement pinned by the Tisserand condition
+$\int_M \tilde\rho\,\varphi_e\times\vu\dV = 0$ (the derivation:
+\code{doc/planning/generalised\_rotation\_note.md}, ``The secular
+reduction''). The implementation is therefore three deltas on the
+traditional border: \code{SetRotation(Omega)} assembles
+$I^{(0)} = \int\tilde\rho\,(|\varphi_e|^2\mathbf{1} -
+\varphi_e\otimes\varphi_e)\dV$ by quadrature, verifies the
+principal-axis condition, refuses a wander-degenerate (near-spherical)
+model, and enables the Tisserand gauge: the mass-weighted
+representative of the rigid null space, whose mapped-rotation basis
+pins exactly the condition above; the solve's tail preserves that
+representative rather than re-projecting Euclidean. The ensemble makes
+$\omega$ invariant under rigid re-gauges of $\vu$ on \emph{any} model
+— the invariance the traditional theory has only at isotropic inertia
+— at the cost of requiring a figure-realistic model. On a simplified
+(near-spherical) model the \emph{input-inertia option},
+\code{SetRotation(Omega, moments)} $+$ \code{SetTisserandGauge(true)},
+keeps the gauge-borne uniqueness while taking $D$ as data; the
+conservation certificates then degrade at $O(|I_{\mathrm{obs}} -
+I_{\mathrm{model}}|)$ and are reported, not gated. On a model with
+fluid regions the whole-body Tisserand condition is itself
+relabelling-gauge-dependent (a fluid core's rigid swirls are
+relabellings and carry angular momentum), so there the gauge metric
+restricts to the \emph{solid} attributes — the mantle frame of
+Earth-rotation theory — while the row integrals, being exactly
+relabelling-invariant, stay whole-body (the note, ``The fluid-core
+wrinkle'').
+
 %==========================================================================
 \section{The slipping-interface problem}
 \label{sec:slip}
@@ -2265,11 +2375,13 @@ pointing \emph{out of the fluid}, and $\dS$ the referential measure.
 Tangential slip at a fluid--solid interface is not gauge in general
 (\S\ref{sec:gauged}, Model): the welded formulation suppresses it, which
 is exact only where the slip is absent or removable by relabelling. The
-slipping-interface formulation is the general and safe one --- allowing
-a slip that is not needed costs nothing in correctness --- and it is the
-formulation required for interfaces that are not level surfaces of the
-background potential, for two-parameter (stratified) fluids, and for a
-non-linear slip map. When the broken space is used on a pressurised
+slipping-interface formulation is the instrument that admits it --- allowing
+a slip that is not needed costs nothing in correctness --- and it is a
+finite idealisation of the dissipative completion, serving to measure the
+relabelling decomposition; the general treatment of fluid regions
+(any geometry, any stratification) is the Maxwell relaxation of
+\code{SetFluid}, and a non-linear slip map requires the slipping
+formulation in any case. When the broken space is used on a pressurised
 background its interface terms are obligatory. Restrictions of the
 implementation: (S1) one fluid region inside a solid shell (nested shells
 with two-sided fluid extensions are not implemented); (S2) the
@@ -2280,7 +2392,7 @@ throughout and is the route for mapped and aspherical backgrounds; (S3)
 the fluid displacement is gauge (the relabellings \eqref{eq:relabelK}),
 fixed by the penalty and refinement of \S\ref{sec:tikhonov} in both
 enforcement paths, set with \code{SetFluidGauge}$(\mu_g,\eps)$ on the whole
-fluid space (the slip class refuses \code{SetGaugedFluid}, since its fluid
+fluid space (the slip class refuses the gauge-penalty \code{SetFluid}, since its fluid
 has its own space); (S4) the KKT path is implemented for the single-valued
 organisation only (\code{EnableKKT} and \code{EnableBrokenZeta} are
 mutually exclusive).

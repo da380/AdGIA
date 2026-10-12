@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -17,9 +18,15 @@
 
 namespace AdGIA {
 
+class LinearQuasiStaticReferentialSelfGravitatingProblem;
+
+namespace detail {
+class IceStack;
+}
+
 /**
  * @brief Surface fields and sea-level postprocessing on the body's
- * exterior surface (doc/planning/sea_level_plan.md, WP1).
+ * exterior surface.
  *
  * The operator owns a boundary SubMesh of the surface marked on the body
  * mesh, a scalar H1 space on it (sea level is physically continuous),
@@ -49,10 +56,9 @@ namespace AdGIA {
  *
  * The ocean function @f$C@f$ of the initial state (eq. 29:
  * @f$C = 1@f$ where @f$\rho_w SL_0 - \rho_i I > 0@f$) enters integrals
- * pointwise at quadrature from the surface fields — never through a
- * projection — per the plan's representation split. Until
- * SetInitialState() is called the whole surface is ocean
- * (@f$C \equiv 1@f$), the all-ocean configuration of the rung-0 tests.
+ * pointwise at quadrature from the surface fields, never through a
+ * projection. Until SetInitialState() is called the whole surface is
+ * ocean (@f$C \equiv 1@f$), the all-ocean configuration.
  * A shoreline crossing an element makes the integrand discontinuous
  * there; the quadrature error is the documented price of
  * shorelines-as-data.
@@ -62,9 +68,7 @@ namespace AdGIA {
  * own no surface elements; every method is safe to call on such ranks
  * (the integrals are collective over the body communicator).
  *
- * WP2 grows this class by the feedback boundary forms and the
- * @f$\Phi_g@f$/@f$\omega@f$ borders; nothing here depends on a problem
- * class.
+ * Nothing here depends on a problem class.
  */
 class SeaLevelOperator {
  public:
@@ -162,13 +166,27 @@ class SeaLevelOperator {
                           const mfem::GridFunction& phi, mfem::real_t phi_g,
                           mfem::Coefficient* psi = nullptr);
 
+  /**
+   * @brief The referential form of the above: the combination
+   * @f$u\cdot\nabla\Phi_0 + \phi@f$ IS the referential potential
+   * @f$\zeta^1@f$, so @f$SL_1 = (-(\zeta^1+\psi) + \Phi_g)/g@f$ with
+   * @p zeta the problem's body potential
+   * (LinearQuasiStaticReferentialSelfGravitatingProblem::PotentialOnBody)
+   * and @f$g = |\nabla\Phi_0|@f$ as before (quasi_static_models.tex,
+   * the referential sea-level subsection).
+   */
+  void SeaLevelChangeFrom(const mfem::GridFunction& zeta,
+                          mfem::VectorCoefficient& grad_phi0,
+                          mfem::real_t phi_g,
+                          mfem::Coefficient* psi = nullptr);
+
   // --- integrals ------------------------------------------------------------
 
   /**
    * @brief Write a surface field's nodal values with their coordinates
    * to @p path as CSV (header `x,y[,z],value`; one row per global node,
    * written by rank 0 in parallel) — the exchange format of
-   * `postprocess/surface_to_netcdf.py`, which grids the nodes onto a regular
+   * `earth_data/surface_to_netcdf.py`, which grids the nodes onto a regular
    * lon–lat array for NetCDF / pyshtools / cartopy. Exact nodal data,
    * no resampling on the C++ side.
    */
@@ -178,7 +196,7 @@ class SeaLevelOperator {
   /**
    * @brief Read one value column of a surface CSV in WriteSurfaceField's
    * format into the surface field @p f — the ingest leg of the exchange
-   * format (the `postprocess/` ice-ng export writes it). Rows are
+   * format (the `earth_data/` ice-ng export writes it). Rows are
    * matched to local nodes by their coordinates (quantized, with a
    * neighbour-bin search; every rank reads the whole file), so neither
    * the file's row order nor the rank count that wrote it matters.
@@ -212,6 +230,18 @@ class SeaLevelOperator {
   mfem::real_t OceanArea() const;
 
  private:
+  friend class detail::IceStack;
+
+  /** @brief Single-pass CSV ingest: the value columns @p columns (empty:
+   * all) of @p path become new surface fields in @p out; returns every
+   * value column's name. */
+  std::vector<std::string> ReadSurfaceColumns(
+      const std::string& path, const std::vector<int>& columns,
+      std::vector<std::unique_ptr<mfem::GridFunction>>& out) const;
+  /** @brief g = |grad Phi0| interpolated on the body and restricted to
+   * the surface field @p g. */
+  void RestrictedGravity(mfem::VectorCoefficient& grad_phi0,
+                         mfem::GridFunction& g) const;
   void TransferPair(const mfem::GridFunction& src,
                     mfem::GridFunction& dst) const;
   mfem::real_t GlobalSum(mfem::real_t v) const;
@@ -249,10 +279,8 @@ class MigratingOceanState;
 }
 
 /**
- * @brief Shoreline migration for the coupled water load
- * (doc/planning/sea_level_plan.md, WP5): required machinery for
- * ice-age work, with frozen shorelines as the switchable first-order
- * control.
+ * @brief Shoreline migration for the coupled water load, with frozen
+ * shorelines as the switchable first-order control.
  *
  * The ocean function of eq. (29) follows the evolving sea level,
  * @f$C = C(\rho_w SL - \rho_i I > 0)@f$ with @f$SL = SL_0 + SL_1@f$
@@ -270,11 +298,10 @@ class MigratingOceanState;
  * of the initial ocean area) or the iteration cap. The first pass IS
  * the frozen-C solve, so `max_iterations = 0` is the off-switch.
  *
- * Shoreline migration is strictly second order in the instantaneous
- * perturbation (the plan's Crawford note) — the certificate is that
- * the migrating-minus-frozen difference scales quadratically with the
- * load amplitude — but over ice-age histories the excursions are
- * finite, hence this machinery.
+ * The load integrand vanishes at the shoreline, so migration is second
+ * order in the perturbation amplitude: the migrating-minus-frozen
+ * difference scales quadratically with the load amplitude. Over ice-age
+ * histories the excursions are finite, hence this machinery.
  *
  * The state coefficients (initial sea level, initial ice, ice change)
  * must be evaluable on the body mesh (analytic ones are); the smooth
@@ -291,41 +318,25 @@ class ShorelineMigration {
      * k's linear solve runs at relative tolerance inexact * (the
      * previous SL1 increment), clamped to [the problem's RelTol(),
      * inexact_max]; the Picard seed (the frozen-C pass) runs at
-     * inexact_max — a fixed-point iteration is self-correcting, so
-     * solver digits beyond the next shoreline correction are wasted.
-     * The returned state is always polished by one full-tolerance
-     * solve whose operator carries the FINAL ocean function, so the
-     * endpoint is the problem's RelTol() either way. 0 runs every pass
-     * at full tolerance (the reproducible-path mode); the off-switch
+     * inexact_max. The returned state is always polished by one
+     * full-tolerance solve whose operator carries the FINAL ocean
+     * function, so the endpoint is at the problem's RelTol() either way.
+     * 0 runs every pass at full tolerance; the off-switch
      * (max_iterations = 0) always solves at full tolerance. */
     mfem::real_t inexact = 0.1;
     mfem::real_t inexact_max = 1e-3;  ///< loosest per-pass tolerance
-    /** @brief Contraction guard on the inexact path. The self-correction
-     * argument above holds only while the loose pass's error stays small
-     * against the shoreline smoothing band: the solution feeds back into
-     * the OPERATOR through C, and the uniform term @f$\Phi_g@f$ is
-     * recovered through a bordered elimination that can amplify a loose
-     * solver residual into an O(tolerance) ABSOLUTE error — a uniform
-     * SL1 shift of several bands floods or dries shorelines globally and
-     * the Picard loop leaves its basin (solver-stack dependent; see
-     * doc/planning/open_issues.md, "The sea-level equation"). So a
-     * loose pass whose SL1 increment fails to
-     * contract — change_k > guard * change_{k-1} — is re-solved at full
-     * tolerance (warm-started; counted in TotalOuterIterations()) and
-     * inexactness is ABANDONED for the remainder of the loop: the
-     * amplification is a property of the configuration, so further
-     * loose passes would poison the state again, and the tight loop is
-     * globally attracted (C bounded, weak feedback), recovering even
-     * from a poisoned seed. A genuinely slow migration fires it once
-     * and degrades to the plain-tolerance loop: economy lost,
-     * correctness kept. 0 disables the guard. The default fires on
-     * stagnation or growth only — a poisoned pass shows change ratios
-     * ~1 — while an honest slow contraction (ratios well below 1,
-     * observed on the test states) keeps its loose economy. Changes at
-     * or below ~10x inexact_max never fire it: that is the benign
-     * rattle of loose increments near convergence (an honest loose
-     * pass moves SL1 by about the loose tolerance), which the loop
-     * grinds down by itself. */
+    /** @brief Contraction guard on the inexact path. A loose pass whose
+     * SL1 increment fails to contract, change_k > guard * change_{k-1},
+     * is re-solved at full tolerance (warm-started; counted in
+     * TotalOuterIterations()); the guard then escalates to full
+     * tolerance once and stays there for the rest of the loop. It must
+     * act on stagnation or growth only: the solution feeds back into
+     * the operator through C, and the bordered elimination for
+     * @f$\Phi_g@f$ can turn a loose solver residual into an
+     * O(tolerance) absolute SL1 shift. Increments at or below
+     * 10 * inexact_max never fire it: a loose pass moves SL1 by about
+     * the loose tolerance, so such increments are benign rattle near
+     * convergence. 0 disables the guard. */
     mfem::real_t guard = 0.95;
     bool verbose = false;  ///< per-pass trace (tolerance, change, Phi_g)
   };
@@ -338,6 +349,18 @@ class ShorelineMigration {
                      mfem::real_t rho_ice,
                      const mfem::Array<int>& surface_marker,
                      Options options);
+
+  /** @brief As above, driving the referential class: the state
+   * update's @f$\tau@f$ is @f$\zeta^1@f$ directly (the ζζ collapse;
+   * quasi_static_models.tex, the referential sea-level subsection) —
+   * the one structural difference between the classes here. */
+  ShorelineMigration(
+      LinearQuasiStaticReferentialSelfGravitatingProblem& problem,
+      mfem::VectorCoefficient& grad_phi0,
+      mfem::Coefficient& initial_sea_level, mfem::Coefficient& initial_ice,
+      mfem::Coefficient& ice_change, mfem::real_t rho_water,
+      mfem::real_t rho_ice, const mfem::Array<int>& surface_marker,
+      Options options);
   ~ShorelineMigration();
 
   /** @brief Solve at time @p t: the frozen-C pass, then Picard on the
@@ -364,7 +387,24 @@ class ShorelineMigration {
    * previous one (the guard's re-measure against the same baseline). */
   void UpdateState(bool replace = false);
 
-  LinearQuasiStaticMixedSelfGravitatingProblem& problem_;
+  // The problem, through its base plus the class-specific closures
+  // bound by the constructors (the bordered.hpp pattern): water
+  // refresh, the border scalars/fields, and the tau route are all the
+  // classes differ by here.
+  LinearQuasiStaticProblemBase& base_;
+  std::function<void()> refresh_;
+  std::function<mfem::real_t()> phi_g_;
+  std::function<int()> last_outer_;
+  std::function<mfem::Coefficient*()> rot_psi_;  // null without rotation
+  std::function<const mfem::GridFunction&()> potential_on_body_;
+  bool referential_ = false;
+  /** @brief The shared constructor tail (state, spaces, parallelism);
+   * @p potential_fes is the parent-mesh scalar space. */
+  void Init(mfem::VectorCoefficient& grad_phi0,
+            mfem::Coefficient& initial_sea_level,
+            mfem::Coefficient& initial_ice, mfem::Coefficient& ice_change,
+            mfem::real_t rho_water, mfem::real_t rho_ice,
+            mfem::FiniteElementSpace& potential_fes);
   Options options_;
   mfem::Array<int> marker_;
   std::unique_ptr<detail::MigratingOceanState> state_;
@@ -372,6 +412,10 @@ class ShorelineMigration {
   mfem::VectorCoefficient* grad_phi0_ = nullptr;
   std::unique_ptr<mfem::FiniteElementCollection> sfec_;
   std::unique_ptr<mfem::FiniteElementSpace> sfes_, pfes_;
+  // Per-pass scratch of UpdateState(); g is cached for the duration of a
+  // Solve().
+  std::unique_ptr<mfem::GridFunction> tau_, phi_, psi_, g_;
+  bool g_valid_ = false;
   mfem::real_t last_change_ = 0.0;
   int iterations_ = 0, outer_its_total_ = 0;
   bool parallel_ = false;
@@ -386,8 +430,8 @@ class IceStack;
 
 /**
  * @brief A time stack of nodal surface fields, linearly interpolated in
- * time — ice-age loading histories, read from the `postprocess/` ice-ng
- * export (WP6 of doc/planning/sea_level_plan.md).
+ * time — ice-age loading histories, read from the `earth_data/` ice-ng
+ * export.
  *
  * The file is WriteSurfaceField's CSV with one value column per time
  * and the header naming each column by its time, ascending (the export

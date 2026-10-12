@@ -26,14 +26,22 @@ panel), regenerated at will from the raw results:
                   reference, finite elements, difference
 
     python talk_figures.py --out talk
-    python talk_figures.py --out talk --methods-case <dir> ...
+    python talk_figures.py --out talk --methods-case runs/fluid_core/h0.3 \\
+        --cmb-case runs/prem_4/h0.2 --identity-logs runs/relabelling \\
+        --derivative-case runs/perturbation/fluid_core \\
+        --ladder runs/ladder/fluid_core --combined
 
-Every input has a flag; the defaults point at the build-tree runs this
-repository's campaigns produce (run from <build>/benchmarks).
+Every input has a flag (--methods-case, --cmb-case, --identity-logs,
+--aspherical, --derivative-case, --ladder, --models, --viscoelastic,
+--field; --combined selects combined Love results for methods.png); the
+defaults point at the build-tree runs this repository's campaigns produce
+(run from <build>/benchmarks). A figure whose inputs are missing is
+skipped with a message.
 """
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -42,15 +50,26 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
 
-sys.path.insert(0, str(Path(__file__).resolve().parent / "common"))
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE / "common"))
 
 from costs import load_cost  # noqa: E402
 from outputs import outside_source  # noqa: E402
 
-COLOURS = {"dahlen": "#2a78d6", "gauged": "#eb6834",
-           "referential": "#eda100", "slip": "#008300",
-           "slip_broken": "#4a3aa7"}
+
+def load_sibling(alias: str, relative: str):
+    """A module of a sibling family, loaded by path: the families each
+    have a plot.py, so a plain `import plot` is ambiguous."""
+    spec = importlib.util.spec_from_file_location(alias, HERE / relative)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+love_plot = load_sibling("love_numbers_plot", "love_numbers/plot.py")
+COLOURS = love_plot.VARIANT_COLOURS
 INK, MUTED, GRID = "#0b0b0b", "#52514e", "#e4e3df"
 GOOD, WARN = "#1baf7a", "#eda100"
 
@@ -190,14 +209,25 @@ def identity_figure(campaign: Path, out: Path) -> None:
                 return float(line.split()[-1])
         raise SystemExit(f"no identity number in {log}")
 
+    def find_log(pattern: str) -> Path | None:
+        """The log matching `pattern` at the finest element size run."""
+        found = sorted(campaign.glob(pattern), key=lambda q: float(
+            q.stem.rsplit("_h", 1)[1]))
+        if not found:
+            print(f"no identity log matching {pattern} under {campaign}")
+            return None
+        if len(found) > 1:
+            print(f"identity: using {found[0].name} (finest of "
+                  f"{len(found)} logs matching {pattern})")
+        return found[0]
+
     bars = []
-    for log, label in [
-            ("identity_homogeneous_h0.3.txt", "homogeneous (welded solid)"),
-            ("identity_two_solid_h0.3.txt", "two solids (welded)"),
-            ("identity_fluid_core_h0.3.txt",
-             "fluid core (welded, gauged)")]:
-        path = campaign / log
-        if path.exists():
+    for pattern, label in [
+            ("identity_homogeneous_h*.txt", "homogeneous (welded solid)"),
+            ("identity_two_solid_h*.txt", "two solids (welded)"),
+            ("identity_fluid_core_h*.txt", "fluid core (welded, gauged)")]:
+        path = find_log(pattern)
+        if path is not None:
             bars.append((label, measured(path), GOOD, False))
     # The slipping interface: read the campaign's slip identity log when
     # it exists; the fallback constant is the measurement of
@@ -205,8 +235,8 @@ def identity_figure(campaign: Path, out: Path) -> None:
     # hatched and labelled so it cannot pass for a measurement of this
     # tree. The slipping-interface forms are not certified covariant, so
     # this bar is informational.
-    slip_log = campaign / "identity_fluid_core_slip_h0.3.txt"
-    if slip_log.exists():
+    slip_log = find_log("identity_fluid_core_slip_h*.txt")
+    if slip_log is not None:
         bars.append(("fluid core (slip interface)", measured(slip_log),
                      WARN, False))
     else:
@@ -357,8 +387,6 @@ def ladder_figure(tree: Path, out: Path) -> None:
     """h-refinement at orders 2 and 3: per mesh, the median and the
     worst relative error over the load and tidal Love numbers of
     degrees 2 to 4."""
-    sys.path.insert(0, str(Path(__file__).resolve().parent / "love_numbers"))
-    import plot as love_plot  # noqa: E402
     by_order: dict[int, list[tuple[float, float, float]]] = {}
     for case in sorted(tree.glob("h*")):
         ref = love_plot.reference_values(
@@ -402,10 +430,7 @@ def models_figure(tree: Path, out: Path, h: float = 0.2) -> None:
     """Every model of the sweep at one element size, orders 2 and 3:
     the median relative error of its Love numbers (degrees 1 to 5, load
     and tide) as the bar, the worst as the tick above it."""
-    sys.path.insert(0, str(Path(__file__).resolve().parent / "love_numbers"))
-    import plot as love_plot  # noqa: E402
     rows = []
-    sys.path.insert(0, str(Path(__file__).resolve().parent / "common"))
     import models as model_table  # noqa: E402
     # the named models only (a tree may hold variant studies beside
     # them, prem_4_cmb or fluid_core_geom3, which repeat a model)
@@ -510,9 +535,6 @@ def fieldmap_figure(field_path: Path, out: Path) -> None:
     """The radial displacement on the surface under an off-axis cap
     load: reference, finite elements, and their difference on its own
     scale."""
-    import numpy as np
-    sys.path.insert(0, str(Path(__file__).resolve().parent / "love_numbers"))
-    import plot as love_plot  # noqa: E402
     if not field_path.exists():
         print(f"no {field_path}: fieldmap.png skipped")
         return

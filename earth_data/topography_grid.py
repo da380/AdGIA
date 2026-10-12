@@ -2,10 +2,9 @@
 """Export an ICE-NG topography grid and its pre-processed shoreline
 for mesh refinement.
 
-The first step of the real-coastline mesh chain
-(doc/planning/planetmodel_coastline_sizing_plan.md): rather than
-isolating coastline polylines, hand the mesher a smooth field to size
-elements by. Two fields go in the .npz, each a wrapped lat-lon grid
+The first step of the real-coastline mesh chain (see meshes/README.md):
+rather than isolating coastline polylines, hand the mesher a smooth
+field to size elements by. Two fields go in the .npz, each a wrapped lat-lon grid
 (poles and the 360-degree column included, so sampling needs no seam
 handling):
 
@@ -50,14 +49,27 @@ def main() -> None:
     p = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("-o", "--out", type=Path, default=Path("topography.npz"))
+    p.add_argument("-o", "--out", type=Path, default=Path("topography.npz"),
+                   help="output .npz file (default %(default)s)")
     p.add_argument("--version", default="ICE7G",
-                   choices=["ICE5G", "ICE6G", "ICE7G"])
-    p.add_argument("--date", type=float, default=0.0)
-    p.add_argument("--lmax", type=int, default=24)
-    p.add_argument("--shore-lmax", type=int, default=180)
-    p.add_argument("--band", type=float, default=400.0)
-    p.add_argument("--plot", action="store_true")
+                   choices=["ICE5G", "ICE6G", "ICE7G"],
+                   help="ice model (default %(default)s)")
+    p.add_argument("--date", type=float, default=0.0,
+                   help="date in ka BP (default %(default)s, the present "
+                        "day)")
+    p.add_argument("--lmax", type=int, default=24,
+                   help="spherical-harmonic truncation degree of the "
+                        "topography topo_m (default %(default)s)")
+    p.add_argument("--shore-lmax", type=int, default=180,
+                   help="truncation degree at which the coastline is "
+                        "defined, about the data's native resolution "
+                        "(default %(default)s)")
+    p.add_argument("--band", type=float, default=400.0,
+                   help="ocean shallower than this depth, in metres, "
+                        "counts as coast (default %(default)s)")
+    p.add_argument("--plot", action="store_true",
+                   help="also write a quick-look map PNG beside the "
+                        "output (default off)")
     args = p.parse_args()
 
     from pyslfp.ice import IceNG

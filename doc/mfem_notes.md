@@ -1,6 +1,6 @@
 # MFEM facts and pitfalls
 
-MFEM behaviours (checked against MFEM 4.9) that the library relies on or
+MFEM behaviours (checked against MFEM 4.10; 4.9 is the minimum supported) that the library relies on or
 works around. Each entry says where the library deals with it; the subject
 notes (`submesh_coupling.md`, `null_space.md`, `viscoelasticity.md`) give
 the context.

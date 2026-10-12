@@ -26,7 +26,7 @@
        well-posedness, the Dahlen closure, and what dissipation\\
        selects}
 \author{AdGIA method notes}
-\date{7--8 October 2026}
+\date{October 2026}
 
 \begin{document}
 \maketitle
@@ -61,10 +61,7 @@ The short version:
   $\ell \ge 1$ (\S\ref{sec:dahlen}).
 \item Dissipation decides. Every physical regularisation we can
   identify --- fluid viscosity, diffusion of the stratifying quantity
-  (a point made by Wunsch in the 1970s\footnote{Reference to be added;
-  the observation that the static response of a stratified fluid is
-  selected by dissipative processes, however weak, goes back at least
-  to Wunsch's work of that decade.}), or a Maxwell viscoelastic core
+  (a point made by Wunsch in the 1970s), or a Maxwell viscoelastic core
   --- yields a well-posed evolution whose $t \to \infty$ limit is the
   Dahlen (secular) answer. Dahlen's closure is therefore not one
   arbitrary resolution among many: it is the distinguished limit of
@@ -87,7 +84,7 @@ The short version:
   Implemented generically in the problem layer and, after
   optimisation, \emph{cheaper} in three dimensions than the welded
   static solve it replaces (\S\ref{sec:maxwell}).
-\item This inverts the ranking of the formulations. Free slip is the
+\item The formulations are ranked accordingly. Free slip is the
   $\eta \to 0$ asymptotics of a viscous boundary layer --- correct
   about the interface once the layer has collapsed, silent about the
   interior physics that collapses it --- and the measurements show
@@ -97,6 +94,20 @@ The short version:
   converged spherical closure; welded and slip are its
   approximants, retained as instruments (\S\ref{sec:persp}).
 \end{enumerate}
+
+\begin{center}
+\fbox{\parbox{0.92\textwidth}{\small\textbf{Method hierarchy.}
+For coupled elasto-gravity problems with fluid regions: the Maxwell
+relaxation of the fluid (\code{SetFluid}'s default treatment) is the
+general method --- any geometry, any stratification, any number of
+regions. The gauge-penalty treatment is clean only for neutrally
+stratified fluids: at $N^2 \neq 0$ its semi-convergence is
+Rayleigh--Taylor growth, and answers are defined only to the
+stratification band. For hydrostatic (spherical) models Dahlen's
+mixed formulation is the practical workhorse. The slipping and welded
+formulations are finite idealisations of the dissipative completion
+and serve as instruments.}}
+\end{center}
 
 \noindent
 Numerical evidence for each statement, obtained with this library's
@@ -443,7 +454,7 @@ the surface-mass bookkeeping of the secular closure --- and that for
 $N^2 \ne 0$ some such discontinuity is \emph{necessary}, since no
 static solution without one exists. The only question a formulation
 answers is whether it admits the jump openly and is well posed, or
-forbids it and loses existence. \emph{(Exact references to be added.)}
+forbids it and loses existence.
 \end{remark}
 
 %=====================================================================
@@ -498,7 +509,7 @@ it gives a well-posed problem:
   sits on the essential spectrum); the static limit is genuinely
   non-uniform, which is the spectral restatement of the whole
   phenomenon and connects to the classical secular-constant
-  (Longman) discussions. \emph{(References to be added.)}
+  (Longman) discussions.
 \end{itemize}
 
 \noindent
@@ -752,9 +763,7 @@ translation; see \code{doc/planning/open\_issues.md}).
 \section{Perspective, implications, and open items}
 \label{sec:persp}
 
-\paragraph{The status of the formulations.} Where this leaves the
-method stack deserves stating plainly, because it inverts the
-ranking this project carried into October. Free slip is not physics
+\paragraph{The status of the formulations.} Free slip is not physics
 as such: it is the $\eta \to 0$ asymptotics of a viscous boundary
 layer --- correct about what the \emph{interface} looks like once
 the layer has collapsed, and silent about the \emph{interior}
@@ -763,13 +772,19 @@ $N^2 \ne 0$ the slip classes wander in the same resolution band as
 welded (freeing the interface kinematics does nothing for the
 interior slaving), while Dahlen converges because its closure
 contains \emph{both} halves of the dissipative limit, interface and
-interior. The hierarchy is therefore: the \textbf{dissipative
-completion} (the Maxwell relaxation, \S\ref{sec:maxwell}) is the
-formulation-faithful computation, on any geometry; \textbf{Dahlen}
-is its converged closed form, available spherically;
-\textbf{welded} and \textbf{slip} are finite idealisations of it
---- one representing the layer within a continuous space, the other
-replacing it by its zero-width limit --- retained as instruments:
+interior. The hierarchy is as follows. The Maxwell relaxation of the
+fluid (\code{SetFluid}'s default treatment, \S\ref{sec:maxwell}) is
+the general method: any geometry, any stratification, any number of
+regions. The gauge-penalty treatment (\code{SetFluid} with
+\code{GaugePenaltyOptions}) is clean only for neutrally stratified
+fluids: at $N^2 \neq 0$ its semi-convergence is Rayleigh--Taylor
+growth, and answers are defined only to the stratification band. For
+hydrostatic (spherical) models Dahlen's mixed formulation, the
+converged closed form of the dissipative limit, is the practical
+workhorse. The \textbf{welded} and \textbf{slip} formulations are
+finite idealisations of the dissipative completion --- one
+representing the layer within a continuous space, the other
+replacing it by its zero-width limit --- and serve as instruments:
 the slip machinery measures the relabelling decomposition (the
 welded-suppression question of \S\ref{sec:maxwell}), and the
 welded gauged classes are the relaxation's own per-step engine.
@@ -803,9 +818,8 @@ defined only up to the secular closure, Dahlen computes that closure,
 and the distance to any finite-time (partially relaxed) state is a
 transient that requires the dissipative physics to evaluate.
 
-\paragraph{Relation to the dynamic ill-posedness argument (DAMTP
-2025 talk).} A sketched argument of the author's (slides,
-\code{\~{}/Documents/Talks/DAMTP2025}; to be completed) holds that
+\paragraph{Relation to the dynamic ill-posedness argument.}
+A sketched argument of the author's holds that
 the \emph{dynamic} equations in a non-neutrally stratified fluid are
 ill-posed through a loss of regularity: writing the fluid
 elasto-dynamic operator as $A = C^*(C+D+E) + FC$, with $C$ the
@@ -830,8 +844,8 @@ the measured band, while the interfacial loss of compactness is the
 spatial face of the dynamic loss of regularity. The two gradations
 are consistent: dynamically, mild solutions survive while
 derivatives are progressively lost; statically, where there is no
-time left to lose them in, existence itself fails. In particular the open theorem below and the talk's
-to-be-completed argument are one piece of mathematics --- the
+time left to lose them in, existence itself fails. In particular the open theorem below and the dynamic
+argument are one piece of mathematics --- the
 essential-spectrum characterisation there reduces to the Fredholm
 property of $1_Z - p^{-1}D\,(QB|_{\ker C} + p\,1)^{-1}QF$, whose
 $p \to 0$ corner is exactly the static solvability question ---
@@ -845,7 +859,7 @@ now best approached jointly with the dynamic argument above.
 (ii) The Maxwell relaxation (\S\ref{sec:maxwell}): the degree-1
 adjudication and the first benchmark-grade Love-number runs are done
 (8 October; the measured paragraph of \S\ref{sec:maxwell} and
-\code{doc/benchmarks.tex}, ``The 3-D adjudication''), and the
+\code{doc/benchmarks.tex}, ``The degree-1 adjudication''), and the
 welded referential methods now solve \emph{tidal} problems as well
 (\code{SetTidalLoad}; dahlen--maxwell fluid-core tides agree to the
 load-row grade and converge with order; the slipping classes refuse
@@ -861,8 +875,5 @@ welded--slip null test, the Dahlen-path $h$-ladder (deciding whether
 the non-neutral floor explains the outstanding
 \code{fluid\_core} ladder residuals), and the decomposition of the
 \code{pyslfp} offsets.
-(v) References: Dahlen's 1970s static-deformation papers, the
-Crossley--Gubbins exchange, Longman's problem, and Wunsch's
-dissipation argument, to be added precisely.
 
 \end{document}

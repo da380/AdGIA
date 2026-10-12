@@ -156,14 +156,12 @@ Spaces MakeSpaces(Mesh& parent_mesh, Mesh& submesh, const Config& cfg) {
   const auto vdim = cfg.family == 1 ? sdim : 1;
   const auto ordering = cfg.family == 1 ? Ordering::byVDIM : Ordering::byNODES;
 
-#ifdef MFEM_USE_MPI
   if (auto* pm = dynamic_cast<ParMesh*>(&parent_mesh)) {
     auto* psm = dynamic_cast<ParMesh*>(&submesh);
     s.parent = std::make_unique<ParFiniteElementSpace>(pm, pfec);
     s.sub = std::make_unique<ParFiniteElementSpace>(psm, sfec, vdim, ordering);
     return s;
   }
-#endif
   s.parent = std::make_unique<FiniteElementSpace>(&parent_mesh, pfec);
   s.sub = std::make_unique<FiniteElementSpace>(&submesh, sfec, vdim, ordering);
   return s;

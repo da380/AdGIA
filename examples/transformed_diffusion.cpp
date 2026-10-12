@@ -7,42 +7,37 @@
 // domain" or "pullback" approach, the approach of the library's referential
 // problems.
 //
-// The core idea is to perform all calculations on a simple,
-// undeformed *reference mesh* (a disk or a ball).
+// The core idea is to perform all calculations on a simple, undeformed
+// reference mesh (a disk or a ball).
 //
 // The process is as follows:
 //
-// 1. **Solve Standard Problem:** First, it solves a standard Laplace
-//    equation ($\nabla^2 \phi = 0$) on the reference mesh. This serves
-//    as a baseline.
+// 1. Solve the standard problem: first, the Laplace equation
+//    (laplacian phi = 0) on the reference mesh. This serves as a baseline.
 //
-// 2. **Define Transformation:** It defines a smooth coordinate
-//    transformation (a diffeomorphism, $q(x)$) that deforms the mesh.
-//    In this case, it's an interior "twist" that leaves the boundary
-//    and centre fixed.
+// 2. Define the transformation: a smooth coordinate transformation (a
+//    diffeomorphism q(x)) that deforms the mesh. Here it is an interior
+//    "twist" that leaves the boundary and the centre fixed (it is the
+//    identity at r = 1).
 //
-// 3. **Solve Transformed Problem:** It solves the *transformed*
-//    Laplace equation on the *same reference mesh*. This is done
-//    using the `TransformedDiffusionIntegrator`, which automatically
-//    handles the geometric factors (Jacobians) from the
-//    transformation $q(x)$. The resulting solution, $\zeta(x)$, is the
-//    "pullback" of the physical solution $u$, meaning $\zeta(x) = u(q(x))$.
-//    The twist maps the disk (ball) onto itself and fixes its boundary,
-//    so the boundary data are the same as in step 1.
+// 3. Solve the transformed problem: the transformed Laplace equation on the
+//    same reference mesh, using the TransformedDiffusionIntegrator, which
+//    handles the geometric factors (Jacobians) from q(x). The resulting
+//    solution, zeta(x), is the pullback of the physical solution u, that is
+//    zeta(x) = u(q(x)). The twist maps the disk (ball) onto itself and fixes
+//    its boundary, so the boundary data are the same as in step 1.
 //
-// 4. **Error Calculation:** It computes the L2 error for both the
-//    standard solution ($\phi$) and the transformed solution ($\zeta$)
-//    by comparing them to their respective exact solutions: the harmonic
-//    function $xy$ (2-D) or $yz$ (3-D), and its pullback. Both errors are
-//    printed and should decrease with refinement.
+// 4. Error calculation: the L2 error of both the standard solution (phi) and
+//    the transformed solution (zeta), against their exact solutions: the
+//    harmonic function xy (2-D) or yz (3-D), and its pullback. Both errors
+//    are printed and should decrease with refinement.
 //
-// 5. **Visualization:**
-//    a. Visualizes $\phi$ on the reference mesh.
-//    b. Visualizes $\zeta$ on the reference mesh (the pullback).
-//    c. Physically deforms the mesh nodes using the transformation
-//       $q(x)$ and visualizes $\zeta$ on this *new* deformed
-//       mesh. This shows the final "push-forward" solution $u$ on
-//       the actual, physical domain.
+// 5. Visualisation (with -vis, the default):
+//    a. phi on the reference mesh.
+//    b. zeta on the reference mesh (the pullback).
+//    c. The mesh nodes are moved by the transformation q(x) and zeta is
+//       shown on this deformed mesh: the push-forward solution u on the
+//       actual, physical domain.
 //
 // One source serves the serial and the parallel build: against an MFEM with
 // MPI the mesh, the spaces and the matrices are the parallel ones, the
@@ -57,8 +52,15 @@
 //   -pr   refinements of the partitioned mesh [0]; the option exists
 //         in the parallel build only.
 //   -th   rotation angle of the interior twist in degrees [10].
-//   -d    problem dimension, 2 or 3 [2]: picks ../data/disk.msh or
-//         ../data/ball.msh (there is no mesh option).
+//   -d    problem dimension, 2 or 3 [2]: picks ../data/disc_2d.msh or
+//         ../data/ball_3d.msh (there is no mesh option).
+//   -vis / -no-vis   GLVis windows on or off [on]; -no-vis runs headless.
+//
+// Mesh requirements: the unit disk (meshes/homogeneous_body.py --preset disc -> disc_2d.msh) or the
+// unit ball (meshes/homogeneous_body.py --preset ball -> ball_3d.msh), origin-centred, radius 1, a
+// single body attribute and boundary attribute 1 (the Dirichlet boundary).
+// The twist is the identity at r = 1, so the boundary data are unchanged.
+// Nondimensional.
 //
 // Sample runs:  ./transformed_diffusion
 //               ./transformed_diffusion -d 3 -o 1 -th 30
@@ -66,9 +68,7 @@
 //
 //------------------------------------------------------------------------------
 
-#include <cassert>
-#include <cstddef>
-#include <fstream>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <numbers>  // For std::numbers::pi_v
@@ -77,6 +77,7 @@
 #include "mfem.hpp"
 // The AdGIA library
 #include "AdGIA.hpp"
+#include "visualisation.hpp"
 
 // Use standard C++ and MFEM namespaces
 using namespace std;
@@ -84,7 +85,6 @@ using namespace mfem;
 using namespace AdGIA;
 
 #ifdef MFEM_USE_MPI
-using MeshType = ParMesh;
 using SpaceType = ParFiniteElementSpace;
 using FieldType = ParGridFunction;
 using BilinearFormType = ParBilinearForm;
@@ -92,7 +92,6 @@ using LinearFormType = ParLinearForm;
 using MatrixType = HypreParMatrix;
 using PreconditionerType = HypreBoomerAMG;
 #else
-using MeshType = Mesh;
 using SpaceType = FiniteElementSpace;
 using FieldType = GridFunction;
 using BilinearFormType = BilinearForm;
@@ -119,18 +118,11 @@ CGSolver MakeCG() {
 #endif
 }
 
-// Send a field on its mesh to GLVis.
-void Show(Mesh &mesh, const GridFunction &f, const char *title) {
-  char vishost[] = "localhost";
-  auto sock = socketstream(vishost, 19916);
-  sock.precision(8);
-#ifdef MFEM_USE_MPI
-  sock << "parallel " << Mpi::WorldSize() << " " << Mpi::WorldRank() << "\n";
-#endif
-  sock << "solution\n" << mesh << f << "window_title '" << title << "'\n";
-  // 2D or 3D viewing keys
-  sock << (mesh.Dimension() == 2 ? "keys Rjlc\n" : "keys RRRjlci zZ\n")
-       << flush;
+// Send a field on its mesh to GLVis (a no-op without -vis).
+void Show(bool vis, Mesh &mesh, const GridFunction &f, const char *title) {
+  if (!vis) return;
+  examples::GLVisWindow win(title, examples::DefaultKeys(mesh.Dimension()));
+  win.Send(mesh, f);
 }
 
 // Define pi using the mfem::real_t type
@@ -153,8 +145,8 @@ int main(int argc, char *argv[]) {
   // === 1. Set default options and parse command-line arguments ===
 
   // Default mesh files
-  string mesh_file2 = "../data/disk.msh";  // 2D unit disk (meshes/unit_disc.py)
-  string mesh_file3 = "../data/ball.msh";  // 3D unit ball (meshes/unit_ball.py)
+  string mesh_file2 = "../data/disc_2d.msh";  // 2D unit disk (meshes/homogeneous_body.py --preset disc)
+  string mesh_file3 = "../data/ball_3d.msh";  // 3D unit ball (meshes/homogeneous_body.py --preset ball)
   // Default finite element polynomial order
   int order = 2;
   // Default number of uniform mesh refinements
@@ -163,6 +155,8 @@ int main(int argc, char *argv[]) {
   int theta = 10;
   // Default problem dimension
   int dim = 2;
+  // GLVis on or off
+  bool visualization = true;
 
   // Initialize MFEM's options parser
   OptionsParser args(argc, argv);
@@ -177,6 +171,8 @@ int main(int argc, char *argv[]) {
 #endif
   args.AddOption(&theta, "-th", "--theta", "rotation angle in degrees");
   args.AddOption(&dim, "-d", "--dim", "dimension of problem (2 or 3)");
+  args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
+                 "--no-visualization", "Enable or disable GLVis.");
 
   // Parse the arguments
   args.Parse();
@@ -283,7 +279,7 @@ int main(int argc, char *argv[]) {
 
   // === 6. Visualize the standard solution ===
   // Send the mesh and the solution 'phi' to GLVis
-  Show(mesh, phi, "phi");
+  Show(visualization, mesh, phi, "phi");
 
   // === 7. Set up the coordinate transformation (Diffeomorphism) ===
   // This defines a smooth, invertible map q(x) that deforms the domain.
@@ -389,7 +385,7 @@ int main(int argc, char *argv[]) {
   // === 10. Visualize the transformed solution ===
 
   // Visualize 'zeta' on the *original, undeformed* mesh.
-  Show(mesh, zeta, "zeta");
+  Show(visualization, mesh, zeta, "zeta");
 
   // === 11. Deform the mesh and visualize the "pushed-forward" solution ===
 
@@ -409,6 +405,6 @@ int main(int argc, char *argv[]) {
   // Visualize the *same* solution 'zeta' but on the *deformed* mesh.
   // GLVis will use the new node positions, showing the "push-forward"
   // of the solution onto the physical (deformed) domain.
-  Show(mesh, zeta, "zeta pushed forward");
+  Show(visualization, mesh, zeta, "zeta pushed forward");
   return 0;
 }

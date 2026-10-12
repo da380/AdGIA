@@ -91,7 +91,7 @@ double L2Norm(const GridFunction& u) {
 }
 
 void RunCase(int order, const std::string& label) {
-  const char* mesh_file = "../data/elastogravity_2d.msh";
+  const char* mesh_file = "../data/disc_buffer_2d.msh";
   Mesh smesh(mesh_file, 1, 1);
   const int dim = smesh.Dimension();
   Array<int> body_attr({1}), buffer_attr({2});
@@ -173,7 +173,7 @@ void RunCase(int order, const std::string& label) {
 // compared directly (the fluid displacement carries the fluid gauge, but
 // the eps penalty fixes it in the discrete system).
 void RunSlipCase(int order, const std::string& label) {
-  const char* mesh_file = "../data/elastogravity_two_layer_2d.msh";
+  const char* mesh_file = "../data/earth_fluidcore_2d.msh";
   Mesh smesh(mesh_file, 1, 1);
   const int dim = smesh.Dimension();
   const double r_cmb = 3483.0 / 6371.0;
@@ -283,7 +283,7 @@ void RunSlipCase(int order, const std::string& label) {
 // both interface constraints (no fluid extension anywhere) must build
 // the same discrete system on 1 and N ranks.
 void RunBrokenSlipCase(int order, const std::string& label) {
-  const char* mesh_file = "../data/elastogravity_two_layer_2d.msh";
+  const char* mesh_file = "../data/earth_fluidcore_2d.msh";
   Mesh smesh(mesh_file, 1, 1);
   const int dim = smesh.Dimension();
   const double r_cmb = 3483.0 / 6371.0;
@@ -396,7 +396,7 @@ void RunBrokenSlipCase(int order, const std::string& label) {
 // Serial-vs-parallel agreement of the harmonic buffer extension of a
 // mapping that is non-trivial on the physical surface.
 void RunHarmonicExtensionCase() {
-  const char* mesh_file = "../data/elastogravity_2d.msh";
+  const char* mesh_file = "../data/disc_buffer_2d.msh";
   Mesh smesh(mesh_file, 1, 1);
   const int dim = smesh.Dimension();
 
@@ -427,7 +427,7 @@ void RunHarmonicExtensionCase() {
 // Al-Attar & Woodhouse (2010) (doc/gravitating_elasticity.md, §6) (the auxiliary fields are rigid-projected, so they compare
 // directly).
 void RunEquilibriumStressCase() {
-  Mesh smesh("../data/elastogravity_2d.msh", 1, 1);
+  Mesh smesh("../data/disc_buffer_2d.msh", 1, 1);
   const int dim = smesh.Dimension();
   Array<int> body_attr({1});
   VectorFunctionCoefficient f(dim, [](const Vector& x, Vector& v) {

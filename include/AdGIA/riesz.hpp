@@ -1,5 +1,4 @@
-#ifndef ADGIA_RIESZ_HPP
-#define ADGIA_RIESZ_HPP
+#pragma once
 
 #include <memory>
 
@@ -37,10 +36,9 @@ class RieszMap : public mfem::Operator {
 };
 
 /**
- * @brief The L2 identification: g solves M g = j. The baseline of the
- * equilibrium-figures programme — acceptable when the derivative is
- * itself smooth, with the caveats documented in the reference (mesh-
- * scale assembly noise passes straight through, cumulatively).
+ * @brief The L2 identification: g solves M g = j. The baseline metric,
+ * acceptable when the derivative is itself smooth (mesh-scale assembly
+ * noise passes straight through, cumulatively).
  */
 class L2RieszMap : public RieszMap {
  public:
@@ -64,9 +62,8 @@ class L2RieszMap : public RieszMap {
  * discretely @f$g = (\tilde A^{-1} M)^{s-1} \tilde A^{-1} j@f$ with
  * @f$\tilde A = \alpha M + \beta K@f$ — so each order costs one more
  * solve with the one assembled operator. The smoothing length is
- * @f$\sqrt{\beta/\alpha}@f$; order 2 is the working default of the
- * equilibrium-figures programme (H1 does not embed in C0 in 3-D;
- * H2 does, with margin).
+ * @f$\sqrt{\beta/\alpha}@f$; order 2 is the default (H1 does not
+ * embed in C0 in 3-D; H2 does, with margin).
  *
  * Posed on an extension domain (the whole mesh of @p fes, typically
  * body and buffer) with homogeneous Dirichlet conditions on
@@ -108,5 +105,3 @@ class SobolevRieszMap : public RieszMap {
 };
 
 }  // namespace AdGIA
-
-#endif  // ADGIA_RIESZ_HPP

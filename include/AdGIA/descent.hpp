@@ -1,5 +1,4 @@
-#ifndef ADGIA_DESCENT_HPP
-#define ADGIA_DESCENT_HPP
+#pragma once
 
 #include <functional>
 #include <memory>
@@ -11,16 +10,17 @@
 namespace AdGIA {
 
 /**
+ * @file descent.hpp
  * @brief The descent toolkit of the equilibrium-figures programme
  * (doc/equilibrium_figures.tex §6, §8): a constrained metric — Riesz
  * identification, one linear constraint held by metric-orthogonal
  * projection, an optional quadratic prior — and two loops over it,
  * nonlinear conjugate gradients and Levenberg–Marquardt Gauss–Newton.
  * The loops see a problem only through DescentFunctional, so any
- * control field with a dual-valued derivative (density today, shape
- * parameters later) runs through the same machinery. Serial and
- * parallel: the loops work on true-dof vectors and every reduction is
- * a RieszMap pairing.
+ * control field with a dual-valued derivative (a density, shape
+ * parameters) runs through the same machinery. Serial and parallel:
+ * the loops work on true-dof vectors and every reduction is a RieszMap
+ * pairing.
  */
 
 /**
@@ -158,5 +158,3 @@ DescentResult LevenbergMarquardt(const DescentFunctional& f,
                                  const DescentOptions& options = {});
 
 }  // namespace AdGIA
-
-#endif  // ADGIA_DESCENT_HPP

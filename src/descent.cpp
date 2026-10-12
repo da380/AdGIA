@@ -1,11 +1,24 @@
 #include "AdGIA/descent.hpp"
 
 #include <algorithm>
-#include <iostream>
 
 namespace AdGIA {
 
 using namespace mfem;
+
+namespace {
+
+// Rank 0 (or the only rank, when MPI is absent or not initialised).
+bool IsRoot() {
+#ifdef MFEM_USE_MPI
+  if (Mpi::IsInitialized()) {
+    return Mpi::Root();
+  }
+#endif
+  return true;
+}
+
+}  // namespace
 
 ConstrainedMetric::ConstrainedMetric(RieszMap& riesz) : riesz_(&riesz) {}
 
@@ -73,7 +86,7 @@ DescentResult NonlinearCG(const DescentFunctional& f,
                           const DescentOptions& options) {
   DescentResult result;
   Vector j(c.Size()), g(c.Size()), d(c.Size()), j_old(c.Size()),
-      g_old(c.Size()), c_trial(c.Size());
+      g_old(c.Size()), c_trial(c.Size()), dg(c.Size());
 
   // The descended objective is value + prior; the reported values are
   // the functional's own.
@@ -85,7 +98,7 @@ DescentResult NonlinearCG(const DescentFunctional& f,
     return raw + metric.PriorValue(at);
   };
 
-  real_t raw;
+  real_t raw = 0.0;
   real_t jval = total(c, &j, raw);
   result.initial = raw;
   metric.Gradient(j, g);
@@ -112,29 +125,24 @@ DescentResult NonlinearCG(const DescentFunctional& f,
     // Forward-tracking line search: the objective is smooth (for the
     // feasibility functional, an exact quartic along the ray), so
     // double while it falls, halve while it does not; warm-started.
-    real_t raw_new = raw;
-    auto at = [&](real_t step, real_t& raw_out) {
+    auto at = [&](real_t step) {
       c_trial = c;
       c_trial.Add(step, d);
-      real_t r;
-      const real_t v = total(c_trial, nullptr, r);
-      raw_out = r;
-      return v;
+      real_t unused = 0.0;
+      return total(c_trial, nullptr, unused);
     };
-    real_t j_new = at(t, raw_new);
+    real_t j_new = at(t);
     while (j_new >= jval && t > 1e-14) {
       t *= 0.5;
-      j_new = at(t, raw_new);
+      j_new = at(t);
     }
     while (t > 1e-14) {
-      real_t raw_next;
-      const real_t j_next = at(2.0 * t, raw_next);
+      const real_t j_next = at(2.0 * t);
       if (j_next >= j_new) {
         break;
       }
       t *= 2.0;
       j_new = j_next;
-      raw_new = raw_next;
     }
     if (t <= 1e-14) {
       break;
@@ -150,8 +158,8 @@ DescentResult NonlinearCG(const DescentFunctional& f,
     if (options.monitor) {
       options.monitor(it, raw, t);
     }
-    if (options.print) {
-      std::cout << "cg " << it << ": value " << raw << ", step " << t
+    if (options.print && IsRoot()) {
+      mfem::out << "cg " << it << ": value " << raw << ", step " << t
                 << "\n";
     }
     if (options.tolerance > 0 && raw < options.tolerance * result.initial) {
@@ -166,7 +174,7 @@ DescentResult NonlinearCG(const DescentFunctional& f,
     // Polak-Ribiere+, in dual-gradient pairings; the projected
     // gradients make these the constraint manifold's inner products.
     metric.Gradient(j, g);
-    Vector dg(g);
+    dg = g;
     dg -= g_old;
     const real_t beta =
         std::max(real_t{0}, metric.Riesz().Pair(j, dg) /
@@ -203,13 +211,14 @@ class LmOperator : public Operator {
 
   void Mult(const Vector& x, Vector& y) const override {
     f_->gauss_newton(x, y);
-    Vector Gx(x.Size());
-    damping_->Mult(x, Gx);
-    y.Add(lambda, Gx);
+    Gx_.SetSize(x.Size());
+    damping_->Mult(x, Gx_);
+    y.Add(lambda, Gx_);
     metric_->AddPriorHessian(x, y);
   }
 
  private:
+  mutable Vector Gx_;  ///< scratch: the damping action
   const DescentFunctional* f_;
   const ConstrainedMetric* metric_;
   const Operator* damping_;
@@ -235,7 +244,7 @@ DescentResult LevenbergMarquardt(const DescentFunctional& f,
     return raw + metric.PriorValue(at);
   };
 
-  real_t raw;
+  real_t raw = 0.0;
   real_t jval = total(c, &j, raw);
   result.initial = raw;
 
@@ -244,33 +253,35 @@ DescentResult LevenbergMarquardt(const DescentFunctional& f,
                                ? *options.inner_preconditioner
                                : metric.Riesz());
 
+  std::unique_ptr<CGSolver> cg;
+#ifdef MFEM_USE_MPI
+  // Serial callers (the serial tests link no MPI main) must not touch
+  // the communicator: MPICH aborts on any MPI call before MPI_Init.
+  // MPI_COMM_WORLD is the house assumption for the descent loops.
+  cg = Mpi::IsInitialized() ? std::make_unique<CGSolver>(MPI_COMM_WORLD)
+                            : std::make_unique<CGSolver>();
+#else
+  cg = std::make_unique<CGSolver>();
+#endif
+  cg->SetOperator(lm);
+  cg->SetPreconditioner(prec);
+  cg->SetRelTol(1e-2);  // inexact Newton: the model is local anyway
+  cg->SetAbsTol(0.0);
+  cg->SetMaxIter(30);
+  // Silence the non-convergence warning too: the iteration cap is part
+  // of the truncated-Newton design (the acceptance test and the damping
+  // police the step), not a failure.
+  cg->SetPrintLevel(-1);
+  Vector mj(c.Size()), step(c.Size());
+
   real_t lambda = 1.0;
   for (int it = 1; it <= options.max_iterations; it++) {
     bool accepted = false;
     real_t raw_new = raw, j_new = jval;
+    mj = j;
+    mj *= -1.0;
     for (int attempt = 0; attempt < 8 && !accepted; attempt++) {
       lm.lambda = lambda;
-      std::unique_ptr<CGSolver> cg;
-#ifdef MFEM_USE_MPI
-      // Serial callers (the serial tests link no MPI main) must not touch
-      // the communicator: MPICH aborts on any MPI call before MPI_Init.
-      cg = Mpi::IsInitialized() ? std::make_unique<CGSolver>(MPI_COMM_WORLD)
-                                : std::make_unique<CGSolver>();
-#else
-      cg = std::make_unique<CGSolver>();
-#endif
-      cg->SetOperator(lm);
-      cg->SetPreconditioner(prec);
-      cg->SetRelTol(1e-2);  // inexact Newton: the model is local anyway
-      cg->SetAbsTol(0.0);
-      cg->SetMaxIter(30);
-      // Silence the non-convergence warning too: the iteration cap is
-      // part of the truncated-Newton design (the acceptance test and
-      // the damping police the step), not a failure.
-      cg->SetPrintLevel(-1);
-      Vector mj(j);
-      mj *= -1.0;
-      Vector step(c.Size());
       step = 0.0;
       cg->Mult(mj, step);
 
@@ -298,8 +309,8 @@ DescentResult LevenbergMarquardt(const DescentFunctional& f,
     if (options.monitor) {
       options.monitor(it, raw, lambda);
     }
-    if (options.print) {
-      std::cout << "lm " << it << ": value " << raw << ", lambda "
+    if (options.print && IsRoot()) {
+      mfem::out << "lm " << it << ": value " << raw << ", lambda "
                 << lambda << "\n";
     }
     if (options.tolerance > 0 && raw < options.tolerance * result.initial) {

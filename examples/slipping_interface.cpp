@@ -106,7 +106,13 @@
 //               (meshes/aspherical_body.py --fluid-core); an
 //               aspherical mesh is the reference body of the spherical
 //               physical model
-//               [../data/aspherical_fluid_core_buffer_2d.mesh].
+//               [../data/aspherical_fluid_core_buffer_2d.mesh]. The
+//               meshes are order-2 geometry (curved elements; the core
+//               boundary and the surface are on element faces). A
+//               sidecar manifest <mesh>.json, when present, supplies the
+//               shape parameters (see -eps, -beta, -buffer, -rc). The
+//               geometry is dimensionless, in units of the planet radius
+//               (surface at r = 1, buffer to r = 1.2).
 //   -o          finite element order [2].
 //   -l          degree of the surface load (2 or more): Y_l0 in 3-D,
 //               cos(l theta) in 2-D [2].
@@ -156,7 +162,7 @@
 //   -vis / -no-vis   show the fields in GLVis [on].
 //
 // Sample runs (with mpiexec -np N in front in a parallel build):
-//    ./slipping_interface                                  (aspherical, broken)
+//    ./slipping_interface                       (aspherical, broken zeta)
 //    ./slipping_interface -compare
 //    ./slipping_interface -m ../data/spherical_fluid_core_buffer_2d.mesh \
 //        -zeta single -enforce kkt
@@ -174,6 +180,7 @@
 #include <memory>
 #include <numbers>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "AdGIA.hpp"
@@ -234,6 +241,11 @@ constexpr real_t kRcDefault = 3483.0 / 6371.0;
 // boundaries 1 core boundary, 2 surface, 3 outer sphere.
 constexpr int kCoreBoundary = 1;
 constexpr int kSurface = 2;
+constexpr int kOuter = 3;
+constexpr int kBufferDomain = 3;
+// The generator's prefix of the aspherical mesh files (the spherical
+// counterpart replaces it by "spherical_").
+constexpr std::string_view kAsphericalPrefix = "aspherical_";
 
 // phi_e = D^{-1}: the exact inverse of the generator's radial stretch
 // (as in benchmarks/relabelling/aspherical_reference.cpp). D moves the
@@ -249,20 +261,17 @@ class InverseShape : public Diffeomorphism {
 
   void Eval(Vector& V, ElementTransformation& T,
             const IntegrationPoint& ip) override {
-    Vector y(vdim);
-    T.Transform(ip, y);
-    Map(y, V);
+    T.Transform(ip, y_);
+    Map(y_, V);
   }
 
   void EvalGradient(DenseMatrix& F, ElementTransformation& T,
                     const IntegrationPoint& ip) override {
-    Vector y(vdim), x(vdim);
-    T.Transform(ip, y);
-    Map(y, x);
-    DenseMatrix FD(vdim);
-    ForwardGradient(x, FD);
+    T.Transform(ip, y_);
+    Map(y_, x_);
+    ForwardGradient(x_, FD_);
     F.SetSize(vdim);
-    CalcInverse(FD, F);
+    CalcInverse(FD_, F);
   }
 
  private:
@@ -346,9 +355,11 @@ class InverseShape : public Diffeomorphism {
       hr = -2.0 * eps_ * s * q / B_;
       c1 = eps_ * q * q;
     }
-    Vector er(x);
+    Vector& er = er_;
+    er = x;
     er /= r;
-    Vector vt(dim);
+    Vector& vt = vt_;
+    vt.SetSize(dim);
     vt = 0.0;
     if (dim == 3) {
       // grad_1 s = A (sin th th^) - 2 beta s2p (sin th ph^), with
@@ -377,6 +388,9 @@ class InverseShape : public Diffeomorphism {
   }
 
   real_t eps_, beta_, B_;
+  // Per-call scratch (the map is evaluated at every quadrature point).
+  mutable Vector y_, x_, er_, vt_;
+  mutable DenseMatrix FD_;
 };
 
 // One orthonormal surface harmonic of the PHYSICAL direction phi_e(x).
@@ -474,7 +488,7 @@ struct Analysis {
 // zeta1 - (F^{-T} grad zeta0) . u; null when `pot` is Eulerian already.
 Analysis Analyse(Mesh& mesh, const GridFunction& u, const GridFunction& pot,
                  VectorCoefficient* grad_zeta0, Diffeomorphism& map,
-                 const SurfaceHarmonics& basis, int main, real_t g,
+                 const SurfaceHarmonics& basis, int loaded, real_t g,
                  real_t phi_sigma, int qorder) {
   const int dim = mesh.Dimension();
   const int n = basis.Size();
@@ -540,19 +554,19 @@ Analysis Analyse(Mesh& mesh, const GridFunction& u, const GridFunction& pot,
     const real_t norm = dim == 3 ? l * (l + 1.0) : real_t(l * l);
     a.cv[j] = l > 0 ? a.cv[j] / norm : 0.0;
   }
-  a.h = -g * a.cu[main] / phi_sigma;
-  a.l = -g * a.cv[main] / phi_sigma;
-  a.k = a.cphi[main] / phi_sigma - 1.0;
+  a.h = -g * a.cu[loaded] / phi_sigma;
+  a.l = -g * a.cv[loaded] / phi_sigma;
+  a.k = a.cphi[loaded] / phi_sigma - 1.0;
   // In 2-D the potential is determined only up to a constant (a null
   // mode of the 2-D problem), so its degree-0 coefficient is gauge and
   // left out.
   real_t m = 0.0, m1 = 0.0;
   for (int j = 0; j < n; j++) {
-    if (j != main) {
+    if (j != loaded) {
       const bool gauge = dim == 2 && basis.Degree(j) == 0;
       const real_t c = std::max(
-          std::abs(a.cu[j]) / std::abs(a.cu[main]),
-          gauge ? 0.0 : std::abs(a.cphi[j]) / std::abs(a.cphi[main]));
+          std::abs(a.cu[j]) / std::abs(a.cu[loaded]),
+          gauge ? 0.0 : std::abs(a.cphi[j]) / std::abs(a.cphi[loaded]));
       m = std::max(m, c);
       if (basis.Degree(j) != 1) {
         m1 = std::max(m1, c);
@@ -796,10 +810,14 @@ int main(int argc, char* argv[]) {
   {
     std::string mpath(mesh_file);
     const auto dot = mpath.rfind('.');
-    mpath = mpath.substr(0, dot) + ".json";
+    bool has_manifest = false;
+    if (dot != std::string::npos) {
+      mpath = mpath.substr(0, dot) + ".json";
+      has_manifest = std::ifstream(mpath).good();
+    }
     bool contradiction = false;
     std::string message;
-    if (dot != std::string::npos && std::ifstream(mpath).good()) {
+    if (has_manifest) {
       const MeshManifest manifest(mpath);
       auto adopt = [&](const char* key, real_t& value) {
         if (!manifest.HasMeta(key)) {
@@ -831,11 +849,12 @@ int main(int argc, char* argv[]) {
   const bool mapped = eps != 0.0;
   if (mapped && !broken) {
     std::string spherical(mesh_file);
-    const auto pos = spherical.rfind("aspherical_");
+    const auto pos = spherical.rfind(kAsphericalPrefix);
     spherical = pos == std::string::npos
                     ? std::string("a spherical mesh")
                     : "the spherical counterpart, -m " +
-                          spherical.replace(pos, 11, "spherical_");
+                          spherical.replace(pos, kAsphericalPrefix.size(),
+                                            "spherical_");
     return refuse(
         "the single-valued organisation (-zeta single) assembles its "
         "gravity mismatch terms at phi_e = id only, and this mesh is an "
@@ -893,7 +912,7 @@ int main(int argc, char* argv[]) {
         }
       }
     };
-    boundary_points(parent, 3, [&]() {
+    boundary_points(parent, kOuter, [&]() {
       y -= x;
       d_out = std::max(d_out, y.Norml2());
     });
@@ -903,7 +922,7 @@ int main(int argc, char* argv[]) {
     real_t r_core = 0.0, r_mantle = 1e300;
     for (int e = 0; e < parent.GetNE(); e++) {
       const int attr = parent.GetAttribute(e);
-      if (attr == 3) {
+      if (attr == kBufferDomain) {
         continue;
       }
       auto* T = parent.GetElementTransformation(e);
@@ -1200,11 +1219,11 @@ int main(int argc, char* argv[]) {
       if (ref.empty()) {
         ref = mesh_file;
         if (mapped) {
-          const auto pos = ref.rfind("aspherical_");
+          const auto pos = ref.rfind(kAsphericalPrefix);
           MFEM_VERIFY(pos != std::string::npos,
                       "-compare: name the spherical counterpart with "
                       "-mref.");
-          ref.replace(pos, std::string("aspherical_").size(), "spherical_");
+          ref.replace(pos, kAsphericalPrefix.size(), "spherical_");
         }
       }
       const bool same = ref == std::string(mesh_file);

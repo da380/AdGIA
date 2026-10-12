@@ -56,7 +56,7 @@
 // differences are the mesh partitioning and the reductions of the mass.
 //
 // Options (defaults in brackets):
-//   -m      mesh file [../data/coupled_poisson.msh]: a 3-D ball
+//   -m      mesh file [../data/ball_buffer_coarse_3d.msh]: a 3-D ball
 //           (attribute 1) inside a buffer shell.
 //   -o      finite element order [3]; order 2 leaves the relaxed
 //           state badly resolved on the default mesh (see above).
@@ -86,12 +86,20 @@
 //    ./viscoelastic_love_numbers -kappa 100        (compressibility shows)
 //    ./viscoelastic_love_numbers -o 2              (the relaxed state drifts)
 //    ./viscoelastic_love_numbers -s sdirk23 -n 8   (another integrator)
+//
+// Mesh requirements: 3-D only (checked). Origin-centred; attribute 1 is the
+// homogeneous ball and attribute 2 a buffer shell for the DtN condition; the
+// surface of the ball is the LAST (largest-numbered) boundary attribute of
+// the body submesh, and the sphere's radius is read from the mesh (the load
+// is analysed on that boundary). Default ../data/ball_buffer_coarse_3d.msh
+// (meshes/homogeneous_body.py --preset ball-buffer-coarse: ball of radius 1, buffer to r = 2). The
+// units are nondimensional: G and rho are options (default 1), the moduli
+// are in the same units.
 // ============================================================================
 #include <cmath>
 #include <iomanip>
 #include <iostream>
 #include <memory>
-#include <numbers>
 #include <string>
 #include <vector>
 
@@ -116,8 +124,6 @@ using SpaceType = FiniteElementSpace;
 using FieldType = GridFunction;
 bool Root() { return true; }
 #endif
-
-constexpr real_t kPi = std::numbers::pi_v<real_t>;
 
 // Sum of a linear functional over the whole mesh: through the true-dof
 // vector (shared dofs counted once), then reduced over the ranks.
@@ -158,7 +164,7 @@ int main(int argc, char* argv[]) {
   Hypre::Init();
 #endif
 
-  const char* mesh_file = "../data/coupled_poisson.msh";
+  const char* mesh_file = "../data/ball_buffer_coarse_3d.msh";
   int order = 3;
   int dtn_degree = 12;
   int lmin = 2, lmax = 4;
@@ -208,6 +214,13 @@ int main(int argc, char* argv[]) {
   if (Root()) {
     args.PrintOptions(std::cout);
   }
+  if (std::string(scheme) != "exptrap" && std::string(scheme) != "sdirk23") {
+    if (Root()) {
+      std::cerr << "Unknown scheme '" << scheme
+                << "' (use exptrap or sdirk23).\n";
+    }
+    return 1;
+  }
 
   Mesh smesh(mesh_file, 1, 1);
   const int dim = smesh.Dimension();
@@ -242,13 +255,13 @@ int main(int argc, char* argv[]) {
   const auto& basis = radial.Basis();
   const real_t a = radial.Radius();
 
-  // Surface gravity g = 4 pi G M / |S|, with the mesh's mass.
+  // Surface gravity g = G M / a^2 (|S| = 4 pi a^2), with the mesh's mass.
   SpaceType fes_s(&body, &fec);
   LinearForm mass(&fes_s);
   mass.AddDomainIntegrator(new DomainLFIntegrator(rho_c));
   mass.Assemble();
   const real_t M = TrueSum(fes_s, mass);
-  const real_t g = 4.0 * kPi * G * M / (4.0 * kPi * a * a);
+  const real_t g = G * M / (a * a);
 
   // The load: a unit (l, 0) coefficient at every degree, held from t = 0.
   std::vector<int> degrees, index;
@@ -372,7 +385,7 @@ int main(int argc, char* argv[]) {
   // branch).
   ViscoelasticOperator visco(problem);
   std::unique_ptr<ODESolver> ode;
-  if (std::string(scheme) == "sdirk23") {
+  if (std::string(scheme) == "sdirk23") {  // (validated above)
     ode = std::make_unique<SDIRK23Solver>(2);
   } else {
     ode = std::make_unique<ExponentialTrapezoidSolver>();

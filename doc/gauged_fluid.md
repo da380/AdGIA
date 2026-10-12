@@ -1,7 +1,18 @@
 # The gauged treatment of fluid regions
 
-Method notes for the gauged-fluid option of `LinearQuasiStaticProblemBase`
-(`SetGaugedFluid()`, `quasi_static_problem.hpp`) and its self-gravitating
+> **Status.** For coupled elasto-gravity problems with fluid regions: the
+> Maxwell relaxation of the fluid (`SetFluid`'s default treatment) is the
+> general method — any geometry, any stratification, any number of regions.
+> The gauge-penalty treatment described here is clean only for neutrally
+> stratified fluids: at N² ≠ 0 its semi-convergence is Rayleigh–Taylor
+> growth, and answers are defined only to the stratification band. For
+> hydrostatic (spherical) models Dahlen's mixed formulation is the practical
+> workhorse. The slipping and welded formulations are finite idealisations of
+> the dissipative completion and serve as instruments. The full account is
+> `doc/static_fluid_core.tex`, "The status of the formulations".
+
+Method notes for the gauge-penalty option of `LinearQuasiStaticProblemBase`
+(`SetFluid(..., GaugePenaltyOptions)`, `quasi_static_problem.hpp`) and its self-gravitating
 uses: the mixed class `LinearQuasiStaticMixedSelfGravitatingProblem`
 (`mixed_problem.hpp`) and the referential class
 `LinearQuasiStaticReferentialSelfGravitatingProblem`
@@ -91,6 +102,14 @@ coarse test mesh at `eps = 1e-2`, k = 3, growing like `k / eps` beyond
 (`TestMixedProblemGauged`); physical (degree-2) loads do not sit on the
 near-kernel. The mathematics is `doc/gauge_penalty_iteration.tex`.
 
+The window above is the neutrally stratified one. At `N^2 != 0` the
+near-kernel is no longer a harmless gauge: the discrete near-kernel modes
+carry a restoring (or, in an unstably stratified fluid, a destabilising)
+energy, and the semi-convergent growth of the refinement is Rayleigh–Taylor
+growth of the stratification-unstable modes. The answers are then defined
+only to the stratification band, and the window cannot be widened by tuning
+`eps` (`doc/static_fluid_core.tex`).
+
 ## 2. Tangential slip and the welded space
 
 The gauged fluid uses **one continuous H1 displacement space** over solid
@@ -118,18 +137,20 @@ materially barotropic fluid the larger relabelling class `K` of §1 is
 available; which slips it removes on which geometries is not established
 here, and the library does not rely on it.)
 
-**What the library does.** The slipping-interface formulation
-(`doc/slip_interface.tex`) is the general one: it allows a tangential jump
-and enforces only normal continuity, and allowing a slip that is not needed
-costs nothing in correctness. The welded gauged formulation of this note is
+**What the library does.** The welded gauged formulation of this note is
 used where the slip it suppresses is absent or removable by relabelling —
 as for the spherically symmetric models of the benchmarks, where the welded
 and slipping formulations agree to discretisation level (`TestSlipProblem`
 `TwoLayerBarotropicCrossCheck`; the `gauged` and `slip` columns of the
-Love-number benchmark, `doc/benchmarks.tex`). For aspherical fluid regions
-the slipping formulation should be used. A two-parameter (stratified)
-fluid and the non-linear slip map are further cases outside the welded
-formulation.
+Love-number benchmark, `doc/benchmarks.tex`). For aspherical or stratified
+fluid regions the default is the Maxwell relaxation of `SetFluid`, which
+needs no assumption on the geometry or the stratification
+(`doc/static_fluid_core.tex`). The slipping-interface formulation
+(`doc/slip_interface.tex`) allows a tangential jump and enforces only normal
+continuity; it is a finite idealisation of the dissipative completion and
+serves as an instrument, in particular for the relabelling decomposition
+(what the welded space costs, and where). The non-linear slip map is a
+further case outside the welded formulation.
 
 Two consequences of the welded space are worth noting where it is used.
 The tangential traction it transmits is the fluid's deviatoric stress,
@@ -146,8 +167,8 @@ would bias the solution by the `O(eps)` restoring they actually feel).
 In `LinearQuasiStaticMixedSelfGravitatingProblem` the gauged mode is selected by
 construction: **no FluidRegions** — the fluid attributes join the
 displacement SubMesh, the rheology gives them `kappa_f` with zero shear,
-the `density` coefficient covers them, and `SetGaugedFluid()` adds the
-penalty. Nothing else changes, because every operator of the class
+the `density` coefficient covers them, and `SetFluid(..., GaugePenaltyOptions)`
+adds the penalty. Nothing else changes, because every operator of the class
 integrates over the whole SubMesh:
 
 | Dahlen (`doc/self_gravitation.md`) | Gauged |
@@ -183,7 +204,9 @@ agreement of solid displacement and potential to the discretisation level
 under a zero-mean load. For a two-parameter fluid (`N^2 != 0`) the static
 `kappa`-response is the "frozen" elastic one and *differs* from the
 secular Dahlen response by `O(N^2)`; the gauge freedom also shrinks (§1),
-though the penalty machinery still regularises the nearly-neutral case.
+and the penalty machinery regularises only the nearly-neutral case: at
+`N^2 != 0` its semi-convergence is Rayleigh–Taylor growth (§1), and the
+answers are defined only to the stratification band.
 Benchmark comparisons against Dahlen or pyslfp at `l >= 1` must therefore
 use neutrally stratified cores (PREM's outer core is Adams–Williamson by
 construction; a uniform-density core is not).
@@ -204,20 +227,18 @@ with pyslfp.
 The machinery lives in `LinearQuasiStaticProblemBase`
 (`quasi_static_problem.hpp`, `src/quasi_static_problem.cpp`):
 
-- `SetGaugedFluid(const Array<int>& fluid_marker, Coefficient& mu_gauge,
-  real_t epsilon, int refinements = 2,
-  GaugePenalty penalty = GaugePenalty::Deviatoric,
-  Diffeomorphism* map = nullptr)` builds a template form holding one
-  penalty integrator on the marked attributes (`mu_gauge` is not owned and
-  must outlive the problem):
+- `SetFluid(const Array<int>& fluid_marker, Coefficient& mu_gauge,
+  const GaugePenaltyOptions& opts, Diffeomorphism* map = nullptr)` — with
+  `GaugePenaltyOptions{epsilon = 1e-2, refinements = 2, form =
+  GaugePenalty::Deviatoric}` — builds a template form holding one penalty
+  integrator on the marked attributes (`mu_gauge` is not owned and must
+  outlive the problem). The overload taking `MaxwellRelaxationOptions` (or
+  none) is the default Maxwell treatment, and `ClearFluid()` removes either:
   - `GaugePenalty::Deviatoric` (a fluid): without a map,
     `ElasticityIntegrator(eps mu_g, -2/dim, 1)`; with a map (the identity
     included) the **covariant** form, `ElasticTensorIntegrator(C, map)`
     with `C` the isotropic tensor of `lambda = -2 eps mu_g / dim`,
-    `mu = eps mu_g` pulled back through the map, so that the penalty of a
-    relabelled problem is the exact pull-back of the unmapped one and both
-    sides of a change-of-variables identity use the same integrator class
-    (`doc/mappings.md`).
+    `mu = eps mu_g` (the rule and its trap: `doc/mappings.md`, Pitfalls).
   - `GaugePenalty::Harmonic` (a vacuum-extension field):
     `VectorDiffusionIntegrator(eps mu_g)`; it is gauge data shared between
     descriptions and refuses a non-identity map.
@@ -229,7 +250,7 @@ The machinery lives in `LinearQuasiStaticProblemBase`
   the penalty appended (MFEM's borrowing forms own no integrators). The
   solver and preconditioner are built on `A + eps Q`;
   `RegularizedMatrix()` exposes it. `SetGaugeEpsilon()`,
-  `SetGaugeRefinements()` and `ClearGaugedFluid()` adjust or remove it.
+  `SetGaugeRefinements()` and `ClearFluid()` adjust or remove it.
 - `Solve()` runs `SolveLinearSystem` once, warm-started from the previous
   solution, then `GaugeRefine()`: `r = eps Q delta`, one further
   `SolveLinearSystem` per refinement, each **cold-started** from zero (the
@@ -242,7 +263,7 @@ The machinery lives in `LinearQuasiStaticProblemBase`
   (`src/referential_problem.cpp`) solve the coupled increment with zero
   potential load, accumulate the potential alongside the displacement and
   leave the accumulated pair as the next warm start. The referential class
-  also overrides `SetGaugedFluid()` to assemble the Deviatoric penalty
+  also overrides the configuration hook of `SetFluid` to assemble the Deviatoric penalty
   covariantly through the rheology's equilibrium mapping when no map is
   passed, and uses the same machinery with the Harmonic penalty for its
   ball-wide vacuum extension (`SetVacuumExtension`; see
@@ -250,7 +271,7 @@ The machinery lives in `LinearQuasiStaticProblemBase`
   under refinement).
 - The slipping-interface class
   `LinearQuasiStaticReferentialSelfGravitatingSlipProblem` keeps the fluid
-  on its own space and refuses `SetGaugedFluid()`; its fluid gauge is set
+  on its own space and refuses `SetFluid()`; its fluid gauge is set
   with `SetFluidGauge(mu_gauge, epsilon)` (covariant Deviatoric penalty)
   and refined inside its constraint loop (`doc/slip_interface.tex`).
 - Essential boundary conditions must not touch the gauged attributes
@@ -265,7 +286,14 @@ leaves a mesh-asymmetry rigid translation (~1e-5 on the test meshes) that
 uniform refinement does not remove, and which dominates e.g. a Lamé
 comparison at the 0.5% level (`TestFluidGauge`).
 
-## 5. The slipping interface
+## 5. The slipping interface and the Maxwell route
+
+The Maxwell relaxation of `SetFluid` (the default treatment) reads the same
+deviatoric engine `eps mu Q` as the per-step effective shear of an artificial
+Maxwell solid and relaxes the Heaviside-loaded system to the secular static
+response; the gauge refinement iteration is exactly its
+beta -> infinity limit. It is honest at any stratification, geometry and
+number of fluid regions (`doc/static_fluid_core.tex`).
 
 When a genuine tangential discontinuity is wanted (§2), the fluid and solid
 carry separate displacement spaces on two SubMeshes of one parent, paired

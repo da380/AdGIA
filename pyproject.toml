@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "The Python tooling of AdGIA, one environment for all of it: mesh generation (meshes/), the benchmark scripts (benchmarks/) and the earth-data tools (earth_data/)"
 requires-python = ">=3.12"
 dependencies = [
-    "planetmodel[meshing,mfem]>=1.2.3",
+    "planetmodel[meshing,mfem]>=1.2.4",
     "pyslfp (>=2.2.0)",
     "numpy (>=1.26)",
     "scipy (>=1.13)",

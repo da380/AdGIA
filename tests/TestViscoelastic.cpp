@@ -943,6 +943,50 @@ TEST(ViscoelasticConvergence, TemporalOrders) {
 
 // An elastic rheology through the operator: no internal state, and the
 // displacement is the static solution at every time for every scheme.
+// Regression: a ViscoelasticOperator constructed on a problem that a
+// previous operator has relaxed must start from the UNRELAXED modulus
+// (the constructor clears inherited relaxation weights); before the fix
+// the second operator silently assembled the first one's effective
+// modulus.
+TEST(ViscoelasticElastic, FreshOperatorClearsInheritedWeights) {
+  const int dim = 2;
+  Mesh mesh = Mesh::MakeCartesian2D(3, 3, Element::QUADRILATERAL);
+  H1_FECollection fec(1, dim);
+  FiniteElementSpace fes(&mesh, &fec, dim);
+  ConstantCoefficient kappa(Kappa(dim)), mu(kMu), tau(0.5);
+  auto rheology = IsotropicMaxwellRheology::Maxwell(dim, kappa, mu, tau);
+  const int x0 = BdrAttributeAt(mesh, 0, 0.0),
+            x1 = BdrAttributeAt(mesh, 0, 1.0);
+  auto ess = Marker(mesh.bdr_attributes.Max(), {x0});
+  auto pull_marker = Marker(mesh.bdr_attributes.Max(), {x1});
+  VectorFunctionCoefficient pull(dim, PullTraction);
+
+  LinearQuasiStaticClampedProblem problem(&fes, rheology, ess, pull,
+                                          pull_marker);
+  {
+    // The first operator steps with the exponential trapezoid, leaving
+    // the problem's stiffness at the EFFECTIVE modulus when it dies.
+    ViscoelasticOperator first(problem);
+    ExponentialTrapezoidSolver ode;
+    ode.Init(first);
+    Vector m(first.Height());
+    m = 0.0;
+    double t = 0.0, dt = 0.4;
+    ode.Step(m, t, dt);
+  }
+  ViscoelasticOperator second(problem);
+  Vector m0(second.Height());
+  m0 = 0.0;
+  ASSERT_TRUE(second.SolveElastic(m0, 0.0));
+
+  LinearQuasiStaticClampedProblem fresh(&fes, rheology, ess, pull,
+                                        pull_marker);
+  fresh.AssembleForce(0.0);
+  ASSERT_TRUE(fresh.Solve());
+  EXPECT_GT(fresh.Displacement().Normlinf(), 0.0);
+  EXPECT_LT(RelMaxDiff(problem.Displacement(), fresh.Displacement()), 1e-12);
+}
+
 TEST(ViscoelasticElastic, ElasticRheologyHasNoState) {
   const int dim = 2;
   Mesh mesh = Mesh::MakeCartesian2D(3, 3, Element::QUADRILATERAL);

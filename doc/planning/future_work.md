@@ -4,6 +4,70 @@
 
 ## Nonlinear problems
 
+### Fully nonlinear forward models
+
+**Status:** parked — a commitment of the original funding proposal
+(recorded 11 Oct 2026), not immediate work.
+
+The proposal's plan included full geometrically nonlinear forward
+models — nonlinearity in the *deformation*, not just the viscoelastic
+constitutive relation — on the working assumption that the effect is
+small but perhaps not nothing over a glacial cycle. The magnitude
+case (context added 11 Oct 2026): background strains are only
+1e-4..1e-3 near ice margins, but reported simulations find realistic
+*static* topography has a measurable effect on GIA (pers. comm. to
+David), and GIA itself produces topography of comparable
+substance — hundreds of metres to a kilometre of deflection under
+the ice sheets and forebulges — over a cycle. Linear theory
+evaluates loads, ocean geometry and gravity on a reference the cycle
+itself deflects; that self-generated-topography feedback, plus
+prestress advection at the margins and the degree-2/rotation
+feedback over repeated cycles, is the concrete mechanism for "not
+nothing". The route is the fully referential framework with general
+strain-energy functions, and it is shorter than it looks, because
+the linear referential class is already the Newton method of this
+problem:
+
+- **Newton structure for free.** The class's (C, S_e) pair about
+  φ_e *is* the consistent tangent of a general W(F) at a running
+  configuration (C the second derivative, S_e's geometric term the
+  `GeometricStiffnessIntegrator`); the nonlinear solve is the
+  residual with the first Piola–Kirchhoff P(F) plus Newton on the
+  existing operator. Referential mass conservation is exact, the
+  mapped-Laplacian gravity coefficients a_e = J F⁻¹F⁻ᵀ exist for
+  fixed maps (the extension: the map becomes the running
+  configuration), surface loads already carry Nanson factors, and
+  the gauge/null-space handling per Newton step is solved.
+- **No boundary awkwardness.** The domain and its boundary are the
+  FIXED reference body: evolving topography is carried by the
+  solution (the image of the reference surface under the motion),
+  not the mesh — no ALE, no remeshing, no free-boundary tracking.
+  The free surface is the natural condition on a fixed boundary,
+  and deformed-surface loads are referential loads with Nanson
+  factors, the conventions the sea-level work installed and
+  gate-certified. The nonlinearity is confined to the constitutive
+  relation and the configuration-dependence of the Poisson
+  operator.
+- **The genuinely new piece:** finite-strain viscoelasticity
+  (multiplicative decomposition on the internal-variable regions) —
+  the only part without a present-day skeleton.
+- **Synergies:** (i) the equilibrium-figures rungs 2–3 are
+  themselves nonlinear static gravitating solves — the figure
+  builder and this solver are one solver with two hats; (ii) M&A's
+  exact (un-linearised) Tisserand framework is the nonlinear
+  rotation theory, pre-written; (iii) the charter's second-order
+  adjoints need the same second-variation machinery a Newton
+  forward solver exercises.
+- **First deliverable when opened:** the error bar on the linear
+  theory — quantify the nonlinear correction over a glacial cycle.
+
+**See:** `doc/gravitating_elasticity.md`;
+`generalised_rotation_note.md`; "Equilibrium backgrounds with
+surface water" above.
+
+The two subsections below — the nonlinear slip map and the buffer
+motion — are component problems of this programme.
+
 ### Nonlinear slip map and the mortar route
 
 **Status:** future work; not implemented. The linearised slip is
@@ -65,11 +129,11 @@ serial and parallel.
 
 ### Nonlinear elasticity
 
-**Status:** future work.
-
-The problem interface carries "Linear" in its class names to leave room
-for nonlinear elastic problems; in the referential formulation φ_e is the
-slot a Newton iterate would occupy. Not started.
+**Status:** folded into "Fully nonlinear forward models" above, which
+carries the proposal context, the Newton-structure argument and the
+synergies; the class-naming hook stands — the interface carries
+"Linear" in its names to leave room, and in the referential
+formulation φ_e is the slot a Newton iterate would occupy.
 
 **See:** `doc/quasi_static_models.tex`, "Naming and the problem-class
 grid"; `doc/gravitating_elasticity.md` (preamble).
@@ -159,7 +223,9 @@ rigid motions of the buffer would make them exact discrete null pairs.
 ### Chaljub–Valette two-potential fluid and the essential spectrum
 
 **Status:** open question; not used as a formulation (the penalty gauged
-formulation is the accepted one); the spectral prediction is untested.
+formulation is the accepted gauge-fixing one for the penalty path; the Maxwell
+relaxation is the general fluid treatment, `doc/static_fluid_core.tex`, and
+the penalty the specialist for neutrally stratified fluids); the spectral prediction is untested.
 
 Chaljub & Valette (2004) write the fluid displacement as
 u = ∇χ + ξ s, s = ∇ρ/ρ − g/c², N² = s·g. For a non-rotating hydrostatic
@@ -475,9 +541,78 @@ slipping problems, e.g. for relaxation of an aspherical body.
 
 ## Sea level
 
+### In-C++ shoreline mesh refinement (the MFEM `shaper` pattern)
+
+**Status:** core DELIVERED 11 Oct 2026 (`RefineToShoreline` in
+`mesh.hpp`/`mesh.cpp`, gated by `TestShorelineRefinement{,Par}`, shown
+in `examples/shoreline_refinement.cpp`); the gridded-flotation leg for
+real geographies stays open. Mid-run AMR is NOT wanted: David's call,
+shorelines never migrate far enough to leave a sensibly chosen band,
+so one pre-run refinement around the initial shoreline suffices — the
+`band` option is that headroom.
+
+The miniapp's mechanism is exactly a shoreline refiner: a pointwise
+`material(x)` id (here: ocean/land from the flotation of a sampled
+state), each element sampled at `sd` interior subdivisions, any
+element seeing BOTH materials marked, and
+`Mesh::GeneralRefinement(refs, -1, nc_limit)` applied iteratively —
+on SIMPLICES this is CONFORMING local refinement (no hanging nodes),
+which keeps the whole downstream stack (SubMesh, the house
+mesh-conforms-to-interfaces rule) untouched; quads/hexes would go
+non-conforming with an optional anisotropic mask. `ParMesh` supports
+the same call with rebalancing.
+
+What this buys over the current planetmodel/gmsh-side `Refinement`
+protocol (`planetmodel_coastline_sizing_plan.md`): the band follows
+the ACTUAL ocean function of the run's own state (not a canned
+coastline), the gmsh round trip disappears, and iteration depth and
+band width become run-time knobs.
+
+Delivered facts (measured, encoded in the tests): conforming tet
+bisection throughout (no hanging nodes, SubMesh machinery untouched);
+the ordering constraint — tets lose their refinement marking under
+`UniformRefinement`, so RefineToShoreline goes FIRST, straight after
+load, and uniform refinements compose after (the utility verifies
+this with the recipe in the message); snapping puts nodes on the
+sphere to machine precision (4e-16) and takes the shoreline band's
+surface-geometry error 4.1e-4 -> 2.2e-5 (two passes) -> 6.1e-6
+(three); closure cascades reach the deep interior but stay a ~1%
+share of the refined mesh; parallel marking is partition-independent
+at the global-count level (np 4 reproduces the serial pass counts).
+
+Resolution at the shoreline is settable directly:
+`ShorelineRefinementOptions::target_h` (example `-hs`) continues the
+pass loop until the marked zone's elements are at or below the target
+size, the stop exact by construction (marking tests the same measure;
+`levels` becomes a safety cap). The zone's EXTENT is the separate
+knob: the marked zone's width is settable GEOMETRICALLY
+(`ShorelineRefinementOptions::width`, radians of arc; the example's
+`-width`): elements within that angular distance of the shoreline
+are marked via a per-element gradient estimate, so the refined
+zone's extent is independent of the ocean function's coastal
+steepness. `band` (ocean-function units) remains the default
+semantics when width is unset.
+
+Open: the GRIDDED flotation coefficient for real geographies. The
+analytic-geography case needs nothing (the example's wavy continent
+plugs in as a FunctionCoefficient), but an ICE-7G/earth run must
+evaluate the flotation at ARBITRARY points while the mesh changes,
+so the nodal-CSV ingest (IceHistory, coordinate-matched) is the
+wrong source mid-refinement; a small gridded lon-lat reader (the
+`earth_data` NetCDF/npz the chain already produces) evaluated by
+bilinear interpolation closes the loop: refine in C++ first, sample
+the stacks at the FINAL node set after.
+
+**See:** `~/dev/mfem/miniapps/meshing/shaper.cpp` (230 lines; also
+`toys/mandel.cpp`/`mondrian.cpp` for the same loop on other
+material functions); `planetmodel_coastline_sizing_plan.md`;
+`Mesh::GeneralRefinement`, `ParMesh::GeneralRefinement`.
+
 ### The referential sea-level leg and the generalised rotational theory
 
-**Status:** proposal (the plan's WP7).
+**Status:** proposal — design pass written, awaiting review
+([`referential_sea_level_plan.md`](referential_sea_level_plan.md):
+phases, gates and the open design questions).
 
 Port the sea-level boundary terms to the referential class, where the
 combination `u·∇Φ + φ` is the referential potential ζ and the water
@@ -492,7 +627,8 @@ variables"); `doc/Elasticity/ggae092.pdf`.
 
 ### Equilibrium backgrounds with surface water
 
-**Status:** parked (the foundational caveat).
+**Status:** parked (the foundational caveat); scope sketched (David,
+11 Oct 2026).
 
 All sea-level theory to date computes forces that belong to a rotating
 model with oceans on a non-rotating model without them — the reference
@@ -502,7 +638,62 @@ backgrounds extended to carry surface water, and the generalised
 rotational theory is the matching perturbation framework — both on the
 referential leg.
 
-**See:** `equilibrium_figures.md`; `sea_level_plan.md`.
+The ladder of applications, as sketched:
+
+1. **Done (stage 1):** given a fluid–solid body and its density,
+   compute an equilibrium stress state hydrostatic in the fluid core
+   by density updates there.
+2. **Later:** the full shape-and-density optimisation for hydrostatic
+   equilibrium figures (`equilibrium_shape_plan.md`).
+3. **The ocean as a surface load:** for a fluid–solid planet with a
+   solid surface, find equilibrium stresses and fluid density
+   compatible with an ocean modelled as a *surface load* — 3-D oceans
+   are not needed for the applications in view and would be too hard
+   to mesh. Forward version: place the initial load through a choice
+   of equipotential and iterate until it still sits on an
+   equipotential of the full potential including its own mass (the
+   same fixed-point shape as the sea-level machinery; the
+   which-equipotential datum is one scalar, like the ocean-mass
+   datum). The which-equipotential and disconnected-basin questions
+   are open and interesting (each disconnected basin can sit on its
+   own level unless the connectivity says otherwise — the
+   ocean-function machinery, per component).
+4. **The realistic inverse:** the surface topography is known and the
+   mean sea level is *observed* — but it will not lie on an
+   equipotential of a given earth model. Tweak the density structure
+   *minimally* so that the observed sea level is the model's sea
+   level, with the observed moments of inertia as constraints. The
+   problem is non-unique — the result is not the true density — but it
+   gives *an* answer, which is a start on consistent density models,
+   and the misfit is linear in the density perturbation through the
+   Poisson operator, so the stage-1 descent/Gauss–Newton machinery
+   applies. A model produced this way is also exactly the
+   properly-known reference structure that makes the generalised
+   rotational theory applicable with nothing imposed (the
+   inertia-data question of `referential_sea_level_plan.md`, WP7.5),
+   and supersedes the Mitrovica & Wahr-style plastering of the
+   traditional theory.
+
+**The Mitrovica & Wahr requirement, read as a specification (agreed
+11 Oct 2026):** their rotational-stability corrections relocate here
+rather than evaporate. For the viscoelastic generalised door to
+stabilise polar wander correctly, the background must carry the
+Earth's NON-HYDROSTATIC excess flattening, supported by the
+equilibrium stress field — not by the rheology the GIA loads feel —
+so that it does not relax on loading timescales. Rungs 2 and 4 are
+where that structure is built (the moments-of-inertia constraint in
+rung 4 is exactly the excess-flattening datum). The matching
+validation is an *emergence test*, not a theory input: the M&A door
+run on a spherical model with input moments including the excess
+should reproduce the corrected Mitrovica et al. (2005) stability
+behaviour, and degrade to the classical over-wandering when the
+excess is removed (the W&M numerical check of
+`generalised_rotation_note.md`).
+
+**See:** `equilibrium_figures.md`; `equilibrium_shape_plan.md`;
+`sea_level_plan.md`; `referential_sea_level_plan.md`;
+`generalised_rotation_note.md` (the input-inertia section);
+`doc/Elasticity/annurev-earth-040610-133404.pdf`.
 
 ### Ice-age production runs
 

@@ -6,7 +6,11 @@
 
 #include "AdGIA/quasi_static_problem.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <string>
+#include <string_view>
+#include <vector>
 
 #include "AdGIA/bilininteg.hpp"
 #include "AdGIA/detail/fem_factory.hpp"
@@ -225,10 +229,21 @@ void LinearQuasiStaticProblemBase::ClearRelaxationWeights() {
   }
 }
 
+bool LinearQuasiStaticProblemBase::PreconditionerAwaitsCapture() const {
+  return a_ && prec_ && !prec_stale_ && prec_reuse_ > 1.0 && !prec_form_ &&
+         !prec_A_.Ptr();
+}
+
+void LinearQuasiStaticProblemBase::CapturePreconditionerMatrix(
+    OperatorHandle& src) {
+  prec_A_ = src;
+  prec_A_.SetOperatorOwner(src.OwnsOperator());
+  src.SetOperatorOwner(false);
+}
+
 void LinearQuasiStaticProblemBase::AssembleOperator() {
   operator_version_++;
-  if (a_ && prec_ && !prec_stale_ && prec_reuse_ > 1.0 && !prec_form_ &&
-      !prec_A_.Ptr()) {
+  if (PreconditionerAwaitsCapture()) {
     // The preconditioner was built on the current solver matrix and stays on
     // it: keep that form and matrix alive while the preconditioner is
     // reused. (Later reassemblies leave prec_form_ alone; their matrices
@@ -237,14 +252,10 @@ void LinearQuasiStaticProblemBase::AssembleOperator() {
     // (prec_A_ set with no form behind it) is likewise left alone.
     if (a_solve_form_) {
       prec_form_ = std::move(a_solve_form_);
-      prec_A_ = A_solve_;
-      prec_A_.SetOperatorOwner(A_solve_.OwnsOperator());
-      A_solve_.SetOperatorOwner(false);
+      CapturePreconditionerMatrix(A_solve_);
     } else {
       prec_form_ = std::move(a_);
-      prec_A_ = A_;
-      prec_A_.SetOperatorOwner(A_.OwnsOperator());
-      A_.SetOperatorOwner(false);
+      CapturePreconditionerMatrix(A_);
     }
   }
   a_ = detail::MakeBilinearForm(fes_, integrators_.get());
@@ -275,16 +286,13 @@ void LinearQuasiStaticProblemBase::AssembleOperator() {
 
 void LinearQuasiStaticProblemBase::RescaleGaugeOperator() {
   operator_version_++;
-  MFEM_ASSERT(HasGaugedFluid() && fluid_op_.HasUnitCache(),
+  MFEM_VERIFY(HasGaugedFluid() && fluid_op_.HasUnitCache(),
               "RescaleGaugeOperator: no cached unit penalty.");
   // Keep the matrix the (reused) preconditioner was built on alive, as
   // in AssembleOperator; here there is no form to move, the matrix
   // handle alone is captured.
-  if (a_ && prec_ && !prec_stale_ && prec_reuse_ > 1.0 && !prec_form_ &&
-      !prec_A_.Ptr()) {
-    prec_A_ = A_solve_;
-    prec_A_.SetOperatorOwner(A_solve_.OwnsOperator());
-    A_solve_.SetOperatorOwner(false);
+  if (PreconditionerAwaitsCapture()) {
+    CapturePreconditionerMatrix(A_solve_);
   }
   fluid_op_.Rescale();
 #ifdef MFEM_USE_MPI
@@ -534,9 +542,9 @@ bool LinearQuasiStaticProblemBase::GaugeRefine(Vector& X) {
   // Maxwell step: each refinement is the FULL solve
   // (A + eps Q) u_{k+1} = f + eps Q u_k through the virtual
   // SolveLinearSystem, so companion blocks (a potential) ride along
-  // with their loads reapplied — equivalent, by linearity, to the
-  // historical zero-companion-load increment accumulation, with the
-  // same residuals ||eps Q delta_k|| recorded.
+  // with their loads reapplied (equivalent, by linearity, to
+  // accumulating zero-companion-load increments). The residuals
+  // ||eps Q delta_k|| are recorded.
   gauge_residuals_.clear();
   Vector r(X.Size()), Bn, Xprev, delta(X);
   bool ok = true;
@@ -570,9 +578,9 @@ void LinearQuasiStaticProblemBase::BuildMaxwellSolidDofs() {
   Vector ind(fes_->GetVSize());
   ind = 0.0;
   Array<int> vdofs;
+  const Array<int>& marker = fluid_op_.Marker();
   for (int e = 0; e < fes_->GetNE(); ++e) {
     const int attr = fes_->GetMesh()->GetAttribute(e);
-    const Array<int>& marker = fluid_op_.Marker();
     if (attr <= marker.Size() && marker[attr - 1]) {
       continue;
     }
@@ -622,7 +630,6 @@ real_t LinearQuasiStaticProblemBase::MaxOverSolidDofs(const Vector& x) const {
 bool LinearQuasiStaticProblemBase::MaxwellSolve() {
   const MaxwellRelaxationOptions& o = maxwell_opts_;
   maxwell_report_ = MaxwellRelaxationReport();
-  maxwell_report_.stop = "max_steps";
 
   real_t beta = o.dt_over_tau;
   real_t eps_cur = -1.0;
@@ -705,17 +712,17 @@ bool LinearQuasiStaticProblemBase::MaxwellSolve() {
     DenseMatrix N(m);
     Vector rhs(m), gamma(m);
     const Vector& rk = aa_r.back();
+    std::vector<Vector> dr(m, rk);
     for (int i = 0; i < m; ++i) {
-      Vector dri(rk);
-      dri -= aa_r[i];
+      dr[i] -= aa_r[i];
+    }
+    for (int i = 0; i < m; ++i) {
       for (int j = i; j < m; ++j) {
-        Vector drj(rk);
-        drj -= aa_r[j];
-        const real_t v = Dot(dri, drj);
+        const real_t v = Dot(dr[i], dr[j]);
         N(i, j) = v;
         N(j, i) = v;
       }
-      rhs[i] = Dot(dri, rk);
+      rhs[i] = Dot(dr[i], rk);
     }
     for (int i = 0; i < m; ++i) {
       N(i, i) += 1e-12 * (N(i, i) + 1.0);  // near-collinearity guard
@@ -860,11 +867,12 @@ bool LinearQuasiStaticProblemBase::MaxwellSolve() {
     }
   }
 
+  const std::string_view stop_sv(stop);
   maxwell_report_.stop = stop;
   maxwell_report_.delta_returned = delta;
   rel_tol_ = rel_tol_base;  // the endgame runs at full tolerance
   bool polished = false;
-  if (stop != std::string("converged") && stop != std::string("stagnation")) {
+  if (stop_sv != "converged" && stop_sv != "stagnation") {
     if (eps_best < 0.0) {
       ok = false;  // no successful step to return
     } else if (delta > delta_best) {
@@ -907,13 +915,45 @@ void LinearQuasiStaticProblemBase::SetupDefaultPreconditioner(
     if (pfes_) {
       auto amg = std::make_unique<HypreBoomerAMG>(*A.As<HypreParMatrix>());
       // Systems AMG with the nodal coarsening and coarse-grid smoother of
-      // SetElasticityOptions, but without its rigid-body interpolation,
-      // which needs Ordering::byVDIM (MFEM 4.10 verifies this; the
-      // displacement spaces here are byNODES).
+      // SetElasticityOptions; its rigid-body interpolation needs
+      // Ordering::byVDIM in mfem's own path (the displacement spaces
+      // here are byNODES), so with SetElasticityNearNull() the rotation
+      // vectors are attached directly through the hypre interface
+      // instead (GM-2; the translations are the nodal coarsening's
+      // constants).
       amg->SetSystemsOptions(pfes_->GetVDim(), true);
       HYPRE_BoomerAMGSetNodal(*amg, 4);
       HYPRE_BoomerAMGSetNodalDiag(*amg, 1);
       HYPRE_BoomerAMGSetCycleRelaxType(*amg, 8, 3);
+      if (amg_rbm_) {
+        HYPRE_BoomerAMGSetInterpVecVariant(*amg, 2);
+        HYPRE_BoomerAMGSetInterpVecQMax(*amg, 4);
+        HYPRE_BoomerAMGSetSmoothInterpVectors(*amg, 1);
+        const int dim = pfes_->GetParMesh()->Dimension();
+        amg_rbms_.clear();
+        amg_rbm_handles_.SetSize(0);
+        auto add_rotation = [&](int component) {
+          RigidRotation rot(dim, component);
+          ParGridFunction gf(pfes_);
+          gf.ProjectCoefficient(rot);
+          auto tv = std::unique_ptr<HypreParVector>(pfes_->NewTrueDofVector());
+          gf.GetTrueDofs(*tv);
+          amg_rbm_handles_.Append(*tv);
+          amg_rbms_.push_back(std::move(tv));
+        };
+        if (dim == 2) {
+          add_rotation(2);
+        } else {
+          add_rotation(0);
+          add_rotation(1);
+          add_rotation(2);
+        }
+        HYPRE_BoomerAMGSetInterpVectors(*amg, amg_rbm_handles_.Size(),
+                                        amg_rbm_handles_.GetData());
+        // The elasticity interpolation can leave singular coarse grids
+        // that hypre's solve handles but whose setup reports errors.
+        amg->SetErrorMode(HypreSolver::IGNORE_HYPRE_ERRORS);
+      }
       amg->SetPrintLevel(0);
       prec_ = std::move(amg);
     } else
@@ -995,9 +1035,9 @@ real_t LinearQuasiStaticProblemBase::Dot(const Vector& x,
 
 bool LinearQuasiStaticProblemBase::SetWarmStartTolerance(
     IterativeSolver& solver, Solver& prec, const Vector& B) const {
-  Vector z(B.Size());
-  prec.Mult(B, z);
-  const real_t nom = Dot(B, z);
+  warm_z_.SetSize(B.Size());
+  prec.Mult(B, warm_z_);
+  const real_t nom = Dot(B, warm_z_);
   if (!(nom > 0.0)) {
     return false;
   }

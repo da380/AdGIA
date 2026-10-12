@@ -96,6 +96,11 @@ same number of equal steps: at least `-steps` (4), more to keep
 default the reference's 13) are hit exactly. `-tide` evolves the tidal
 forcing as well.
 
+The `-method gauged` histories are clean only for a neutrally stratified
+fluid core: at N² ≠ 0 (`fluid_core`'s uniform core) the gauge penalty is
+defined only to the stratification band, and the comparison with the
+Laplace reference there carries that band (`doc/static_fluid_core.tex`).
+
 ```
 mpiexec -np 8 <build>/benchmarks/bin/viscoelastic_love \
     -c case.json -o 2 -lmax 4 -tau 1 -out results.json

@@ -3,6 +3,7 @@
 #include "mfem.hpp"
 #include "AdGIA/background.hpp"
 #include "AdGIA/bilininteg.hpp"
+#include "AdGIA/bordered.hpp"
 #include "AdGIA/coefficient.hpp"
 #include "AdGIA/descent.hpp"
 #include "AdGIA/elastic_tensor.hpp"
@@ -25,4 +26,5 @@
 #include "AdGIA/sea_level.hpp"
 #include "AdGIA/spherical_harmonics.hpp"
 #include "AdGIA/submesh.hpp"
+#include "AdGIA/adjoint.hpp"
 #include "AdGIA/viscoelastic.hpp"

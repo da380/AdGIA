@@ -78,7 +78,14 @@ def find_program(given: Path | None) -> Path:
 
 class Runner:
     def __init__(self, args):
-        self.program = find_program(args.programs)
+        if args.dry_run:
+            try:
+                self.program = find_program(args.programs)
+            except SystemExit:
+                self.program = Path("<viscoelastic_box>")
+        else:
+            self.program = find_program(args.programs)
+        self._announced: set[str] = set()
         self.mpiexec = args.mpiexec
         self.out = args.out
         self.jobs = args.jobs
@@ -86,6 +93,13 @@ class Runner:
 
     def reference(self, case: dict, stehfest=()) -> Path:
         d = self.out / "runs" / case["name"]
+        if self.dry:
+            # nothing is written and no reference is computed
+            if case["name"] not in self._announced:
+                self._announced.add(case["name"])
+                print(f"  would write {d / 'case.json'} and compute its "
+                      "exact reference")
+            return d / "case.json"
         d.mkdir(parents=True, exist_ok=True)
         cpath, rpath = d / "case.json", d / "reference.json"
         text = json.dumps(case, indent=1)
@@ -183,9 +197,9 @@ def save(records: list[dict], path: Path) -> None:
 
 # --- the studies ----------------------------------------------------------------
 
-# Profiles, as campaign.py's: "local" fits a laptop (the longest run a few
-# minutes on 4 ranks), "server" adds the long 3-D runs (p = 2 at nz = 10,
-# ~106k unknowns, ~1.5 h on 4 ranks; p = 1 at nz = 20) and more ranks.
+# Profiles, as campaign.py's: "local" keeps the runs small, "server" adds
+# the large 3-D runs (p = 2 at nz = 10, ~106k unknowns; p = 1 at nz = 20)
+# and more ranks.
 PROFILES = {
     "local": dict(np=2, jobs=10,
                   slab_3d=[(1, 5), (1, 10), (2, 5)]),
@@ -295,6 +309,11 @@ def study_slab(R: Runner, quick: bool, np_: int,
 
 
 def study_stehfest(R: Runner, quick: bool) -> list[dict]:
+    if R.dry:
+        print("  would compute the Stehfest/Talbot comparison and the "
+              "noise-amplification study from the slab references "
+              "(no driver runs)")
+        return []
     recs = []
     orders = (8, 10, 12, 14, 16, 18)
     models = ("lid", "channel", "burgers_lid", "prony_lid", "maxwell_slab",
@@ -703,6 +722,8 @@ def figures_stehfest(recs: list[dict], out: Path) -> None:
         fig.tight_layout()
         fig.savefig(out / "stehfest_noise.png")
         plt.close(fig)
+    if not recs:
+        return
     orders = sorted(int(k[8:]) for k in recs[0]
                     if k.startswith("stehfest") and k[8:].isdigit())
     fig, axes = plt.subplots(1, 2, figsize=(10, 3.8), sharey=True)
@@ -782,21 +803,37 @@ def figures_contrast(recs: list[dict], out: Path) -> None:
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    class Fmt(argparse.RawDescriptionHelpFormatter,
+              argparse.ArgumentDefaultsHelpFormatter):
+        pass
+
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=Fmt)
     p.add_argument("study", choices=("steppers", "slab", "stehfest",
-                                     "contrast", "all"))
-    p.add_argument("--out", type=Path, default=Path("."))
-    p.add_argument("--programs", type=Path)
-    p.add_argument("--mpiexec", default="mpiexec")
-    p.add_argument("--profile", choices=sorted(PROFILES), default="local")
+                                     "contrast", "all"),
+                   help="the study to run")
+    p.add_argument("--out", type=Path, default=Path("."),
+                   help="output root (must be in a build tree or outside "
+                        "the repository); each study writes to <out>/<study>")
+    p.add_argument("--programs", type=Path, default=None,
+                   help="viscoelastic_box executable or its directory; "
+                        "found in a build tree when not given")
+    p.add_argument("--mpiexec", default="mpiexec", help="MPI launcher")
+    p.add_argument("--profile", choices=sorted(PROFILES), default="local",
+                   help="run sizes: local (np 2, jobs 10) or server "
+                        "(np 8, jobs 96, larger 3-D runs)")
     p.add_argument("--jobs", type=int, default=None,
-                   help="cores to use at once, runs x ranks (profile)")
+                   help="cores to use at once, runs x ranks; the "
+                        "profile's value when not given")
     p.add_argument("--np", type=int, default=None,
-                   help="ranks per slab/contrast run (profile)")
-    p.add_argument("--quick", action="store_true")
-    p.add_argument("--figures-only", action="store_true")
-    p.add_argument("--dry-run", action="store_true")
+                   help="ranks per slab/contrast run; the profile's "
+                        "value when not given")
+    p.add_argument("--quick", action="store_true",
+                   help="a reduced set of models, histories and modes")
+    p.add_argument("--figures-only", action="store_true",
+                   help="redraw figures from the saved summary.json")
+    p.add_argument("--dry-run", action="store_true",
+                   help="print the driver commands; writes nothing and "
+                        "computes no references")
     a = p.parse_args()
     profile = PROFILES[a.profile]
     a.jobs = a.jobs or profile["jobs"]
@@ -806,7 +843,8 @@ def main() -> None:
                if a.study == "all" else (a.study,))
     for study in studies:
         d = a.out / study
-        d.mkdir(parents=True, exist_ok=True)
+        if not a.dry_run:
+            d.mkdir(parents=True, exist_ok=True)
         summary = d / "summary.json"
         if not a.figures_only:
             a_out = a.out

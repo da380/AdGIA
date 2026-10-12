@@ -25,7 +25,11 @@ class CentrifugalPotential : public mfem::Coefficient {
       : dim_(dim), Omega_(Omega), w_(dim == 2 ? 1 : 3) {
     w_ = 0.0;
   }
-  void SetAmplitudes(const mfem::Vector& w) { w_ = w; }
+  void SetAmplitudes(const mfem::Vector& w) {
+    MFEM_ASSERT(w.Size() == w_.Size(), "CentrifugalPotential: wrong "
+                                       "number of amplitudes.");
+    w_ = w;
+  }
   void SetUnit(int k) {
     w_ = 0.0;
     w_[k] = 1.0;
@@ -35,19 +39,67 @@ class CentrifugalPotential : public mfem::Coefficient {
 
   mfem::real_t Eval(mfem::ElementTransformation& T,
                     const mfem::IntegrationPoint& ip) override {
-    mfem::Vector x;
-    T.Transform(ip, x);
+    T.Transform(ip, x_);
     if (dim_ == 2) {
-      return -Omega_ * w_[0] * (x * x);
+      return -Omega_ * w_[0] * (x_ * x_);
     }
-    return Omega_ * (w_[0] * x[2] * x[0] + w_[1] * x[2] * x[1] -
-                     w_[2] * (x[0] * x[0] + x[1] * x[1]));
+    return Omega_ * (w_[0] * x_[2] * x_[0] + w_[1] * x_[2] * x_[1] -
+                     w_[2] * (x_[0] * x_[0] + x_[1] * x_[1]));
   }
 
  private:
   int dim_;
   mfem::real_t Omega_;
   mfem::Vector w_;
+  mfem::Vector x_;  ///< scratch: the physical point
+};
+
+/**
+ * @brief @f$\nabla\psi@f$ of CentrifugalPotential, analytically: in 3-D
+ * @f$\nabla\psi = \Omega(\omega_1 x_3 - 2\omega_3 x_1,\;
+ * \omega_2 x_3 - 2\omega_3 x_2,\; \omega_1 x_1 + \omega_2 x_2)@f$, in
+ * 2-D @f$-2\Omega\,\omega_1 x@f$. The referential classes' rotation
+ * machinery assembles its volume loads from this (their tidal door
+ * takes the physical gradient as analytic data).
+ */
+class CentrifugalPotentialGradient : public mfem::VectorCoefficient {
+ public:
+  CentrifugalPotentialGradient(int dim, mfem::real_t Omega)
+      : mfem::VectorCoefficient(dim),
+        dim_(dim),
+        Omega_(Omega),
+        w_(dim == 2 ? 1 : 3) {
+    w_ = 0.0;
+  }
+  void SetAmplitudes(const mfem::Vector& w) {
+    MFEM_ASSERT(w.Size() == w_.Size(),
+                "CentrifugalPotentialGradient: wrong number of amplitudes.");
+    w_ = w;
+  }
+  void SetUnit(int k) {
+    w_ = 0.0;
+    w_[k] = 1.0;
+  }
+
+  void Eval(mfem::Vector& V, mfem::ElementTransformation& T,
+            const mfem::IntegrationPoint& ip) override {
+    T.Transform(ip, x_);
+    V.SetSize(dim_);
+    if (dim_ == 2) {
+      V = x_;
+      V *= -2.0 * Omega_ * w_[0];
+      return;
+    }
+    V[0] = Omega_ * (w_[0] * x_[2] - 2.0 * w_[2] * x_[0]);
+    V[1] = Omega_ * (w_[1] * x_[2] - 2.0 * w_[2] * x_[1]);
+    V[2] = Omega_ * (w_[0] * x_[0] + w_[1] * x_[1]);
+  }
+
+ private:
+  int dim_;
+  mfem::real_t Omega_;
+  mfem::Vector w_;
+  mfem::Vector x_;  ///< scratch: the physical point
 };
 
 /** @brief The inertia matrix of the traditional theory (Yu et al. 2025,

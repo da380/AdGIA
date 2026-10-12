@@ -48,8 +48,8 @@ void Check(double err, double tol, const std::string& what) {
 }
 
 std::string BodyMeshFile(int dim) {
-  return dim == 2 ? "../data/elastogravity_two_layer_2d.msh"
-                  : "../data/elastogravity_three_layer_3d.msh";
+  return dim == 2 ? "../data/earth_fluidcore_2d.msh"
+                  : "../data/earth_innercore_3d.msh";
 }
 
 void UniformPressureTraction(const Vector& x, Vector& f) {

@@ -27,8 +27,8 @@
 // the tidal potential (r/a)^l Y_l0, l >= 2, is evolved as well, in a second
 // run from rest.
 //
-// Time stepping (-scheme): sdirk23 (the stepper survey's best fixed-step
-// scheme, two solves per step; the default), exptrap (exponential
+// Time stepping (-scheme): sdirk23 (the default; the best measured of the
+// fixed-step schemes, two solves per step), exptrap (exponential
 // trapezoid), be (backward Euler), etd1 (exponential Euler), adaptive (the
 // adaptive exponential trapezoid at -rtol). Fixed-step schemes take, within
 // each interval between output times, the same number of equal steps: at
@@ -36,7 +36,7 @@
 // therefore hit exactly, are NOT tied to a fixed step grid, and the
 // default times (geometric, ratio 2^(5/6), the reference's own) fall at a
 // different place in the relaxation each, so that the history metric of
-// compare.py (worst error over all output times, the survey's metric) cannot
+// compare.py (worst error over all output times) cannot
 // be scored stroboscopically.
 //
 // Times and taus are in the same, arbitrary, unit: the quasi-static problem
@@ -311,7 +311,11 @@ int main(int argc, char* argv[]) {
     for (int i = 0; i < cu.Size(); i++) {
       const bool f = std::find(forced.begin(), forced.end(), i) !=
                      forced.end();
-      (f ? big : small) = std::max(f ? big : small, std::abs(cu[i]));
+      if (f) {
+        big = std::max(big, std::abs(cu[i]));
+      } else {
+        small = std::max(small, std::abs(cu[i]));
+      }
     }
     s.spurious = small / (big + 1e-300);
     return s;
@@ -394,12 +398,14 @@ int main(int argc, char* argv[]) {
   const Run load = evolve(true);
   Run tidal;
   const bool with_tide = tide && lmax >= 2;
+  if (root && tide && !with_tide) {
+    std::cout << "Tide skipped: it needs lmax >= 2.\n";
+  }
   if (with_tide) {
     if (root) std::cout << "\nTide: h by degree\n";
-    // The load run's operator is gone but its effective modulus is still
-    // assembled in the problem, and a fresh operator assumes the
-    // unrelaxed one: restore it before starting from rest.
-    problem.ClearRelaxationWeights();
+    // A fresh ViscoelasticOperator clears any effective modulus the load
+    // run left assembled in the problem; only the solution needs
+    // resetting here.
     c.ResetSolution();
     tidal = evolve(false);
   }
@@ -423,11 +429,12 @@ int main(int argc, char* argv[]) {
       if (tide_s) {
         // The tidal numbers exist from degree two: null below.
         std::vector<real_t> h, l, k;
+        const real_t nan = std::numeric_limits<real_t>::quiet_NaN();
         for (std::size_t j = 0; j < degrees.size(); j++) {
           const bool has = degrees[j] >= 2;
-          h.push_back(has ? tide_s->h[j] : NAN);
-          l.push_back(has ? tide_s->l[j] : NAN);
-          k.push_back(has ? tide_s->k[j] : NAN);
+          h.push_back(has ? tide_s->h[j] : nan);
+          l.push_back(has ? tide_s->l[j] : nan);
+          k.push_back(has ? tide_s->k[j] : nan);
         }
         os << ", \"h_tide\": " << List(h) << ", \"l_tide\": " << List(l)
            << ", \"k_tide\": " << List(k);
@@ -469,7 +476,7 @@ int main(int argc, char* argv[]) {
     }
     os << "],\n  \"scheme\": \"" << scheme_name << "\""
        << ",\n  \"steps_per_interval\": " << steps
-       << ",\n  \"dt_max\": " << Num(dt_max * tau_min)
+       << ",\n  \"dt_cap_absolute\": " << Num(dt_max * tau_min)
        << ",\n  \"rtol\": " << Num(rtol) << ",\n  \"atol\": " << Num(atol)
        << ",\n  \"tau_min\": " << Num(tau_min)
        << ",\n  \"degree\": " << List(degrees)

@@ -53,7 +53,7 @@ struct Toy {
 }  // namespace
 
 TEST(Descent, LoopsReachTheConstrainedOptimum) {
-  Mesh mesh("../data/elastogravity_two_layer_2d.msh", 1, 1);
+  Mesh mesh("../data/earth_fluidcore_2d.msh", 1, 1);
   L2_FECollection l2(1, 2);
   FiniteElementSpace fes(&mesh, &l2);
 
@@ -118,7 +118,7 @@ TEST(Descent, LoopsReachTheConstrainedOptimum) {
 }
 
 TEST(Descent, PriorScalesTheQuadraticSolution) {
-  Mesh mesh("../data/elastogravity_two_layer_2d.msh", 1, 1);
+  Mesh mesh("../data/earth_fluidcore_2d.msh", 1, 1);
   L2_FECollection l2(1, 2);
   FiniteElementSpace fes(&mesh, &l2);
 
@@ -174,7 +174,7 @@ TEST(Descent, PriorScalesTheQuadraticSolution) {
 }
 
 TEST(Descent, StopPredicateEndsBothLoops) {
-  Mesh mesh("../data/elastogravity_two_layer_2d.msh", 1, 1);
+  Mesh mesh("../data/earth_fluidcore_2d.msh", 1, 1);
   L2_FECollection l2(1, 2);
   FiniteElementSpace fes(&mesh, &l2);
 

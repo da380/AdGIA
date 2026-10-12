@@ -116,7 +116,8 @@ void AssembleHarmonicGradientElementMatrix(
 *****************************************************************/
 
 void PoissonDtNOperator::SetUp() {
-  assert(dim_ == 2 || dim_ == 3);
+  MFEM_VERIFY(dim_ == 2 || dim_ == 3,
+              "PoissonDtNOperator: the mesh must be 2- or 3-dimensional.");
 
 #ifdef MFEM_USE_MPI
   if (parallel_) {
@@ -159,16 +160,26 @@ PoissonDtNOperator::PoissonDtNOperator(MPI_Comm comm,
                                        mfem::ParFiniteElementSpace* fes,
                                        int degree)
     : mfem::Operator(fes->GetVSize()),
-      parallel_{true},
-      comm_{comm},
-      pfes_{fes},
       fes_{fes},
       dim_{fes->GetMesh()->Dimension()},
       degree_{degree},
       basis_{dim_, degree},
       coeff_dim_{basis_.Size()},
-      mat_(fes->GetVSize(), coeff_dim_) {
+      mat_(fes->GetVSize(), coeff_dim_),
+      parallel_{true},
+      pfes_{fes},
+      comm_{comm} {
   SetUp();
+}
+
+PoissonDtNOperator::~PoissonDtNOperator() {
+  if (bdr_comm_ != MPI_COMM_NULL) {
+    int finalized = 0;
+    MPI_Finalized(&finalized);
+    if (!finalized) {
+      MPI_Comm_free(&bdr_comm_);
+    }
+  }
 }
 #endif
 
@@ -251,6 +262,8 @@ void PoissonDtNOperator::Assemble() {
 #ifdef MFEM_USE_MPI
 mfem::RAPOperator PoissonDtNOperator::RAP() const {
   auto* P = fes_->GetProlongationMatrix();
+  MFEM_VERIFY(P, "PoissonDtNOperator::RAP: the space has no prolongation "
+                 "operator (it is not a ParFiniteElementSpace).");
   return mfem::RAPOperator(*P, *this, *P);
 }
 #endif
@@ -277,7 +290,9 @@ void PoissonDtNOperator::AssembleElementMatrix(
 *****************************************************************/
 
 void PoissonMultipoleOperator::SetUp() {
-  assert(tr_fes_->GetMesh() == te_fes_->GetMesh());
+  MFEM_VERIFY(tr_fes_->GetMesh() == te_fes_->GetMesh(),
+              "PoissonMultipoleOperator: trial and test spaces must share a "
+              "mesh.");
 #ifdef MFEM_USE_MPI
   if (parallel_) {
     SetBoundaryMarker(tr_pfes_->GetParMesh());
@@ -315,19 +330,19 @@ PoissonMultipoleOperator::PoissonMultipoleOperator(
     mfem::ParFiniteElementSpace* te_fes, int degree,
     const mfem::Array<int>& dom_marker)
     : mfem::Operator(te_fes->GetVSize(), tr_fes->GetVSize()),
-      parallel_{true},
-      comm_{comm},
       tr_fes_{tr_fes},
       te_fes_{te_fes},
-      tr_pfes_{tr_fes},
-      te_pfes_{te_fes},
       dim_{tr_fes->GetMesh()->Dimension()},
       degree_{degree},
       basis_{dim_, degree},
       coeff_dim_{basis_.Size()},
       dom_marker_{dom_marker},
       lmat_(te_fes->GetVSize(), coeff_dim_),
-      rmat_(tr_fes->GetVSize(), coeff_dim_) {
+      rmat_(tr_fes->GetVSize(), coeff_dim_),
+      parallel_{true},
+      tr_pfes_{tr_fes},
+      te_pfes_{te_fes},
+      comm_{comm} {
   SetUp();
 }
 #endif
@@ -419,6 +434,10 @@ void PoissonMultipoleOperator::Assemble() {
 mfem::RAPOperator PoissonMultipoleOperator::RAP() const {
   auto* P_te = te_fes_->GetProlongationMatrix();
   auto* P_tr = tr_fes_->GetProlongationMatrix();
+  MFEM_VERIFY(P_te && P_tr,
+              "RAP: the trial and test spaces must be "
+              "ParFiniteElementSpaces (a serial space has no prolongation "
+              "operator).");
   return mfem::RAPOperator(*P_te, *this, *P_tr);
 }
 #endif
@@ -460,8 +479,12 @@ void PoissonMultipoleOperator::AssembleRightElementMatrix(
 *****************************************************************/
 
 void PoissonLinearisedMultipoleOperator::SetUp() {
-  assert(tr_fes_->GetMesh() == te_fes_->GetMesh());
-  assert(tr_fes_->GetMesh()->Dimension() == tr_fes_->GetVDim());
+  MFEM_VERIFY(tr_fes_->GetMesh() == te_fes_->GetMesh(),
+              "PoissonLinearisedMultipoleOperator: trial and test spaces must "
+              "share a mesh.");
+  MFEM_VERIFY(tr_fes_->GetMesh()->Dimension() == tr_fes_->GetVDim(),
+              "PoissonLinearisedMultipoleOperator: the trial space must be "
+              "vector-valued with one component per dimension.");
 #ifdef MFEM_USE_MPI
   if (parallel_) {
     SetBoundaryMarker(tr_pfes_->GetParMesh());
@@ -517,12 +540,8 @@ PoissonLinearisedMultipoleOperator::PoissonLinearisedMultipoleOperator(
     mfem::ParFiniteElementSpace* te_fes, mfem::Coefficient& density, int degree,
     const mfem::Array<int>& dom_marker)
     : mfem::Operator(te_fes->GetVSize(), tr_fes->GetVSize()),
-      parallel_{true},
-      comm_{comm},
       tr_fes_{tr_fes},
       te_fes_{te_fes},
-      tr_pfes_{tr_fes},
-      te_pfes_{te_fes},
       density_{&density},
       dim_{tr_fes->GetMesh()->Dimension()},
       degree_{degree},
@@ -530,7 +549,11 @@ PoissonLinearisedMultipoleOperator::PoissonLinearisedMultipoleOperator(
       coeff_dim_{basis_.Size()},
       dom_marker_{dom_marker},
       lmat_(te_fes->GetVSize(), coeff_dim_),
-      rmat_(tr_fes->GetVSize(), coeff_dim_) {
+      rmat_(tr_fes->GetVSize(), coeff_dim_),
+      parallel_{true},
+      tr_pfes_{tr_fes},
+      te_pfes_{te_fes},
+      comm_{comm} {
   SetUp();
 }
 
@@ -539,19 +562,19 @@ PoissonLinearisedMultipoleOperator::PoissonLinearisedMultipoleOperator(
     mfem::ParFiniteElementSpace* te_fes, int degree,
     const mfem::Array<int>& dom_marker)
     : mfem::Operator(te_fes->GetVSize(), tr_fes->GetVSize()),
-      parallel_{true},
-      comm_{comm},
       tr_fes_{tr_fes},
       te_fes_{te_fes},
-      tr_pfes_{tr_fes},
-      te_pfes_{te_fes},
       dim_{tr_fes->GetMesh()->Dimension()},
       degree_{degree},
       basis_{dim_, degree},
       coeff_dim_{basis_.Size()},
       dom_marker_{dom_marker},
       lmat_(te_fes->GetVSize(), coeff_dim_),
-      rmat_(tr_fes->GetVSize(), coeff_dim_) {
+      rmat_(tr_fes->GetVSize(), coeff_dim_),
+      parallel_{true},
+      tr_pfes_{tr_fes},
+      te_pfes_{te_fes},
+      comm_{comm} {
   SetUp();
 }
 #endif
@@ -643,6 +666,10 @@ void PoissonLinearisedMultipoleOperator::Assemble() {
 mfem::RAPOperator PoissonLinearisedMultipoleOperator::RAP() const {
   auto* P_te = te_fes_->GetProlongationMatrix();
   auto* P_tr = tr_fes_->GetProlongationMatrix();
+  MFEM_VERIFY(P_te && P_tr,
+              "RAP: the trial and test spaces must be "
+              "ParFiniteElementSpaces (a serial space has no prolongation "
+              "operator).");
   return mfem::RAPOperator(*P_te, *this, *P_tr);
 }
 #endif

@@ -22,15 +22,15 @@
 // program runs under mpiexec, on any number of ranks.
 //
 // Meshes (../data):
-//   elastogravity_2d.msh, coupled_poisson.msh          uniform, 2-D and 3-D
-//                   (meshes/disc_with_buffer.py, meshes/ball_with_buffer.py)
+//   disc_buffer_2d.msh, ball_buffer_coarse_3d.msh          uniform, 2-D and 3-D
+//                   (meshes/homogeneous_body.py --preset disc-buffer, meshes/homogeneous_body.py --preset ball-buffer-coarse)
 //   aspherical_buffer_2d.mesh, aspherical_buffer_3d.mesh         uniform
 //                   (meshes/aspherical_body.py)
-//   elastogravity_two_layer_2d.msh, elastogravity_three_layer_2d.msh,
-//   elastogravity_three_layer_3d.msh                   (meshes/layered_earth.py)
+//   earth_fluidcore_2d.msh, earth_innercore_2d.msh,
+//   earth_innercore_3d.msh                   (meshes/layered_earth.py)
 //
 // Options (defaults in brackets):
-//   -m      mesh file [../data/elastogravity_two_layer_2d.msh]; the
+//   -m      mesh file [../data/earth_fluidcore_2d.msh]; the
 //           layering of the model follows the mesh (see above).
 //   -o      finite element order [1].
 //   -s      solver: 0 Schur-complement CG, 1 block MINRES, 2 both [1];
@@ -51,49 +51,66 @@
 //           [off].
 //   -vis / -no-vis   GLVis windows on or off [off].
 //   -no-fluid-mass / -fluid-mass   drop the hydrostatic Poisson term
-//           rho'_F phi (the fluid becomes unstratified), for
-//           experiments [off: the term is kept].
-//   -pv / -no-pv   write a ParaView data collection [off].
+//           rho'_F phi (the fluid becomes unstratified in the Eulerian
+//           sense), for experiments [off: the term is kept]. For the
+//           PREM-like core it changes the response by a factor of about
+//           three, because the potential block is not far from losing its
+//           positivity (doc/self_gravitation.md, "3. Solvers",
+//           "Definiteness of the potential block").
+//   -pv / -no-pv   write ParaView data collections [off]: ParaView/
+//           elastogravity_layered (displacement, on the solid SubMesh) and
+//           ParaView/elastogravity_layered_potential (potentials, on the
+//           parent mesh).
 //
 // Sample runs (with mpiexec -np N in front in a parallel build):
 //    ./elastogravity_layered -o 2
-//    ./elastogravity_layered -m ../data/elastogravity_2d.msh -o 2 -s 2 -diag
-//    ./elastogravity_layered -m ../data/coupled_poisson.msh -o 2 -mu 50e9
-//    ./elastogravity_layered -m ../data/elastogravity_three_layer_2d.msh -o 2
+//    ./elastogravity_layered -m ../data/disc_buffer_2d.msh -o 2 -s 2 -diag
+//    ./elastogravity_layered -m ../data/ball_buffer_coarse_3d.msh -o 2 -mu 50e9
+//    ./elastogravity_layered -m ../data/earth_innercore_2d.msh -o 2
 //        -s 2 -diag
-//    ./elastogravity_layered -m ../data/elastogravity_three_layer_3d.msh -o 1
+//    ./elastogravity_layered -m ../data/earth_innercore_3d.msh -o 1
 //    ./elastogravity_layered -o 2 -load 0 -tidal 1.0
 //    ./elastogravity_layered -o 2 -solid-core
-//    ./elastogravity_layered -m ../data/elastogravity_three_layer_3d.msh -o 1
+//    ./elastogravity_layered -m ../data/earth_innercore_3d.msh -o 1
 //        -no-fluid-mass
-//
-// -s 2 runs both solvers and reports their difference (they solve the same
-// restricted system and agree to solver tolerance). -diag prints the
-// rigid-mode residuals (global modes, then the inner core's rotations),
-// which measure how well the discretisation keeps the rigid-body null space
-// and decrease with refinement, and with a fluid the extreme Ritz values of
-// the potential block. -solid-core treats the outer core as a solid
-// (constant moduli), for comparison with the fluid physics. -tidal A applies
-// the degree-2 tidal potential A (r/a)^2 P_2 with A in m^2/s^2 (with -load 0
-// it is the only forcing). -no-fluid-mass drops the hydrostatic Poisson term
-// rho'_F phi (the fluid becomes unstratified in the Eulerian sense); for the
-// PREM-like core it changes the response by a factor of about three, because
-// the potential block is not far from losing its positivity
-// (doc/self_gravitation.md, "3. Solvers", "Definiteness of the potential
-// block").
 //
 // Output: iterations, time and norms of each solve, the maximum displacement
 // in metres, and with -vis the displacement and the potential perturbation
-// in GLVis (-pv: a ParaView collection).
+// in GLVis (-pv: ParaView collections).
+//
+// Mesh requirements: 2-D or 3-D, origin-centred, in the units of the body
+// (the radii are those of layered_model.hpp; the mesh's outer radius is the
+// surface). The layering is read from the number of attributes and the
+// attribute table is, for the meshes of meshes/layered_earth.py (radii in
+// units of the surface radius 6371 km, the core-mantle boundary at
+// r = 3483/6371):
+//
+//   attribute   uniform         two-layer       three-layer
+//      1        body            fluid core      inner core
+//      2        buffer          mantle          fluid outer core
+//      3        -               buffer (to 1.2) mantle
+//      4        -               -               buffer
+//
+//   boundary    1 CMB (two-layer), 2 surface, 3 outer boundary of the
+//               buffer; the three-layer mesh adds the inner-core boundary.
+//
+// The buffer (to r = 1.2 for the layered meshes) carries the potential
+// only; the displacement lives on the solid SubMesh of the body. The
+// uniform meshes (homogeneous_body.py presets disc-buffer, ball-buffer-coarse,
+// aspherical_body.py) have the body as attribute 1 and the buffer as 2,
+// the surface being the body's outer boundary. Dimensional parameters are
+// in SI units and are nondimensionalised internally.
 // ============================================================================
 
 #include <chrono>
 #include <iostream>
 #include <memory>
 #include <numbers>
+#include <vector>
 
-#include "layered_model.hpp"
 #include "AdGIA.hpp"
+#include "layered_model.hpp"
+#include "visualisation.hpp"
 
 using namespace mfem;
 using namespace AdGIA;
@@ -125,20 +142,6 @@ real_t MaxAbs(const FieldType& f) {
                 MPI_COMM_WORLD);
 #endif
   return m;
-}
-
-// Send a field to GLVis.
-void Show(Mesh& mesh, const GridFunction& f, const char* title) {
-  char vishost[] = "localhost";
-  socketstream sock(vishost, 19916);
-  sock.precision(8);
-#ifdef MFEM_USE_MPI
-  sock << "parallel " << Mpi::WorldSize() << " " << Mpi::WorldRank() << "\n";
-#endif
-  sock << "solution\n"
-       << mesh << f << "window_title '" << title << "'"
-       << (mesh.Dimension() == 2 ? "\nkeys Rjlbc\n" : "\nkeys RRRilc\n")
-       << std::flush;
 }
 
 struct Result {
@@ -179,7 +182,7 @@ int main(int argc, char* argv[]) {
   Hypre::Init();
 #endif
 
-  const char* mesh_file = "../data/elastogravity_two_layer_2d.msh";
+  const char* mesh_file = "../data/earth_fluidcore_2d.msh";
   int order = 1;
   int solver = 1;
   int dtn_degree = 16;
@@ -361,21 +364,42 @@ int main(int argc, char* argv[]) {
     std::cout << "Max displacement: " << umax << " m\n";
   }
 
+  FieldType phi_dim(r.phi);
+  ND.UnscaleGravityPotential(phi_dim);
+
   if (paraview) {
-    ParaViewDataCollection dc("elastogravity_layered", &solid);
-    dc.SetPrefixPath("ParaView");
-    dc.SetLevelsOfDetail(order);
-    dc.SetHighOrderOutput(true);
-    problem.RegisterFields(dc);
-    dc.SetCycle(0);
-    dc.SetTime(0.0);
-    dc.Save();
+    // Two collections, because a collection has one mesh: the displacement
+    // lives on the solid SubMesh, the potentials on the parent mesh.
+    // (Fields are registered directly, in the problem's model units, rather
+    // than through problem.RegisterFields, which would put the potentials in
+    // the solid collection too.)
+    FieldType u_out(r.u), phi_out(r.phi),
+        phi0_out(static_cast<const FieldType&>(problem.BackgroundPotential()));
+    ParaViewDataCollection dc_u("elastogravity_layered", &solid);
+    dc_u.SetPrefixPath("ParaView");
+    dc_u.SetLevelsOfDetail(order);
+    dc_u.SetHighOrderOutput(true);
+    dc_u.RegisterField("displacement", &u_out);
+    dc_u.SetCycle(0);
+    dc_u.SetTime(0.0);
+    dc_u.Save();
+    ParaViewDataCollection dc_phi("elastogravity_layered_potential", &parent);
+    dc_phi.SetPrefixPath("ParaView");
+    dc_phi.SetLevelsOfDetail(order);
+    dc_phi.SetHighOrderOutput(true);
+    dc_phi.RegisterField("potential", &phi_out);
+    dc_phi.RegisterField("background_potential", &phi0_out);
+    dc_phi.SetCycle(0);
+    dc_phi.SetTime(0.0);
+    dc_phi.Save();
   }
   if (visualization) {
-    Show(solid, u_dim, "Displacement [m]");
-    FieldType phi_dim(r.phi);
-    ND.UnscaleGravityPotential(phi_dim);
-    Show(parent, phi_dim, "Potential perturbation [m^2/s^2]");
+    // The solid SubMesh can leave ranks empty; GLVisWindow skips them.
+    examples::GLVisWindow win_u("Displacement [m]", examples::DefaultKeys(dim));
+    examples::GLVisWindow win_phi("Potential perturbation [m^2/s^2]",
+                                  examples::DefaultKeys(dim));
+    win_u.Send(solid, u_dim);
+    win_phi.Send(parent, phi_dim);
   }
   return 0;
 }

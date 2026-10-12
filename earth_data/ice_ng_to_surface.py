@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Sample an ice-ng loading history at exported surface nodes.
 
-The ingest leg of the surface exchange format (WP6 of
-doc/planning/sea_level_plan.md): reads the CSV that
+The ingest leg of the surface exchange format: reads the CSV that
 SeaLevelOperator::WriteSurfaceField writes (the node set; the value
 column is ignored), samples an ICE-5G/6G/7G field at those nodes for a
 list of dates, and writes a time-stack CSV that IceHistory reads —
@@ -15,7 +14,9 @@ and its IceNG loader does the per-date file resolution and the
 interpolation between the model's time slices. Each date's field comes
 back on a wrapped DH grid (poles and the 360-degree column included),
 so sampling at the nodes is plain bilinear interpolation in latitude
-and longitude with no seam or pole casing.
+and longitude with no seam or pole casing. The nodes are sampled by
+direction (latitude and longitude of each node): their radius is not
+checked, so any surface node set, of any radius, is accepted.
 
 Times and units: dates are in ka BP, oldest first; the column times are
 model times t_k = (date_0 - date_k) / time-scale, ascending from zero,
@@ -29,7 +30,8 @@ Options (defaults in brackets):
   --version        ICE7G, ICE6G or ICE5G [ICE7G].
   --field          ice, topography or sea_level [ice].
   --dates          comma list, ka BP, oldest first [21,15,10,5,0].
-  --lmax           grid truncation of the ice model's fields [180].
+  --lmax           spherical-harmonic truncation degree of the ice
+                   model's fields [180].
   --length-scale   metres per length unit of the output [1.0].
   --time-scale     ka per time unit of the column times [1.0].
 
@@ -70,16 +72,33 @@ def main() -> None:
     p = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("csv", type=Path)
-    p.add_argument("-o", "--out", type=Path, default=None)
+    p.add_argument("csv", type=Path,
+                   help="exported surface CSV (header x,y,z,...) giving "
+                        "the node set; its value column is ignored")
+    p.add_argument("-o", "--out", type=Path, default=None,
+                   help="output time-stack CSV (default: "
+                        "<csv stem>_<field>.csv beside the input)")
     p.add_argument("--version", default="ICE7G",
-                   choices=["ICE5G", "ICE6G", "ICE7G"])
+                   choices=["ICE5G", "ICE6G", "ICE7G"],
+                   help="ice model (default %(default)s)")
     p.add_argument("--field", default="ice",
-                   choices=["ice", "topography", "sea_level"])
-    p.add_argument("--dates", default="21,15,10,5,0")
-    p.add_argument("--lmax", type=int, default=180)
-    p.add_argument("--length-scale", type=float, default=1.0)
-    p.add_argument("--time-scale", type=float, default=1.0)
+                   choices=["ice", "topography", "sea_level"],
+                   help="field to sample: ice thickness, topography or "
+                        "sea level (default %(default)s)")
+    p.add_argument("--dates", default="21,15,10,5,0",
+                   help="comma-separated dates in ka BP, oldest first "
+                        "(default %(default)s)")
+    p.add_argument("--lmax", type=int, default=180,
+                   help="spherical-harmonic truncation degree of the "
+                        "model's fields (default %(default)s)")
+    p.add_argument("--length-scale", type=float, default=1.0,
+                   help="metres per length unit of the output; lengths "
+                        "(thickness, height) are divided by it (default "
+                        "%(default)s, i.e. metres; 6.371e6 for lengths in "
+                        "Earth radii)")
+    p.add_argument("--time-scale", type=float, default=1.0,
+                   help="ka per time unit of the output column times "
+                        "(default %(default)s, i.e. ka)")
     args = p.parse_args()
 
     dates = [float(tok) for tok in args.dates.split(",") if tok.strip()]
@@ -109,12 +128,9 @@ def main() -> None:
 
     out = args.out or args.csv.with_name(
         f"{args.csv.stem}_{args.field}.csv")
-    with open(out, "w") as f:
-        f.write("x,y,z," + ",".join(f"{t:.10g}" for t in times) + "\n")
-        for i in range(xyz.shape[0]):
-            row = [f"{v:.16g}" for v in xyz[i]]
-            row += [f"{c[i]:.16g}" for c in columns]
-            f.write(",".join(row) + "\n")
+    header = "x,y,z," + ",".join(f"{t:.10g}" for t in times)
+    np.savetxt(out, np.column_stack([xyz, *columns]), delimiter=",",
+               fmt="%.16g", header=header, comments="")
     print(f"{out}: {xyz.shape[0]} nodes, {len(dates)} times "
           f"({args.version} {args.field}; model times "
           f"{times[0]:g} .. {times[-1]:g})")

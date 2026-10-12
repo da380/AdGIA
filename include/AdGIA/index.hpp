@@ -62,7 +62,7 @@ static_assert(SymmetricComponentOrder::TraceFreeDropped(3) ==
  * @brief Base class for indexing vector, matrix, and tensor fields.
  *
  * This abstract base class provides common functionalities for indexing
- * components within vector, matrix, and tensor fields  defined
+ * components within vector, matrix, and tensor fields defined
  * over a finite element space. It stores the spatial dimension (`dim_`)
  * and the number of degrees of freedom per component (`dof_`).
  */
@@ -79,6 +79,8 @@ class Index {
    * @param dof The number of degrees of freedom associated with each component.
    */
   Index(int dim, int dof) : dim_{dim}, dof_{dof} {}
+
+  virtual ~Index() = default;
 
   /**
    * @brief Returns the spatial dimension of the field.
@@ -249,9 +251,9 @@ class SymmetricMatrixIndex : public MatrixIndex {
  * This class extends `SymmetricMatrixIndex`. The indexing is identical
  * to that for symmetric matrices, with the implicit understanding that
  * the final diagonal element (component (d-1, d-1), i.e. 33 in 3D and 22 in
- * 2D, at offset `SymmetricComponentOrder::TraceFreeDropped`) is removed from the basis to
- * enforce the trace-free condition. This removal is not explicitly checked
- * in calls to the indexing or offset functions.
+ * 2D, at offset `SymmetricComponentOrder::TraceFreeDropped`) is removed from
+ * the basis to enforce the trace-free condition. This removal is not
+ * explicitly checked in calls to the indexing or offset functions.
  */
 class TraceFreeSymmetricMatrixIndex : public SymmetricMatrixIndex {
  public:

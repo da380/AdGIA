@@ -58,6 +58,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <limits>
 #include <map>
 
 #include "benchmark_case.hpp"
@@ -176,6 +177,14 @@ int main(int argc, char* argv[]) {
   Case c(options);
   const auto& basis = c.Basis();
   const real_t a = c.radius, g = c.gravity;
+  if (root && profiles && !c.SupportsProfiles()) {
+    std::cout << "Radial profiles are not written for -method " << c.method
+              << ".\n";
+  }
+  if (root && tide && !c.SupportsTide()) {
+    std::cout << "Tidal solves are skipped for -method " << c.method
+              << " (no tidal force in the slip classes).\n";
+  }
   profiles = profiles && c.SupportsProfiles();
   tide = tide && c.SupportsTide();
   if (combined && c.method == "dahlen" && c.HasFluid() && lmin == 0) {
@@ -193,7 +202,6 @@ int main(int argc, char* argv[]) {
   // The gravity of the background at the radii of the profiles.
   std::vector<Vector> profile_gravity;
   if (profiles) {
-    Vector none;
     ParGridFunction zero_u(c.fes_u.get()), zero_phi(c.fes_phi.get());
     zero_u = 0.0;
     zero_phi = 0.0;
@@ -365,7 +373,8 @@ int main(int argc, char* argv[]) {
     const real_t l_load = -g * load.v[c.surface] / phi_sigma;
 
     Response tidal;
-    real_t h = NAN, k = NAN, l_tide = NAN;
+    const real_t nan = std::numeric_limits<real_t>::quiet_NaN();
+    real_t h = nan, k = nan, l_tide = nan;
     if (with_tide) {
       tidal = tides[l];
       h = -g * tidal.u[c.surface];

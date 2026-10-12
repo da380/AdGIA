@@ -6,7 +6,7 @@
 // solution) of what lateral variations do to the relaxation, and of a
 // pattern worth knowing: the asymmetry is TRANSIENT.
 //
-// The body is the homogeneous disc of elastogravity_2d.msh (radius 1, in a
+// The body is the homogeneous disc of disc_buffer_2d.msh (radius 1, in a
 // buffer for the DtN condition), self-gravitating, with a standard linear
 // solid rheology (IsotropicMaxwellRheology with a long-term modulus):
 //
@@ -45,7 +45,7 @@
 // on one rank and reduced globally.
 //
 // Options (defaults in brackets):
-//   -m       mesh file [../data/elastogravity_2d.msh]: a body
+//   -m       mesh file [../data/disc_buffer_2d.msh]: a body
 //            (attribute 1) in a buffer (attribute 2) for the DtN
 //            condition.
 //   -o       finite element order [2].
@@ -75,6 +75,14 @@
 //    ./lateral_viscosity
 //    ./lateral_viscosity -tauf 1 -taus 1       (uniform: no asymmetry)
 //    ./lateral_viscosity -w 0.02 -o 3         (a sharper transition)
+//
+// Mesh requirements: 2-D only (the observation points and the load are in
+// the x-y plane), origin-centred, the body being the UNIT disc (attribute 1,
+// radius 1: the observation points are at (+-1, 0) and (0, 1)) inside a
+// buffer (attribute 2) for the DtN condition. The surface of the body is
+// the LAST (largest-numbered) boundary attribute of the body submesh, where
+// the load acts. Default ../data/disc_buffer_2d.msh (meshes/
+// homogeneous_body.py --preset disc-buffer). Nondimensional, with the density fixed at rho = 1.
 // ============================================================================
 #include <cmath>
 #include <iomanip>
@@ -178,7 +186,7 @@ int main(int argc, char* argv[]) {
   Hypre::Init();
 #endif
 
-  const char* mesh_file = "../data/elastogravity_2d.msh";
+  const char* mesh_file = "../data/disc_buffer_2d.msh";
   int order = 2;
   int dtn_degree = 16;
   real_t G = 0.2, rho = 1.0, kappa = 3.0, mu_inf = 0.2, mu_1 = 0.8;
@@ -228,6 +236,7 @@ int main(int argc, char* argv[]) {
   if (Root()) {
     args.PrintOptions(std::cout);
   }
+  MFEM_VERIFY(n_out >= 2, "-nout must be at least 2.");
 
   Mesh smesh(mesh_file, 1, 1);
   const int dim = smesh.Dimension();

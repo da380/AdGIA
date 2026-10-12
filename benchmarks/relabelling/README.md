@@ -45,7 +45,17 @@ and writes the identity logs and aspherical results to
   `-method slip_broken` the run is informational: it also compares the
   sixteen assembled blocks of the broken organisation
   (`ApplyBrokenBlock`) and the stored constraint kernels
-  (`ApplyBrokenKernel`).
+  (`ApplyBrokenKernel`). Two further legs extend the identity to the
+  referential sea-level solve: `-water` replaces the
+  plain surface load by the full water feedback (`SetWaterLoad`), whose
+  bordered solve joins the identity — strict (measured u 4.9e-7,
+  Φ_g 4.8e-10 at A = 0.02, h = 0.3, homogeneous), and `-map-surface`
+  swaps in a SURFACE-MOVING radial relabelling (solid models, welded
+  only), the leg that exercises the referential-area conventions: the
+  mapped side's load and weight compose with the map and carry the
+  Nanson factor `J_Σ`, which is also `SetWaterLoad`'s
+  `surface_jacobian`. Strict both plain (u 8.0e-9) and with water
+  (u 9.7e-9, Φ_g 1.3e-12), which pins the data-row Jacobian convention.
 - **`aspherical_reference`** (exact F): the same spherical physics
   described from an aspherical reference body, whose mesh is the image of
   a spherical gmsh mesh under the radial stretch of
@@ -63,6 +73,13 @@ and writes the identity logs and aspherical results to
           --eps 0.02 --name _e0.02 --out <dir>
       python <repo>/meshes/aspherical_body.py --dim 3 --buffer \
           --scale 0.5 --name _s0.5 --out <dir>
+
+  With `-water` the degree sweep is replaced
+  by ONE water solve on the aspherical body, certified internally with
+  no spherical reference: monolithic ≡ fixed point (measured 4.5e-8),
+  the displacement agreement (1.8e-7), and the mass-conservation
+  certificate (machine precision), at eps 0.05, beta 0.5, order 2 on
+  the stock mesh.
 
   `plot.py` draws the runs' relative L2 field errors against degree, one
   series per results file, into `aspherical.png` beside them

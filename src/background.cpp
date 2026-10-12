@@ -13,6 +13,19 @@ namespace AdGIA {
 
 using namespace mfem;
 
+namespace {
+
+// Linear interpolation of a profile sampled on the uniform grid of
+// spacing h, at 0 <= r < R.
+real_t InterpolateProfile(const std::vector<real_t>& v, real_t h, real_t r) {
+  const real_t s = std::max(real_t{0}, r) / h;
+  const int i = std::min(static_cast<int>(s), static_cast<int>(v.size()) - 2);
+  const real_t w = s - i;
+  return (1.0 - w) * v[i] + w * v[i + 1];
+}
+
+}  // namespace
+
 RadialHydrostaticState::RadialHydrostaticState(
     int dim, std::function<real_t(real_t)> rho, real_t G, real_t radius,
     int samples)
@@ -24,15 +37,20 @@ RadialHydrostaticState::RadialHydrostaticState(
 
   // Cumulative trapezoid for m(r) = int_0^r rho s^{d-1} ds, then
   // g = 4 pi G m / r^{d-1}.
+  std::vector<real_t> rho_samples(samples + 1);
+  for (int i = 0; i <= samples; i++) {
+    rho_samples[i] = rho_(i * h_);
+  }
   g_.assign(samples + 1, 0.0);
   real_t m = 0.0;
-  auto integrand = [&](real_t r) {
-    return rho_(r) * (dim_ == 2 ? r : r * r);
+  auto integrand = [&](int i) {
+    const real_t r = i * h_;
+    return rho_samples[i] * (dim_ == 2 ? r : r * r);
   };
-  real_t prev = integrand(0.0);
+  real_t prev = integrand(0);
   for (int i = 1; i <= samples; i++) {
     const real_t r = i * h_;
-    const real_t cur = integrand(r);
+    const real_t cur = integrand(i);
     m += 0.5 * h_ * (prev + cur);
     prev = cur;
     g_[i] = four_pi_G * m / (dim_ == 2 ? r : r * r);
@@ -41,8 +59,8 @@ RadialHydrostaticState::RadialHydrostaticState(
   // Cumulative trapezoid inward for p(r) = int_r^R rho g ds, p(R) = 0.
   p_.assign(samples + 1, 0.0);
   for (int i = samples - 1; i >= 0; i--) {
-    const real_t f0 = rho_(i * h_) * g_[i];
-    const real_t f1 = rho_((i + 1) * h_) * g_[i + 1];
+    const real_t f0 = rho_samples[i] * g_[i];
+    const real_t f1 = rho_samples[i + 1] * g_[i + 1];
     p_[i] = p_[i + 1] + 0.5 * h_ * (f0 + f1);
   }
 }
@@ -53,34 +71,23 @@ real_t RadialHydrostaticState::Gravity(real_t r) const {
     const real_t g_R = g_.back();
     return dim_ == 2 ? g_R * (R_ / r) : g_R * (R_ / r) * (R_ / r);
   }
-  const real_t s = std::max(real_t{0}, r) / h_;
-  const int i =
-      std::min(static_cast<int>(s), static_cast<int>(g_.size()) - 2);
-  const real_t w = s - i;
-  return (1.0 - w) * g_[i] + w * g_[i + 1];
+  return InterpolateProfile(g_, h_, r);
 }
 
 real_t RadialHydrostaticState::Pressure(real_t r) const {
   if (r >= R_) {
     return 0.0;
   }
-  const real_t s = std::max(real_t{0}, r) / h_;
-  const int i =
-      std::min(static_cast<int>(s), static_cast<int>(p_.size()) - 2);
-  const real_t w = s - i;
-  return (1.0 - w) * p_[i] + w * p_[i + 1];
+  return InterpolateProfile(p_, h_, r);
 }
 
 real_t RadialHydrostaticState::Density(real_t r) const {
   return r > R_ ? 0.0 : rho_(std::max(real_t{0}, r));
 }
 
-// Hidden from Doxygen, which cannot match the unqualified parameter types
-// of this constructor to its declaration.
-/// @cond
 RadialHydrostaticBackground::RadialHydrostaticBackground(
-    int dim, RadialFunc rho, RadialFunc kappa, RadialFunc mu, real_t G,
-    real_t radius, int samples)
+    int dim, RadialFunc rho, RadialFunc kappa, RadialFunc mu, mfem::real_t G,
+    mfem::real_t radius, int samples)
     : dim_(dim),
       kappa_fn_(std::move(kappa)),
       mu_fn_(std::move(mu)),
@@ -97,7 +104,6 @@ RadialHydrostaticBackground::RadialHydrostaticBackground(
       S_(minus_p0_, identity_),
       phi_e_(dim),
       rheology_(dim, C_, S_, phi_e_) {}
-/// @endcond
 
 RelabelledBackground::RelabelledBackground(RadialHydrostaticBackground& base,
                                            Diffeomorphism& xi)
@@ -183,15 +189,6 @@ void AssembleTrueRHS(FiniteElementSpace& fes, LinearForm& lf, Vector& B) {
   }
 }
 
-std::unique_ptr<BilinearForm> MakeBilinearForm(FiniteElementSpace& fes) {
-#ifdef MFEM_USE_MPI
-  if (auto* pfes = dynamic_cast<ParFiniteElementSpace*>(&fes)) {
-    return std::make_unique<ParBilinearForm>(pfes);
-  }
-#endif
-  return std::make_unique<BilinearForm>(&fes);
-}
-
 std::unique_ptr<MixedBilinearForm> MakeMixedBilinearForm(
     FiniteElementSpace& trial, FiniteElementSpace& test) {
 #ifdef MFEM_USE_MPI
@@ -202,21 +199,6 @@ std::unique_ptr<MixedBilinearForm> MakeMixedBilinearForm(
   }
 #endif
   return std::make_unique<MixedBilinearForm>(&trial, &test);
-}
-
-// A GS (serial) or AMG (parallel) preconditioner for an assembled
-// operator handle.
-std::unique_ptr<Solver> MakePreconditioner(const OperatorHandle& A) {
-#ifdef MFEM_USE_MPI
-  if (A.Type() == Operator::Hypre_ParCSR) {
-    auto amg = std::make_unique<HypreBoomerAMG>(
-        *const_cast<OperatorHandle&>(A).As<HypreParMatrix>());
-    amg->SetPrintLevel(0);
-    return amg;
-  }
-#endif
-  return std::make_unique<GSSmoother>(
-      *const_cast<OperatorHandle&>(A).As<SparseMatrix>());
 }
 
 #ifdef MFEM_USE_MPI
@@ -330,7 +312,7 @@ MinimumNormEquilibriumStress::MinimumNormEquilibriumStress(
   // the form is pulled back with the standard relabelling recipe.
   ConstantCoefficient zero(0.0);
   IsotropicElasticTensorCoefficient C_iso(dim, zero, m);
-  auto a = MakeBilinearForm(fes);
+  auto a = detail::MakeBilinearForm(&fes);
   a->AddDomainIntegrator(map_ ? new ElasticTensorIntegrator(C_iso, *map_)
                               : new ElasticTensorIntegrator(C_iso));
   a->Assemble();
@@ -353,7 +335,7 @@ MinimumNormEquilibriumStress::MinimumNormEquilibriumStress(
   B *= -1.0;
 
   auto projector = MakeGeneratorProjector(fes, map_);
-  auto prec = MakePreconditioner(A);
+  auto prec = detail::MakePreconditioner(A);
   std::unique_ptr<CGSolver> cg;
 #ifdef MFEM_USE_MPI
   bool parallel = false;
@@ -437,7 +419,7 @@ struct StokesSaddleSolver::Impl {
 #ifdef MFEM_USE_MPI
     if (parallel) {
       real_t global = 0.0;
-      MPI_Allreduce(&d, &global, 1, MPI_DOUBLE, MPI_SUM, comm);
+      MPI_Allreduce(&d, &global, 1, MPITypeMap<real_t>::mpi_type, MPI_SUM, comm);
       d = global;
     }
 #endif
@@ -534,7 +516,7 @@ StokesSaddleSolver::StokesSaddleSolver(
   // each form pulled back with the relabelling recipe in mapped mode.
   ConstantCoefficient zero(0.0);
   IsotropicElasticTensorCoefficient C_iso(dim, zero, m);
-  s.a = MakeBilinearForm(fes_u);
+  s.a = detail::MakeBilinearForm(&fes_u);
   s.a->AddDomainIntegrator(map ? new ElasticTensorIntegrator(C_iso, *map)
                                : new ElasticTensorIntegrator(C_iso));
   s.a->Assemble();
@@ -562,12 +544,12 @@ StokesSaddleSolver::StokesSaddleSolver(
 
   // Pressure-block preconditioner: the mass matrix (the Stokes Schur
   // complement up to the mu weight).
-  s.mp = MakeBilinearForm(fes_p);
+  s.mp = detail::MakeBilinearForm(&fes_p);
   s.mp->AddDomainIntegrator(new MassIntegrator(one));
   s.mp->Assemble();
   s.mp->FormSystemMatrix(empty, s.Mp);
-  s.prec_u = MakePreconditioner(s.A);
-  s.prec_p = MakePreconditioner(s.Mp);
+  s.prec_u = detail::MakePreconditioner(s.A);
+  s.prec_p = detail::MakePreconditioner(s.Mp);
   s.block_prec = std::make_unique<BlockDiagonalPreconditioner>(s.offsets);
   s.block_prec->SetDiagonalBlock(0, s.prec_u.get());
   s.block_prec->SetDiagonalBlock(1, s.prec_p.get());
@@ -648,7 +630,7 @@ StokesSaddleSolver::StokesSaddleSolver(
     // The uneliminated operators (fresh assemblies; the eliminated
     // ones above were modified in place).
     IsotropicElasticTensorCoefficient C_full(dim, zero, m);
-    s.a_full_form = MakeBilinearForm(fes_u);
+    s.a_full_form = detail::MakeBilinearForm(&fes_u);
     s.a_full_form->AddDomainIntegrator(new ElasticTensorIntegrator(C_full));
     s.a_full_form->Assemble();
     Array<int> none;
@@ -824,10 +806,8 @@ MinimumDeviatoricEquilibriumStress::MinimumDeviatoricEquilibriumStress(
     // stored boundary orientation is per-element corrected
     // (OutwardSignedCoefficient), and the saddle's weak form carries
     // the boundary term with the sign that makes the (f, v . n)
-    // integrator at s = +1 the load for T n = -p n — pinned by the
-    // interface-continuity check (an enclosed solid's hydrostatic
-    // pressure must EQUAL the loading fluid's at the interface, not
-    // its negative).
+    // integrator at s = +1 the load for T n = -p n: an enclosed solid's
+    // hydrostatic pressure equals the loading fluid's at the interface.
     signed_p = std::make_unique<OutwardSignedCoefficient>(
         *fes_u.GetMesh(), *interface_pressure);
     auto* integrator = new VectorBoundaryFluxLFIntegrator(*signed_p, 1.0);
@@ -892,6 +872,7 @@ GridFunctionDiffeomorphism NewHarmonicExtensionMapping(
   ess_bdr = 1;
   Array<int> ess_tdof;
   fes_buffer.GetEssentialTrueDofs(ess_bdr, ess_tdof);
+  // Serial overload: the local count is the global one.
   MFEM_VERIFY(ess_tdof.Size() > 0,
               "NewHarmonicExtensionMapping: the buffer has no boundary dofs");
 

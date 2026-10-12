@@ -43,11 +43,11 @@
 // three-layer Earth with a solid inner core, the default, or the
 // two-layer one whose fluid core reaches the centre); together with
 // -shape they name one of the sixteen
-// {flattened,cmb_topo,cmb_bump}_{two,three}_layer_{2,3}d.mesh /
-// elastogravity_{two,three}_layer_{2,3}d.msh meshes, and -m overrides
+// earth_{fluidcore,innercore}_{flat,cmbtopo,cmbbump}_{2,3}d.mesh /
+// earth_{fluidcore,innercore}_{2,3}d.msh meshes, and -m overrides
 // with any layered mesh of the same conventions (meshes/README.md:
 // the layering is recognised from the attribute count;
-// equilibrium_bodies.py makes the aspherical ones and takes
+// layered_earth.py --shape flat|cmbtopo|cmbbump makes the aspherical ones and takes
 // --flattening, --amplitude, --degree, --width and --scale for
 // variants). With an inner core, the
 // enclosed solid's force and torque balance joins the constraints
@@ -77,9 +77,9 @@
 // (eta = 6e-2 at -amp 0.1) and restore cleanly at either order.
 //
 // The example drives J to its floor by moving the fluid density, three
-// ways (the default is the study's measured recipe, doc/planning/
-// equilibrium_figures.md: Levenberg-Marquardt Gauss-Newton with a
-// roughness prior, stopped at the discretisation floor):
+// ways (the default is the measured recipe: Levenberg-Marquardt
+// Gauss-Newton with a roughness prior, stopped at the discretisation
+// floor):
 //
 //   -loop gn      Levenberg-Marquardt Gauss-Newton (L2 control): the
 //                 inner PCG solves (H_GN + lambda M) s = -j with
@@ -94,8 +94,7 @@
 //                 from the constant start every shape's correction is
 //                 smooth and the prior helps everywhere (cmb stops at
 //                 the floor in 19 iterations with it against 40+
-//                 without; the earlier RADIAL starting profile needed
-//                 prior 0 there, its correction then oscillatory).
+//                 without).
 //
 //   -loop cg      nonlinear conjugate gradients (Polak-Ribiere+, a
 //                 forward-tracking line search) on the density, the
@@ -123,8 +122,8 @@
 //                 energy is unbounded below (discrete gravitational
 //                 collapse — in 2-D this channel dominates and the
 //                 flow runs straight into the ceiling). Exploratory;
-//                 a range-preserving (semi-Lagrangian) step is the
-//                 known structural fix (the planning document).
+//                 a range-preserving semi-Lagrangian transport step is
+//                 the structural fix.
 //
 // Stopping: J's absolute size is dominated by the base model's own
 // discretisation imbalance, so a relative-J tolerance is the wrong
@@ -141,8 +140,10 @@
 // the before/after scatter is the example's physical verdict.
 //
 // Outputs: the -csv table (default equilibrium_density.csv; "" writes
-// none) with J, the step or damping, the mass drift, eta, the energy
-// and the core motion by iteration, and a *_barotropy.csv named after
+// none) with J, the step or damping, the mass drift (the advect loop
+// only: the change of the fluid mass int rho since the start; 0 for gn
+// and cg, which hold the mass fixed by projection), eta, the energy and
+// the core motion by iteration, and a *_barotropy.csv named after
 // it with the scatter, both for plot_csv.py. With -vis (start `glvis`
 // first), six windows: the density change (final - initial) on the
 // fluid — from the constant start, exactly the variability the
@@ -172,16 +173,33 @@
 // as a stressed halo in the mantle. Both stress windows share the
 // fluid p_rms scale and are elementwise — |dev T| genuinely jumps at
 // the CMB and ICB, which a continuous field renders as an interface
-// artefact (refine the mesh, equilibrium_bodies.py --scale, for a
+// artefact (refine the mesh, layered_earth.py --scale, for a
 // finer image).
 //
 // One source serves the serial and the parallel build, as in
 // equilibrium_stress.cpp; the barotropy scatter is gathered to the root.
 //
+// Mesh requirements. The default mesh is chosen by -dim, -ic and -shape
+// from ../data (meshes/layered_earth.py --shape ... for the aspherical ones,
+// meshes/layered_earth.py for -shape sphere); -m overrides it with any
+// layered mesh of the same conventions, and the layering is recognised
+// from the number of domain attributes:
+//   three layers (4 domain attributes): 1 solid inner core, 2 fluid outer
+//     core, 3 mantle, 4 buffer; boundary attributes 1 ICB, 2 CMB,
+//     3 surface, 4 outer;
+//   two layers (3 domain attributes): 1 fluid core, 2 mantle, 3 buffer;
+//     boundary attributes 1 CMB, 2 surface, 3 outer.
+// The unit is the planet radius (surface at r = 1, buffer to r = 1.2,
+// CMB near 0.55 on the sphere); 2-D or 3-D, order-2 geometry. The model
+// is nondimensional: G = 0.05, fluid density 1.2, inner core 1.3,
+// mantle 1 (buffer 0). The -blob anomaly sits at the hard-coded radius
+// 0.77 (mid-mantle between the CMB at 0.55 and the surface) on the +x
+// axis, so it assumes the unit-radius layout above.
+//
 // Options (defaults in brackets):
 //   -m       mesh file [chosen by -dim, -ic and -shape]: any layered
-//            model with a buffer (meshes/README.md conventions)
-//            overrides those three flags.
+//            model with a buffer (layout above) overrides those three
+//            flags.
 //   -dim     dimension of the default mesh [2]: 2 for the disc
 //            section, 3 for the ball — an order of magnitude dearer,
 //            and at its default order 2 the aspherical shapes' signal
@@ -258,9 +276,9 @@
 //    ./equilibrium_density -shape sphere -loop advect -iters 200
 //    ./equilibrium_density -o 2                the order-2 floor hides the
 //                                              geometric signal (measured)
-//    ./equilibrium_density -m ../data/flattened_three_layer_2d_f20.mesh
+//    ./equilibrium_density -m ../data/earth_innercore_flat_2d_f20.mesh
 //                                              a hand-built variant
-//                                              (equilibrium_bodies.py)
+//                                              (layered_earth.py --shape flat)
 // ============================================================================
 
 #include <algorithm>
@@ -287,6 +305,7 @@ using SpaceType = ParFiniteElementSpace;
 using GridType = ParGridFunction;
 using FormType = ParBilinearForm;
 bool Root() { return Mpi::Root(); }
+using LinearFormType = ParLinearForm;
 #else
 using MeshType = Mesh;
 using SubMeshType = SubMesh;
@@ -294,6 +313,7 @@ using SpaceType = FiniteElementSpace;
 using GridType = GridFunction;
 using FormType = BilinearForm;
 bool Root() { return true; }
+using LinearFormType = LinearForm;
 #endif
 
 double GlobalSum(double v) {
@@ -306,12 +326,8 @@ double GlobalSum(double v) {
 #endif
 }
 
-// The layered meshes' conventions (meshes/README.md; also the test
-// meshes). Three layers: attributes 1 inner core, 2 fluid outer core,
-// 3 mantle, 4 buffer; boundary attributes 1 ICB, 2 CMB, 3 surface,
-// 4 outer. Two layers (no inner core): attributes 1 fluid core,
-// 2 mantle, 3 buffer; boundary attributes 1 CMB, 2 surface, 3 outer.
-// The layering is recognised from the number of domain attributes.
+// The layered meshes' conventions (see "Mesh requirements" in the header):
+// the layering is recognised from the number of domain attributes.
 struct Layering {
   bool has_core;
   int fluid, mantle, buffer;  // domain attributes
@@ -327,15 +343,12 @@ Layering RecogniseLayering(int max_attr) {
 
 constexpr double kG = 0.05;
 
-double lateral_amplitude = 0.1;
-double blob_amplitude = 0.0;
-
 // The fluid's starting density: a CONSTANT base — hydrostatic in any
 // container on its own (p = -rho Phi + c), so every disequilibrium is
 // explicit — plus an optional lateral part of amplitude -amp, which no
 // relabelling can remove. With the constant base the aspherical
 // shapes' signal is the enclosed core's force imbalance (the header).
-double FluidRho(const Vector& x) {
+double FluidRho(const Vector& x, double lateral_amplitude) {
   const double r = x.Norml2();
   return 1.2 + lateral_amplitude * (r > 0.0 ? x[1] / r : 0.0);
 }
@@ -345,7 +358,7 @@ double FluidRho(const Vector& x) {
 // density, not of the control: its gravity stresses the mantle and
 // shifts the equipotentials, so the fluid core's equilibrium density
 // moves in response.
-double MantleRho(const Vector& x) {
+double MantleRho(const Vector& x, double blob_amplitude) {
   if (blob_amplitude == 0.0) {
     return 1.0;
   }
@@ -374,9 +387,14 @@ void Transfer(const GridFunction& src, GridFunction& dst) {
 // takes, kept in step by Sync (the fluid field is the primary).
 struct Density {
   Density(const Layering& layers, SpaceType& fes_fluid,
-          SpaceType& fes_fluid_on_parent)
-      : fluid_base(FluidRho),
-        mantle(MantleRho),
+          SpaceType& fes_fluid_on_parent, double lateral_amplitude,
+          double blob_amplitude)
+      : fluid_base([lateral_amplitude](const Vector& x) {
+          return FluidRho(x, lateral_amplitude);
+        }),
+        mantle([blob_amplitude](const Vector& x) {
+          return MantleRho(x, blob_amplitude);
+        }),
         inner(1.3),
         buffer(0.0),
         c_fluid(&fes_fluid),
@@ -602,8 +620,10 @@ int main(int argc, char* argv[]) {
 
   OptionsParser args(argc, argv);
   args.AddOption(&mesh_file, "-m", "--mesh",
-                 "Mesh file (a layered model with a buffer; overrides "
-                 "-dim and -ic/-no-ic).");
+                 "Mesh file (a layered model with a buffer: domains 1-4 = "
+                 "inner core, fluid core, mantle, buffer, or 1-3 = fluid "
+                 "core, mantle, buffer without an inner core; unit "
+                 "planet radius; overrides -dim and -ic/-no-ic).");
   args.AddOption(&mesh_dim, "-dim", "--dimension",
                  "Dimension of the default mesh: 2 (the default) for "
                  "the disc section, 3 for the ball — an order of "
@@ -685,27 +705,22 @@ int main(int argc, char* argv[]) {
   }
   if (prior < 0.0) {
     // From the constant start every shape's correction is smooth and
-    // the H1 prior helps on all of them (the earlier RADIAL starting
-    // profile needed prior 0 on cmb, whose correction was then
-    // oscillatory and boundary-following).
+    // the H1 prior helps on all of them.
     prior = 1e-7;
   }
-  lateral_amplitude = amplitude;
-  blob_amplitude = blob;
   std::string mesh_path = mesh_file;
   if (mesh_path.empty()) {
     MFEM_VERIFY(mesh_dim == 2 || mesh_dim == 3, "-dim must be 2 or 3.");
-    const std::string layers_s = inner_core ? "three" : "two";
+    const std::string layers_s = inner_core ? "innercore" : "fluidcore";
     const std::string dim_s = std::to_string(mesh_dim);
     if (shape_s == "sphere") {
-      mesh_path = "../data/elastogravity_" + layers_s + "_layer_" + dim_s +
-                  "d.msh";
+      mesh_path = "../data/earth_" + layers_s + "_" + dim_s + "d.msh";
     } else {
-      const std::string stem = shape_s == "flat"  ? "flattened_"
-                               : shape_s == "cmb" ? "cmb_topo_"
-                                                  : "cmb_bump_";
+      const std::string stem = shape_s == "flat"  ? "_flat_"
+                               : shape_s == "cmb" ? "_cmbtopo_"
+                                                  : "_cmbbump_";
       mesh_path =
-          "../data/" + stem + layers_s + "_layer_" + dim_s + "d.mesh";
+          "../data/earth_" + layers_s + stem + dim_s + "d.mesh";
     }
   }
 
@@ -771,10 +786,19 @@ int main(int argc, char* argv[]) {
                                     Array<int>({layers.fluid}), fes_u,
                                     fes_p, nullptr, &ess,
                                     rigid.empty() ? nullptr : &rigid);
-  Spaces s{&parent,      &fluid,       layers, &fes_phi,   &fes_u, &fes_p,
-           &ctrl_fluid,  &ctrl_parent, &ess,   dtn_degree, &problem};
+  Spaces s{.parent = &parent,
+           .fluid = &fluid,
+           .layers = layers,
+           .phi = &fes_phi,
+           .u = &fes_u,
+           .p = &fes_p,
+           .ctrl_fluid = &ctrl_fluid,
+           .ctrl_parent = &ctrl_parent,
+           .ess = &ess,
+           .dtn_degree = dtn_degree,
+           .problem = &problem};
 
-  Density rho(layers, ctrl_fluid, ctrl_parent);
+  Density rho(layers, ctrl_fluid, ctrl_parent, amplitude, blob);
 
   // dev_over_p = |dev T| / |p| over the fluid: the dimensionless
   // infeasibility ("how non-fluid is the state"), the quantity a
@@ -784,6 +808,9 @@ int main(int argc, char* argv[]) {
     const double p = J.Stress().Pressure().ComputeL2Error(zero);
     return p > 0.0 ? std::sqrt(2.0 * J.Value()) / p : 0.0;
   };
+  // mass_drift is the change of the fluid mass since the start, filled by
+  // the advect loop only (the gn and cg loops hold the mass fixed by
+  // projection and write 0).
   examples::CsvTable history(csv_file, {"iteration", "J", "step",
                                         "mass_drift", "dev_over_p",
                                         "energy", "core_motion"});
@@ -840,6 +867,9 @@ int main(int argc, char* argv[]) {
   // diagnostic eta keeps its own scale, the pressure VARIATION
   // (gauge-invariant without any datum).
   struct InfeasibilityCoefficient : public Coefficient {
+    explicit InfeasibilityCoefficient(MatrixCoefficient* stress,
+                                      double scale_in = 1.0)
+        : T(stress), scale(scale_in) {}
     MatrixCoefficient* T;
     double scale;
     mutable DenseMatrix M;
@@ -868,8 +898,7 @@ int main(int argc, char* argv[]) {
   struct PressureStats {
     double variation, mean, area;
   };
-  auto pressure_stats = [&](const GridFunction& p_in, SpaceType& fes) {
-    auto& p = const_cast<GridFunction&>(p_in);
+  auto pressure_stats = [&](const GridFunction& p, SpaceType& fes) {
     ConstantCoefficient one_c(1.0);
 #ifdef MFEM_USE_MPI
     ParLinearForm mass_lf(&fes);
@@ -1054,9 +1083,7 @@ int main(int argc, char* argv[]) {
       *gauge = c;
     }
 
-    InfeasibilityCoefficient eta_c;
-    eta_c.T = T;
-    eta_c.scale = 1.0;
+    InfeasibilityCoefficient eta_c(T);
     SpaceType map_fes(&comp, &l2_map);
     GridType map_c(&map_fes);
     map_c.ProjectCoefficient(eta_c);
@@ -1113,9 +1140,7 @@ int main(int argc, char* argv[]) {
         std::cout << "fluid " << dev_f << " (leakage included), solid "
                   << dev_s << "\n";
       }
-      InfeasibilityCoefficient eta_c;
-      eta_c.T = &T;
-      eta_c.scale = 1.0;
+      InfeasibilityCoefficient eta_c(&T);
       map_body.ProjectCoefficient(eta_c);
       // The global solve's pressure is datum-determined by the free
       // surface: its RMS over the fluid is the map's physical scale
@@ -1147,9 +1172,7 @@ int main(int argc, char* argv[]) {
 
     // The fluid piece: the certificate's own map.
     {
-      InfeasibilityCoefficient eta_c;
-      eta_c.T = &const_cast<MinimumDeviatoricEquilibriumStress&>(J.Stress());
-      eta_c.scale = 1.0;
+      InfeasibilityCoefficient eta_c(&J.Stress());
       SpaceType map_fes(&fluid, &l2_map);
       GridType map_f(&map_fes);
       map_f.ProjectCoefficient(eta_c);
@@ -1406,21 +1429,21 @@ int main(int argc, char* argv[]) {
     }
 #endif
 
+    // The advective increment in its WEAK form: with div u = 0 and
+    // u = 0 on the boundary, (d rho, v) = dt int rho u . grad v — the
+    // derivative lands on the test function, the control is never
+    // differentiated (no numerical-differentiation noise), and v = 1
+    // shows the discrete mass is conserved exactly. The form is built
+    // once; each iteration repoints the velocity coefficient at the
+    // current multiplier and reassembles.
+    VectorGridFunctionCoefficient u_coeff(&J_last->Velocity());
+    ScalarVectorProductCoefficient rho_u(rho.stokes, u_coeff);
+    LinearFormType lf(&ctrl_fluid);
+    lf.AddDomainIntegrator(new DomainLFGradIntegrator(rho_u));
+
     double dt = 1.0;
     for (int it = 1; it <= iters; it++) {
-      // The advective increment in its WEAK form: with div u = 0 and
-      // u = 0 on the boundary, (d rho, v) = dt int rho u . grad v —
-      // the derivative lands on the test function, the control is
-      // never differentiated (no numerical-differentiation noise), and
-      // v = 1 shows the discrete mass is conserved exactly.
-      VectorGridFunctionCoefficient u(&J_last->Velocity());
-      ScalarVectorProductCoefficient rho_u(rho.stokes, u);
-#ifdef MFEM_USE_MPI
-      ParLinearForm lf(&ctrl_fluid);
-#else
-      LinearForm lf(&ctrl_fluid);
-#endif
-      lf.AddDomainIntegrator(new DomainLFGradIntegrator(rho_u));
+      u_coeff.SetGridFunction(&J_last->Velocity());
       lf.Assemble();
       Vector j_adv(c.Size());
 #ifdef MFEM_USE_MPI
@@ -1462,8 +1485,8 @@ int main(int argc, char* argv[]) {
         // discretisation error, and OFF the rearrangement manifold E
         // is unbounded below (discrete gravitational collapse, which
         // raises J monotonically as it feeds). The guard forbids that
-        // channel; a range-preserving (semi-Lagrangian composition)
-        // step is the structural fix, noted in the planning document.
+        // channel; a range-preserving semi-Lagrangian transport step is
+        // the structural fix.
         if ((trial->GravitationalEnergy() <= e_old - 0.2 * dt * jval &&
              j_new <= 2.0 * j_start) ||
             dt < 1e-14) {

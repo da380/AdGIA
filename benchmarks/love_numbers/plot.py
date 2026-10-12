@@ -1,9 +1,8 @@
 """Compare the runs of the Love-number benchmark with their references.
 
 Reads the tree run.py writes for one model, `<runs>/<model>/h*/`, or for
-all of them, prints a
-table of the relative errors of every run and writes figures in each
-model's directory, beside its cases:
+all of them, prints a table of the relative errors of every run and writes
+figures in each model's directory, beside its cases:
 
   love_numbers.png   h', l', k' (load) and h, l, k (tide) by degree: the reference
                      and the finest run of each order
@@ -31,7 +30,7 @@ k' is minus one in both solutions and is not plotted. With a fluid layer
 Dahlen's degree-zero numbers differ from the reference by design (see
 doc/gauged_fluid.md, "Degree 0") and are plotted to show it.
 
-    python plot.py runs/homogeneous
+    python plot.py runs/homogeneous   one model, and runs/homogeneous/summary.md
     python plot.py runs          every model, and the summary runs/summary.md
 """
 from __future__ import annotations
@@ -53,11 +52,9 @@ import matplotlib.colors  # noqa: E402
 import matplotlib.ticker  # noqa: E402
 import numpy as np  # noqa: E402
 
-#: Categorical colours in their fixed order, with a marker for each so that
-#: no series is told by colour alone.
+#: Categorical colours in their fixed order.
 COLOURS = ("#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300",
            "#4a3aa7", "#e34948")
-MARKERS = ("o", "s", "^", "D", "v", "P", "X", "*")
 INK, MUTED, GRID, SURFACE = "#0b0b0b", "#52514e", "#e4e3df", "#fcfcfb"
 
 #: One colour per formulation and per CMB treatment, the same in every
@@ -101,8 +98,8 @@ class Run:
     tag: str = ""
     setup_seconds: float = 0.0
     #: wall seconds and outer iterations of the LOAD solve, by degree
-    solve_seconds: dict[int, float] = None
-    iterations: dict[int, int] = None
+    solve_seconds: dict[int, float] | None = None
+    iterations: dict[int, int] | None = None
     #: the CMB treatment of the Dahlen path ("full" otherwise)
     cmb: str = "full"
     map_amplitude: float = 0.0
@@ -908,12 +905,10 @@ def main() -> None:
              "degree 2 | worst scaled error, degree 5 | field error, u | "
              "field error, phi | setup s | total s |",
              "|---|---|---|---|---|---|---|---|---|---|", *summary]
-    out = (args.directory if len(directories) > 1
-           else args.directory.parent) / "summary.md"
-    if len(directories) > 1:
-        out.write_text("\n".join(lines) + "\n")
+    out = args.directory / "summary.md"
+    out.write_text("\n".join(lines) + "\n")
     print("\n" + "\n".join(lines))
-    print(f"\nfigures in {args.directory}")
+    print(f"\nfigures in {args.directory}, summary in {out}")
 
 
 if __name__ == "__main__":

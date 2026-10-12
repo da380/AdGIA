@@ -2259,4 +2259,4 @@ maps = ["cartopy", "pyshtools"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12"
-content-hash = "584b1cbf137a6df10d9d92fd499e78dd26df3951fd28f6bc9733cc94b71458f0"
+content-hash = "7ad6dc9bdb6e8dda79d9a09fc9fcba31110bb7fbfa235f7fac0975f7ffb18dce"

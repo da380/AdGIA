@@ -76,7 +76,7 @@ struct Setting {
   double r_out = 0.0;
 
   explicit Setting(int order = 2) {
-    parent = std::make_unique<Mesh>("../data/elastogravity_two_layer_2d.msh",
+    parent = std::make_unique<Mesh>("../data/earth_fluidcore_2d.msh",
                                     1, 1);
     const int dim = parent->Dimension();
     Array<int> fluid_attr({1}), solid_attr({2}), buffer_attr({3}),

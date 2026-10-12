@@ -262,8 +262,8 @@ numerical error (below) blows up. Consequently the biased single-solve
 regime works (with $O(\eps)$ error), but refinement \emph{diverges}
 under mesh and order refinement (at order~2 on the test meshes). No
 choice of $\eps$ or $k$ repairs it, because the failure is in the
-spectrum of the pair, not in the parameters. The production referential
-class therefore replaces the buffer unknowns by a \emph{prescribed}
+spectrum of the pair, not in the parameters. The referential
+class's gauge path therefore replaces the buffer unknowns by a \emph{prescribed}
 extension operator (\texttt{doc/gravitating\_elasticity.md}, section
 ``The linearised referential system'', option (b)), which removes the
 gauge unknowns instead of penalising them. The ball-wide penalised mode
@@ -298,6 +298,13 @@ practical notes:
   $\eps/(\lambda_{i}+\eps)$ and dominate the residual diagnostics.
   Assertions and quality checks are made at the recommended operating
   point, not in the $\eps \to 0$ limit.
+\item At $N^2 \neq 0$ a second, physical mechanism exists beside the
+  floating-point one above: the unregularised fluid's Rayleigh--Taylor
+  modes. The recommended operating point ($\eps \sim 10^{-2}$,
+  $k = 2$--$3$) is validated for neutrally stratified fluids; a
+  non-neutral model is band-limited, with answers defined only to the
+  stratification band (\texttt{doc/static\_fluid\_core.tex}, which
+  also places the Maxwell relaxation as the general treatment).
 \item Starting values: each refinement solve is for an
   \emph{increment} and starts from zero (a cold start; the increments
   shrink by the contraction factor from step to step, so zero is the
@@ -340,7 +347,7 @@ $Ax = b$, a doubled saddle system with no $\eps$). There the
 so the saddle-point preconditioning theory, which assumes a full-rank
 rectangular constraint, does not apply, and the near-kernel reappears in
 every solve with $A$; the penalty with iterated refinement is the
-production path (\texttt{doc/slip\_interface.tex}, ``Why the fluid gauge
+gauge-fixing path (\texttt{doc/slip\_interface.tex}, ``Why the fluid gauge
 stays a penalty'').
 
 \section{Algorithm and implementation map}
@@ -392,12 +399,15 @@ multiplier updates of its interface constraint; see
 Base machinery in \texttt{quasi\_static\_problem.hpp} and
 \texttt{src/quasi\_static\_problem.cpp}:
 \begin{quote}\small\raggedright
-\texttt{SetGaugedFluid(const Array<int>\& fluid\_marker,
-Coefficient\& mu\_gauge, real\_t epsilon, int refinements = 2,
-GaugePenalty penalty = GaugePenalty::Deviatoric,
+\texttt{SetFluid(const Array<int>\& fluid\_marker,
+Coefficient\& mu\_scale, const GaugePenaltyOptions\& opts,
 Diffeomorphism* map = nullptr)}
 \end{quote}
-with $\mu_g$ a coefficient (not owned). \texttt{GaugePenalty::Deviatoric}
+with $\mu_g$ (\texttt{mu\_scale}) a coefficient (not owned) and
+\texttt{GaugePenaltyOptions} carrying \texttt{epsilon} (default
+$10^{-2}$), \texttt{refinements} (default 2) and the penalty form
+\texttt{GaugePenalty form = GaugePenalty::Deviatoric}; the default
+\texttt{SetFluid(marker, mu\_scale)} is instead the Maxwell relaxation. \texttt{GaugePenalty::Deviatoric}
 assembles the deviatoric penalty of \S2 --- without a map as
 \texttt{ElasticityIntegrator}, and with a map (the identity included)
 \emph{covariantly} as \texttt{ElasticTensorIntegrator(C, map)}, $C$ the

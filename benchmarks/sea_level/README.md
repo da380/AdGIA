@@ -3,10 +3,19 @@
 AdGIA's monolithic sea-level solve (`SetWaterLoad`: the sea-level
 equation folded into the elastic operator, frozen shorelines, no
 rotation) against pyslfp's pseudo-spectral solution of the same problem
-— rung 1 of `doc/planning/sea_level_plan.md`. `--rot` adds the
-rotational border on both sides (rung 2), `--nonlinear` adds shoreline
-migration against pyslfp's nonlinear solver (rung 3), and `--timings`
-times the solve across the feature axis instead of comparing.
+(the default leg). `--rot` adds the rotational border on both sides,
+`--nonlinear` adds shoreline migration against pyslfp's nonlinear solver,
+and `--timings` times the solve across the feature axis instead of
+comparing.
+
+`--method referential` runs the same comparison on the welded
+referential class (the ζζ collapse,
+`doc/planning/referential_sea_level_plan.md`), outputs tagged `_ref`
+beside the Eulerian ones. Measured at the toy resolution (homogeneous,
+h 0.4, order 2, lmax 16): ocean-RMS relative difference 1.2 % against
+pyslfp, next to the Dahlen leg's 1.1 % at the same settings — the same
+grade, the per-degree split differing as two discretisations at the
+spectral floor do. `-feedback picard`/`monolithic` stay mixed-only.
 
 `--earth` keeps the comparison but swaps the analytic state for the
 real present-day geography: the ICE-7G sea level and ice at `--lmax`,
@@ -46,9 +55,8 @@ toy FE mesh and a sharp ocean function on an lmax ≈ 16 grid (pyslfp's
 nonlinear updates are sharp where ours are smoothed over `shore`), so
 at toy resolution only the machinery is validated — the migrating
 fingerprints agree at the frozen pair's grade while the deltas are
-resolution-starved. The resolved comparison also wants the
-coastline-refined meshes planned in
-`doc/planning/planetmodel_coastline_sizing_plan.md`. The AdGIA
+resolution-starved. The resolved comparison wants the
+coastline-refined meshes, which `--coast` (below) provides. The AdGIA
 migration runs tight here (`-mig-inexact 0`): this solver stack
 amplifies a loose residual into an O(tolerance) absolute error in
 Phi_g, and the library's contraction guard

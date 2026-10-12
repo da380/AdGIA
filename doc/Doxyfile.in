@@ -34,11 +34,15 @@ RECURSIVE              = YES
 EXCLUDE_PATTERNS       =
 EXCLUDE_SYMBOLS        =
 
-# Source code Browse
-STRIP_CODE_COMMENTS    = YES
+# Source code Browse: every entity's "Definition at line ..." links
+# into syntax-highlighted, cross-referenced source pages (headers and
+# src/ implementations alike), with the comments kept readable.
+SOURCE_BROWSER         = YES
+INLINE_SOURCES         = NO
+STRIP_CODE_COMMENTS    = NO
 REFERENCED_BY_RELATION = YES
 REFERENCES_RELATION    = YES
-VERBATIM_HEADERS       = NO
+VERBATIM_HEADERS       = YES
 
 # Configuration for documentation generation
 EXTRACT_ALL            = YES # Extract all entities, even undocumented ones

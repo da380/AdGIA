@@ -159,6 +159,8 @@ def maxwell_model(name: str, taus: list[float | None], s: float | None):
     rebuilt = LayeredIsotropicElastic(
         [float(b) for b in sk.boundaries], rho=rho, vp=vp, vs=vs,
         layer_names=[la.name for la in base.layers],
+        # In planetmodel 1.2.x the skeleton carries no interface names
+        # (they live on the geometry), so this probe yields None there.
         interface_names=list(base.skeleton.interface_names)
         if hasattr(base.skeleton, "interface_names") else None,
         name=base.name)

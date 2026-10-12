@@ -1,10 +1,12 @@
 /**
  * @file sea_level.cpp
- * @brief Implementation of SeaLevelOperator (the WP1 surface layer).
+ * @brief Implementation of SeaLevelOperator, ShorelineMigration and
+ * IceHistory.
  */
 
 #include "AdGIA/sea_level.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -16,6 +18,7 @@
 #include <vector>
 
 #include "AdGIA/detail/fem_factory.hpp"
+#include "AdGIA/referential_problem.hpp"
 
 namespace AdGIA {
 
@@ -55,6 +58,13 @@ class OceanIndicatorCoefficient : public Coefficient {
   const GridFunction* ice_;
   real_t rho_water_, rho_ice_;
 };
+
+// Nodal interpolant of g = |grad Phi0| on the space of @p out.
+void ProjectGravity(VectorCoefficient& grad_phi0, GridFunction& out) {
+  InnerProductCoefficient gg(grad_phi0, grad_phi0);
+  PowerCoefficient gmag(gg, 0.5);
+  out.ProjectCoefficient(gmag);
+}
 
 }  // namespace
 
@@ -218,6 +228,12 @@ void SeaLevelOperator::Restrict(const GridFunction& scalar,
   TransferPair(hop, out);
 }
 
+void SeaLevelOperator::RestrictedGravity(VectorCoefficient& grad_phi0,
+                                         GridFunction& g) const {
+  ProjectGravity(grad_phi0, BodyScratch());
+  Restrict(BodyScratch(), g);
+}
+
 void SeaLevelOperator::SeaLevelChangeFrom(const GridFunction& u,
                                           VectorCoefficient& grad_phi0,
                                           const GridFunction& phi,
@@ -235,12 +251,7 @@ void SeaLevelOperator::SeaLevelChangeFrom(const GridFunction& u,
   auto phis = detail::MakeGridFunction(sfes_.get());
   Restrict(phi, *phis);
   auto g = detail::MakeGridFunction(sfes_.get());
-  {
-    InnerProductCoefficient gg(grad_phi0, grad_phi0);
-    PowerCoefficient gmag(gg, 0.5);
-    BodyScratch().ProjectCoefficient(gmag);
-    Restrict(BodyScratch(), *g);
-  }
+  RestrictedGravity(grad_phi0, *g);
   std::unique_ptr<GridFunction> psis;
   if (psi) {
     psis = detail::MakeGridFunction(sfes_.get());
@@ -253,6 +264,29 @@ void SeaLevelOperator::SeaLevelChangeFrom(const GridFunction& u,
                 "vanishes on the surface.");
     (*sl1_)[i] =
         (-((*ugf)[i] + (*phis)[i] + (psis ? (*psis)[i] : 0.0)) + phi_g) / gi;
+  }
+}
+
+void SeaLevelOperator::SeaLevelChangeFrom(const GridFunction& zeta,
+                                          VectorCoefficient& grad_phi0,
+                                          real_t phi_g, Coefficient* psi) {
+  // The referential combination: tau = zeta^1 directly.
+  auto zs = detail::MakeGridFunction(sfes_.get());
+  Restrict(zeta, *zs);
+  auto g = detail::MakeGridFunction(sfes_.get());
+  RestrictedGravity(grad_phi0, *g);
+  std::unique_ptr<GridFunction> psis;
+  if (psi) {
+    psis = detail::MakeGridFunction(sfes_.get());
+    psis->ProjectCoefficient(*psi);
+  }
+  for (int i = 0; i < sl1_->Size(); i++) {
+    const real_t gi = (*g)[i];
+    MFEM_VERIFY(gi > 0.0,
+                "SeaLevelOperator::SeaLevelChangeFrom: |grad Phi0| "
+                "vanishes on the surface.");
+    (*sl1_)[i] =
+        (-((*zs)[i] + (psis ? (*psis)[i] : 0.0)) + phi_g) / gi;
   }
 }
 
@@ -275,12 +309,7 @@ SeaLevelOperator::SeaLevelChangeInfo SeaLevelOperator::SeaLevelChange(
   Restrict(phi, *phis);
   // g = |grad(Phi0)| nodally on the body, then restricted.
   auto g = detail::MakeGridFunction(sfes_.get());
-  {
-    InnerProductCoefficient gg(grad_phi0, grad_phi0);
-    PowerCoefficient gmag(gg, 0.5);
-    BodyScratch().ProjectCoefficient(gmag);
-    Restrict(BodyScratch(), *g);
-  }
+  RestrictedGravity(grad_phi0, *g);
   // The optional surface potential.
   std::unique_ptr<GridFunction> psis;
   if (psi) {
@@ -334,6 +363,33 @@ std::unique_ptr<GridFunction> NodalCoordinates(
   return coords;
 }
 
+// Row key of the surface CSV: coordinates quantized to a quantum far
+// below any node separation and far above the 16-digit print round-trip
+// noise. Lookups search the neighbouring bins, so a coordinate on a bin
+// boundary cannot be missed; matching by coordinates makes the file
+// independent of row order and of the rank count that wrote it.
+using SurfaceKey = std::array<long long, 3>;
+
+SurfaceKey SurfaceKeyOf(const real_t* x, int sdim) {
+  const real_t q = 1e-9;
+  SurfaceKey k{0, 0, 0};
+  for (int c = 0; c < sdim; c++) {
+    k[c] = llround(x[c] / q);
+  }
+  return k;
+}
+
+struct SurfaceKeyHash {
+  std::size_t operator()(const SurfaceKey& k) const {
+    std::size_t h = 1469598103934665603ull;
+    for (long long v : k) {
+      h ^= static_cast<std::size_t>(v);
+      h *= 1099511628211ull;
+    }
+    return h;
+  }
+};
+
 }  // namespace
 
 void SeaLevelOperator::WriteSurfaceField(const GridFunction& f,
@@ -364,7 +420,8 @@ void SeaLevelOperator::WriteSurfaceField(const GridFunction& f,
     rows.push_back(f[i]);
   }
 
-  std::vector<real_t> all = rows;
+  std::vector<real_t> gathered;
+  const std::vector<real_t>* all = &rows;
 #ifdef MFEM_USE_MPI
   if (parallel_) {
     int rank = 0, size = 1;
@@ -379,14 +436,15 @@ void SeaLevelOperator::WriteSurfaceField(const GridFunction& f,
         displs[r] = total;
         total += counts[r];
       }
-      all.resize(total);
+      gathered.resize(total);
     }
-    MPI_Gatherv(rows.data(), nloc, MPITypeMap<real_t>::mpi_type, all.data(),
-                counts.data(), displs.data(), MPITypeMap<real_t>::mpi_type,
-                0, comm_);
+    MPI_Gatherv(rows.data(), nloc, MPITypeMap<real_t>::mpi_type,
+                gathered.data(), counts.data(), displs.data(),
+                MPITypeMap<real_t>::mpi_type, 0, comm_);
     if (rank != 0) {
       return;
     }
+    all = &gathered;
   }
 #endif
   std::ofstream out(path);
@@ -395,9 +453,9 @@ void SeaLevelOperator::WriteSurfaceField(const GridFunction& f,
   out.precision(16);
   out << (sdim == 2 ? "x,y,value\n" : "x,y,z,value\n");
   const std::size_t stride = sdim + 1;
-  for (std::size_t r = 0; r + stride <= all.size(); r += stride) {
+  for (std::size_t r = 0; r + stride <= all->size(); r += stride) {
     for (std::size_t c = 0; c < stride; c++) {
-      out << all[r + c] << (c + 1 < stride ? ',' : '\n');
+      out << (*all)[r + c] << (c + 1 < stride ? ',' : '\n');
     }
   }
 }
@@ -407,6 +465,15 @@ std::vector<std::string> SeaLevelOperator::ReadSurfaceField(
   MFEM_VERIFY(f.FESpace() == sfes_.get(),
               "SeaLevelOperator::ReadSurfaceField: a surface field "
               "expected.");
+  std::vector<std::unique_ptr<GridFunction>> out;
+  auto names = ReadSurfaceColumns(path, {column}, out);
+  f = *out[0];
+  return names;
+}
+
+std::vector<std::string> SeaLevelOperator::ReadSurfaceColumns(
+    const std::string& path, const std::vector<int>& columns,
+    std::vector<std::unique_ptr<GridFunction>>& out) const {
   const int sdim = surf_mesh_->SpaceDimension();
   std::ifstream in(path);
   MFEM_VERIFY(in,
@@ -422,38 +489,31 @@ std::vector<std::string> SeaLevelOperator::ReadSurfaceField(
       names.push_back(tok);
     }
   }
-  MFEM_VERIFY(static_cast<int>(names.size()) > sdim + column,
+  MFEM_VERIFY(static_cast<int>(names.size()) > sdim,
               "SeaLevelOperator::ReadSurfaceField: " << path
-                  << " has no value column " << column);
+                  << " has no value column");
   names.erase(names.begin(), names.begin() + sdim);
+  const int nvalue = static_cast<int>(names.size());
 
-  // Quantized-coordinate table of the file's rows: the quantum sits far
-  // below any node separation and far above the 16-digit print
-  // round-trip noise, and the lookup searches the neighbouring bins, so
-  // a coordinate on a bin boundary cannot be missed. Matching by
-  // coordinates makes the file independent of row order and of the rank
-  // count that wrote it.
-  const real_t q = 1e-9;
-  using Key = std::array<long long, 3>;
-  auto key_of = [&](const real_t* x) {
-    Key k{0, 0, 0};
-    for (int c = 0; c < sdim; c++) {
-      k[c] = llround(x[c] / q);
+  std::vector<int> wanted = columns;
+  if (wanted.empty()) {
+    for (int c = 0; c < nvalue; c++) {
+      wanted.push_back(c);
     }
-    return k;
-  };
-  struct KeyHash {
-    std::size_t operator()(const Key& k) const {
-      std::size_t h = 1469598103934665603ull;
-      for (long long v : k) {
-        h ^= static_cast<std::size_t>(v);
-        h *= 1099511628211ull;
-      }
-      return h;
-    }
-  };
-  std::unordered_map<Key, real_t, KeyHash> table;
-  const std::size_t ncols = names.size() + sdim;
+  }
+  for (int c : wanted) {
+    MFEM_VERIFY(c >= 0 && c < nvalue,
+                "SeaLevelOperator::ReadSurfaceField: " << path
+                    << " has no value column " << c);
+  }
+  const std::size_t nw = wanted.size();
+
+  // Table of the file's rows keyed by quantized coordinates (one pass
+  // over the file, however many columns are wanted); a row's wanted
+  // values are stored at row * nw.
+  std::unordered_map<SurfaceKey, std::size_t, SurfaceKeyHash> table;
+  std::vector<real_t> values;
+  const std::size_t ncols = static_cast<std::size_t>(nvalue) + sdim;
   std::vector<real_t> row(ncols);
   while (std::getline(in, line)) {
     if (line.empty()) {
@@ -467,9 +527,20 @@ std::vector<std::string> SeaLevelOperator::ReadSurfaceField(
     }
     MFEM_VERIFY(c == ncols,
                 "SeaLevelOperator::ReadSurfaceField: short row in " << path);
-    table[key_of(row.data())] = row[sdim + column];
+    const auto [it, inserted] =
+        table.try_emplace(SurfaceKeyOf(row.data(), sdim), values.size() / nw);
+    if (inserted) {
+      values.resize(values.size() + nw);
+    }
+    for (std::size_t j = 0; j < nw; j++) {
+      values[it->second * nw + j] = row[sdim + wanted[j]];
+    }
   }
 
+  out.clear();
+  for (std::size_t j = 0; j < nw; j++) {
+    out.push_back(detail::MakeGridFunction(sfes_.get()));
+  }
   std::unique_ptr<mfem::FiniteElementSpace> vfes;
   auto coords = NodalCoordinates(*surf_mesh_, *fec_, sdim, parallel_, vfes);
   const int nd = sfes_->GetVSize();
@@ -478,17 +549,17 @@ std::vector<std::string> SeaLevelOperator::ReadSurfaceField(
     for (int c = 0; c < sdim; c++) {
       x[c] = (*coords)[i + c * nd];
     }
-    const Key k0 = key_of(x);
+    const SurfaceKey k0 = SurfaceKeyOf(x, sdim);
     bool found = false;
-    real_t value = 0.0;
+    std::size_t at = 0;
     const long long dlo = sdim == 3 ? -1 : 0, dhi = sdim == 3 ? 1 : 0;
     for (long long dx = -1; dx <= 1 && !found; dx++) {
       for (long long dy = -1; dy <= 1 && !found; dy++) {
         for (long long dz = dlo; dz <= dhi && !found; dz++) {
-          const Key k{k0[0] + dx, k0[1] + dy, k0[2] + dz};
+          const SurfaceKey k{k0[0] + dx, k0[1] + dy, k0[2] + dz};
           auto it = table.find(k);
           if (it != table.end()) {
-            value = it->second;
+            at = it->second;
             found = true;
           }
         }
@@ -501,7 +572,9 @@ std::vector<std::string> SeaLevelOperator::ReadSurfaceField(
                        "the mesh AND the finite-element order: re-export "
                        "the nodes and resample the fields after changing "
                        "either.");
-    f[i] = value;
+    for (std::size_t j = 0; j < nw; j++) {
+      (*out[j])[i] = values[at * nw + j];
+    }
   }
   return names;
 }
@@ -632,9 +705,8 @@ class MigratingOceanState {
   }
 
   real_t Weight(ElementTransformation& T, const IntegrationPoint& ip) const {
-    Vector g;
-    grad_phi0_->Eval(g, T, ip);
-    return rho_w_ * Fraction(T, ip, false) / g.Norml2();
+    grad_phi0_->Eval(g_scratch_, T, ip);
+    return rho_w_ * Fraction(T, ip, false) / g_scratch_.Norml2();
   }
 
   real_t Data(ElementTransformation& T, const IntegrationPoint& ip) const {
@@ -653,6 +725,7 @@ class MigratingOceanState {
   Coefficient *sl0_, *ice0_, *dice_;
   real_t rho_w_, rho_i_, shore_;
   std::unique_ptr<GridFunction> sl1_body_, sl1_parent_, sl1_prev_;
+  mutable Vector g_scratch_;  ///< grad Phi0 at the current point
 };
 
 namespace {
@@ -686,30 +759,80 @@ ShorelineMigration::ShorelineMigration(
     VectorCoefficient& grad_phi0, Coefficient& initial_sea_level,
     Coefficient& initial_ice, Coefficient& ice_change, real_t rho_water,
     real_t rho_ice, const Array<int>& surface_marker, Options options)
-    : problem_(problem),
+    : base_(problem),
+      refresh_([&problem] { problem.RefreshWaterLoad(); }),
+      phi_g_([&problem] { return problem.UniformPotentialTerm(); }),
+      last_outer_([&problem] { return problem.LastOuterIterations(); }),
+      rot_psi_([&problem]() -> Coefficient* {
+        return problem.AngularVelocity().Size() > 0
+                   ? &problem.SolutionCentrifugalPotential()
+                   : nullptr;
+      }),
+      potential_on_body_(
+          [&problem]() -> const GridFunction& {
+            return problem.PotentialOnBody();
+          }),
+      referential_(false),
       options_(options),
       marker_(surface_marker),
       grad_phi0_(&grad_phi0) {
+  Init(grad_phi0, initial_sea_level, initial_ice, ice_change, rho_water,
+       rho_ice,
+       *const_cast<GridFunction&>(problem.Potential()).FESpace());
+  problem.SetWaterLoad(*weight_, *data_, surface_marker);
+}
+
+ShorelineMigration::ShorelineMigration(
+    LinearQuasiStaticReferentialSelfGravitatingProblem& problem,
+    VectorCoefficient& grad_phi0, Coefficient& initial_sea_level,
+    Coefficient& initial_ice, Coefficient& ice_change, real_t rho_water,
+    real_t rho_ice, const Array<int>& surface_marker, Options options)
+    : base_(problem),
+      refresh_([&problem] { problem.RefreshWaterLoad(); }),
+      phi_g_([&problem] { return problem.UniformPotentialTerm(); }),
+      last_outer_([&problem] { return problem.LastOuterIterations(); }),
+      rot_psi_([&problem]() -> Coefficient* {
+        return problem.AngularVelocity().Size() > 0
+                   ? &problem.SolutionCentrifugalPotential()
+                   : nullptr;
+      }),
+      potential_on_body_(
+          [&problem]() -> const GridFunction& {
+            return problem.PotentialOnBody();
+          }),
+      referential_(true),
+      options_(options),
+      marker_(surface_marker),
+      grad_phi0_(&grad_phi0) {
+  Init(grad_phi0, initial_sea_level, initial_ice, ice_change, rho_water,
+       rho_ice,
+       *const_cast<GridFunction&>(problem.Potential()).FESpace());
+  problem.SetWaterLoad(*weight_, *data_, surface_marker);
+}
+
+void ShorelineMigration::Init(VectorCoefficient& grad_phi0,
+                              Coefficient& initial_sea_level,
+                              Coefficient& initial_ice,
+                              Coefficient& ice_change, real_t rho_water,
+                              real_t rho_ice,
+                              FiniteElementSpace& potential_fes) {
   state_ = std::make_unique<detail::MigratingOceanState>(
       grad_phi0, initial_sea_level, initial_ice, ice_change, rho_water,
-      rho_ice, options.shore);
+      rho_ice, options_.shore);
   weight_ = std::make_unique<detail::StateCoefficient>(
       *state_, detail::StateCoefficient::Kind::Weight);
   data_ = std::make_unique<detail::StateCoefficient>(
       *state_, detail::StateCoefficient::Kind::Data);
   frac_coef_ = std::make_unique<detail::StateCoefficient>(
       *state_, detail::StateCoefficient::Kind::Fraction);
-  problem_.SetWaterLoad(*weight_, *data_, surface_marker);
 
-  FiniteElementSpace& fes = problem_.DisplacementSpace();
+  FiniteElementSpace& fes = base_.DisplacementSpace();
   const int dim = fes.GetMesh()->Dimension();
   sfec_ = std::make_unique<H1_FECollection>(fes.GetMaxElementOrder(), dim);
   sfes_ = detail::MakeFESpace(fes, sfec_.get());
   // A matching scalar space on the parent mesh (the potential's), for
   // the up-transferred state.
-  pfes_ = detail::MakeFESpace(
-      *const_cast<GridFunction&>(problem_.Potential()).FESpace(),
-      sfec_.get());
+  pfes_ = detail::MakeFESpace(potential_fes, sfec_.get());
   parallel_ = detail::IsParallel(fes);
 #ifdef MFEM_USE_MPI
   if (parallel_) {
@@ -756,38 +879,47 @@ real_t ShorelineMigration::ShorelineChange() {
 }
 
 void ShorelineMigration::UpdateState(bool replace) {
-  // Nodal SL1 = (-(u.grad Phi0 + phi + psi) + Phi_g)/g on the body
-  // scalar space, then transferred up to the parent, so the state is
-  // evaluable wherever the water blocks assemble.
-  auto tau = detail::MakeGridFunction(sfes_.get());
-  {
-    VectorGridFunctionCoefficient uc(&problem_.Displacement());
-    InnerProductCoefficient ug(uc, *grad_phi0_);
-    tau->ProjectCoefficient(ug);
+  // Nodal SL1 = (-(tau + psi) + Phi_g)/g on the body scalar space,
+  // then transferred up to the parent, so the state is evaluable
+  // wherever the water blocks assemble. tau = u.grad Phi0 + phi on the
+  // mixed class; on the referential class it is zeta^1 directly.
+  if (!tau_) {
+    tau_ = detail::MakeGridFunction(sfes_.get());
+    phi_ = detail::MakeGridFunction(sfes_.get());
+    psi_ = detail::MakeGridFunction(sfes_.get());
+    g_ = detail::MakeGridFunction(sfes_.get());
   }
-  auto phi = detail::MakeGridFunction(sfes_.get());
-  {
+  GridFunction& tau = *tau_;
+  if (referential_) {
+    GridFunctionCoefficient zc(
+        const_cast<GridFunction*>(&potential_on_body_()));
+    tau.ProjectCoefficient(zc);
+  } else {
+    {
+      VectorGridFunctionCoefficient uc(&base_.Displacement());
+      InnerProductCoefficient ug(uc, *grad_phi0_);
+      tau.ProjectCoefficient(ug);
+    }
     GridFunctionCoefficient pc(
-        const_cast<GridFunction*>(&problem_.PotentialOnBody()));
-    phi->ProjectCoefficient(pc);
+        const_cast<GridFunction*>(&potential_on_body_()));
+    phi_->ProjectCoefficient(pc);
+    tau += *phi_;
   }
-  std::unique_ptr<GridFunction> psi;
-  if (problem_.AngularVelocity().Size() > 0) {
-    psi = detail::MakeGridFunction(sfes_.get());
-    psi->ProjectCoefficient(problem_.SolutionCentrifugalPotential());
+  const GridFunction* psi = nullptr;
+  if (Coefficient* psi_coef = rot_psi_()) {
+    psi_->ProjectCoefficient(*psi_coef);
+    psi = psi_.get();
   }
-  auto g = detail::MakeGridFunction(sfes_.get());
-  {
-    InnerProductCoefficient gg(*grad_phi0_, *grad_phi0_);
-    PowerCoefficient gmag(gg, 0.5);
-    g->ProjectCoefficient(gmag);
+  // g is loop-invariant within a Solve().
+  if (!g_valid_) {
+    ProjectGravity(*grad_phi0_, *g_);
+    g_valid_ = true;
   }
   auto body = detail::MakeGridFunction(sfes_.get());
-  const real_t phi_g = problem_.UniformPotentialTerm();
+  const real_t phi_g = phi_g_();
   for (int i = 0; i < body->Size(); i++) {
-    (*body)[i] = (-((*tau)[i] + (*phi)[i] + (psi ? (*psi)[i] : 0.0)) +
-                  phi_g) /
-                 (*g)[i];
+    (*body)[i] =
+        (-(tau[i] + (psi ? (*psi)[i] : 0.0)) + phi_g) / (*g_)[i];
   }
   auto parent = detail::MakeGridFunction(pfes_.get());
   *parent = 0.0;
@@ -807,17 +939,18 @@ bool ShorelineMigration::Solve(real_t t) {
   iterations_ = 0;
   last_change_ = 0.0;
   outer_its_total_ = 0;
-  const real_t base = problem_.RelTol();
+  g_valid_ = false;
+  const real_t base = base_.RelTol();
   const bool loose = options_.inexact > 0.0 && options_.max_iterations > 0;
   auto solve_at = [&](real_t tol) {
-    problem_.SetRelTol(tol);
-    problem_.AssembleForce(t);
-    const bool ok = problem_.Solve();
-    outer_its_total_ += problem_.LastOuterIterations();
+    base_.SetRelTol(tol);
+    base_.AssembleForce(t);
+    const bool ok = base_.Solve();
+    outer_its_total_ += last_outer_();
     return ok;
   };
   auto finish = [&](bool ok) {
-    problem_.SetRelTol(base);
+    base_.SetRelTol(base);
     return ok;
   };
   auto root = [&]() {
@@ -833,7 +966,7 @@ bool ShorelineMigration::Solve(real_t t) {
   auto trace = [&](const char* what, real_t value) {
     if (options_.verbose && root()) {
       mfem::out << "shoreline migration: " << what << " " << value
-                << ", Phi_g " << problem_.UniformPotentialTerm() << "\n";
+                << ", Phi_g " << phi_g_() << "\n";
     }
   };
 
@@ -849,22 +982,12 @@ bool ShorelineMigration::Solve(real_t t) {
   for (int it = 0; it < options_.max_iterations; it++) {
     UpdateState();
     last_change_ = ShorelineChange();
-    // The contraction guard (the Options note): a loose pass whose SL1
-    // increment fails to contract may have been poisoned by the
-    // border-amplified solver error. Redo this iterate at full
-    // tolerance, measured against the same baseline — and abandon
-    // inexactness for the rest of the loop: the amplification is a
-    // property of the operator-and-solver configuration, so every
-    // further loose pass would poison the state again (a non-sticky
-    // guard leaves the loop bouncing between flooded and dried
-    // shorelines). The tight loop is globally attracted — C is bounded
-    // and the water feedback is a weak contraction — so it recovers
-    // even from a poisoned seed.
-    // The absolute floor: an honest loose pass can move SL1 by about
-    // the loosest solver tolerance, so the benign rattle of the
-    // increments near convergence sits at ~inexact_max and must not
-    // fire the guard; a non-contracting move an order of magnitude
-    // bigger than any honest loose move is poison.
+    // The contraction guard (see Options::guard): a loose pass whose
+    // SL1 increment fails to contract is redone at full tolerance
+    // against the same baseline, and inexactness is abandoned for the
+    // rest of the loop. Increments at or below 10 * inexact_max are the
+    // benign rattle of loose passes (an honest loose pass moves SL1 by
+    // about the loose tolerance) and never fire it.
     const real_t floor = 10.0 * options_.inexact_max;
     if (loose && !inexact_abandoned && options_.guard > 0.0 &&
         state_->Previous() && last_change_ > options_.guard * prev_change &&
@@ -882,7 +1005,7 @@ bool ShorelineMigration::Solve(real_t t) {
       break;
     }
     prev_change = last_change_;
-    problem_.RefreshWaterLoad();
+    refresh_();
     const real_t tol =
         loose && !inexact_abandoned
             ? std::min(std::max(options_.inexact * last_change_, base),
@@ -897,7 +1020,7 @@ bool ShorelineMigration::Solve(real_t t) {
     // The polish: one full-tolerance solve whose operator carries the
     // final ocean function (the loose passes solved with the previous
     // pass's shoreline; warm-started, so it is cheap).
-    problem_.RefreshWaterLoad();
+    refresh_();
     if (!solve_at(base)) {
       return finish(false);
     }
@@ -915,8 +1038,8 @@ namespace detail {
 class IceStack {
  public:
   IceStack(SeaLevelOperator& sea, const std::string& path) {
-    auto first = detail::MakeGridFunction(&sea.SurfaceSpace());
-    const auto names = sea.ReadSurfaceField(*first, path, 0);
+    // One pass over the file fills every column.
+    const auto names = sea.ReadSurfaceColumns(path, {}, surface_);
     for (const auto& name : names) {
       std::size_t pos = 0;
       real_t t = 0.0;
@@ -934,17 +1057,10 @@ class IceStack {
       times_.push_back(t);
     }
     const int n = static_cast<int>(times_.size());
-    surface_.resize(n);
     top_.resize(n);
     body_.resize(n);
     mfem::FiniteElementSpace* bfes = sea.BodyScalarSpace();
     for (int k = 0; k < n; k++) {
-      surface_[k] = detail::MakeGridFunction(&sea.SurfaceSpace());
-      if (k == 0) {
-        *surface_[k] = *first;
-      } else {
-        sea.ReadSurfaceField(*surface_[k], path, k);
-      }
       top_[k] = detail::MakeGridFunction(&sea.TopScalarSpace());
       sea.Extend(*surface_[k], *top_[k]);
       if (bfes) {

@@ -30,61 +30,6 @@
 // z -> z + h(x,y)(1 + z/D), so the bottom stays flat and element faces
 // follow the surface — no remeshing.
 //
-// The arguments (defaults in brackets; -h prints the same list):
-//   -d       space dimension, 2 or 3                           [2]
-//   -o       finite element order                              [2]
-//   -nx      elements across the width (3-D: each horizontal
-//            direction)                                        [64 / 24]
-//   -nz      elements through the depth                        [32 / 12]
-//   -W       width of the box                                  [8]
-//   -D       depth of the box                                  [4]
-// the fault:
-//   -dip     dip in degrees from horizontal, towards +x        [30]
-//   -rake    rake in degrees, anticlockwise in the fault plane
-//            from the strike: 90 thrust, 0 left-lateral
-//            strike-slip (3-D; 2-D is pure dip-slip)           [90]
-//   -strike  strike in degrees clockwise from the y axis (3-D) [0]
-//   -fd      depth of the fault centre below z = 0             [1]
-//   -fx      x of the fault centre                             [0]
-//   -fl      along-dip length                                  [1.5]
-//   -fw      along-strike width (3-D)                          [1.5]
-//   -s       slip; in 2-D > 0 thrust, < 0 normal; the PEAK
-//            value when tapered                                [0.01]
-//   -taper / -no-taper  cos^2 slip taper, zero at the fault
-//            ends (3-D: all edges) — a uniform distribution's
-//            abrupt edges are themselves an artifact. Midpoint
-//            patches leave -nd 1 a full point source           [on]
-//   -nd      point-source patches along dip                    [12]
-//   -ns      point-source patches along strike (3-D); with
-//            -nd 1 -ns 1 the fault is a single point source    [12]
-//   -smooth  replace each point source by a normalised Gaussian
-//            of this sigma in ELEMENT widths: same moment, same
-//            far field to O(sigma^2/r^2), but a resolved density
-//            instead of mesh-scale artifacts near the fault; the
-//            printed capture is < 100% when a tail leaves the
-//            body (0: point sources)                           [0]
-// the elastic structure (all off by default):
-//   -beta    depth stiffening, moduli *= 1 + beta |z| / D      [0]
-//   -alpha   lateral gradient, moduli *= 1 + alpha x / W
-//            (|alpha| < 2 keeps them positive)                 [0]
-//   -gamma   Gaussian basin: moduli *= 1 - gamma exp(-r^2 /
-//            2 br^2), gamma < 1 the softening at its centre    [0]
-//   -bx      x of the basin centre                             [0]
-//   -bz      depth of the basin centre below z = 0             [0]
-//   -br      Gaussian radius of the basin                      [1]
-// the topography:
-//   -topo    height of the Gaussian surface topography         [0]
-//   -tx      x of the topography centre                        [0]
-//   -tr      Gaussian radius of the topography                 [1.5]
-//   -hill    asymmetric hill: right of the crest a smooth,
-//            roughly linear ramp keeping this fraction of the
-//            height at the right edge (negative: symmetric)    [-1]
-// the output:
-//   -vis / -no-vis   u_z, the vector displacement, kappa and
-//                    mu in GLVis                               [on]
-//   -csv     surface-profile table ("": off)
-//                                       [coseismic_deformation.csv]
-//
 // Output: the total scalar moment and the peak surface uplift and
 // subsidence on the screen; coseismic_deformation.csv, the surface
 // displacement profile along the x axis (3-D: at y = 0), via
@@ -163,6 +108,15 @@
 //    ./coseismic_deformation -alpha 1 -bz 0.5 -gamma 0.6 -bx -1
 //    ./coseismic_deformation -d 3 -o 1 -rake 0           (strike-slip)
 //    ./coseismic_deformation -d 3 -fd 0.75 -fl 1 -fw 2 -strike 30
+//
+// Mesh requirements: none read; the mesh is built internally by
+// fault_box.hpp (no mesh file): a Cartesian box of quadrilaterals (2-D) or
+// hexahedra (3-D), x in [-W/2, W/2] (3-D: also y) and z in [-D, 0], with the
+// free surface at the top (boundary attribute box.TopAttribute(dim): 3 in
+// 2-D, 6 in 3-D, MFEM Cartesian numbering); all other boundaries are
+// clamped. A single body attribute. Nondimensional (mu0 = lambda0 = 1);
+// topography is mapped onto the nodes, so the hard-coded geometry is just
+// -W and -D.
 // ============================================================================
 
 #include <cmath>
@@ -301,7 +255,7 @@ int main(int argc, char* argv[]) {
   }
   b.Assemble();
   if (sources.smoothed) {
-    const double captured = examples::MomentCapture(
+    const real_t captured = examples::MomentCapture(
         b, fes, sources.couple, sources.moment_signed);
     if (Root()) {
       cout << "Smoothed sources: sigma = " << sources.sigma << " ("
@@ -328,7 +282,12 @@ int main(int argc, char* argv[]) {
 #ifdef MFEM_USE_MPI
   HypreBoomerAMG prec(*Amat.As<HypreParMatrix>());
   prec.SetPrintLevel(0);
-  prec.SetSystemsOptions(dim);
+  // The space uses MFEM's default byNODES layout, so the systems AMG
+  // is told so. Measured at the example's defaults on 4 ranks: the
+  // flag is neutral here (PCG 182 iterations in 2-D and 85 in 3-D,
+  // identical either way); it is kept for correctness of the
+  // description.
+  prec.SetSystemsOptions(dim, /*order_bynodes=*/true);
   CGSolver cg(MPI_COMM_WORLD);
 #else
   GSSmoother prec(*Amat.As<SparseMatrix>());

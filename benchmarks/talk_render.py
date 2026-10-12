@@ -1,8 +1,12 @@
 """A slide-grade 3-D render of a cap-load solve, through ParaView.
 
-Run with pvbatch (not the benchmarks venv):
+Run with pvbatch (ParaView's own Python), not in the benchmarks venv:
 
     pvbatch talk_render.py <case>/paraview_o2/solid/solid.pvd talk/field3d.png
+
+Because pvbatch's interpreter has no access to the benchmark modules, the
+output-location guard of common/outputs.py is not applied here: write the
+image into the build tree (or outside the repository).
 
 Loads the solid's ParaView output from field_benchmark --paraview,
 clips half the ball away, warps the surface by the displacement
@@ -10,6 +14,18 @@ clips half the ball away, warps the surface by the displacement
 the off-axis cap load makes an asymmetric, recognisably 3-D picture.
 """
 import sys
+from pathlib import Path
+
+USAGE = "usage: pvbatch talk_render.py <solid.pvd> <output.png>"
+if len(sys.argv) != 3:
+    raise SystemExit(USAGE)
+if not Path(sys.argv[1]).is_file():
+    raise SystemExit(f"{sys.argv[1]}: no such file\n{USAGE}")
+if not sys.argv[2].lower().endswith(".png"):
+    raise SystemExit(f"{sys.argv[2]}: the output must be a .png file\n"
+                     f"{USAGE}")
+if not Path(sys.argv[2]).resolve().parent.is_dir():
+    raise SystemExit(f"{sys.argv[2]}: its directory does not exist")
 
 from paraview.simple import (Clip, ColorBy, GetActiveViewOrCreate,
                              GetColorTransferFunction, GetScalarBar,
