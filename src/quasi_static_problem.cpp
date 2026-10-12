@@ -915,13 +915,45 @@ void LinearQuasiStaticProblemBase::SetupDefaultPreconditioner(
     if (pfes_) {
       auto amg = std::make_unique<HypreBoomerAMG>(*A.As<HypreParMatrix>());
       // Systems AMG with the nodal coarsening and coarse-grid smoother of
-      // SetElasticityOptions, but without its rigid-body interpolation,
-      // which needs Ordering::byVDIM (MFEM 4.10 verifies this; the
-      // displacement spaces here are byNODES).
+      // SetElasticityOptions; its rigid-body interpolation needs
+      // Ordering::byVDIM in mfem's own path (the displacement spaces
+      // here are byNODES), so with SetElasticityNearNull() the rotation
+      // vectors are attached directly through the hypre interface
+      // instead (GM-2; the translations are the nodal coarsening's
+      // constants).
       amg->SetSystemsOptions(pfes_->GetVDim(), true);
       HYPRE_BoomerAMGSetNodal(*amg, 4);
       HYPRE_BoomerAMGSetNodalDiag(*amg, 1);
       HYPRE_BoomerAMGSetCycleRelaxType(*amg, 8, 3);
+      if (amg_rbm_) {
+        HYPRE_BoomerAMGSetInterpVecVariant(*amg, 2);
+        HYPRE_BoomerAMGSetInterpVecQMax(*amg, 4);
+        HYPRE_BoomerAMGSetSmoothInterpVectors(*amg, 1);
+        const int dim = pfes_->GetParMesh()->Dimension();
+        amg_rbms_.clear();
+        amg_rbm_handles_.SetSize(0);
+        auto add_rotation = [&](int component) {
+          RigidRotation rot(dim, component);
+          ParGridFunction gf(pfes_);
+          gf.ProjectCoefficient(rot);
+          auto tv = std::unique_ptr<HypreParVector>(pfes_->NewTrueDofVector());
+          gf.GetTrueDofs(*tv);
+          amg_rbm_handles_.Append(*tv);
+          amg_rbms_.push_back(std::move(tv));
+        };
+        if (dim == 2) {
+          add_rotation(2);
+        } else {
+          add_rotation(0);
+          add_rotation(1);
+          add_rotation(2);
+        }
+        HYPRE_BoomerAMGSetInterpVectors(*amg, amg_rbm_handles_.Size(),
+                                        amg_rbm_handles_.GetData());
+        // The elasticity interpolation can leave singular coarse grids
+        // that hypre's solve handles but whose setup reports errors.
+        amg->SetErrorMode(HypreSolver::IGNORE_HYPRE_ERRORS);
+      }
       amg->SetPrintLevel(0);
       prec_ = std::move(amg);
     } else

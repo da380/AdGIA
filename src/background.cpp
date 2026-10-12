@@ -85,12 +85,9 @@ real_t RadialHydrostaticState::Density(real_t r) const {
   return r > R_ ? 0.0 : rho_(std::max(real_t{0}, r));
 }
 
-// Hidden from Doxygen, which cannot match the unqualified parameter types
-// of this constructor to its declaration.
-/// @cond
 RadialHydrostaticBackground::RadialHydrostaticBackground(
-    int dim, RadialFunc rho, RadialFunc kappa, RadialFunc mu, real_t G,
-    real_t radius, int samples)
+    int dim, RadialFunc rho, RadialFunc kappa, RadialFunc mu, mfem::real_t G,
+    mfem::real_t radius, int samples)
     : dim_(dim),
       kappa_fn_(std::move(kappa)),
       mu_fn_(std::move(mu)),
@@ -107,7 +104,6 @@ RadialHydrostaticBackground::RadialHydrostaticBackground(
       S_(minus_p0_, identity_),
       phi_e_(dim),
       rheology_(dim, C_, S_, phi_e_) {}
-/// @endcond
 
 RelabelledBackground::RelabelledBackground(RadialHydrostaticBackground& base,
                                            Diffeomorphism& xi)

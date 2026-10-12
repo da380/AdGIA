@@ -460,12 +460,8 @@ void BoundaryHarmonicCoefficients::Reduce(Vector& c) const {
 #endif
 }
 
-// Hidden from Doxygen, which cannot match these overloads to their
-// declarations: the unqualified mfem types here do not resolve without the
-// MFEM headers in its input.
-/// @cond
-void BoundaryHarmonicCoefficients::Coefficients(const GridFunction& f,
-                                                Vector& c) const {
+void BoundaryHarmonicCoefficients::Coefficients(const mfem::GridFunction& f,
+                                                mfem::Vector& c) const {
   MFEM_VERIFY(f.Size() == M_.Height(),
               "BoundaryHarmonicCoefficients: the field is not on the space.");
   c.SetSize(Size());
@@ -473,8 +469,8 @@ void BoundaryHarmonicCoefficients::Coefficients(const GridFunction& f,
   Reduce(c);
 }
 
-void BoundaryHarmonicCoefficients::Coefficients(Coefficient& f,
-                                                Vector& c) const {
+void BoundaryHarmonicCoefficients::Coefficients(mfem::Coefficient& f,
+                                                mfem::Vector& c) const {
   MFEM_VERIFY(component_ == Component::Scalar,
               "BoundaryHarmonicCoefficients: scalar coefficient on a Radial "
               "operator.");
@@ -487,8 +483,8 @@ void BoundaryHarmonicCoefficients::Coefficients(Coefficient& f,
   Reduce(c);
 }
 
-void BoundaryHarmonicCoefficients::Coefficients(VectorCoefficient& f,
-                                                Vector& c) const {
+void BoundaryHarmonicCoefficients::Coefficients(mfem::VectorCoefficient& f,
+                                                mfem::Vector& c) const {
   MFEM_VERIFY(component_ != Component::Scalar,
               "BoundaryHarmonicCoefficients: vector coefficient on a Scalar "
               "operator.");
@@ -510,7 +506,6 @@ void BoundaryHarmonicCoefficients::Coefficients(VectorCoefficient& f,
   Reduce(c);
 }
 
-/// @endcond
 
 void BoundaryHarmonicCoefficients::LoadVector(const Vector& c,
                                               Vector& b) const {

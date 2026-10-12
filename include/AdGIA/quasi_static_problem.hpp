@@ -570,6 +570,17 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   virtual void SetGaugePreconditionerOnly(mfem::real_t eps_prec);
   bool GaugePreconditionerOnly() const { return gauge_prec_only_; }
 
+  /**
+   * @brief Give the displacement BoomerAMG the rigid-body rotations as
+   * interpolation vectors (hypre's GM-2 elasticity interpolation; the
+   * translations are the constants of the nodal coarsening). The byNODES
+   * equivalent of mfem's SetElasticityOptions, whose own path requires
+   * Ordering::byVDIM. Parallel builds only (the serial smoother ignores
+   * it); call before the first Solve(). Off by default pending
+   * measurement against the nodal-systems default.
+   */
+  void SetElasticityNearNull(bool on = true) { amg_rbm_ = on; }
+
   /** @brief Stagnation (plateau) stop for the SetGaugePreconditionerOnly
    * mode: the block solve runs as warm-started restarts of @p chunk
    * iterations and stops when the residual of a chunk exceeds @p ratio
@@ -806,6 +817,15 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   FluidTreatment fluid_treatment_ = FluidTreatment::None;
   int gauge_refinements_ = 2;
   bool gauge_prec_only_ = false;  // clean-A operator, A + eps_prec Q prec
+  bool amg_rbm_ = false;  // rigid-rotation interpolation vectors on the AMG
+#ifdef MFEM_USE_MPI
+  // The interpolation vectors hypre references during AMG setup — and
+  // the HANDLE ARRAY itself, whose pointer hypre stores without
+  // copying; both must outlive the preconditioner, so they are rebuilt
+  // with it.
+  std::vector<std::unique_ptr<mfem::HypreParVector>> amg_rbms_;
+  mfem::Array<HYPRE_ParVector> amg_rbm_handles_;
+#endif
   mfem::real_t gauge_plateau_ratio_ = 0.0;  // 0: no stagnation stop
   int gauge_plateau_chunk_ = 25;
 

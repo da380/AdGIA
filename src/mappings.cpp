@@ -97,14 +97,11 @@ RadialDiffeomorphism::RadialDiffeomorphism(int dim, Coefficient& f,
   MFEM_VERIFY(grad_f.GetVDim() == dim, "RadialDiffeomorphism: grad_f vdim.");
 }
 
-// Hidden from Doxygen, which cannot match the unqualified parameter types
-// of these overloaded constructors to their declarations.
-/// @cond
 RadialDiffeomorphism::RadialDiffeomorphism(
-    int dim, std::function<real_t(real_t)> f, std::function<real_t(real_t)> df)
+    int dim, std::function<mfem::real_t(mfem::real_t)> f,
+    std::function<mfem::real_t(mfem::real_t)> df)
     : Diffeomorphism(dim), fr_(std::move(f)), dfr_(std::move(df)), x_(dim),
       g_(dim) {}
-/// @endcond
 
 real_t RadialDiffeomorphism::Scalar(ElementTransformation& T,
                                     const IntegrationPoint& ip) {
@@ -219,9 +216,7 @@ void TaperedDiffeomorphism::EvalGradient(DenseMatrix& F,
   }
 }
 
-// Hidden from Doxygen, as for RadialDiffeomorphism above.
-/// @cond
-GridFunctionDiffeomorphism::GridFunctionDiffeomorphism(const GridFunction& h)
+GridFunctionDiffeomorphism::GridFunctionDiffeomorphism(const mfem::GridFunction& h)
     : Diffeomorphism(h.VectorDim()), h_(&h), x_(h.VectorDim()) {
   MFEM_VERIFY(
       h.VectorDim() == h.FESpace()->GetMesh()->SpaceDimension(),
@@ -230,15 +225,15 @@ GridFunctionDiffeomorphism::GridFunctionDiffeomorphism(const GridFunction& h)
 }
 
 GridFunctionDiffeomorphism::GridFunctionDiffeomorphism(
-    std::unique_ptr<FiniteElementCollection> fec,
-    std::unique_ptr<FiniteElementSpace> fes, std::unique_ptr<GridFunction> h)
+    std::unique_ptr<mfem::FiniteElementCollection> fec,
+    std::unique_ptr<mfem::FiniteElementSpace> fes,
+    std::unique_ptr<mfem::GridFunction> h)
     : Diffeomorphism(h->VectorDim()),
       owned_fec_(std::move(fec)),
       owned_fes_(std::move(fes)),
       owned_h_(std::move(h)),
       h_(owned_h_.get()),
       x_(vdim) {}
-/// @endcond
 
 void GridFunctionDiffeomorphism::Eval(Vector& V, ElementTransformation& T,
                                       const IntegrationPoint& ip) {
