@@ -53,7 +53,11 @@ layered self-gravitating bodies, across formulations, solvers and
 core--mantle-boundary treatments, and the response as fields), the
 relabelling family (the mapped/aspherical machinery checked with
 the spherical physics unchanged), the perturbation family (derivatives of
-the response with respect to an interface radius), and the viscoelastic
+the response with respect to an interface radius), the disc family
+(two-dimensional gravitating discs against per-degree exact radial
+references: the fluid-treatment laboratory), the sea-level family (the
+sea-level equation against \code{pyslfp}: fingerprints, rotational
+feedback, shoreline migration), and the viscoelastic
 family (the time integrators: exact box and sphere benchmarks without
 gravity, the time-stepping survey, and Maxwell Love-number histories
 against a correspondence-principle reference). For each it states what is
@@ -88,6 +92,8 @@ family & drivers & scripts \\
 \code{love\_numbers/} & \code{love\_benchmark}, \code{field\_benchmark}, \code{partition\_case} & \code{run.py}, \code{plot.py}, \code{cmb\_report.py} \\
 \code{relabelling/} & \code{relabelled\_identity}, \code{aspherical\_reference} & \code{plot.py} \\
 \code{perturbation/} & none (\code{love\_benchmark -map-shift}) & \code{perturbation\_check.py}, \code{plot.py} \\
+\code{disc/} & \code{disc\_benchmark} & \code{disc\_models.py}, \code{disc\_radial.py}, \code{disc\_reference.py}, \code{check.py}, \code{explore.py} \\
+\code{sea\_level/} & \code{sea\_level\_benchmark} & \code{run.py} \\
 \code{viscoelastic/box/} & \code{viscoelastic\_box} & \code{cases.py}, \code{histories.py}, \code{reference.py}, \code{compare.py}, \code{study.py} \\
 \code{viscoelastic/sphere/} & \code{viscoelastic\_sphere} & \code{meshes.py}, \code{cases.py}, \code{reference.py}, \code{derive\_euler.py}, \code{study.py} \\
 \code{viscoelastic/love/} & \code{viscoelastic\_love} & \code{laplace\_reference.py}, \code{compare.py} \\
@@ -110,7 +116,7 @@ file & role \\
 \code{viscoelastic\_common.hpp} & what the box and sphere drivers share: the step grid, the schemes, the cost bookkeeping \\
 \code{costs.py} & the cost of a run (per-degree or combined solves) for the collating scripts \\
 \code{drivers.py} & locating the build's drivers; running and logging commands \\
-\code{outputs.py} & the guard that refuses output paths inside the source tree (used by the box and sphere scripts) \\
+\code{outputs.py} & the guard that refuses output paths inside the source tree (\code{outside\_source}, used by every benchmark script) \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -187,6 +193,7 @@ model & boundaries (km) & layers: $\rho$ (kg\,m$^{-3}$), $v_P$, $v_S$ (m\,s$^{-1
 \code{homogeneous\_lithosphere} & $0, 5700, 6371$ & the same body, cut so that the outer shell can stay elastic (viscoelastic family only) \\
 \code{two\_solid} & $0, 5000, 6371$ & lower 6500, 12000, 6500; upper 3500, 8500, 4500 \\
 \code{fluid\_core} & $0, 3500, 6371$ & core (fluid) 11000, 9000, 0; mantle 4500, 11000, 6000 \\
+\code{aw\_core} & $0, 3500, 6371$ & \code{fluid\_core}'s neutrally stratified twin: a closed-form Adams--Williamson core ($N^2 = 0$ exactly; $\rho = \rho_0(1-\alpha x^2)$, $\kappa$ from the neutrality identity), mass-matched so the mantle's hydrostatic state and surface gravity equal \code{fluid\_core}'s \\
 \code{inner\_core} & $0, 1200,\allowbreak\ 3500, 6371$ & 13000, 11000, 3500; fluid 11000, 9000, 0; 4500, 11000, 6000 \\
 \code{linear\_solid} & $0, 6371$ & $8000-4500x$, $12500-5000x$, $7000-3000x$ \\
 \code{stratified\_core} & $0, 3500, 6371$ & fluid core $12500-4500x$, $10500-4500x$, 0; mantle $7000-3000x$, $15500-6500x$, $8000-3000x$ \\
@@ -207,11 +214,14 @@ matter for the comparisons below.
 \item \emph{Stratification of the fluid.} A uniform-density compressible
   layer has $N^2=-\rho g^2/\kappa<0$ (convectively unstable). The fluid
   cores of \code{fluid\_core} and \code{inner\_core} are of this kind.
-  PREM's outer core is close to Adams--Williamson ($N^2\approx 0$).
-\item \emph{Shiftable interfaces.} \code{fluid\_core} (its CMB) and
-  \code{two\_solid} (its mid-mantle discontinuity) take the interface
-  radius as an argument; the perturbation family uses this
-  (\code{models.SHIFTABLE}).
+  PREM's outer core is close to Adams--Williamson ($N^2\approx 0$);
+  \code{aw\_core} is exactly so by construction, which makes it the
+  clean cross-method comparison model.
+\item \emph{Shiftable interfaces.} \code{fluid\_core} (its CMB),
+  \code{aw\_core} (its CMB, every shifted member re-derived exactly
+  neutral) and \code{two\_solid} (its mid-mantle discontinuity) take
+  the interface radius as an argument; the perturbation family uses
+  this (\code{models.SHIFTABLE}).
 \end{enumerate}
 
 \subsection{Cases}
@@ -434,8 +444,10 @@ into the build tree; the copies carry a prefix (\code{fc\_} for
 \code{methods.png} and so on without one). Paths below are relative to
 \code{<build>/benchmarks}; the Love-number commands are started in
 \code{love\_numbers/}, the viscoelastic ones in their sub-family directory.
-\code{talk\_figures.py} reads every input from a flag whose default is the
-location given here (\code{python talk\_figures.py --out talk}).
+\code{talk\_figures.py} and \code{talk\_render.py} stay in the source
+tree (no build launcher): run them from \code{<build>/benchmarks}, where
+their input defaults point, as
+\code{python <repo>/benchmarks/talk\_figures.py --out talk}.
 \begin{center}
 \footnotesize
 \begin{tabular}{@{}P{3.6cm}P{7.2cm}P{4.6cm}@{}}
@@ -458,7 +470,11 @@ figures & command & output \\
 \path{talk_identity} & local campaign, stage \path{identity}; \path{talk_figures.py} reads the logs & \path{runs_campaign/relabelling/identity_*.txt} \\
 \path{talk_aspherical} & the amplitude sweep of \S\ref{sec:legC}; \code{talk\_figures.py --aspherical talk\_data} & \path{talk_data/} \\
 \path{pert_fc_referential}, \path{pert_fc_slip_broken}, \path{pert_ts_referential} &
-local campaign, stages \code{perturbation plot}; \path{talk_figures.py} &
+local campaign, stages \code{perturbation plot} (order 2; the stage
+passes the gauge-converged shift settings \code{-geps 0.1 -gref 7});
+the definitive table's order-3 rows by
+\code{./perturbation\_check <case> --order 3 --program-args "-geps 0.1
+-gref 7"} in \path{perturbation/}; \path{talk_figures.py} &
 \path{runs_campaign/perturbation/<model>/perturbation_<method>_o2.png} \\
 \path{box_steppers_*}, \path{box_slab_*}, \path{box_stehfest_*}, \path{box_contrast_*} &
 \code{./study steppers|slab|stehfest|contrast --out runs} (\path{viscoelastic/box}) &
@@ -474,8 +490,8 @@ local campaign, stages \code{perturbation plot}; \path{talk_figures.py} &
 \end{center}
 A three-dimensional render of a cap-load solve is made from the ParaView
 output of \code{field\_benchmark} (\code{run.py --field --paraview}) by
-\code{pvbatch talk\_render.py <case>/paraview\_o2/solid/solid.pvd
-talk/field3d.png}.
+\code{pvbatch <repo>/benchmarks/talk\_render.py
+<case>/paraview\_o2/solid/solid.pvd talk/field3d.png}.
 
 %=============================================================================
 \section{The Love-number family}
@@ -2214,7 +2230,7 @@ The regime decides the winner (Figure~\ref{fig:box-cost}). After a step
 load (Heaviside, load\_unload) the adaptive trapezoid is cheapest, by a
 factor of 3--5 on the stiff bodies, and its error is far below rtol there
 because the ETD1 estimate is conservative. Under sustained periodic
-forcing it is the worst choice (1400--23000 solves), since the same
+forcing it is the worst choice (1400--13000 solves), since the same
 estimate keeps every step small for the whole run. On non-stiff bodies
 RK4 wins at tight targets (273 solves for $10^{-5}$ on \code{sls}), but on
 a stiff one it is bound by stability (16401 on \code{prony\_wide} whatever

@@ -46,9 +46,8 @@ Sources (the PDFs are in `doc/Elasticity/` where a file name is given):
   stress fields in general models, and the modern rendering of Dahlen's
   hydrostatic-region argument (§6).
 - **Valette (1986)**, About the influence of pre-stress upon adiabatic
-  perturbations of the Earth, *Geophys. J. R. astr. Soc.* 85, 179–208,
-  and **Valette (1991)**, Gravito-elastodynamics of a pre-stressed
-  elastic earth, *Geophys. J. Int.* 104, 555: the geometric
+  perturbations of the Earth, *Geophys. J. R. astr. Soc.* 85, 179–208:
+  the geometric
   (Weingarten-operator) treatment of the fluid–solid interface terms —
   the content of Woodhouse & Dahlen with the interface curvature
   explicit.
@@ -345,9 +344,11 @@ Structural remarks:
   Al-Attar 2024) enters as an operator term on the same substrate: the
   traditional angular-velocity border, or the generalised Tisserand door
   (`doc/quasi_static_models.tex`).
-  The slipping subclasses refuse the tidal load for now: their fluid
+  The slipping subclasses refuse the tidal load: their fluid
   displacement row carries no tidal force, and a solid-row-only load
-  under-drives a fluid core by tens of percent (measured).
+  under-drives a fluid core by tens of percent, so the front door
+  aborts rather than mislead (the welded referential and Maxwell
+  routes solve tides).
 - **At `φ_e = id`, hydrostatic**: `H = Du`, `a_e = 1`, `w = g₀ = ∇Φ₀`,
   and the coupling reduces to
   `⟨[(div u)1 − Du − Duᵀ]∇Φ₀, ∇χ⟩/4πG`. The system is related to the
@@ -457,11 +458,17 @@ A fluid region has `W = V(x, J)`: bulk response only, `P = −pJF⁻ᵀ`,
 statement of "a fluid at pressure is not a shear-free solid".
 
 The quasi-static solution in a fluid is defined only up to linearised
-relabellings. In a hydrostatic, barotropic fluid the linearised energy is
-unchanged by displacements that are divergence-free **and** tangent to
-the level surfaces (of the equilibrium potential, pressure and density,
-which coincide in hydrostatic equilibrium): these are the relabelling
-(gauge) directions. `doc/gauged_fluid.md` (gauge penalty, Tikhonov
+relabellings, and which displacements are relabellings depends on the
+stratification. With a second advected parameter (`N² ≠ 0`, the
+two-parameter case) the linearised energy is unchanged by displacements
+that are divergence-free **and** tangent to the level surfaces (of the
+equilibrium potential, pressure and density, which coincide in
+hydrostatic equilibrium). For a materially barotropic fluid
+(Adams–Williamson, `N² = 0`) the class is larger: every `w` with
+`div(ρ₀w) = 0` in the fluid and `w·m = 0` on its boundary — the trivial
+displacements of Friedman & Schutz — which is what makes every
+tangential slip removable there. These are the relabelling (gauge)
+directions. `doc/gauged_fluid.md` (gauge penalty, Tikhonov
 refinement, the continuous-space gauge for barotropic fluids) applies
 with the general operators of this note, and its discussion of the
 Adams–Williamson condition identifies when the hydrostatic short-cuts

@@ -25,9 +25,9 @@ the context.
   `A` with a projected right-hand side. When the constant is only
   approximately null (the 2-D potential block with a fluid mass term) that
   is a different regularisation from CG on `P A P`, and the two give
-  different answers. The library uses `P A P` throughout; only
-  `examples/poisson_dtn.cpp` uses `OrthoSolver`, for the singular 2-D case
-  of a stand-alone Poisson problem.
+  different answers. The library uses `P A P` throughout; `OrthoSolver`
+  appears in `examples/poisson_dtn.cpp` (the singular 2-D case of a
+  stand-alone Poisson problem) and in `src/equilibrium_figures.cpp`.
 - **Setting the operator of an `IterativeSolver` also sets it on its
   preconditioner.** When the two must differ, set the operator first and the
   preconditioner second (`SetupCG`).

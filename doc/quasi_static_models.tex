@@ -69,7 +69,10 @@ rheology); the mixed referential--spatial self-gravitating problem in
 Dahlen's organisation, including the full ladder of approximate
 core--mantle-boundary conditions used in glacial isostatic adjustment
 (GIA) codes and the physics each of them drops; the same problem with the
-fluid treated in the gauged (relabelling) formulation; the fully
+fluid kept in the displacement space (welded), treated by the default
+Maxwell relaxation --- the general method at any stratification --- or by
+the gauge-penalty (relabelling) formulation, its neutral-stratification
+specialist; the fully
 referential self-gravitating problem about a general equilibrium
 (an arbitrary elastic tensor, equilibrium stress and equilibrium mapping
 of the reference body); and the problem with a genuinely slipping
@@ -187,8 +190,11 @@ Valentine \& Trampert \cite{AC18}), AW10 (Al-Attar \& Woodhouse
 \cite{AW10}) and MA24 (Maitra \& Al-Attar \cite{MaitraAlAttar2024}).
 ``Dahlen's treatment'' of a fluid region means the elimination of the
 fluid displacement in favour of the potential (\S\ref{sec:mixed});
-``gauged'' means the alternative in which the fluid keeps its displacement
-and a gauge is fixed numerically (\S\ref{sec:gauged}).
+``gauged'' means the welded alternative in which the fluid keeps its
+displacement and a gauge is fixed numerically (\S\ref{sec:gauged});
+``Maxwell relaxation'' means the default welded treatment, the fluid an
+artificial Maxwell solid relaxed to the secular response
+(\S\ref{sec:maxwell}), the general method of the fluid hierarchy.
 
 \paragraph{Overloaded symbols.} A few letters are used in more than one
 sense, always distinguished by context and defined locally: $\lambda$
@@ -196,11 +202,14 @@ sense, always distinguished by context and defined locally: $\lambda$
 (first Piola--Kirchhoff stress; projector; constraint-penalty matrix;
 dof injection), $M$ (body; mass matrices), $h$ (element size; Love number;
 $dt/\tau$), $Q$ (gauge-penalty matrix), $\eps$ ($\eps(\vu)$ with an
-argument is the strain, a bare $\eps$ a small parameter), $\sigma$ (Cauchy
+argument is the strain; a bare $\eps$ is a small parameter, except in
+\S\ref{sec:visco}, where it is the strain field of the constitutive
+relations), $\sigma$ (Cauchy
 stress; surface mass load; slip map in \S\ref{sec:slip}), $S$ (second
 Piola--Kirchhoff stress; Schur complements), $B$ (the ball; various
 matrices $B_u$, $B_n$, $B_q$), $C$ (elastic tensors; the coupling matrix of
-\S\ref{sec:mixed}), $K$ (Laplacian stiffness matrix; a number of
+\S\ref{sec:mixed}; the ocean function of the sea-level sections), $K$
+(Laplacian stiffness matrix; a number of
 iterations; calligraphic $\mathcal{K}$ for the relabelling kernel and the
 block operator), $\kappa$ (bulk modulus; condition number $\kappa(\cdot)$),
 and $w$
@@ -274,7 +283,7 @@ Class (prefix \code{LinearQuasiStatic}) & Gravity & Reference state & Fluid regi
 \end{tabular}
 \caption{The quasi-static problem classes. ``Maxwell'': secular
 relaxation of an artificial Maxwell fluid, \code{SetFluid}'s default
-treatment (\S\ref{sec:gauged}; evidence in
+treatment (\S\ref{sec:maxwell}; evidence in
 \code{doc/static\_fluid\_core.tex}); ``Schur CG'': CG on the
 displacement Schur complement (\S\ref{sec:mixed-solvers}); ``AL sweeps'':
 penalty with augmented-Lagrangian iterations (\S\ref{sec:slip-enforce}); ``welded'':
@@ -777,8 +786,8 @@ has been integrated by parts into the symmetrised form of the second line.
 $\rho'_F < 0$ wherever density increases downward, so (F1) is a
 \emph{negative} mass term on the potential (\S\ref{sec:mixed-solvers}).
 
-\paragraph{Interface convention and physical content.} With $\vn$ the
-upward unit normal, $\vm\cdot\grad\Phi_0 = -g$ where
+\paragraph{Interface convention and physical content.} The solid's
+outward normal $\vm$ gives $\vm\cdot\grad\Phi_0 = -g$ where
 the fluid is below and $+g$ where it is above, and (F2)--(F3) reproduce the
 published forms, which treat the two kinds of interface separately with
 opposite signs. Written with $\vm$ the code never classifies an interface:
@@ -954,10 +963,13 @@ interior to the unmeshed region and assembles nothing. The benchmark flag
 \code{-cmb-keep-inner} keeps the inner core meshed, isolating its own
 contribution as a measurable delta.
 
-Beyond the ladder, the \emph{gauged} treatment of \S\ref{sec:gauged}
-keeps the fluid's displacement and bulk modulus and is selected by
-construction rather than by a \code{FluidRegion} setting; it is the
-reference against which the rungs are judged at degree 0.
+Beyond the ladder, the welded treatments of \S\ref{sec:gauged} keep the
+fluid's displacement and bulk modulus and are selected by construction
+rather than by a \code{FluidRegion} setting; they restore the degree-0
+compressible physics every rung drops and are the reference against
+which the rungs are judged at degree 0 --- the gauge penalty subject to
+its neutral-stratification caveat, the Maxwell relaxation
+(\S\ref{sec:maxwell}) without it.
 
 \subsubsection{Degree 0 and the core's mass}
 \label{sec:cmb-deg0}
@@ -969,7 +981,7 @@ core's volume constraint, living entirely at degree 0 (Latychev et al.\
 surface-load convention). This is the free constant of (M4) \cite{AW10}:
 \emph{every} rung, full Dahlen included, misses the core's compressional
 physics at $l=0$ because eliminating the fluid discards its bulk modulus
-there. The gauged treatment (\S\ref{sec:gauged}) keeps it.
+there. The welded treatments (\S\ref{sec:gauged}) keep it.
 
 \subsubsection{Love numbers, and the accuracy of the rungs}
 
@@ -1012,8 +1024,10 @@ radial code \code{pyslfp} on a PREM-like model with a stratified core
   loading-derived CMB condition for tidal computations imports a
   percent-level systematic;
 \item at $l=0$ every rung is wrong, each differently, and no tuning of
-  the CMB condition repairs it (\S\ref{sec:cmb-deg0}); the gauged treatment
-  agrees with the radial reference there.
+  the CMB condition repairs it (\S\ref{sec:cmb-deg0}); the measured gauged
+  runs agree with the radial reference there, and off neutrally
+  stratified models the Maxwell relaxation (\S\ref{sec:maxwell}) is the
+  caveat-free welded route to the same physics.
 \end{itemize}
 
 \subsection{Discretisation}
@@ -1114,8 +1128,9 @@ degree $L$,
 \end{equation}
 In 2-D the expansion is in $\cos k\theta$, $\sin k\theta$, with
 arc-length moments $\phi_k = \int_{\partial B}\cos(k\theta)\,\phi\dS$
-($k<0$) and $\int_{\partial B}\sin(k\theta)\,\phi\dS$ ($k>0$), $\dS =
-b\,\mathrm{d}\theta$, and exterior continuation $(b/r)^{|k|}$. Since
+($k>0$) and $\int_{\partial B}\sin(|k|\theta)\,\phi\dS$ ($k<0$), $\dS =
+b\,\mathrm{d}\theta$, and exterior continuation $(b/r)^{|k|}$ (the sign
+convention of \code{poisson.hpp}). Since
 $\int_{\partial B}\cos^2k\theta\dS = \pi b$, the same argument gives
 \begin{equation}
   \DtN(\phi,\chi) = \frac{1}{\pi b^2}\sum_{k\neq0}|k|\,\phi_k\chi_k ,
@@ -1373,7 +1388,7 @@ the ocean--ice system. The water load $\sigma = \rho_wC\,SL_1 +
   \code{MassIntegrator}$(-w)$ on the potential block, with
   $q_g = \vn\cdot\grad\Phi_0$ (\code{SetWaterLoad});
 \item a rank-one \emph{border}: the column $c = \int w\,\tau'\dS$ against
-  the unknown $\Phi_g$, closed by the mass row $\int_{\partial B}\sigma\dS
+  the unknown $\Phi_g$, closed by the mass row $\int_{\partial M}\sigma\dS
   = 0$; and
 \item the data load $\sigma_d$ through the ordinary surface-load slot.
 \end{itemize}
@@ -1411,7 +1426,7 @@ initial $C_0$ --- the linearisation point of the load law --- so
 exact. The stop is the relative surface-$L^2$ increment of $SL_1$: a
 snapshot of $\Delta C$ itself cannot resolve a shoreline strip narrower
 than the mesh. Migration is strictly second order in the instantaneous
-load (Crawford: the load integrand vanishes at the shoreline), and the
+load (the load integrand vanishes at the shoreline), and the
 certificate measures exactly that --- but only in the resolved sharp
 regime: a smoothing band wider than $\rho_w SL_1$ adds a first-order
 piece in the band width, and a moved strip narrower than the boundary
@@ -1427,9 +1442,10 @@ history forces longer loops.
 
 The sea-level machinery is three-dimensional only: 2-D elastic solves
 with gravity remain useful for visualisation and testing, but a 2-D
-ocean is not physics anyone needs, and the 2-D exterior's compatibility
-relocation (the log-DtN monopole gauge) would make the bordered system
-asymmetric. \code{SetWaterLoad} refuses the dimension.
+ocean has no application, and the 2-D exterior's compatibility
+treatment (\S\ref{sec:mixed-2d}, which relocates the logarithmic
+monopole) would make the bordered pairing deliberately asymmetric.
+\code{SetWaterLoad} refuses the dimension.
 
 The bordered system can also be solved monolithically
 (\code{SetMonolithicBorder}, BlockMINRES path): one MINRES over
@@ -1442,12 +1458,11 @@ endpoint polished by true-residual iterative refinement (the
 recurrence-tracked residual drifts at $\tilde S$'s conditioning). It
 matches the elimination at solver grade (gated, including near-neutral
 moments) and replaces the per-column solves by a mildly longer single
-iteration: measured on the benchmark, the composed water--rotation
-solve drops from $3.8\times$ to $2.3\times$ an elastic solve, while
-the single-border water case stays with the elimination
-($1.6\times$), and the elimination's cached columns remain the
-cheapest route when the operator is frozen across solves (time
-stepping; the cache invalidates on any reassembly).
+iteration. It wins multi-border one-shots; the single-border water
+case, and any sequence of solves at a frozen operator (time stepping
+--- the cached columns invalidate on any reassembly), belong to the
+elimination. The timings are recorded by the sea-level benchmark
+(\code{benchmarks/sea\_level/run.py --timings}).
 
 The self-correction argument behind the inexact passes has a measured
 limit: the bordered elimination recovers $\Phi_g$ through
@@ -1466,10 +1481,9 @@ near convergence the increments rattle at that floor harmlessly) is
 re-solved at full tolerance against the same baseline, after which
 inexactness is abandoned for the remainder of the loop --- the
 amplification is a property of the configuration, and the tight loop is
-globally attracted, $C$ being bounded and the feedback weak. On the
-benchmark stack the unguarded loose loop diverges, the guarded one
-converges to the tight fixed point in five passes, and tight solving
-from the start takes two.
+globally attracted, $C$ being bounded and the feedback weak. The guard
+is gated on a configuration whose unguarded loose loop diverges
+(\code{TestShorelineMigration}, \code{GuardEscalatesToTight}).
 
 Verification: the monolithic solve equals the converged fixed point of
 the iterated water load; mass conservation holds to the mass-row's
@@ -1500,7 +1514,7 @@ leaves the direct potential's discretisation error in $k'$, a 30\,\% effect
 on a coarse 3-D mesh.
 
 %==========================================================================
-\section{The mixed problem with a gauged fluid}
+\section{The mixed problem with a welded fluid: Maxwell relaxation and gauge penalty}
 \label{sec:gauged}
 %==========================================================================
 
@@ -1513,6 +1527,11 @@ join the displacement SubMesh, the rheology gives them $\kappa_f$ with zero
 shear, the density covers them, and \code{SetFluid(marker, mu, GaugePenaltyOptions\char`\{\ldots\char`\}, map)} adds the
 penalty. The machinery lives in the base class
 (\S\ref{sec:nograv}) and is reused by the referential and slip classes.
+The same construction --- fluid attributes in the displacement SubMesh,
+$\kappa_f$ with zero shear --- serves both welded treatments: the default
+Maxwell relaxation (\S\ref{sec:maxwell}) reuses this section's operator
+as its per-step engine, reading the shear term as an effective modulus
+rather than a gauge fixing.
 
 \subsection{Model}
 
@@ -1599,18 +1618,6 @@ fluid never sees $\kappa_f$, while the gauged fluid carries it at every
 degree, restoring the compressible degree-0 physics
 (\S\ref{sec:cmb-deg0}).
 
-\paragraph{Fluid regions: the Maxwell relaxation.} The default treatment of
-fluid regions, \code{SetFluid(marker, mu\_scale)}, is not the gauge penalty
-but the Maxwell relaxation: the fluid is made an artificial Maxwell solid,
-the load is applied as a step, and the body relaxes until the solid stops
-moving, which computes the secular response on any geometry and for any
-stratification. Each step solves the gauge machinery's operator
-$A + \eps\mu Q$ at $\eps = 1/(1+\beta)$, with a continuation to the welded
-limit and a best-state return. It is the general method; the gauge-penalty
-treatment above is clean only for neutrally stratified fluids, and Dahlen's
-mixed formulation is the practical workhorse for hydrostatic models. The
-hierarchy and its evidence are in \code{doc/static\_fluid\_core.tex}.
-
 \paragraph{What changes against Dahlen.}
 \begin{center}
 \small
@@ -1629,6 +1636,35 @@ well-conditioned displacement block & $1/\eps$ fluid near-kernel in the displace
 \bottomrule
 \end{tabular}
 \end{center}
+
+\subsection{The Maxwell relaxation: the default fluid treatment}
+\label{sec:maxwell}
+
+The default treatment of fluid regions,
+\code{SetFluid(marker, mu\_scale)}, is not the gauge penalty but the
+Maxwell relaxation: the fluid is made an artificial Maxwell solid, the
+load is applied as a Heaviside step, and the quasi-static system is
+stepped until the \emph{solid} stops moving --- the secular response,
+computed on any geometry, for any stratification and any number of fluid
+regions, with nothing but welded elastic solves. Each backward-Euler step
+solves the gauge machinery's operator $A + \eps\mu Q$ at
+$\eps = 1/(1+\beta)$, $\beta = \Delta t/\tau$, so the treatment reuses
+this section's engine while reading the term as a per-step effective
+shear rather than a gauge fixing (the penalty's iterated refinement is
+exactly the $\beta\to\infty$ case). The stepper runs the physical $\beta$
+until the solid increment stagnates (the configurational cascade; at
+$N^2<0$, Rayleigh--Taylor growth), then escalates $\beta$ geometrically
+towards the welded limit --- backward Euler is L-stable, so the growing
+modes are damped --- guarded by a best-state checkpoint and
+increment-validated inexact solves. The stopping metric is the solid
+increment alone: the fluid displacement does not converge at
+$N^2\neq0$ and must not be monitored.
+
+This is the general method of the fluid hierarchy; the gauge-penalty
+treatment above is the cheaper specialist, clean only for neutrally
+stratified fluids, and Dahlen's mixed formulation
+(\S\ref{sec:mixed}) is the practical workhorse for hydrostatic models.
+The hierarchy and its evidence are in \code{doc/static\_fluid\_core.tex}.
 
 \subsection{Assumptions}
 
@@ -2029,9 +2065,11 @@ as the body (\S\ref{sec:vacuum}).
   diffeomorphism and be the identity at the DtN sphere (asserted, not
   enforced). The extension inside the buffer is gauge, but a rule is
   needed (\S\ref{sec:mappings}).
-\item[(R4)] Fluid regions in this class are treated by the welded gauged
-  formulation (\S\ref{sec:ref-gauged}); a genuinely slipping interface
-  needs \S\ref{sec:slip}.
+\item[(R4)] Fluid regions in this class are welded, through both base
+  treatments of \code{SetFluid}: the Maxwell relaxation by default, the
+  gauge penalty as the neutral-stratification specialist
+  (\S\ref{sec:ref-gauged}); a genuinely slipping interface needs
+  \S\ref{sec:slip}.
 \end{enumerate}
 
 \subsection{Background states}
@@ -2095,9 +2133,11 @@ rotation of components). Three rules:
 \begin{equation}
   \tilde\grad = F^{-T}\grad, \qquad
   \mathrm{d}\xi = J\dV, \qquad
-  \tilde\vm\,\mathrm{d}\tilde S = \bnu\dS, \quad \bnu = JF^{-T}\vn
+  \tilde\vm\,\mathrm{d}\tilde S = \bnu\dS, \quad \bnu = JF^{-T}\vm
   \ \ \text{(Nanson)} .
 \end{equation}
+Nanson's rule here is \eqref{eq:nanson0} with the mesh's unit normal
+$\vm$ in $\vN$'s slot and $\tilde\vm$ its mapped image.
 Integrators take the \emph{physical} material fields expressed in
 reference coordinates ($\rho$ means $\tilde\rho\circ\xi$) with $J$, $F$
 explicit in the form; nothing is absorbed into relabelled densities, so
@@ -2119,7 +2159,7 @@ formed. \textbf{One assembly recipe} implements every domain term: at each
 quadrature point replace $\mathrm{dshape}\to\mathrm{dshape}\cdot F^{-1}$
 and the weight $w\to Jw$, then run the standard assembly (for the elastic
 term: the usual Mandel $B$ matrix contracted with the referential
-21-component tensor, exact because $\tilde c$ has its minor symmetries in
+21-component tensor, exact because $c$ has its minor symmetries in
 physical indices). Boundary terms use Nanson instead:
 \code{BoundaryNormalScalarIntegrator} maps $(\vm\cdot\vv)\dS\to
 (\bnu\cdot\vv)\dS$ (the $|\bnu|$ factors cancel), and
@@ -2311,7 +2351,8 @@ factor while the feedback operator does); $\tilde g = |F_e^{-T}
 C\circ\varphi_e$ is pointwise, never projected. For every current model
 the equilibrium mapping is the identity at the surface and
 \eqref{eq:zetazeta-water} is entry-for-entry the mixed term; the factors
-are carried for the mapped gates. The condensed system is otherwise the
+are carried so that mapped (relabelled) configurations assemble exactly,
+which is what the relabelled-with-water identity tests check. The condensed system is otherwise the
 one of \S\ref{sec:mixed-sea}: the rank-one $\Phi_g$ border with the
 (referential) mass-conservation row, the rotation border with its
 columns through the tidal door (the centrifugal $r^2$ part is not an
@@ -2350,7 +2391,7 @@ own} principal moments --- the wander denominators come from the frame
 term $\mathrm{ad}_\Omega(I^{(0)}-\lambda)$, not from bare conservation
 --- and with the displacement pinned by the Tisserand condition
 $\int_M \tilde\rho\,\varphi_e\times\vu\dV = 0$ (the derivation:
-\code{doc/planning/generalised\_rotation\_note.md}, ``The secular
+\code{doc/generalised\_rotation.md}, ``The secular
 reduction''). The implementation is therefore three deltas on the
 traditional border: \code{SetRotation(Omega)} assembles
 $I^{(0)} = \int\tilde\rho\,(|\varphi_e|^2\mathbf{1} -
@@ -2458,7 +2499,7 @@ referential second fundamental form). To first order $\vv_{\mathrm{f}}
 the normal-jump constraint with the \emph{mapped} normal. To second order
 the curvature enters and re-hides: by the Weingarten identity
 $\vN\cdot D\vs[\vs] = -\mathrm{II}(\vs,\vs)$ (the content of Valette's analysis
-\cite{Valette1986,Valette1991}), the $\bnu$-component of the fluid's
+\cite{Valette1986}), the $\bnu$-component of the fluid's
 second-order boundary datum is
 \begin{equation}
   \bnu\cdot\mathbf{b}_2 = \bnu\cdot\grad_\Sigma(\vv_{\mathrm{s}}
@@ -2552,7 +2593,11 @@ splits over the deformed regions (a tiling), giving
 \end{equation}
 subject to $\zeta_{\mathrm{f}} = \zeta_{\mathrm{s}}\circ\sigma$ on
 $\Sigma$. Both sources are exact: the fluid extension, $\vw$ and the
-mismatch terms disappear identically. Linearising,
+mismatch terms disappear identically. Linearising, with
+$\varphi^1 := \Phi_1\circ\varphi_e$ the first-order Eulerian potential
+composed with the equilibrium mapping (single-valued, since $\Phi_1$
+and $\varphi_e$ are; the notation of \code{doc/slip\_interface.tex},
+``Gravity: the broken-$\zeta$ organisation''),
 \begin{equation}
   \zeta^1_r = \varphi^1 + \vb\cdot\vv_r \quad\Longrightarrow\quad
   \boxed{\ \jump{\zeta^1} = \vb\cdot\jump{\vv} = -\vs\cdot\grad_\Sigma\zeta^0\ },
@@ -3002,10 +3047,6 @@ B.~Valette, 1986.
 About the influence of pre-stress upon adiabatic perturbations of the
 Earth, \emph{Geophys.\ J.\ R.\ astr.\ Soc.}, 85, 179--208.
 
-\bibitem{Valette1991}
-B.~Valette, 1991.
-Gravito-elastodynamics of a pre-stressed elastic earth,
-\emph{Geophys.\ J.\ Int.}, 104, 555.
 
 \bibitem{Wohlmuth2001}
 B.~I.~Wohlmuth, 2001.

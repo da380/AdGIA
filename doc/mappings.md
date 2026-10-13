@@ -230,10 +230,13 @@ Serial, with parallel overloads under `MFEM_USE_MPI`:
   the referential classes' rigid-mode projectors and by the equilibrium
   stress generators in mapped mode.
 
-Note the distinction between the last three and the rest: the
+Note the distinction between `PullbackStressCoefficient` and
+`RelabelledElasticTensorCoefficient` and the rest: these two
 relabelling coefficients *transform data* (they describe the same
-physical body from another reference), whereas the pull-back recipe of
-Section 3 keeps the data physical and puts `J`, `F` in the form.
+physical body from another reference), whereas the plain
+`Transformed*` coefficients only compose, the pull-back recipe of
+Section 3 keeps the data physical and puts `J`, `F` in the form, and
+`MappedRotation` transforms nothing — it is the mode `W ξ(x)` itself.
 
 ### Boundary (Nanson) machinery
 
@@ -391,7 +394,7 @@ gravity couplings, Poisson block, loads, extensions and projectors.
 Through a slipping interface the identity is not met to that level (the
 slip-interface terms are not certified covariant). What is verified: the
 broken-ζ organisation on a relabelled two-layer background whose map
-twists across the interface (`TestSlipProblem.BrokenZetaRelabelledEquilibrium`,
+twists across the interface (`SlipProblem.BrokenZetaRelabelledEquilibrium`,
 agreement with the identity description to 5e-3, the fixed mesh's
 geometric-interpolation floor), and the radial-stretch aspherical
 fluid-core meshes of `examples/slipping_interface.cpp`, where mapped

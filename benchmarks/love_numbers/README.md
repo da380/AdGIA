@@ -144,6 +144,7 @@ not change and the gain is solver-side only.
 | `homogeneous` | one uniform solid |
 | `two_solid` | two uniform solids, every parameter jumping between them |
 | `fluid_core` | a uniform fluid core under a uniform solid mantle |
+| `aw_core` | `fluid_core`'s neutrally stratified twin: a closed-form Adams–Williamson core (N² = 0 exactly), mass-matched under the same mantle — the clean cross-method comparison model, shiftable with every member exactly neutral |
 | `inner_core` | a solid inner core, a fluid outer core and a mantle, each uniform |
 | `linear_solid` | one solid, density and velocities linear in radius |
 | `stratified_core` | a fluid core whose density falls with radius, under a mantle, every parameter linear in radius |

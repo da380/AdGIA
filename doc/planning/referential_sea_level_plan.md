@@ -1,11 +1,11 @@
 # The referential sea-level leg (WP7): design
 
 *Status: **delivered** (11 Oct 2026) — phases A and B implemented and
-gated through G8d; the per-WP entries below and the gates table in
-[`generalised_rotation_note.md`](generalised_rotation_note.md) carry
-the record. Still open: the fluid-core door's gauge (the note's
-"fluid-core wrinkle") and the Mitrovica & Wahr viscoelastic numerical
-check. This is WP7 of
+gated through G8d; the per-WP entries below and the Verification table
+of [`../generalised_rotation.md`](../generalised_rotation.md) carry
+the record (the fluid-core frame choice is settled there: the
+Tisserand gauge pins the mantle frame). Still open: the Mitrovica &
+Wahr viscoelastic numerical check. This is WP7 of
 [`sea_level_plan.md`](sea_level_plan.md): the sea-level boundary terms
 on the referential class, and the Maitra & Al-Attar generalised
 rotational theory that hangs off it. Formulation of record as before:
@@ -133,8 +133,9 @@ table below measured at their stated grades).
 ### Phase B — the generalised (M&A) rotational theory
 
 - **WP7.5** A derivation note first (the WP3-derivation pattern; this
-  one is genuinely new) — **written:
-  [`generalised_rotation_note.md`](generalised_rotation_note.md)**.
+  one is genuinely new) — **written, and since graduated to the
+  reference docs (13 Oct 2026):
+  [`../generalised_rotation.md`](../generalised_rotation.md)**.
   Headlines: the traditional ω's rigid-gauge shift in closed form,
   δω = D⁻¹[ad_b, I]Ω (zero iff the model inertia is isotropic — the
   quantitative certificate for the G8 demonstration); the linearised
@@ -189,9 +190,9 @@ table below measured at their stated grades).
   `GeneralisedRotationDoor` + `ConservationCertificate` (+ the
   `water+generalised` parallel-twin case), and the demonstration
   example `examples/generalised_rotation.cpp` (decision 3's
-  deliverable). Open: the fluid-core door's gauge (the note's
-  "fluid-core wrinkle" — a design question for review) and the
-  Mitrovica & Wahr viscoelastic numerical check.
+  deliverable). The fluid-core frame choice is settled and gated
+  (`../generalised_rotation.md`: the Tisserand gauge pins the mantle
+  frame); open: the Mitrovica & Wahr viscoelastic numerical check.
 
 ## Gates (each phase separately gated, the house ladder)
 

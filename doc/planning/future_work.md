@@ -62,7 +62,7 @@ problem:
   theory — quantify the nonlinear correction over a glacial cycle.
 
 **See:** `doc/gravitating_elasticity.md`;
-`generalised_rotation_note.md`; "Equilibrium backgrounds with
+`../generalised_rotation.md`; "Equilibrium backgrounds with
 surface water" above.
 
 The two subsections below — the nonlinear slip map and the buffer
@@ -614,14 +614,18 @@ material functions); `planetmodel_coastline_sizing_plan.md`;
 rotation borders, the mapped gates and the generalised (M&A) door,
 gated G1–G8d
 ([`referential_sea_level_plan.md`](referential_sea_level_plan.md)
-holds the record). Two items remain open:
+holds the record; the derivation note has graduated to
+[`../generalised_rotation.md`](../generalised_rotation.md), whose
+fluid-core frame choice — the Tisserand gauge pinning the mantle
+frame — is settled and gated). Open:
 
-1. the fluid-core door's gauge for the generalised rotation (the
-   "fluid-core wrinkle" of
-   [`generalised_rotation_note.md`](generalised_rotation_note.md) — a
-   design question for review);
-2. the Mitrovica & Wahr viscoelastic numerical check (the emergence
-   test of "Equilibrium backgrounds with surface water" below).
+1. the Mitrovica & Wahr viscoelastic numerical check (the emergence
+   test of "Equilibrium backgrounds with surface water" below), as
+   part of checking the secular reduction against the viscoelastic
+   time-stepping layer (what the stepper holds fixed per step);
+2. whether the translations' momentum condition ever needs the
+   mantle-frame treatment (loads with net force are excluded by the
+   existing machinery; expected inert).
 
 **See:** `sea_level_plan.md` ("The condensed system in our
 variables"); `doc/Elasticity/ggae092.pdf`.
@@ -689,11 +693,11 @@ run on a spherical model with input moments including the excess
 should reproduce the corrected Mitrovica et al. (2005) stability
 behaviour, and degrade to the classical over-wandering when the
 excess is removed (the W&M numerical check of
-`generalised_rotation_note.md`).
+`../generalised_rotation.md`).
 
 **See:** `equilibrium_figures.md`; `equilibrium_shape_plan.md`;
 `sea_level_plan.md`; `referential_sea_level_plan.md`;
-`generalised_rotation_note.md` (the input-inertia section);
+`../generalised_rotation.md` (the input-inertia section);
 `doc/Elasticity/annurev-earth-040610-133404.pdf`.
 
 ### Ice-age production runs

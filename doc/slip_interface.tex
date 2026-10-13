@@ -83,8 +83,12 @@ default treatment); the slipping and welded formulations are finite
 idealisations of that dissipative completion and serve as instruments
 (\texttt{doc/static\_fluid\_core.tex}). The welded (continuous-space)
 gauged formulation is used where the slip it suppresses is absent or
-removable, as for spherically symmetric models, where the two agree to
-discretisation level (\S\ref{sec:verif}). Whenever the broken space is
+removable: on spherically symmetric, \emph{neutrally stratified} models
+every tangential slip is removable and the welded and slipping solutions
+coincide to discretisation level (\S\ref{sec:verif}); at $N^2 \neq 0$
+only the rotations and toroidal slips are removable, the degree-1
+welded--slip gap is genuine physics, and both formulations are
+idealisations defined only to the stratification band. Whenever the broken space is
 used on a pressurised background the interface terms below are
 obligatory: they vanish only where the equilibrium pressure does, as in
 the gravity-free sliding tests.
@@ -268,7 +272,7 @@ forced normal part contributes $-(\bnu\cdot F_e\bN)\,\mathrm{II}(\bs,\bs) =
 \label{rem:wein}
 For a tangent field $\bs$ on $\Sigma$, differentiating
 $\bN\cdot\bs = 0$ gives $\bN\cdot D\bs[\bs] = -\mathrm{II}(\bs,\bs)$
---- Valette's (1986, 1991) Weingarten-operator content. Combined with
+--- Valette's (1986) Weingarten-operator content. Combined with
 $D(F_e\bs)[\bs] = D^2\varphi_e[\bs,\bs] + F_e D\bs[\bs]$, the last two
 terms of \eqref{eq:b2n} collapse:
 \begin{equation}
@@ -851,7 +855,7 @@ broken-motion energy, for which the constrained parameterisation of
 (a) spherical hydrostatic reference $\to$ the F1--F3 interface terms
 of \texttt{doc/self\_gravitation.md} under the change of variables
 $\zeta^1 = \varphi^1 + \bv\cdot\nabla\Phi_0$, and the forms of AC18
-(eqs.~121/137) \cite{AC18} and Valette \cite{Valette1986,Valette1991};
+(eqs.~121/137) \cite{AC18} and Valette \cite{Valette1986};
 (b) welded limit $\bs = 0$: $B_\Sigma = 0$, $\bw$ interior-gauge --- the
 welded referential problem of \texttt{doc/gravitating\_elasticity.md}
 exactly; (c) gravity and pressure off: the gravity-free sliding
@@ -1460,7 +1464,8 @@ with the cross-rank pairing and extension operators.
   penalty, assembled covariantly as
   \texttt{ElasticTensorIntegrator(C, map)} with the pulled-back
   deviatoric tensor and the rheology's equilibrium mapping. The
-  base-class \texttt{SetFluid()} (gauge-penalty form) is refused (the fluid has its own
+  base-class \texttt{SetFluid()} is refused in both its forms, the
+  Maxwell relaxation and the gauge penalty (the fluid has its own
   space here).
 \item \texttt{SetConstraint(theta, iterations)}: the penalty $\theta$
   (default $100$) and the number of AL sweeps or KKT gauge refinements
@@ -1712,10 +1717,6 @@ B.~Valette,
 \emph{About the influence of pre-stress upon adiabatic perturbations of
 the Earth},
 Geophys. J. R. astr. Soc. 85 (1986), 179--208.
-
-\bibitem{Valette1991}
-B.~Valette, on the gravito-elastodynamics of a pre-stressed elastic
-Earth, Geophys. J. Int. 104 (1991), 555.
 
 \bibitem{WoodhouseDahlen1978}
 J.~H. Woodhouse, F.~A. Dahlen,

@@ -423,12 +423,17 @@ def main() -> None:
                         "--np", prof["np"], "--lmax", prof["pert_lmax"],
                         "--dtn-degree", prof["dtn_degree"],
                         "--out", loves, "--method", *methods)
+            # Shift runs need the gauge-converged settings: the default
+            # penalty (eps 0.01, 3 refinements) is semi-convergent at
+            # order 3 and silently biased at order 2 on these meshes
+            # (open_issues.md, the interface-shift item).
             stage(f"perturbation:{model}", ok and run_py(
                 "perturbation", "perturbation_check",
                 loves / model / f"h{h:g}",
                 "--out", out / "perturbation" / model,
                 "--eps", *prof["shift_eps"], "--method", *methods,
                 "--order", max(prof["orders"]),
+                "--program-args", "-geps 0.1 -gref 7",
                 "--lmax", prof["pert_lmax"], "--np", prof["np"]))
 
     # 8. Weak scaling: a couple of degrees per rung, the timings land in

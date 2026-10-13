@@ -288,7 +288,7 @@ one bordered solve. So:
 ## Work packages (rephased per the decisions: the lego ladder)
 
 - **WP8.1 Theory note + common structure design** (the
-  `generalised_rotation_note.md` pattern): digest Yu 2025 into repo
+  `../generalised_rotation.md` pattern): digest Yu 2025 into repo
   conventions — the force slots on both classes, the reversed ocean
   function through the migration machinery, the ρ split (equilibrium
   Poisson in, momentum balance parked), the interface shape calculus,

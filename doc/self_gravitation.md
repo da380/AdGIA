@@ -50,7 +50,9 @@ A(u,φ | u′,φ′) =
   − ∫_{Σ_F} ρ_F [ φ (m·u′) + φ′ (m·u) ] dS              (F3)
 ```
 
-The first six lines are the solid body; (F1)–(F3) appear with fluid regions.
+The first five lines precede the fluid terms — four solid-region
+integrals and the whole-space field energy; (F1)–(F3) appear with fluid
+regions.
 `A` is symmetric. The elastic terms generalise to an anisotropic tensor
 without touching anything else: the gravity, coupling and fluid terms do not
 involve the elastic moduli.

@@ -184,7 +184,9 @@ border|monolithic|picard`).
   Picard-feedback mode in the stepper, the loose-tolerance Φ_g
   amplification: `solvers.md`.
 - WP7 referential leg + generalised rotational theory: delivered
-  11 Oct 2026 (`referential_sea_level_plan.md`); its residue (the
-  fluid-core door's gauge, the Mitrovica & Wahr viscoelastic check),
-  equilibrium backgrounds with water (the foundational-caveat fix)
-  and ice-age production runs: `future_work.md`.
+  11 Oct 2026 (`referential_sea_level_plan.md`; the derivation is the
+  reference note `../generalised_rotation.md`); its residue (the
+  Mitrovica & Wahr viscoelastic check, the translations' momentum
+  question), equilibrium backgrounds with water (the
+  foundational-caveat fix) and ice-age production runs:
+  `future_work.md`.

@@ -556,7 +556,7 @@ step instead of one).
 The cost of the conservative estimate is measured:
 
 - Under sustained periodic forcing (box benchmarks) the adaptive scheme
-  is the most expensive choice, 1400–23000 solves, because the estimate
+  is the most expensive choice, 1400–13000 solves, because the estimate
   keeps every step small.
 - At contrast C = 1e8 (box column) it takes 35000 solves to reach
   rtol 1e-1, because the estimate tracks the transient of the τ = 1e-8
