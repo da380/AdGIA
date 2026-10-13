@@ -2,7 +2,7 @@
 
 Five-agent sweep of every document (tex, method notes, READMEs,
 planning) for typos, LaTeX defects and correctness. Mechanical fixes
-were applied directly (uncommitted, in this tree): ~60 sites across
+were applied directly (committed 13 Oct 2026, d9a8708): ~60 sites across
 the tex files (notation, dashes, bibliography order, `\texorpdfstring`
 titles), the READMEs/INSTALL (17 path and table fixes) and two method
 notes; **the headline defect was the `\eps` macro in

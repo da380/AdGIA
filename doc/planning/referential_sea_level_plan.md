@@ -1,6 +1,11 @@
 # The referential sea-level leg (WP7): design
 
-*Status: **proposal** (design pass for review; no code). This is WP7 of
+*Status: **delivered** (11 Oct 2026) — phases A and B implemented and
+gated through G8d; the per-WP entries below and the gates table in
+[`generalised_rotation_note.md`](generalised_rotation_note.md) carry
+the record. Still open: the fluid-core door's gauge (the note's
+"fluid-core wrinkle") and the Mitrovica & Wahr viscoelastic numerical
+check. This is WP7 of
 [`sea_level_plan.md`](sea_level_plan.md): the sea-level boundary terms
 on the referential class, and the Maitra & Al-Attar generalised
 rotational theory that hangs off it. Formulation of record as before:
@@ -97,6 +102,9 @@ rebuilding `u·∇Φ₀ + φ` from pieces.
 ## Phases and work packages
 
 ### Phase A — water, Φ_g and the traditional rotation border
+
+**Status: delivered 11 Oct 2026** (all four WPs; gates G1–G7b in the
+table below measured at their stated grades).
 
 - **WP7.1** The derivation half-page (conventions above) into
   `quasi_static_models.tex`; then `SetWaterLoad(ocean_weight,

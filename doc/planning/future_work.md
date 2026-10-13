@@ -608,19 +608,20 @@ the stacks at the FINAL node set after.
 material functions); `planetmodel_coastline_sizing_plan.md`;
 `Mesh::GeneralRefinement`, `ParMesh::GeneralRefinement`.
 
-### The referential sea-level leg and the generalised rotational theory
+### The referential sea-level leg: open residue
 
-**Status:** proposal — design pass written, awaiting review
-([`referential_sea_level_plan.md`](referential_sea_level_plan.md):
-phases, gates and the open design questions).
+**Status:** WP7 DELIVERED 11 Oct 2026 — the ζζ collapse, the Φ_g and
+rotation borders, the mapped gates and the generalised (M&A) door,
+gated G1–G8d
+([`referential_sea_level_plan.md`](referential_sea_level_plan.md)
+holds the record). Two items remain open:
 
-Port the sea-level boundary terms to the referential class, where the
-combination `u·∇Φ + φ` is the referential potential ζ and the water
-feedback collapses to a single ζζ boundary mass (the condensed system
-of `sea_level_plan.md`); gate against the mixed-class results. The
-Maitra & Al-Attar (2024) generalised rotational theory hangs off this
-leg: the traditional theory implicitly assumes an isotropic background
-inertia tensor (Yu et al. §2.4), which bites for 3-D models.
+1. the fluid-core door's gauge for the generalised rotation (the
+   "fluid-core wrinkle" of
+   [`generalised_rotation_note.md`](generalised_rotation_note.md) — a
+   design question for review);
+2. the Mitrovica & Wahr viscoelastic numerical check (the emergence
+   test of "Equilibrium backgrounds with surface water" below).
 
 **See:** `sea_level_plan.md` ("The condensed system in our
 variables"); `doc/Elasticity/ggae092.pdf`.

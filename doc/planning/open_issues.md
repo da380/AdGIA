@@ -800,6 +800,11 @@ its degree-4 point; the gap predates the combined-degree mode.
    amplitude sweep (`talk_data/`) and the dense viscoelastic histories
    (`viscoelastic_series/`). Campaign stages (or a `--stages docs` group)
    would make the whole documentation reproducible with one command.
+   The `prem_4` CMB runs additionally predate the 13 Oct 2026 default
+   (non-full rungs now drop the enclosed inner core; the recorded
+   numbers correspond to `-cmb-keep-inner`), so the CMB stage needs a
+   re-measure under the new default, with the keep/drop delta worth
+   recording alongside.
 2. ~~Scripts that write relative to the working directory without the
    source-tree guard.~~ Done (6 Oct 2026): every benchmark script now
    passes its output root through `common/outputs.py::outside_source`.

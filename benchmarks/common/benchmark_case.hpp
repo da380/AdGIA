@@ -244,6 +244,7 @@ struct CaseOptions {
   real_t mx_beta0 = -1.0;         // maxwell: physical-phase dt/tau
   real_t mx_prec_eps = 0.0;       // maxwell: frozen-preconditioner epsilon
   const char* cmb = "full";
+  bool cmb_keep_inner = false;    // keep fluid-enclosed solids meshed
   const char* method = "dahlen";
   real_t slip_theta = 1e2;
   real_t gs_scale = 1.0;
@@ -351,6 +352,16 @@ struct CaseOptions {
                    "standard unmeshed-core condition of the GIA codes), "
                    "'winkler' (uniform without the interface potential "
                    "coupling F3: buoyancy alone).");
+    args.AddOption(&cmb_keep_inner, "-cmb-keep-inner",
+                   "--cmb-keep-inner-core", "-cmb-drop-inner",
+                   "--cmb-drop-inner-core",
+                   "The non-full -cmb rungs drop solid regions enclosed by "
+                   "the fluid (an inner core) from the displacement SubMesh "
+                   "and fold their attributes into the fluid region, since "
+                   "the published condition models nothing below the CMB "
+                   "(the background density still sources Phi_0). "
+                   "-cmb-keep-inner keeps them meshed, isolating the inner "
+                   "core's own contribution.");
     args.AddOption(&gauged, "-gauged", "--gauged", "-dahlen", "--dahlen",
                    "Gauged fluid treatment: the fluid layers join the "
                    "displacement SubMesh with their bulk modulus and a gauge "
@@ -517,6 +528,46 @@ class Case {
     // the fluid its own SubMesh).
     solid_attributes = manifest.SolidAttributes();
     fluid_attributes = manifest.FluidAttributes();
+
+    const std::string cmb(options.cmb);
+    MFEM_VERIFY(cmb == "full" || cmb == "nomass" || cmb == "uniform" ||
+                    cmb == "winkler",
+                "-cmb must be full, nomass, uniform or winkler.");
+    MFEM_VERIFY(method == "dahlen" || cmb == "full",
+                "-cmb applies to the Dahlen path only.");
+    // The published CMB condition models nothing below the CMB, so on the
+    // approximate rungs a solid region enclosed by the fluid (an inner
+    // core) is dropped from the displacement SubMesh by default and its
+    // attributes folded into the fluid region: the treatment zeroes
+    // rho'_F there, and the region's background density still sources
+    // Phi_0. -cmb-keep-inner keeps it meshed (the inner core's own
+    // contribution as a measurable delta).
+    Array<int> folded_attributes;
+    if (method == "dahlen" && cmb != "full" && !options.cmb_keep_inner) {
+      Array<int> kept;
+      for (const int attribute : solid_attributes) {
+        bool enclosed = true;
+        for (const auto& f : manifest.Interfaces()) {
+          if (f.below == attribute || f.above == attribute) {
+            const int other = f.below == attribute ? f.above : f.below;
+            enclosed = enclosed && fluid_attributes.Find(other) >= 0;
+          }
+        }
+        (enclosed ? folded_attributes : kept).Append(attribute);
+      }
+      solid_attributes = kept;
+      MFEM_VERIFY(solid_attributes.Size() > 0,
+                  "-cmb dropped every solid region; use -cmb-keep-inner.");
+      if (root && folded_attributes.Size() > 0) {
+        std::cout << "CMB approximation '" << cmb << "': layer";
+        for (const int a : folded_attributes) {
+          std::cout << " " << a;
+        }
+        std::cout << (folded_attributes.Size() > 1 ? "s are" : " is")
+                  << " enclosed by the fluid: unmeshed, folded into the "
+                     "fluid region (-cmb-keep-inner keeps it).\n";
+      }
+    }
     Array<int> u_attributes(solid_attributes);
     if (method == "gauged" || method == "referential" ||
         method == "maxwell") {
@@ -562,32 +613,51 @@ class Case {
 
     // The fluid layers: the density on the parent's fluid elements, and on
     // the solid's boundary elements the density of the fluid beyond them.
-    const std::string cmb(options.cmb);
-    MFEM_VERIFY(cmb == "full" || cmb == "nomass" || cmb == "uniform" ||
-                    cmb == "winkler",
-                "-cmb must be full, nomass, uniform or winkler.");
-    MFEM_VERIFY(method == "dahlen" || cmb == "full",
-                "-cmb applies to the Dahlen path only.");
     const int n_bdr = solid->bdr_attributes.Max();
     std::vector<FluidRegion> fluids;
     if (method == "dahlen") {
       fluid_side_ = FluidSideDensity(manifest, n_bdr);
       rho_interface_c_ = std::make_unique<PWConstCoefficient>(fluid_side_);
+      const int first = manifest.Interfaces().front().attribute;
       for (const int attribute : fluid_attributes) {
         FluidRegion f;
         f.attributes = Array<int>({attribute});
+        // Unmeshed (folded) solids join the region of an adjacent fluid,
+        // so their background density sources Phi_0 through it.
+        for (const int s : folded_attributes) {
+          for (const auto& itf : manifest.Interfaces()) {
+            if ((itf.below == s && itf.above == attribute) ||
+                (itf.above == s && itf.below == attribute)) {
+              f.attributes.Append(s);
+              break;
+            }
+          }
+        }
         f.density = rho_parent_c_.get();
         f.interface_density = rho_interface_c_.get();
-        f.interface_marker = MeshManifest::Marker(
-            manifest.FluidSolidInterfaces(attribute), n_bdr);
-        if (options.no_fluid_gradient || cmb != "full") {
+        // Only interfaces with a meshed solid side assemble: a folded
+        // inner core's ICB is interior to the unmeshed region.
+        Array<int> region_interfaces;
+        for (const int b : manifest.FluidSolidInterfaces(attribute)) {
+          const auto& itf = manifest.Interfaces()[b - first];
+          if (solid_attributes.Find(itf.below) >= 0 ||
+              solid_attributes.Find(itf.above) >= 0) {
+            region_interfaces.Append(b);
+          }
+        }
+        f.interface_marker = MeshManifest::Marker(region_interfaces, n_bdr);
+        if (options.no_fluid_gradient && cmb == "full") {
           f.density_gradient = &zero_;
         }
-        if (cmb == "uniform" || cmb == "winkler") {
+        if (cmb == "nomass") {
+          f.treatment = FluidRegion::Treatment::NoMass;
+        } else if (cmb == "uniform" || cmb == "winkler") {
+          f.treatment = cmb == "uniform" ? FluidRegion::Treatment::UniformCore
+                                         : FluidRegion::Treatment::Winkler;
+          f.interface_density = nullptr;  // the treatment owns it
           // The constant fluid density of the approximate condition: the
           // fluid-side value at the region's outermost interface (the
           // core-top density for a core).
-          const int first = manifest.Interfaces().front().attribute;
           real_t rho_c = 0.0, r_max = -1.0;
           for (const int b : manifest.FluidSolidInterfaces(attribute)) {
             const auto& itf = manifest.Interfaces()[b - first];
@@ -596,15 +666,13 @@ class Case {
               rho_c = itf.ValueBeside("rho", attribute);
             }
           }
-          cmb_rho_.push_back(std::make_unique<ConstantCoefficient>(rho_c));
-          f.interface_density = cmb_rho_.back().get();
+          f.uniform_density = rho_c;
           if (root) {
             std::cout << "CMB approximation '" << cmb << "': fluid layer "
                       << attribute << " with constant interface density "
                       << rho_c << "\n";
           }
         }
-        f.interface_potential_coupling = cmb != "winkler";
         fluids.push_back(f);
       }
     }
@@ -1089,6 +1157,10 @@ class Case {
                                                          : "gauged")
        << "\""
        << ",\n  \"cmb\": \"" << options_.cmb << "\""
+       << (std::string(options_.cmb) != "full"
+               ? std::string(",\n  \"cmb_keep_inner\": ") +
+                     (options_.cmb_keep_inner ? "true" : "false")
+               : std::string())
        << (options_.map_amplitude != 0.0
                ? ",\n  \"map_amplitude\": " + Num(options_.map_amplitude) +
                      ",\n  \"map_mode\": \"" +
@@ -1648,7 +1720,6 @@ class Case {
   std::unique_ptr<GridFunctionCoefficient> rho_c_, kappa_c_, mu_c_,
       rho_parent_c_;
   Vector fluid_side_;
-  std::vector<std::unique_ptr<ConstantCoefficient>> cmb_rho_;
   Array<int> gauge_marker_;
   std::unique_ptr<PWConstCoefficient> rho_interface_c_;
   ConstantCoefficient zero_{0.0};

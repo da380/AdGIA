@@ -11,7 +11,8 @@
   background potential, the rigid-mode and region-rotation residuals, the
   potential-block Ritz values), for both solver types under the combined
   surface and tidal load, for its time scaling, and with a relaxation
-  weight.
+  weight. The named CMB treatments (FluidRegion::Treatment) are gated
+  against the hand-assembled degradations in parallel.
 */
 
 #include <mpi.h>
@@ -167,6 +168,120 @@ void RunCase(int dim, int order, const std::string& label) {
         label + " restored |u|");
 }
 
+// The named CMB treatments against the hand-assembled degradations, in
+// parallel: the enum route builds the same coefficients and assembly, so
+// it must match the hand route on the same partition to solver noise.
+void RunCmbCase(int dim, int order, const std::string& label) {
+  Mesh smesh(ThreeLayerMeshFile(dim).c_str(), 1, 1);
+  Array<int> solid_attrs({1, 3});
+  ParMesh pmesh(MPI_COMM_WORLD, smesh);
+  ParSubMesh solid(ParSubMesh::CreateFromDomain(pmesh, solid_attrs));
+  H1_FECollection fec(order, dim);
+  ParFiniteElementSpace fes_u(&solid, &fec, dim), fes_phi(&pmesh, &fec);
+
+  ConstantCoefficient kappa(kKappa), mu(kMu), zero(0.0);
+  ConstantCoefficient rho_c(1.1);  // the core-top density of the profile
+  FunctionCoefficient rho_s(SolidDensity), rho_f(FluidDensity),
+      sigma(SurfaceLoad);
+  IsotropicElasticRheology rheology(dim, kappa, mu);
+  Array<int> surface = SurfaceMarker(solid), inner_core({1});
+
+  auto solve = [&](const std::vector<FluidRegion>& fluids,
+                   const std::string& what) {
+    auto p = std::make_unique<LinearQuasiStaticMixedSelfGravitatingProblem>(
+        &fes_u, &fes_phi, rheology, rho_s, kG, kDtNDegree, nullptr, fluids);
+    p->SetSurfaceLoad(sigma, surface);
+    p->AddRegionRotations(inner_core);
+    p->SetRelTol(1e-11);
+    p->AssembleForce(0.0);
+    Check(p->Solve() ? 0.0 : 1.0, 0.0, what + " solve");
+    return p;
+  };
+
+  for (bool winkler : {false, true}) {
+    const std::string name = label + (winkler ? " winkler" : " uniform");
+    std::vector<FluidRegion> hand{OuterCore(solid, rho_f)};
+    hand[0].density_gradient = &zero;
+    hand[0].interface_density = &rho_c;
+    hand[0].interface_potential_coupling = !winkler;
+    auto p_hand = solve(hand, name + " hand");
+
+    std::vector<FluidRegion> named{OuterCore(solid, rho_f)};
+    named[0].treatment = winkler ? FluidRegion::Treatment::Winkler
+                                 : FluidRegion::Treatment::UniformCore;
+    named[0].uniform_density = 1.1;
+    auto p_named = solve(named, name + " named");
+
+    Check(RelErr(L2Norm(p_named->Displacement()),
+                 L2Norm(p_hand->Displacement())),
+          1e-11, name + " |u|");
+    Check(RelErr(L2Norm(p_named->Potential()), L2Norm(p_hand->Potential())),
+          1e-11, name + " |phi|");
+  }
+}
+
+// The dropped-inner-core recipe in parallel: a mantle-only ParSubMesh
+// with the whole core folded into one UniformCore FluidRegion must keep
+// the background potential of the kept-inner-core problem (the folded
+// mass still sources Phi_0) and solve.
+void RunDroppedInner(int dim, int order, const std::string& label) {
+  Mesh smesh(ThreeLayerMeshFile(dim).c_str(), 1, 1);
+  ParMesh pmesh(MPI_COMM_WORLD, smesh);
+  H1_FECollection fec(order, dim);
+  ParFiniteElementSpace fes_phi(&pmesh, &fec);
+
+  ConstantCoefficient kappa(kKappa), mu(kMu);
+  FunctionCoefficient rho_s(SolidDensity), rho_f(FluidDensity),
+      sigma(SurfaceLoad);
+  IsotropicElasticRheology rheology(dim, kappa, mu);
+
+  // Kept inner core: the standard three-layer problem, UniformCore.
+  Array<int> solid_attrs({1, 3});
+  ParSubMesh solid(ParSubMesh::CreateFromDomain(pmesh, solid_attrs));
+  ParFiniteElementSpace fes_u(&solid, &fec, dim);
+  std::vector<FluidRegion> meshed{OuterCore(solid, rho_f)};
+  meshed[0].treatment = FluidRegion::Treatment::UniformCore;
+  meshed[0].uniform_density = 1.1;
+  LinearQuasiStaticMixedSelfGravitatingProblem keep(
+      &fes_u, &fes_phi, rheology, rho_s, kG, kDtNDegree, nullptr, meshed);
+  keep.SetSurfaceLoad(sigma, SurfaceMarker(solid));
+  Array<int> inner_core({1});
+  keep.AddRegionRotations(inner_core);
+  keep.SetRelTol(1e-11);
+  keep.AssembleForce(0.0);
+  Check(keep.Solve() ? 0.0 : 1.0, 0.0, label + " keep solve");
+
+  // Dropped inner core: mantle-only SubMesh, the core {1, 2} one region.
+  Array<int> mantle_attr({3});
+  ParSubMesh mantle(ParSubMesh::CreateFromDomain(pmesh, mantle_attr));
+  ParFiniteElementSpace fes_m(&mantle, &fec, dim);
+  FunctionCoefficient rho_inner(SolidDensity);
+  PWCoefficient rho_core;
+  rho_core.UpdateCoefficient(1, rho_inner);
+  rho_core.UpdateCoefficient(2, rho_f);
+  FluidRegion core;
+  core.attributes = Array<int>({1, 2});
+  core.density = &rho_core;
+  core.treatment = FluidRegion::Treatment::UniformCore;
+  core.uniform_density = 1.1;
+  core.interface_marker.SetSize(mantle.bdr_attributes.Max());
+  core.interface_marker = 0;
+  core.interface_marker[1] = 1;  // the CMB; the ICB is unmeshed
+  std::vector<FluidRegion> folded{core};
+  LinearQuasiStaticMixedSelfGravitatingProblem drop(
+      &fes_m, &fes_phi, rheology, rho_s, kG, kDtNDegree, nullptr, folded);
+  drop.SetSurfaceLoad(sigma, SurfaceMarker(mantle));
+  drop.SetRelTol(1e-11);
+  drop.AssembleForce(0.0);
+  Check(drop.Solve() ? 0.0 : 1.0, 0.0, label + " drop solve");
+
+  Check(RelErr(L2Norm(drop.BackgroundPotential()),
+               L2Norm(keep.BackgroundPotential())),
+        1e-8, label + " folded-mass |phi0|");
+  Check(RelErr(L2Norm(drop.Potential()), L2Norm(keep.Potential())), 0.5,
+        label + " drop-vs-keep |phi| band");
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -176,6 +291,10 @@ int main(int argc, char* argv[]) {
   RunCase(2, 1, "2d-o1");
   RunCase(2, 2, "2d-o2");
   RunCase(3, 1, "3d-o1");
+  RunCmbCase(2, 2, "2d-o2 cmb");
+  RunCmbCase(3, 1, "3d-o1 cmb");
+  RunDroppedInner(2, 2, "2d-o2 dropped-inner");
+  RunDroppedInner(3, 1, "3d-o1 dropped-inner");
 
   if (Mpi::Root()) {
     if (num_fails == 0) {

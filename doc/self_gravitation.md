@@ -150,8 +150,8 @@ al. 2005, *Geophys. J. Int.* 161, 421–444, eqs. 11–12; Huang et al. 2023,
 *Geophys. J. Int.* 235, 2231–2256). Relative to the conditions above it
 makes two approximations: ρ_F is the constant core-top value instead of
 the fluid-side density on each interface, and (F1) is absent (ρ′_F ≡ 0).
-The class realises the steps between the two as degenerate settings of
-`FluidRegion` (§2, "The CMB approximation rungs"): `full` (F1)+(F2)+(F3),
+The class names the steps between the two as `FluidRegion::Treatment`
+rungs (§2, "The CMB approximation rungs"): `full` (F1)+(F2)+(F3),
 `nomass` (F2)+(F3), `uniform` (F2)+(F3) with constant ρ_F — the standard
 condition — and `winkler` (F2) alone. In every rung the core's
 *background* density still generates Φ₀; only its perturbation physics is
@@ -205,16 +205,26 @@ elements, on interfaces inherited from the parent and on cut ones alike (the
 tests check ∫ x·m dS on both).
 
 **The CMB approximation rungs.** The rungs of §1 ("The CMB
-approximations of the GIA literature") are settings of `FluidRegion`,
-selected in the Love-number benchmarks by the driver option `-cmb`
-(`run.py --cmb`, method `dahlen`):
+approximations of the GIA literature") are the named treatments of
+`FluidRegion` (`FluidRegion::Treatment`; a non-Full treatment owns its
+degradations and refuses conflicting expert fields), selected in the
+Love-number benchmarks by the driver option `-cmb` (`run.py --cmb`,
+method `dahlen`):
 
-| Rung | FluidRegion settings |
+| Rung | FluidRegion treatment |
 |---|---|
-| `full` | defaults |
-| `nomass` | `density_gradient` a zero coefficient |
-| `uniform` | as `nomass`, plus a constant `interface_density` (the region's outermost fluid-side value, e.g. the core-top density) |
-| `winkler` | as `uniform`, plus `interface_potential_coupling = false` (both halves of (F3) dropped, so the operator stays symmetric) |
+| `full` | `Treatment::Full` (the default); the expert fields remain available for custom configurations |
+| `nomass` | `Treatment::NoMass`: the class forces a zero `density_gradient` |
+| `uniform` | `Treatment::UniformCore`: as `nomass`, plus the constant `uniform_density` used as the interface density on every interface (the region's outermost fluid-side value, e.g. the core-top density) |
+| `winkler` | `Treatment::Winkler`: as `uniform`, plus the interface potential coupling dropped (both halves of (F3), so the operator stays symmetric) |
+
+On models with a solid inner core the published condition models nothing
+below the CMB, so the non-full rungs drop the enclosed solid by default:
+it leaves the displacement SubMesh and its attributes are folded into the
+`FluidRegion` (the treatment zeroes ρ′_F over it; its background density
+still sources Φ₀; the ICB, interior to the unmeshed region, assembles
+nothing). `-cmb-keep-inner` keeps it meshed, isolating the inner core's
+own contribution.
 
 The gauged treatment (benchmark method `gauged`) and the Maxwell
 relaxation (benchmark method `maxwell`) are separate formulations, not

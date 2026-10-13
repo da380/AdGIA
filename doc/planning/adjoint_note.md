@@ -479,10 +479,13 @@ callback, forward time, fired before every reversed-stepping solve
 and every impulse solve), with the same force-hook pattern on the
 forward operator as the stepping/migration interleave. Gated with a
 prescribed moving ocean against sharp FD, frozen-C control 11×
-worse (`PlaybackKernels`; measurements in the plan). The remaining
-migrating-forward piece is the per-step recording of the Picard-
-converged C and the δC terms' smallness assessment on a real
-deglacial configuration.
+worse (`PlaybackKernels`; measurements in the plan). The per-step
+recording of the Picard-converged C landed 13 Oct 2026 with the
+migration-in-stepper work (`ShorelineMigration::RecordStep` /
+`SetRecordedTime`, left-limit playback — `solvers.md`, "Picard
+feedback inside the time stepper", stage 2); the remaining
+migrating-forward piece is the δC terms' smallness assessment on a
+real deglacial configuration.
 
 ## WP8.2 implementation findings (11 Oct 2026)
 

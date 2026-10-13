@@ -247,7 +247,13 @@ organisation (referential displacement, Eulerian potential perturbation:
 Dahlen's arrangement); \emph{Referential} is the fully referential one.
 Properties of the \emph{reference state} are carried by the rheology, not
 by the names (\S\ref{sec:refstate}). Table~\ref{tab:grid} summarises the
-classes treated here.
+classes treated here. The fluid treatments across the grid order by
+regime: for hydrostatic models with gravity the Dahlen reduction of the
+mixed class is the method of choice; for general (not necessarily
+hydrostatic) models the Maxwell relaxation, \code{SetFluid}'s default,
+is the general method; the gauge penalty is the cheaper specialist for
+neutrally stratified fluids in either setting, a caveat that is empty in
+the non-gravitating classes, where there is no stratification.
 
 \begin{table}[h]
 \centering
@@ -257,16 +263,19 @@ classes treated here.
 Class (prefix \code{LinearQuasiStatic}) & Gravity & Reference state & Fluid regions & Solver \\
 \midrule
 \code{TractionProblem}, \code{ClampedProblem} (\S\ref{sec:nograv})
-  & none & general $(\Ch,\Se,\varphi_e)$ via rheology & optional gauged & (projected) CG \\
+  & none & general $(\Ch,\Se,\varphi_e)$ via rheology & optional: Maxwell (default) or gauge penalty (\code{SetFluid}) & (projected) CG \\
 \code{MixedSelfGravitating\-Problem} (\S\ref{sec:mixed}, \S\ref{sec:gauged})
-  & Eulerian $\phi$ & hydrostatic and natural, \emph{required} & Dahlen (\code{FluidRegion}), or gauged & block MINRES; Schur CG \\
+  & Eulerian $\phi$ & hydrostatic and natural, \emph{required} & Dahlen (\code{FluidRegion}); Maxwell (default) or gauge penalty (\code{SetFluid}) & block MINRES; Schur CG \\
 \code{ReferentialSelf\-GravitatingProblem} (\S\ref{sec:referential})
-  & referential $\zeta^1$ & general & welded gauged & block MINRES \\
-\code{ReferentialSelf\-GravitatingSlipProblem} (\S\ref{sec:slip})
-  & referential, single-valued or broken & general (broken organisation for $\varphi_e\neq\mathrm{id}$) & slipping, gauged & block MINRES with AL sweeps; or KKT MINRES \\
+  & referential $\zeta^1$ & general & welded: Maxwell (default) or gauge penalty (\code{SetFluid}) & block MINRES \\
+\code{ReferentialSelf\-GravitatingSlipProblem} (\S\ref{sec:slip}; extends the welded class)
+  & referential, single-valued or broken & general (broken organisation for $\varphi_e\neq\mathrm{id}$) & slipping, its own gauge (refuses \code{SetFluid}) & block MINRES with AL sweeps; or KKT MINRES \\
 \bottomrule
 \end{tabular}
-\caption{The quasi-static problem classes. ``Schur CG'': CG on the
+\caption{The quasi-static problem classes. ``Maxwell'': secular
+relaxation of an artificial Maxwell fluid, \code{SetFluid}'s default
+treatment (\S\ref{sec:gauged}; evidence in
+\code{doc/static\_fluid\_core.tex}); ``Schur CG'': CG on the
 displacement Schur complement (\S\ref{sec:mixed-solvers}); ``AL sweeps'':
 penalty with augmented-Lagrangian iterations (\S\ref{sec:slip-enforce}); ``welded'':
 one continuous displacement across solid and fluid (\S\ref{sec:gauged});
@@ -824,8 +833,9 @@ they reduce the core to an approximate boundary condition on the mantle
 side of the core--mantle boundary (CMB). This subsection states that
 condition as published, shows that it and its common variants are
 degenerate cases of (F1)--(F3), and defines the resulting ladder of
-approximations, which the library realises through the settings of
-\code{FluidRegion}.
+approximations, which the library names in
+\code{FluidRegion::Treatment} (the struct's expert fields remain
+available under \code{Full} for custom configurations).
 
 \subsubsection{The condition used in the GIA literature}
 
@@ -897,11 +907,14 @@ the core's \emph{perturbation} physics is truncated.
 
 \subsubsection{The ladder}
 
-Each rung is a \code{FluidRegion} configuration of the mixed class; the
+Each rung is a named treatment of \code{FluidRegion}
+(\code{FluidRegion::Treatment}; a non-\code{Full} treatment owns its
+degradations, so it refuses conflicting expert-field settings); the
 Love-number benchmark exposes the ladder as its option \code{-cmb}
 (Dahlen path only).
 \begin{description}
-\item[\code{full}] (F1)+(F2)+(F3) with the model's own densities: the
+\item[\code{full}] (\code{Treatment::Full}, the default)
+  (F1)+(F2)+(F3) with the model's own densities: the
   complete Dahlen treatment of a stratified, barotropic fluid
   \cite{Dahlen1974,AW10}. The fluid's Eulerian density perturbation
   $\rho'_F\phi$ is kept, $\rho_F$ is the fluid-side density on each
@@ -910,27 +923,37 @@ Love-number benchmark exposes the ladder as its option \code{-cmb}
   \code{BarotropicDensityGradientCoefficient} (\S\ref{sec:mixed}, assembly
   table).
 \item[\code{nomass}] (F2)+(F3); (F1) dropped, $\rho'_F = 0$
-  (\code{density\_gradient} set to zero). Keeps the buoyancy and the
+  (\code{Treatment::NoMass}: the gradient forced to zero). Keeps the buoyancy and the
   potential stress at each interface with the model's fluid-side density,
   but the fluid interior no longer contributes a density perturbation to
   the potential: the core perturbs gravity only through the displaced
   interfaces. This is approximation (ii) alone.
 \item[\code{uniform}] As \code{nomass}, and in addition $\rho_F$ replaced
   by one constant per fluid region, the fluid-side density at the region's
-  outermost interface (the core-top density), supplied as a constant
-  \code{interface\_density} and used on all of that region's interfaces.
+  outermost interface (the core-top density), supplied as
+  \code{uniform\_density} (\code{Treatment::UniformCore}) and used on all
+  of that region's interfaces.
   This is approximations (i) and (ii) together: the standard unmeshed-core
   condition of the GIA literature
   \cite{Latychev2005,TrompMitrovica1999,AWahrZhong2013,Huang2023,
   CitcomSVE2025}.
 \item[\code{winkler}] As \code{uniform}, and in addition both halves of
-  (F3) dropped (\code{interface\_potential\_coupling = false}; dropping
+  (F3) dropped (\code{Treatment::Winkler}; dropping
   both keeps the operator symmetric). The core presses on the mantle
   through the buoyancy (F2) alone and contributes nothing to the potential
   perturbation (no potential stress, no $\sigma_{\mathrm{CMB}}$ source).
   It is the variant Huang et al.\ \cite{Huang2023} call FEMIBF, for which
   they find the potential force ``significant for low degree loads''.
 \end{description}
+On models with a solid inner core the published condition models nothing
+below the CMB, so the approximate rungs drop the enclosed solid by
+default: it leaves the displacement SubMesh and its attributes are folded
+into the \code{FluidRegion}, whose treatment zeroes $\rho'_F$ over it
+while its background density still sources $\Phi_0$; the ICB becomes
+interior to the unmeshed region and assembles nothing. The benchmark flag
+\code{-cmb-keep-inner} keeps the inner core meshed, isolating its own
+contribution as a measurable delta.
+
 Beyond the ladder, the \emph{gauged} treatment of \S\ref{sec:gauged}
 keeps the fluid's displacement and bulk modulus and is selected by
 construction rather than by a \code{FluidRegion} setting; it is the

@@ -109,6 +109,46 @@ LinearQuasiStaticMixedSelfGravitatingProblem::
         "LinearQuasiStaticMixedSelfGravitatingProblem: a fluid region's "
         "interface_marker must be sized to the SubMesh's "
         "bdr_attributes.Max().");
+    // The CMB-approximation ladder: a non-Full treatment owns its
+    // degradations, so the fields it prescribes must be left at their
+    // defaults (the ladder is defined in doc/quasi_static_models.tex,
+    // "Fluid regions and the ladder of CMB approximations").
+    if (f.treatment == FluidRegion::Treatment::Full) {
+      MFEM_VERIFY(f.uniform_density == 0.0,
+                  "LinearQuasiStaticMixedSelfGravitatingProblem: "
+                  "uniform_density requires Treatment::UniformCore or "
+                  "Treatment::Winkler.");
+    } else {
+      MFEM_VERIFY(!f.density_gradient,
+                  "LinearQuasiStaticMixedSelfGravitatingProblem: a non-Full "
+                  "treatment prescribes density_gradient; leave it null.");
+      MFEM_VERIFY(f.interface_potential_coupling,
+                  "LinearQuasiStaticMixedSelfGravitatingProblem: leave "
+                  "interface_potential_coupling true; Treatment::Winkler "
+                  "drops it itself.");
+      treatment_coefs_.push_back(std::make_unique<ConstantCoefficient>(0.0));
+      f.density_gradient = treatment_coefs_.back().get();
+      if (f.treatment == FluidRegion::Treatment::NoMass) {
+        MFEM_VERIFY(f.uniform_density == 0.0,
+                    "LinearQuasiStaticMixedSelfGravitatingProblem: "
+                    "uniform_density requires Treatment::UniformCore or "
+                    "Treatment::Winkler.");
+      } else {
+        MFEM_VERIFY(!f.interface_density,
+                    "LinearQuasiStaticMixedSelfGravitatingProblem: "
+                    "Treatment::UniformCore/Winkler prescribe "
+                    "interface_density; supply uniform_density instead.");
+        MFEM_VERIFY(f.uniform_density > 0.0,
+                    "LinearQuasiStaticMixedSelfGravitatingProblem: "
+                    "Treatment::UniformCore/Winkler need a positive "
+                    "uniform_density.");
+        treatment_coefs_.push_back(
+            std::make_unique<ConstantCoefficient>(f.uniform_density));
+        f.interface_density = treatment_coefs_.back().get();
+      }
+      f.interface_potential_coupling =
+          (f.treatment != FluidRegion::Treatment::Winkler);
+    }
     Array<int> marker(fes_phi_->GetMesh()->attributes.Max());
     marker = 0;
     for (int a : f.attributes) {

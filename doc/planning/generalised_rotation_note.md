@@ -1,7 +1,10 @@
 # The generalised rotational theory (WP7.5): derivation note
 
-*Status: **derivation for review** (no code; WP7.5 of
-[`referential_sea_level_plan.md`](referential_sea_level_plan.md)).
+*Status: derivation reviewed; **implemented 11 Oct 2026** as WP7.6 of
+[`referential_sea_level_plan.md`](referential_sea_level_plan.md)
+(the generalised door, the input-inertia option, the triaxial
+demonstration; the gates table below carries the measurements). Open:
+the fluid-core wrinkle and the Mitrovica & Wahr numerical check.
 Sources: Yu, Al-Attar, Syvret & Lloyd (2025, "the paper",
 `doc/Elasticity/ggae388.pdf`) §2.3–2.4 for the traditional theory and
 its diagnosis; Maitra & Al-Attar (2024, "M&A",

@@ -662,10 +662,19 @@ steps from the full treatment to the published conditions one at a time:
 \end{center}
 The gauged treatment, which keeps the fluid's displacement and bulk
 modulus, is a separate formulation (\code{--method gauged}), compared
-alongside. The core stays meshed in every treatment, so the potential
-unknowns do not change and any gain is on the solver side (a code that
-leaves the core unmeshed also saves its elements, a gain bounded by the
-core's share of the element count, which the results record). On a
+alongside. The fluid core stays meshed in every treatment (the potential
+is solved over the whole ball), so the potential unknowns do not change
+and any gain is on the solver side (a code that leaves the core unmeshed
+also saves its elements, a gain bounded by the core's share of the
+element count, which the results record). On models with a solid inner
+core the non-\code{full} rungs drop the enclosed solid from the
+displacement SubMesh by default, folding its attributes into the
+\code{FluidRegion}: the published condition models nothing below the
+CMB, and the folded region's background density still sources $\Phi_0$.
+\code{-cmb-keep-inner} keeps the inner core meshed, so its own
+contribution is a measurable delta; the recorded \code{prem\_4} numbers
+of \S\ref{sec:cmbresults} were measured with the inner core meshed (the
+pre-default behaviour, now \code{-cmb-keep-inner}). On a
 uniform core (\code{fluid\_core}) $\rho'_F=0$ and the fluid-side density is
 the core-top density, so \code{nomass} and \code{uniform} coincide with
 \code{full}; the treatments separate on stratified cores
