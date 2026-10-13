@@ -930,13 +930,21 @@ void ViscoelasticOperator::ImplicitSolve(real_t dt, const Vector& m,
       }
     }
     last_passes_ = pass;
-    if (linear_ || pass >= max_corrector_) {
-      break;
+    bool more = false;
+    if (!linear_ && pass < max_corrector_) {
+      // Corrector: times at the end state (d^{n+1}, m^{n+1}).
+      old_itau_ = itau_;
+      EvaluateRelaxationTimes(d_, cached_m_);
+      more = RelaxationTimeChange(old_itau_) >= corrector_tol_;
     }
-    // Corrector: times at the end state (d^{n+1}, m^{n+1}).
-    old_itau_ = itau_;
-    EvaluateRelaxationTimes(d_, cached_m_);
-    if (RelaxationTimeChange(old_itau_) < corrector_tol_) {
+    if (step_corrector_ && pass < step_corrector_cap_) {
+      // Fired every pass (not short-circuited), so the load-law hook
+      // tracks the latest state even when the time corrector already
+      // demands another pass.
+      const bool hook_more = step_corrector_(t);
+      more = more || hook_more;
+    }
+    if (!more) {
       break;
     }
   }
@@ -1036,19 +1044,27 @@ void ViscoelasticOperator::ExponentialTrapezoidStep(Vector& m, real_t& t,
       }
     }
     last_passes_ = pass;
-    if (linear_ || pass >= max_corrector_) {
-      break;
+    bool more = false;
+    if (!linear_ && pass < max_corrector_) {
+      // Corrector: times at the midpoint state.
+      old_itau_ = itau_;
+      m_mid_ = m;
+      m_mid_ += m_start_;
+      m_mid_ *= 0.5;
+      d_mid_ = d_;
+      d_mid_ += d_prev_;
+      d_mid_ *= 0.5;
+      EvaluateRelaxationTimes(d_mid_, m_mid_);
+      more = RelaxationTimeChange(old_itau_) >= corrector_tol_;
     }
-    // Corrector: times at the midpoint state.
-    old_itau_ = itau_;
-    m_mid_ = m;
-    m_mid_ += m_start_;
-    m_mid_ *= 0.5;
-    d_mid_ = d_;
-    d_mid_ += d_prev_;
-    d_mid_ *= 0.5;
-    EvaluateRelaxationTimes(d_mid_, m_mid_);
-    if (RelaxationTimeChange(old_itau_) < corrector_tol_) {
+    if (step_corrector_ && pass < step_corrector_cap_) {
+      // Fired every pass (not short-circuited), so the load-law hook
+      // tracks the latest state even when the time corrector already
+      // demands another pass.
+      const bool hook_more = step_corrector_(t + dt);
+      more = more || hook_more;
+    }
+    if (!more) {
       break;
     }
   }

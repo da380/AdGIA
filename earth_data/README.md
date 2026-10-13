@@ -15,7 +15,7 @@ The build puts a launcher for each script in `<build>/earth_data/`
 starts the script of the source tree with the Python found at
 configuration — the shared poetry environment of the repository root, or
 the one `EARTH_DATA_PYTHON` names. The environment is made once (see
-INSTALL.md, "Prerequisites", item 5), and a build configured before it
+INSTALL.md, "The Python environment"), and a build configured before it
 existed is configured again so the launchers pick it up:
 
 ```

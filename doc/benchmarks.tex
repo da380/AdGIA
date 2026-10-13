@@ -515,7 +515,7 @@ makes the cases and runs the sweeps; \code{plot.py} and
 \code{dahlen} & Eulerian, fluid eliminated. The fluid enters through the interface terms (F2), (F3) and the fluid mass term (F1) of the potential equation; \code{-cmb} selects the interface treatment (\S\ref{sec:cmb}). \\
 \code{gauged} & Eulerian, the fluid in the displacement space with its bulk modulus and a gauge shear penalty $\eps\,2\mu_g\,\mathrm{dev}\,e(\vu):\mathrm{dev}\,e(\vu')$, $\eps=10^{-2}$ (\code{-geps}), three iterated-Tikhonov refinements per solve (\code{-gref}); \code{-gauge-kkt} replaces the penalty by the exact-gauge saddle (\S\ref{sec:solver-meas}). \\
 \code{referential} & welded gauged referential formulation: bare moduli from $p_0$, equilibrium stress $\mathbf{S}_e=-p_0\mathbf{I}$, the same gauge penalty, prescribed vacuum extension in the buffer. \\
-\code{maxwell} & the referential problem with the fluid treated by MAXWELL RELAXATION (\code{SetFluid}; \code{doc/static\_fluid\_core.tex}, ``The Maxwell relaxation method''): the secular static response by backward-Euler relaxation of an artificial Maxwell core, stopping on the solid increment; \code{-mxbeta} sets the physical-phase $\Delta t/\tau$ (default 3, the $N^2<0$-safe choice). Per-degree stop diagnostics are printed; the degree-1 stop floor on a strongly non-neutral model is the ambiguity band, reported rather than hidden. \\
+\code{maxwell} & the referential problem with the fluid treated by \emph{Maxwell relaxation} (\code{SetFluid}; \code{doc/static\_fluid\_core.tex}, ``The Maxwell relaxation method''): the secular static response by backward-Euler relaxation of an artificial Maxwell core, stopping on the solid increment; \code{-mxbeta} sets the physical-phase $\Delta t/\tau$ (default 3, the $N^2<0$-safe choice). Per-degree stop diagnostics are printed; the degree-1 stop floor on a strongly non-neutral model is the ambiguity band, reported rather than hidden. \\
 \code{slip} & slipping fluid--solid interface: broken displacement pair, single-valued potential; the normal-jump constraint by penalty ($\theta=100$, \code{-theta}) and augmented Lagrangian (8 sweeps, \code{-al}), the early sweeps at the loose relative tolerance $10^{-3}$ (\code{-sweep-tol}, tightened geometrically to the final tolerance); or by a KKT multiplier block (\code{-kkt}, multiplier order \code{-kkt-order}). \\
 \code{slip\_broken} & the same with the potential broken per region too (augmented Lagrangian only). \\
 \bottomrule
@@ -523,8 +523,8 @@ makes the cases and runs the sweeps; \code{plot.py} and
 \end{center}
 \noindent Restrictions recorded in the code: the welded referential
 family (\code{referential}, \code{maxwell}) now solves the tidal
-problems as well as the loads — its tide is the displacement-row load
-$-\int_B\tilde\rho\,(\nabla\psi\circ\varphi_e)\cdot v\,dV$, the
+problems as well as the loads --- its tide is the displacement-row load
+$-\int_B\tilde\rho\,(\nabla\psi\circ\varphi_e)\cdot v\dV$, the
 physical tidal gradient composed with the equilibrium mapping, by the
 chain rule the same thing as the $F_e^{-T}$-transformed gradient of
 the referential tidal potential. The slipping methods still solve load
@@ -813,7 +813,7 @@ tangential slip the welded space suppresses is removable by
 relabelling only for a neutrally stratified fluid ($N^2 = 0$; the
 decomposition paragraph of \S\ref{sec:formulations}), and on this
 non-neutral core the suppression error is genuine but sits below the
-mesh level at these degrees — it is visible at degree~1, where the
+mesh level at these degrees --- it is visible at degree~1, where the
 slip rides the soft core--shell translation. The slipping formulation
 is a finite idealisation of the dissipative completion and serves here as an
 instrument; the general treatment of such a core is the Maxwell relaxation
@@ -955,10 +955,10 @@ zero in both solutions by the choice of frame.}
 
 \paragraph{The runs.} Model \code{prem\_4} (stratified PREM-like core
 under a solid inner core), $h=0.2$, eight ranks, degrees 0--5, orders 2
-AND 3 (regenerated 8 October on one fresh mesh, all columns sharing
+\emph{and} 3 (regenerated 8 October on one fresh mesh, all columns sharing
 it): the Dahlen path with \code{-cmb full}, \code{nomass},
 \code{uniform}, \code{winkler}, the gauged method, and the Maxwell
-relaxation (\code{-method maxwell} — its first inner-core model, a
+relaxation (\code{-method maxwell} --- its first inner-core model, a
 configuration the slipping classes never supported; its tidal columns
 use the referential tidal load of \S\ref{sec:formulations}). The relative
 change against \code{full} on the same mesh and order is the
@@ -1015,21 +1015,21 @@ $l$ & \code{pyslfp} $h'$ & \code{full} & \code{nomass} & \code{uniform} & \code{
   ``potential stress + buoyancy'' and not buoyancy alone is the standard.
 \item At $l=0$ every member of the Dahlen family is wrong, each
   differently: $h'_0$ is scattered over $\pm1$ with sign changes against
-  pyslfp's $-0.1318$. The gauged AND the Maxwell treatments agree with
+  pyslfp's $-0.1318$. The gauged \emph{and} the Maxwell treatments agree with
   pyslfp there ($6\times10^{-4}$ and, at order 3, $2\times10^{-4}$).
   Degree-0 observables (mean sea level, radial
   budgets) are the one place the universal approximation bites, and no
   tuning of the CMB condition can repair a member of the Dahlen family
   there.
 \item The Maxwell column reads with its stop diagnostics. At order 3 it
-  joins the family — $0.9$--$2.5\times10^{-3}$ from pyslfp over
+  joins the family --- $0.9$--$2.5\times10^{-3}$ from pyslfp over
   $l=1$--$5$, against \code{full}'s $0.3$--$1.4\times10^{-3}$ and
-  gauged's $0.6$--$1.4\times10^{-3}$ — and this is its first
+  gauged's $0.6$--$1.4\times10^{-3}$ --- and this is its first
   \emph{inner-core} model, handled with no interface machinery at all.
   At order 2 it carries a $\sim1.5\,\%$ offset: its $l=1,2$ relaxations
   stop honestly at $\sim10^{-2}$ increment floors (reported per degree
   in the log), and the deeper-converged degrees still sit on the welded
-  path's order-2 discretisation of this geometry — all of it gone at
+  path's order-2 discretisation of this geometry --- all of it gone at
   order 3.
 \item The approximation deviations are nearly identical between the
   orders (and to the previous mesh): computed against \code{full} on
@@ -1089,7 +1089,7 @@ order 2 it carries its honest-stop offset ($\sim1.6\,\%$ in $h_2$),
 gone at order 3.
 
 \paragraph{Degree 2 at a glance} (deviation from \code{full}, all six
-numbers; order-independent to the digits shown — orders 2 and 3
+numbers; order-independent to the digits shown --- orders 2 and 3
 agree):
 \begin{center}
 \small
@@ -1383,8 +1383,8 @@ $\zeta\zeta$ collapse of \code{doc/quasi\_static\_models.tex}) and
 $\Phi_g$ joins the pass criterion: measured $4.9\times10^{-7}$ ($\vu$)
 and $4.8\times10^{-10}$ ($\Phi_g$) at $A=0.02$. With
 \code{-map-surface} (solid and welded cases) the relabelling is the
-radial \code{SurfaceMovingRelabelling} — identity at the DtN sphere but
-\emph{not} at the body surface — so the mapped side's ocean weight and
+radial \code{SurfaceMovingRelabelling} --- identity at the DtN sphere but
+\emph{not} at the body surface --- so the mapped side's ocean weight and
 data composition carry the Nanson factor $J_\Sigma$ and the
 area-convention bookkeeping ($\sigma$ per referential area: the
 feedback operator carries $J_\Sigma$, the data rows do not) is
@@ -1461,8 +1461,8 @@ same connectivity), by degree. Stars: elements halved.}
 \end{figure}
 
 \paragraph{The water leg (gate G7b).} With \code{-water} the driver runs
-one bordered water solve on the genuinely aspherical body — a regime no
-spherical reference reaches — and certifies it \emph{internally}: the
+one bordered water solve on the genuinely aspherical body --- a regime no
+spherical reference reaches --- and certifies it \emph{internally}: the
 monolithic solution against the \code{IteredZeta} fixed point
 ($4.5\times10^{-8}$), the mass-conservation row re-integrated at the
 solution (machine precision), and $\Phi_g$ consistency. The run exits

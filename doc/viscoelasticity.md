@@ -457,7 +457,7 @@ law in one region only.
   rank in parallel (`RestrictedStrainMap()`); the public `ComputeStrain()`
   always evaluates on the whole mesh. A whole-mesh rheology has exactly
   the unrestricted layout.
-- Output fields. `RegisterFields` names branch k's field
+- **Output fields.** `RegisterFields` names branch k's field
   `internal_variable_<label>` with the rheology's `BranchLabel(k)`:
   `branch<k>` by default, and `<region>_branch<j>` for a composite (region
   names default to `region<r>`). A rheology with a single branch under the

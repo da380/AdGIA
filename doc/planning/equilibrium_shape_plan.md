@@ -48,7 +48,7 @@ David at the end.*
 2. No shape-parameterisation object: need `φ[s]` with tangents θ_i,
    built on the mapping layer (`RadialDiffeomorphism`,
    `TaperedDiffeomorphism`, `GridFunctionDiffeomorphism`) and matching
-   `meshes/equilibrium_bodies.py`'s smoothstep taper so maps and meshes
+   `meshes/layered_earth.py`'s smoothstep taper so maps and meshes
    describe the same bodies.
 3. No Γ/Eshelby assembly, no GN shape block.
 4. `ConstrainedMetric` takes ONE linear constraint; rotation needs
@@ -95,7 +95,7 @@ David at the end.*
 - **WP-S2** — **shape parameterisation layer**: `φ[s]` + tangents θ_i;
   interface-harmonic coefficients first (the mild nearly-spherical
   family), the interface-FE-field variant later (same Γ projection
-  serves both); lift rule shared with `equilibrium_bodies.py`.
+  serves both); lift rule shared with `layered_earth.py`.
 - **WP-S3** — **the shape derivative**: Eshelby-tensor assembly for Γ,
   `∂J/∂s = Γ(θ_i)`, the Γ_E variant; FD + gauge-identity +
   lift-independence + interface-shift-benchmark gates. Centrifugal term

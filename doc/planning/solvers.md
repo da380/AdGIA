@@ -673,13 +673,26 @@ noise of nearly-converged pairs pollutes later solves (fixed-dt
 stepping 1060 → 1520 iterations), and the frozen-operator regime
 belongs to the elimination anyway.
 
-*Where it goes from here.* The route's regime is operator-changing
-stepping; the decisive measurement is the MIGRATING production loop
-(stage 2 of this front), where every step refreshes the water data —
-the elimination then re-solves its columns per step while
-picard-border pays only its warm passes, and the migration Picard on C
-and this loop merge into one fixed point per step whose converged C
-feeds the recorded-C stack of the adjoint playback (WP8.4).
+*Stage 2 — migration merged (13 October 2026).* The migration loop
+now runs INSIDE the stepper: `ViscoelasticOperator::SetStepCorrector`
+fires a load-law corrector in the implicit and trapezoid pass loops,
+and `ShorelineMigration::Correct()` is that corrector — one combined
+fixed point per step (C, the borders and, when nonlinear, the
+relaxation times together), settling in a few passes per step. The
+converged ocean is recorded per step (`RecordStep`) and played back by
+`SetRecordedTime` (left-limit, memoised) — the recorded-C stack the
+adjoint's reversed playback consumes (WP8.4). Gates
+(`TestShorelineMigration(.Par)`): two migrating trapezoid steps at
+dt ≪ τ land on the static migrating solve (1e-4); the per-step
+corrector settles within 6 passes on a relaxing rotating history;
+playback reproduces the forward ocean exactly; routes agree at 1e-6.
+MEASURED on the rotating migrating history (5 steps, serial, the
+small two-layer ball): elimination 1846 iterations, picard-border
+1548 — a 16 % win in the production-shaped regime (no rotation the
+single border still belongs to the elimination, measured 796 vs
+1299). The promotion decision stays with the route policy above
+(server scale pending); production-scale timing on `ice_age_loading`
+when migration lands there.
 
 **See:** `include/AdGIA/mixed_problem.hpp` (`SetPicardBorder`,
 `LastPicardPasses`); `src/mixed_problem.cpp::SolveBorderedPicard`;

@@ -1146,7 +1146,7 @@ changes along the flow at the rate $-\ip{\operatorname{grad}_aE}
 proportional to $\operatorname{grad}_aE$ itself. So $J$ grows wherever the
 flow runs along negative curvature of $E$ --- leaving an unstable
 arrangement, or overturning. A step test on $J$ therefore rejects
-legitimate steps of the flow. The correct test is on $E$, Armijo-style,
+legitimate steps of the flow. The correct test is on $E$, Armijo-style \cite{Armijo1966},
 using the exact rate $\mathrm{d}E/\mathrm{d}t = -2J$.
 
 \paragraph{Acceptance on $E$ admits collapse.} The implemented Eulerian
@@ -1221,7 +1221,7 @@ iterations; and the Stokes flow has singular gradients at re-entrant
 edges and where free fluid surfaces meet solid, imprinting local
 structure on $J'$.
 
-\subsection{The $H^1$ metric}
+\subsection{\texorpdfstring{The $H^1$ metric}{The H1 metric}}
 
 On a domain $X$ (\S\ref{sec:extension}) take
 \begin{equation}
@@ -1236,7 +1236,7 @@ $L = \sqrt{\beta/\alpha}$: the gradient is the derivative averaged over
 balls of radius $\sim L$, and components of $J'$ at wavelengths below $L$
 are suppressed by $(1 + \beta k^2/\alpha)^{-1}$.
 
-\subsection{Regularity and the $H^2$ default}
+\subsection{\texorpdfstring{Regularity and the $H^2$ default}{Regularity and the H2 default}}
 
 In three dimensions $H^1 \hookrightarrow L^6$ only; $H^s
 \hookrightarrow C^0$ requires $s > 3/2$. A Riesz representative in $H^s$
@@ -1561,7 +1561,7 @@ the tangent directions of the barotropic family.
 \paragraph{The residual term.} $H_{\mathrm{R}}$ pairs the residual
 velocity $\bu$ with the bilinear part of the load. Since
 $\norm{\bu}_a = (2J)^{1/2}$, $|H_{\mathrm{R}}[d,d]| = O(J^{1/2})$: it
-vanishes on the zero set, where Gauss--Newton is exact, and away from it
+vanishes on the zero set, where Gauss--Newton is exact, and away from it,
 it is indefinite (it is what makes the quartic $J$ non-convex), so the
 full Hessian can be indefinite.
 
@@ -1964,6 +1964,7 @@ $\norm{g_\Pi}_G^2 = j^{T}g_\Pi$.
 constrained minimiser $j = \mu\,\mathsf{m}$ (the mass multiplier), so the
 unprojected gradient tends to $\mu r \ne 0$. A loop that projects only
 its search direction computes the Polak--Ribi\`ere coefficient
+\cite{PolakRibiere1969}
 \begin{equation}
   \beta_k = \max\Bigl(0,\ \frac{j_k^{T}(g_k - g_{k-1})}{j_{k-1}^{T}g_{k-1}}\Bigr)
 \end{equation}

@@ -24,5 +24,5 @@ the measured results; `doc/viscoelasticity.md` ("Time stepping") describes
 the integrators and how to choose between them. The campaign runs the box,
 sphere and Love-number sub-families as its opt-in stages
 `viscoelastic_box`, `viscoelastic_sphere` and `viscoelastic`. Every script
-of `box/` and `sphere/` refuses to write into the source tree
-(`common/outputs.py`); run them, and the others, from the build tree.
+here refuses to write into the source tree (`common/outputs.py`); run
+them from the build tree.

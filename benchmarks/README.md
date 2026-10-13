@@ -234,7 +234,7 @@ In brief (the measurements are in `doc/benchmarks.tex`):
 | `viscoelastic_common.hpp` | what the box and sphere drivers share: the step grid, the schemes, the cost bookkeeping |
 | `costs.py` | the cost of a run (by degree or combined) for the collating scripts |
 | `drivers.py` | where a build's drivers are, and how the scripts run and log commands |
-| `outputs.py` | the guard that keeps the box and sphere scripts' outputs out of the source tree |
+| `outputs.py` | the guard that keeps every script's output out of the source tree |
 
 A model is defined once, in `models.py`, and both solvers are given that
 object. planetmodel meshes its skeleton, with a buffer shell outside the

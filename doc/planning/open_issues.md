@@ -821,7 +821,7 @@ during the rewrite: the gauge-ε window (bias 2.6e-2 at ε = 1e-1;
 `fluid_core`, `h = 0.3`); the AL/KKT measurements (θ cliff;
 16.9k / 27.7k / 49.5k; 22.9k; 79.4k; the AL-against-KKT table); the
 gauge-KKT 30k iterations; the combined-solve numbers
-(`love_numbers/README.md`); the 2-D Schur/MINRES timing
+(`benchmarks/love_numbers/README.md`); the 2-D Schur/MINRES timing
 (`doc/self_gravitation.md`); the 3 % near-null leakage and the 6e-5 AL
 floor (2-D test meshes). The prestress ellipse table and every number of
 the CMB, ladder, model-sweep, cross-method, identity and perturbation

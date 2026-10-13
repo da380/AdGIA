@@ -675,6 +675,7 @@ class MigratingOceanState {
 
   const GridFunction* Current() const { return sl1_body_.get(); }
   const GridFunction* Previous() const { return sl1_prev_.get(); }
+  const GridFunction* Parent() const { return sl1_parent_.get(); }
 
   real_t SeaLevelChange(ElementTransformation& T,
                         const IntegrationPoint& ip) const {
@@ -1026,6 +1027,65 @@ bool ShorelineMigration::Solve(real_t t) {
     }
   }
   return finish(true);
+}
+
+bool ShorelineMigration::Correct() {
+  playback_at_ = -2;  // forward mode: any playback memo is stale
+  UpdateState();
+  last_change_ = ShorelineChange();
+  iterations_++;
+  if (last_change_ <= options_.tol) {
+    return false;
+  }
+  refresh_();
+  return true;
+}
+
+void ShorelineMigration::RecordStep(real_t t) {
+  const GridFunction* body = state_->Current();
+  const GridFunction* parent = state_->Parent();
+  MFEM_VERIFY(body && parent,
+              "RecordStep: no migrated state to record (record after a "
+              "converged step).");
+  MFEM_VERIFY(record_.empty() || t > record_.back().t,
+              "RecordStep: times must ascend.");
+  RecordedState s;
+  s.t = t;
+  s.body = detail::MakeGridFunction(sfes_.get());
+  *s.body = static_cast<const Vector&>(*body);
+  s.parent = detail::MakeGridFunction(pfes_.get());
+  *s.parent = static_cast<const Vector&>(*parent);
+  record_.push_back(std::move(s));
+}
+
+void ShorelineMigration::SetRecordedTime(real_t t) {
+  MFEM_VERIFY(!record_.empty(), "SetRecordedTime: nothing recorded.");
+  // The latest record at or before t (left limit); before the first
+  // record the ocean is the initial C0 (empty state).
+  int pick = -1;
+  const real_t eps = 1e-12 * std::max(std::abs(t), real_t{1});
+  for (int k = 0; k < static_cast<int>(record_.size()); k++) {
+    if (record_[k].t <= t + eps) {
+      pick = k;
+    } else {
+      break;
+    }
+  }
+  if (pick == playback_at_) {
+    return;  // the water data already carry this record
+  }
+  if (pick < 0) {
+    state_->SetSeaLevelChange(nullptr, nullptr, /*replace=*/true);
+  } else {
+    auto body = detail::MakeGridFunction(sfes_.get());
+    *body = static_cast<const Vector&>(*record_[pick].body);
+    auto parent = detail::MakeGridFunction(pfes_.get());
+    *parent = static_cast<const Vector&>(*record_[pick].parent);
+    state_->SetSeaLevelChange(std::move(body), std::move(parent),
+                              /*replace=*/true);
+  }
+  refresh_();
+  playback_at_ = pick;
 }
 
 // --- IceHistory --------------------------------------------------------------

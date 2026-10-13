@@ -240,6 +240,23 @@ class ViscoelasticOperator : public mfem::TimeDependentOperator {
     force_hook_ = std::move(hook);
   }
 
+  /** @brief A configurational (load-law) corrector fired inside the
+   * implicit and exponential-trapezoid pass loops after each elastic
+   * solve and internal-variable update, with the step's target time:
+   * return true to request another pass of the SAME step — the hook
+   * updated a solution-dependent load law and refreshed its data
+   * (shoreline migration tracking the ocean function) — or false when
+   * settled. The hook owns its convergence measure; @p cap bounds its
+   * extra passes per step. Runs alongside the nonlinear
+   * relaxation-time corrector (both must settle), and only in the
+   * implicit and trapezoid steppers (the explicit paths have no pass
+   * loop). Clear with nullptr. */
+  void SetStepCorrector(std::function<bool(mfem::real_t)> corrector,
+                        int cap = 16) {
+    step_corrector_ = std::move(corrector);
+    step_corrector_cap_ = cap;
+  }
+
   /** @brief Copy the state into the output GridFunctions. */
   void SyncFields(const mfem::Vector& m);
 
@@ -361,6 +378,8 @@ class ViscoelasticOperator : public mfem::TimeDependentOperator {
   std::vector<mfem::Coefficient*> beta_ptrs_;
   std::vector<std::unique_ptr<mfem::GridFunction>> m_out_;
   std::function<void(mfem::real_t)> force_hook_;  ///< see SetForceHook
+  std::function<bool(mfem::real_t)> step_corrector_;  ///< see SetStepCorrector
+  int step_corrector_cap_ = 16;
   mutable mfem::Vector d_, d_prev_, dual_, force_, zeta_;  ///< scratch
 
   // The weight memo: the (scheme, dt, tau version) the beta_ VALUES
