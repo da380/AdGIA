@@ -456,8 +456,48 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
     MFEM_VERIFY(!on || dim_ == 3,
                 "SetMonolithicBorder: 3-D only (the 2-D compatibility "
                 "relocation makes the bordered system asymmetric).");
+    MFEM_VERIFY(!on || !picard_border_,
+                "SetMonolithicBorder: incompatible with SetPicardBorder.");
     monolithic_border_ = on;
   }
+
+  /**
+   * @brief Solve the bordered system by block Gauss–Seidel (Picard
+   * feedback) instead of by block elimination: iterate the base
+   * @f$(u,\phi)@f$ solve against the current border scalars,
+   * @f$K x^{k+1} = b - B\,y^k@f$, then update the scalars from the
+   * dense rows, @f$D_b\,y^{k+1} = r - B^T x^{k+1}@f$ — the water and
+   * rotation feedbacks as explicit loads. No per-column solves and no
+   * condensed system; each pass is one warm-started base solve, and
+   * the pass count is set by the physical loop gain
+   * @f$\rho(D_b^{-1}B^T K^{-1} B)@f$ (percent-grade for water; slower
+   * as the moments approach neutrality). The border scalars warm-start
+   * from the previous Solve(), so inside a time integration each step
+   * enters far down the contraction and the coupled solve approaches
+   * one base solve per step. Gated to agree with the elimination at
+   * solver grade; the elimination stays the default and is the
+   * automatic fallback (with a warning) when the loop does not meet
+   * @p tol in @p max_passes. Incompatible with SetMonolithicBorder().
+   *
+   * @param on Enable the route.
+   * @param tol Relative border-scalar increment stop.
+   * @param max_passes Pass cap before the elimination fallback.
+   */
+  void SetPicardBorder(bool on = true, mfem::real_t tol = 1e-10,
+                       int max_passes = 50) {
+    MFEM_VERIFY(!on || !monolithic_border_,
+                "SetPicardBorder: incompatible with SetMonolithicBorder.");
+    MFEM_VERIFY(tol > 0.0 && max_passes > 1,
+                "SetPicardBorder: invalid tolerance or pass cap.");
+    picard_border_ = on;
+    picard_tol_ = tol;
+    picard_max_ = max_passes;
+  }
+
+  /** @brief Passes of the last Picard-border Solve() (0 before, or on
+   * the other routes; -1 when the last solve fell back to the
+   * elimination). */
+  int LastPicardPasses() const { return picard_passes_; }
 
   /** @brief @f$\psi(\omega)@f$ of the last Solve() as a coefficient
    * (requires SetRotation()); amplitudes follow each solve. */
@@ -795,6 +835,22 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   // dominant cost of the bordered solve.
   std::unique_ptr<BorderedElimination> border_elim_;
   bool monolithic_border_ = false;
+
+  // The Picard-border route (SetPicardBorder): block Gauss-Seidel over
+  // the same assembled border data, with the scalars warm-started from
+  // the previous solve through phi_g_/omega_.
+  bool picard_border_ = false;
+  mfem::real_t picard_tol_ = 1e-10;
+  int picard_max_ = 50;
+  int picard_passes_ = 0;
+  /** The Gauss-Seidel loop; false only on a base-solve failure (a
+   * non-converged loop falls back to the elimination inside
+   * SolveLinearSystem instead). */
+  bool SolveBorderedPicard(const std::vector<mfem::Vector>& Bu,
+                           const std::vector<mfem::Vector>& Bphi,
+                           const mfem::DenseMatrix& Db,
+                           const mfem::Vector& r, const mfem::Vector& B_in,
+                           mfem::Vector& X, bool& converged);
 
   /** @brief Rebuild the water-rotation cross data (both features on). */
   void BuildBorderCrossData();

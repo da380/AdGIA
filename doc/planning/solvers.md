@@ -40,8 +40,11 @@ below), which orders the remaining work:
    on the box contrast case before any gravitating class ("Options"
    of the near-incompressible item; deflation is the fallback);
 4. the Picard feedback inside the time stepper ("Picard feedback
-   inside the time stepper") — the stepping-economy lever for
-   production runs;
+   inside the time stepper") — **delivered 13 October 2026** as the
+   gated `SetPicardBorder()` route; wins 25 % in operator-changing
+   stepping, loses to the flavour-cached elimination at frozen
+   operators; the promotion decision waits on the migrating
+   production loop (its real regime);
 5. the decisions already measured: combined-degree solves as the
    campaign default, the monolithic border with a border-aware
    refinement stop, the increment-relative stopping test;
@@ -588,6 +591,14 @@ preconditioner stays shared rather than per-flavour).
 
 ## Bordered solves (sea level and rotation)
 
+**Route policy (David, 13 October 2026): all routes stay, and the
+defaults stay — block-MINRES for the coupled (u, φ) solve, the
+ELIMINATION for the borders — until server-scale measurements exist
+(none of the local np 4 verdicts is trusted at production rank counts;
+the scaling ladder of "Parallel efficiency" below is where they could
+invert). Monolithic and Picard remain gated options; the per-problem
+route choice is a calibration-harness knob.**
+
 The bordered system `[K B; Bᵀ Db]` (the Φ_g and ω borders of the
 sea-level machinery) has three solve routes, all gated to agree:
 the **elimination** (one unbordered solve per border column, the
@@ -624,25 +635,84 @@ same near-cancellation seen from the elimination side.
 
 ### Picard feedback inside the time stepper
 
-**Status:** proposal, measured.
+**Status:** DELIVERED 13 October 2026 as the problem-level
+`SetPicardBorder()` route (gated, elimination stays the default);
+promotion decision deferred to the migration stage, where its target
+regime lives.
 
-The water and rotation feedbacks iterated as explicit loads around the
-plain elastic operator converge at the physical loop gain (water
-0.07–0.2 per pass; with rotation at Earth's near-neutral moments, 17
-passes, no stall), and the warm-started per-pass Krylov counts decay
-fast (66 → 59 → … → 4 at h 0.4/o2), so a cold loop costs ~3.7× one
-elastic solve. Inside viscoelastic stepping — where each step starts
-from the previous step's converged state, far down that decay curve —
-the route should approach one elastic solve per step with no borders
-at all. Requirements before productionising: the ψ-dependent
-instruments must use the interpolant convention throughout (the
-experiment's analytic-ψ integrals leave ω ~8 % off at near-neutral
-moments), and the loop belongs inside the stepper rather than per
-solve.
+*What was built.* Block Gauss–Seidel on the already-assembled bordered
+system — @f$K x = b - B y@f$ with the current border scalars, then the
+dense rows @f$D_b y = r - B^T x@f$ — i.e. the water and rotation
+feedbacks as explicit loads over the SAME discrete system as the
+elimination, which makes the routes agree at solver grade by
+construction (gated in `TestMonolithicBorder(.Par)`, np 1/2/4, with
+the near-neutral moments) and removes the earlier instrument's
+ψ-convention and mass-bookkeeping requirements entirely. The border
+scalars warm-start from the previous Solve(). Plain Gauss–Seidel
+STALLS at near-neutral moments (the loop gain reaches 1; measured:
+50-pass cap hit), so the pass loop is Anderson-mixed on the nb ≤ 4
+border scalars — GMRES on the tiny affine Schur map, converging in
+about nb + 1 passes regardless of the gain (rank-replicated scalars:
+no communication, and the dots are the plain update's own). On
+non-convergence the route warns and falls back to the elimination.
 
-**See:** `benchmarks/sea_level/sea_level_benchmark.cpp`
-(`-feedback picard`); the plan's settled decisions
-(`sea_level_plan.md`).
+*Measured (np 4, two-layer ball).* One-shot composed (water +
+rotation, homogeneous h 0.4 o2): elimination 0.580 s, monolithic
+0.332 s, picard-border 0.459 s (8 passes), the fully-explicit
+instrument 0.949 s (13 passes) — cold, the monolithic stays the
+one-shot winner. Cold pass counts: water 3, rotation 9–10, composed 8.
+Stepping (the small sea-level test, 6 trapezoid steps): at FIXED dt
+the elimination + the modulus-flavour cache wins 2× (560 vs 1060
+iterations) — the cached columns are exact probes of the frozen
+operator, the optimal algorithm there; at VARYING dt (the operator
+reassembles each step: adaptive stepping, nonlinear correctors,
+migration) picard-border wins 25 % (1397 → 1049). ANDERSON-RECYCLING
+ACROSS SOLVES was tried and reverted: residual differences are
+load-independent in exact arithmetic, but the warm-start-tolerance
+noise of nearly-converged pairs pollutes later solves (fixed-dt
+stepping 1060 → 1520 iterations), and the frozen-operator regime
+belongs to the elimination anyway.
+
+*Where it goes from here.* The route's regime is operator-changing
+stepping; the decisive measurement is the MIGRATING production loop
+(stage 2 of this front), where every step refreshes the water data —
+the elimination then re-solves its columns per step while
+picard-border pays only its warm passes, and the migration Picard on C
+and this loop merge into one fixed point per step whose converged C
+feeds the recorded-C stack of the adjoint playback (WP8.4).
+
+**See:** `include/AdGIA/mixed_problem.hpp` (`SetPicardBorder`,
+`LastPicardPasses`); `src/mixed_problem.cpp::SolveBorderedPicard`;
+`tests/TestMonolithicBorder(.Par).cpp`;
+`tests/TestSeaLevelViscoelastic(.Par).cpp` (`PicardBorderStepping`);
+`benchmarks/sea_level/sea_level_benchmark.cpp`
+(`-feedback picard-border`; `-feedback picard` remains the
+fully-explicit instrument).
+
+### Anderson mixing: where it helps and where it hurts
+
+**Status:** record (consolidated 13 October 2026 — the findings were
+previously only in the API docs).
+
+- *Maxwell memory fixed point* (`MaxwellRelaxationOptions::anderson`,
+  depth 4, measured before 9 October 2026): mixing the FIELD-SIZED
+  memory vectors gave ~40 % fewer steps and wall −10–35 % in serial
+  2-D and on the 3-D ball (347 vs 539 iterations at the default β),
+  but **+70 % on a small parallel 2-D case** — the mixed updates
+  degrade the inner solves' warm starts and tighten the inexact
+  tolerances sooner. Opt-in; a calibration-harness decision.
+- *Picard border scalars* (13 October 2026): mixing the nb ≤ 4
+  rank-replicated border scalars is load-bearing, not an optimisation
+  — plain Gauss–Seidel stalls at near-neutral moments, mixed it
+  converges in ~nb + 1 passes — and has no parallel cost (no
+  communication; the dots are the plain update's own). Measured at
+  np 4 throughout.
+- *Recycling Anderson pairs across solves*: reverted — see the Picard
+  item above (warm-start-tolerance noise in nearly-converged pairs).
+
+**See:** `include/AdGIA/quasi_static_problem.hpp`
+(`MaxwellRelaxationOptions::anderson`);
+`src/mixed_problem.cpp::SolveBorderedPicard`.
 
 ### Border-column cache against the stepper's modulus switches
 

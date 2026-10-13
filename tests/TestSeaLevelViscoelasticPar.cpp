@@ -280,6 +280,48 @@ void RunCase(int order, const std::string& label) {
          1e-30);
     Check(rel, 1e-8, label + ": restored flavour equals fresh assembly");
   }
+
+  // 5. The Picard border under stepping (varying dt, the
+  //    operator-changing regime it targets): final state agrees with
+  //    the elimination route, no fallback at the end.
+  {
+    auto step_run = [&](bool picard) {
+      auto p = make_problem(maxwell, true);
+      if (picard) {
+        p->SetPicardBorder();
+      }
+      ViscoelasticOperator visco(*p);
+      ExponentialTrapezoidSolver ode;
+      ode.Init(visco);
+      Vector m(visco.Height());
+      m = 0.0;
+      double t = 0.0;
+      Check(visco.SolveElastic(m, t) ? 0.0 : 1.0, 0.0,
+            label + ": picard-stepping elastic response");
+      for (int k = 0; k < 3; k++) {
+        double dt = 0.5 * kTauM * (1.0 + 0.2 * k);
+        ode.Step(m, t, dt);
+      }
+      return p;
+    };
+    auto pe = step_run(false);
+    auto pp = step_run(true);
+    Check(pp->LastPicardPasses() > 0 ? 0.0 : 1.0, 0.0,
+          label + ": picard stepping converged without fallback");
+    ParGridFunction du(
+        static_cast<const ParGridFunction&>(pp->Displacement()));
+    du -= pe->Displacement();
+    const double rel =
+        GlobalNorm(du) /
+        (GlobalNorm(static_cast<const ParGridFunction&>(
+             pe->Displacement())) +
+         1e-30);
+    Check(rel, 1e-6, label + ": picard stepping equals elimination");
+    Vector dw(pp->AngularVelocity());
+    dw -= pe->AngularVelocity();
+    Check(dw.Norml2() / (pe->AngularVelocity().Norml2() + 1e-300), 1e-6,
+          label + ": picard stepping omega");
+  }
 }
 
 }  // namespace

@@ -314,6 +314,64 @@ TEST_P(SeaLevelViscoTest, AlternationRestoresFlavors) {
   EXPECT_LT(L2Norm(du), 1e-8 * (L2Norm(p2->Displacement()) + 1e-30));
 }
 
+TEST_P(SeaLevelViscoTest, PicardBorderStepping) {
+  const auto [dim, order] = GetParam();
+  if (order > 1) {
+    GTEST_SKIP() << "covered at order 1";
+  }
+  Case c(dim, order);
+  WaterLoad load(dim);
+  Vector moments(3);
+  moments[0] = 1.2;
+  moments[1] = 1.3;
+  moments[2] = 2.0;
+
+  // Two stepping regimes: fixed dt (the operator is frozen, so the
+  // elimination's cached columns already amortise) and varying dt (the
+  // operator reassembles each step and the elimination re-solves its
+  // columns, the regime the Picard border targets — in production,
+  // adaptive stepping, nonlinear rheologies and shoreline migration).
+  auto run = [&](bool picard, bool vary_dt) {
+    auto p = c.Problem(true);
+    p->SetWaterLoad(load.w, load.sigma_d, c.surface);
+    p->SetRotation(0.1, moments);
+    if (picard) {
+      p->SetPicardBorder();
+    }
+    ViscoelasticOperator visco(*p);
+    ExponentialTrapezoidSolver ode;
+    ode.Init(visco);
+    Vector m(visco.Height());
+    m = 0.0;
+    double t = 0.0;
+    EXPECT_TRUE(visco.SolveElastic(m, t));
+    for (int k = 0; k < 6; k++) {
+      double dt = 0.5 * kTau * (vary_dt ? 1.0 + 0.1 * k : 1.0);
+      ode.Step(m, t, dt);
+    }
+    EXPECT_TRUE(visco.SolveElastic(m, t));
+    if (picard) {
+      EXPECT_GT(p->LastPicardPasses(), 0);  // no fallback at the end
+    }
+    return p;
+  };
+  for (bool vary_dt : {false, true}) {
+    auto pe = run(false, vary_dt);
+    auto pp = run(true, vary_dt);
+    GridFunction du(pp->Displacement());
+    du -= pe->Displacement();
+    EXPECT_LT(L2Norm(du), 1e-6 * (L2Norm(pe->Displacement()) + 1e-30));
+    Vector dw(pp->AngularVelocity());
+    dw -= pe->AngularVelocity();
+    EXPECT_LT(dw.Norml2() / (pe->AngularVelocity().Norml2() + 1e-300),
+              1e-6);
+    std::cout << "stepping (" << (vary_dt ? "varying" : "fixed")
+              << " dt): elimination " << pe->TotalIterations()
+              << " its, picard " << pp->TotalIterations()
+              << " its, last passes " << pp->LastPicardPasses() << "\n";
+  }
+}
+
 INSTANTIATE_TEST_SUITE_P(SeaLevelViscoelastic, SeaLevelViscoTest,
                          testing::Values(Param{3, 1}, Param{3, 2}));
 

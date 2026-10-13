@@ -82,16 +82,19 @@ struct Case {
     surface = SurfaceMarker(*body);
   }
 
+  // route: 0 elimination (the reference), 1 monolithic, 2 Picard border.
   std::unique_ptr<LinearQuasiStaticMixedSelfGravitatingProblem> Problem(
-      bool monolithic) {
+      int route) {
     auto p = std::make_unique<LinearQuasiStaticMixedSelfGravitatingProblem>(
         fes_u.get(), fes_phi.get(), *rheology, rho, kG, kDtNDegree);
     p->SetSolverType(
         LinearQuasiStaticMixedSelfGravitatingProblem::SolverType::
             BlockMINRES);
     p->SetRelTol(1e-12);
-    if (monolithic) {
+    if (route == 1) {
       p->SetMonolithicBorder();
+    } else if (route == 2) {
+      p->SetPicardBorder();
     }
     return p;
   }
@@ -124,19 +127,33 @@ TEST_P(MonolithicBorderTest, WaterMatchesElimination) {
   });
   FunctionCoefficient sigma_d(MeltLoad);
 
-  auto run = [&](bool monolithic) {
-    auto p = c.Problem(monolithic);
+  auto run = [&](int route) {
+    auto p = c.Problem(route);
     p->SetWaterLoad(w, sigma_d, c.surface);
     p->AssembleForce(0.0);
     EXPECT_TRUE(p->Solve());
     return p;
   };
-  auto pe = run(false);
-  auto pm = run(true);
-  EXPECT_LT(RelDiff(pm->Displacement(), pe->Displacement()), 1e-8);
-  EXPECT_LT(RelDiff(pm->Potential(), pe->Potential()), 1e-8);
-  EXPECT_NEAR(pm->UniformPotentialTerm(), pe->UniformPotentialTerm(),
-              1e-8 * std::abs(pe->UniformPotentialTerm()));
+  auto pe = run(0);
+  for (int route : {1, 2}) {
+    auto pm = run(route);
+    EXPECT_LT(RelDiff(pm->Displacement(), pe->Displacement()), 1e-8);
+    EXPECT_LT(RelDiff(pm->Potential(), pe->Potential()), 1e-8);
+    EXPECT_NEAR(pm->UniformPotentialTerm(), pe->UniformPotentialTerm(),
+                1e-8 * std::abs(pe->UniformPotentialTerm()));
+    if (route == 2) {
+      // Genuinely converged, no elimination fallback.
+      EXPECT_GT(pm->LastPicardPasses(), 0);
+      std::cout << "picard water passes: " << pm->LastPicardPasses()
+                << "\n";
+      // The warm-started repeat enters far down the contraction: the
+      // stepping economy in miniature.
+      pm->AssembleForce(0.0);
+      EXPECT_TRUE(pm->Solve());
+      EXPECT_LE(pm->LastPicardPasses(), 3);
+      EXPECT_GT(pm->LastPicardPasses(), 0);
+    }
+  }
 }
 
 TEST_P(MonolithicBorderTest, RotationMatchesElimination) {
@@ -150,8 +167,8 @@ TEST_P(MonolithicBorderTest, RotationMatchesElimination) {
   });
   FunctionCoefficient sigma_d(MeltLoad);
 
-  auto run = [&](bool monolithic, bool water) {
-    auto p = c.Problem(monolithic);
+  auto run = [&](int route, bool water) {
+    auto p = c.Problem(route);
     if (water) {
       p->SetWaterLoad(w, sigma_d, c.surface);
     } else {
@@ -163,13 +180,22 @@ TEST_P(MonolithicBorderTest, RotationMatchesElimination) {
     return p;
   };
   for (bool water : {false, true}) {
-    auto pe = run(false, water);
-    auto pm = run(true, water);
-    EXPECT_LT(RelDiff(pm->Displacement(), pe->Displacement()), 1e-8);
-    Vector dw(pm->AngularVelocity());
-    dw -= pe->AngularVelocity();
-    EXPECT_LT(dw.Norml2() / (pe->AngularVelocity().Norml2() + 1e-300),
-              1e-7);
+    auto pe = run(0, water);
+    for (int route : {1, 2}) {
+      auto pm = run(route, water);
+      EXPECT_LT(RelDiff(pm->Displacement(), pe->Displacement()), 1e-8);
+      Vector dw(pm->AngularVelocity());
+      dw -= pe->AngularVelocity();
+      EXPECT_LT(dw.Norml2() / (pe->AngularVelocity().Norml2() + 1e-300),
+                1e-7);
+      if (route == 2) {
+        // Agreement must come from the loop itself, not the fallback,
+        // at the NEAR-NEUTRAL moments — Picard's hard regime.
+        EXPECT_GT(pm->LastPicardPasses(), 0);
+        std::cout << "picard rotation passes (water " << water
+                  << "): " << pm->LastPicardPasses() << "\n";
+      }
+    }
   }
 }
 
