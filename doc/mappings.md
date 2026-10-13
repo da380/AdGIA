@@ -149,7 +149,6 @@ mapping (Section 1), so the paper's relabelled density is `J ρ` in this
 note's symbols. The linearised first Piola–Kirchhoff elastic tensor of
 its Section 4 carries the same major-only symmetry as c′ above.
 
-
 ## 4. The `Diffeomorphism` interface (`mappings.hpp`)
 
 A mapping is asked for exactly two things at a quadrature point — ξ and F
@@ -203,8 +202,8 @@ Serial, with parallel overloads under `MFEM_USE_MPI`:
 - `MaxIdentityDeviation(xi, mesh, bdr_marker)` — the max of |ξ(x) − x|
   over quadrature points of the marked boundary; drivers wrap it in an
   `MFEM_VERIFY` to assert the identity-outside-the-body convention
-  (Section 1), which mappings satisfy by construction and this detects
-  the taper that does not quite reach zero.
+  (Section 1), which mappings satisfy by construction; it detects a
+  taper that does not quite reach zero.
 
 ### Coefficients
 

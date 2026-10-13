@@ -242,6 +242,7 @@ struct CaseOptions {
   bool amg_rbm = false;           // rigid-rotation AMG interpolation vectors
   real_t gauge_plateau = 0.0;     // > 0: stagnation stop ratio (with -gpe)
   real_t mx_beta0 = -1.0;         // maxwell: physical-phase dt/tau
+  real_t mx_prec_eps = 0.0;       // maxwell: frozen-preconditioner epsilon
   const char* cmb = "full";
   const char* method = "dahlen";
   real_t slip_theta = 1e2;
@@ -273,6 +274,12 @@ struct CaseOptions {
                    "Maxwell method: the physical-phase dt/tau (< 0: the "
                    "library default, which resolves the N^2 < 0 plateau; "
                    "10-30 is cheaper on neutral/stable models).");
+    args.AddOption(&mx_prec_eps, "-mxpe", "--maxwell-prec-eps",
+                   "Maxwell method: > 0 builds the displacement "
+                   "preconditioner once on the operator at this moderate "
+                   "epsilon and holds it for the whole continuation "
+                   "(MaxwellRelaxationOptions::prec_eps); 0 keeps the "
+                   "iteration-spike reuse heuristic.");
     args.AddOption(&map_amplitude, "-map", "--map-amplitude",
                    "Amplitude of the interior relabelling of the "
                    "relabelled 3-D benchmark: the same "
@@ -498,6 +505,10 @@ class Case {
                     options.solver != 0,
                 "-gpe needs block MINRES: it cannot be combined with -s 0 "
                 "(Schur-complement CG).");
+    MFEM_VERIFY((options.mx_beta0 <= 0.0 && options.mx_prec_eps <= 0.0) ||
+                    method == "maxwell",
+                "-mxbeta and -mxpe apply to -method maxwell only (given "
+                    << method << ").");
 
     // The displacement regions and the material on them: the solid
     // layers, and for the welded treatments of the fluid (gauged,
@@ -1102,7 +1113,9 @@ class Case {
                ? ",\n  \"maxwell_beta0\": " +
                      Num(options_.mx_beta0 > 0.0
                              ? options_.mx_beta0
-                             : MaxwellRelaxationOptions().dt_over_tau)
+                             : MaxwellRelaxationOptions().dt_over_tau) +
+                     ",\n  \"maxwell_prec_eps\": " +
+                     Num(options_.mx_prec_eps)
                : method == "dahlen"
                    ? std::string()
                    : GaugeEntries())
@@ -1416,6 +1429,7 @@ class Case {
           if (options.mx_beta0 > 0.0) {
             mx.dt_over_tau = options.mx_beta0;
           }
+          mx.prec_eps = options.mx_prec_eps;
           ref_problem->SetFluid(gauge_marker_, *kappa_c_, mx);
         } else {
           ref_problem->SetFluid(
@@ -1437,6 +1451,10 @@ class Case {
                     << (options.mx_beta0 > 0.0
                             ? options.mx_beta0
                             : MaxwellRelaxationOptions().dt_over_tau)
+                    << (options.mx_prec_eps > 0.0
+                            ? ", frozen preconditioner at eps " +
+                                  std::to_string(options.mx_prec_eps)
+                            : std::string())
                     << ".\n";
         } else {
         std::cout << "Referential (welded, gauged fluid): "

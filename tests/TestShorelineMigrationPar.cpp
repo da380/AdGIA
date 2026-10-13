@@ -258,6 +258,76 @@ void RunCase(int order, const std::string& label) {
   Check(mr->LastShorelineChange(), 1e-6, label + ": rotating converged");
   Check(pr->AngularVelocity().Norml2() > 0.0 ? 0.0 : 1.0, 0.0,
         label + ": rotating spin");
+
+  // 6. Migration inside the time stepper (SetStepCorrector), with
+  //    rotation and the recorded-C stack: the per-step corrector
+  //    settles, the picard-border route agrees with the elimination,
+  //    and the playback reproduces the forward ocean exactly.
+  {
+    ConstantCoefficient tau(1.0);
+    auto maxwell = IsotropicMaxwellRheology::Maxwell(3, kappa, mu, tau);
+    const int n = 3;
+    auto step_run = [&](bool picard_border) {
+      auto p = std::make_unique<
+          LinearQuasiStaticMixedSelfGravitatingProblem>(
+          &fes_u, &fes_phi, maxwell, rho, kG, kDtNDegree);
+      p->SetRelTol(1e-12);
+      if (picard_border) {
+        p->SetPicardBorder();
+      }
+      Vector moments(3);
+      moments[0] = 1.2;
+      moments[1] = 1.3;
+      moments[2] = 2.0;
+      p->SetRotation(0.1, moments);
+      ShorelineMigration::Options opt;
+      opt.tol = 1e-6;
+      opt.shore = kShore;
+      opt.inexact = 0.0;
+      auto m = std::make_unique<ShorelineMigration>(
+          *p, grad_phi0, sl0, ice0, dice, kRhoW, kRhoI, surface, opt);
+      ViscoelasticOperator visco(*p);
+      visco.SetStepCorrector(
+          [mp = m.get()](double) { return mp->Correct(); });
+      ExponentialTrapezoidSolver ode;
+      ode.Init(visco);
+      Vector mv(visco.Height());
+      mv = 0.0;
+      double t = 0.0;
+      Check(visco.SolveElastic(mv, t) ? 0.0 : 1.0, 0.0,
+            label + ": stepping elastic response");
+      std::vector<double> frac;
+      double dt = 0.5;
+      for (int k = 0; k < n; k++) {
+        m->BeginStep();
+        ode.Step(mv, t, dt);
+        Check(m->LastShorelineChange(), opt.tol,
+              label + ": stepping corrector converged");
+        m->RecordStep(t);
+        frac.push_back(surface_integral(m->OceanFraction()));
+      }
+      return std::tuple{std::move(p), std::move(m), frac};
+    };
+    auto [pse, mse, frace] = step_run(false);
+    auto [psp, msp, fracp] = step_run(true);
+    ParGridFunction du(
+        static_cast<const ParGridFunction&>(psp->Displacement()));
+    du -= pse->Displacement();
+    const double rel =
+        GlobalNorm(du) /
+        (GlobalNorm(static_cast<const ParGridFunction&>(
+             pse->Displacement())) +
+         1e-30);
+    Check(rel, 1e-6, label + ": stepping routes agree");
+    Check(msp->LastShorelineChange(), 1e-6,
+          label + ": picard-border stepping converged");
+    for (int k = n - 1; k >= 0; k--) {
+      mse->SetRecordedTime(0.5 * (k + 1));
+      const double f = surface_integral(mse->OceanFraction());
+      Check(std::abs(f - frace[k]), 1e-12 * std::abs(frace[k]),
+            label + ": playback reproduces the recorded ocean");
+    }
+  }
 }
 
 }  // namespace

@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <array>
 #include <functional>
 #include <utility>
 #include <vector>
@@ -29,7 +30,10 @@ namespace AdGIA {
  * stay inside its solve callback. The columns are load-independent and
  * are cached across solves, keyed on the operator version and the
  * tolerance they were built at, which serves repeated solves at a frozen
- * operator (such as the steps of a viscoelastic time integration).
+ * operator (such as the steps of a viscoelastic time integration). Two
+ * cache entries are kept, so solves that alternate between two operator
+ * versions — a viscoelastic stepper switching between the unrelaxed and
+ * the effective modulus — keep both column sets.
  */
 class BorderedElimination {
  public:
@@ -69,21 +73,29 @@ class BorderedElimination {
                  int version, mfem::real_t tol, State& x, mfem::Vector& y);
 
   /** @brief Drop the cached column solves. */
-  void InvalidateCache() { cache_nb_ = -1; }
+  void InvalidateCache() {
+    for (auto& e : cache_) {
+      e.nb = -1;
+    }
+  }
 
  private:
   int nc_;
   Solve solve_;
   Dot dot_;
-  std::vector<State> Y_;
-  // B^T Y, cached with Y_ (the same key); the per-solve part of the
-  // condensed matrix is only D_b - B^T Y.
-  mfem::DenseMatrix BtY_;
-  // Whether every cached column solve converged.
-  bool cache_ok_ = true;
-  int cache_version_ = -1;
-  int cache_nb_ = -1;
-  mfem::real_t cache_tol_ = 0.0;
+  // A cached column set: Y and B^T Y (the same key; the per-solve part
+  // of the condensed matrix is only D_b - B^T Y), with the version and
+  // tolerance they were built at and whether every column solve
+  // converged. Two entries, most recently used first.
+  struct Entry {
+    std::vector<State> Y;
+    mfem::DenseMatrix BtY;
+    bool ok = true;
+    int version = -1;
+    int nb = -1;
+    mfem::real_t tol = 0.0;
+  };
+  std::array<Entry, 2> cache_;
 };
 
 }  // namespace AdGIA

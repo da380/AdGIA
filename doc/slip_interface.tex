@@ -254,7 +254,7 @@ and the mapped \texttt{BoundaryNormalNormalIntegrator} supply.
 boundary displacement is $\mathbf{b}_2$ of \eqref{eq:expand} with
 $\bs_2$ replaced by $\bm{\sigma}_2$. Its $\bnu$-component: the free
 tangential part $\bs_2$ drops ($\bnu \perp F_e T\Sigma$), while the
-forced normal part contributes $\bnu\cdot F_e\bN\cdot(-\mathrm{II}) =
+forced normal part contributes $-(\bnu\cdot F_e\bN)\,\mathrm{II}(\bs,\bs) =
 -J_e\,\mathrm{II}(\bs,\bs)$ (using $\bnu\cdot F_e\bN = J_e$), so
 \begin{equation}
   \bnu\cdot\mathbf{b}_2
@@ -1220,7 +1220,7 @@ regression check on the constraint blocks.
 
 \paragraph{The multiplier is physical.} By \S\ref{sec:first}, $\lambda$
 is the interface normal-traction perturbation paired with $\bnu$
-(\texttt{KKTMultiplier()}), and a cross-check against the AL path's
+(\texttt{KKTMultiplier()}), and serves as a cross-check against the AL path's
 accumulated \texttt{ConstraintMultiplier()}.
 
 \paragraph{Enforcement is weak.} $CU = 0$ zeroes the jump against the

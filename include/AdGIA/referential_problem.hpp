@@ -722,6 +722,15 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
   // (SetupSolver rebuilds A_aug_ on every call; without the capture a
   // reused AMG would reference the freed previous one).
   mfem::OperatorHandle prec_A_aug_;
+  // Flavour-cache hooks: the fold derives from the assembled
+  // displacement operator, so it travels with the cached modulus
+  // flavour; the shared (reused) preconditioner may have been built on
+  // a slotted fold, which the release hook moves into prec_A_aug_
+  // instead of destroying.
+  void OnFlavorStash(int which) override;
+  void OnFlavorRestore(int which) override;
+  void OnFlavorRelease(int which, bool prec_referent) override;
+  mfem::OperatorHandle flavor_A_aug_[2];
 
   // loads
   std::unique_ptr<mfem::LinearForm> b_zeta_;

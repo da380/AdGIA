@@ -22,6 +22,7 @@ distance GROW":
   ball                ball_3d.msh                3    2      none       0.047, 0.094, 0.2
   disc-buffer         disc_buffer_2d.msh         2    2      to 1.2     0.08, 0.16, 0.8
   disc-buffer-wide    disc_buffer_wide_2d.msh    2    2      to 2.0     0.08, 0.2, 0.8
+  ball-buffer         ball_buffer_3d.msh         3    2      to 2.0     0.15, 0.45, 0.5
   ball-buffer-coarse  ball_buffer_coarse_3d.msh  3    2      to 2.0     0.45, 0.9, 4.5
 
 disc: refined towards the boundary. Used by: transformed_diffusion.
@@ -40,6 +41,11 @@ body's surface (large-ellipticity studies): the taper of the mapping to
 the identity at the DtN circle needs room to stay diffeomorphic, and the
 0.2-wide standard buffer runs out near ellipticity 0.1; the far size is
 0.2 in the large buffer interior. Used by: prestress_loading.
+
+ball-buffer: refined towards the body's surface (where the loads act and
+the near-field of a surface observation lives), coarsening into the
+interior and the buffer; about twenty-five thousand tetrahedra. Used by:
+gia_kernels.
 
 ball-buffer-coarse: deliberately coarse so that it builds quickly and the
 runs on it are cheap; the examples that use it say so where it matters.
@@ -71,6 +77,9 @@ PRESETS = {
     "disc-buffer-wide": dict(layer="body", interface="surface",
                              name="disc_buffer_wide_2d", dim=2, order=2,
                              buffer_radius=2.0, h=0.08, far=0.2, grow=0.8),
+    "ball-buffer": dict(layer="body", interface="surface",
+                        name="ball_buffer_3d", dim=3, order=2,
+                        buffer_radius=2.0, h=0.15, far=0.45, grow=0.5),
     "ball-buffer-coarse": dict(layer="body", interface="surface",
                                name="ball_buffer_coarse_3d", dim=3, order=2,
                                buffer_radius=2.0, h=0.45, far=0.9, grow=4.5),

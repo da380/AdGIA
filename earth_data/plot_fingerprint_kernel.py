@@ -114,6 +114,26 @@ def main() -> None:
     p.add_argument("--no-mask", action="store_true",
                    help="skip the ice mask, for toy geographies (default: "
                         "mask)")
+    p.add_argument("--mask-csv", type=Path, default=None,
+                   help="mask by this surface CSV instead of ICE-7G: "
+                        "points with value above --mask-threshold are "
+                        "inside (an analytic ice footprint exported by "
+                        "the run); one mask for every column")
+    p.add_argument("--mask-threshold", type=float, default=0.05,
+                   help="--mask-csv value above which a point is inside "
+                        "the mask (default %(default)s)")
+    p.add_argument("--mask-below", action="store_true",
+                   help="invert --mask-csv: points BELOW the threshold "
+                        "are inside (e.g. land from an ocean function "
+                        "with threshold 0.5)")
+    p.add_argument("--shore-csv", type=Path, default=None,
+                   help="draw the shoreline of this surface CSV (its "
+                        "--shore-level contour) IN PLACE of Earth "
+                        "coastlines — e.g. an analytic ocean function "
+                        "exported by the run")
+    p.add_argument("--shore-level", type=float, default=0.5,
+                   help="contour level of --shore-csv (default "
+                        "%(default)s)")
     p.add_argument("--side-by-side", action="store_true",
                    help="two kernels on one scale instead of kernel + "
                         "difference (default off)")
@@ -166,7 +186,13 @@ def main() -> None:
     dates = args.ice_dates or [0.0] * len(args.csv)
     if len(dates) == 1:
         dates = dates * len(args.csv)
-    if args.no_mask:
+    if args.mask_csv is not None:
+        xyz, values = s2n.read_nodes(args.mask_csv)
+        _, _, extent = s2n.grid(xyz, values, args.nlat, args.nlon)
+        inside = (extent < args.mask_threshold if args.mask_below else
+                  extent > args.mask_threshold)
+        masks = [inside for _ in args.csv]
+    elif args.no_mask:
         masks = [np.ones((args.nlat, args.nlon), dtype=bool)
                  for _ in args.csv]
     else:
@@ -182,7 +208,8 @@ def main() -> None:
     # kernel sits on the mass-conservation plateau -1/(rho_w A), so
     # its limits are percentiles (symmetric-about-zero would drown the
     # structure); a difference IS zero-centred, so its limits are
-    # symmetric.
+    # symmetric. White is pinned to zero either way: limits straddling
+    # zero get a two-slope norm with its centre there.
     def limits(m, symmetric):
         finite = m[np.isfinite(m)]
         if not finite.size:
@@ -192,6 +219,15 @@ def main() -> None:
             return (-v, v) if v > 0 else (-1.0, 1.0)
         lo, hi = np.percentile(finite, [1.0, 99.0])
         return (lo, hi) if lo < hi else (lo - 1.0, hi + 1.0)
+
+    def norm_of(vmin, vmax):
+        # Two-slope only when both signs carry signal: with one side
+        # near-empty its whole colour half would saturate on noise.
+        big = max(-vmin, vmax, 0.0)
+        if min(-vmin, vmax) > 0.02 * big:
+            return matplotlib.colors.TwoSlopeNorm(0.0, vmin, vmax)
+        return plt.Normalize(vmin=-big if big > 0 else -1.0,
+                             vmax=big if big > 0 else 1.0)
 
     if difference:
         scales = [limits(masked[0], False), limits(masked[1], True)]
@@ -209,10 +245,27 @@ def main() -> None:
                           height_ratios=[1.6, 1.0, 1.0][:nrows])
     pc = ccrs.PlateCarree()
 
+    shore = shore_lons = None
+    if args.shore_csv is not None:
+        xyz, values = s2n.read_nodes(args.shore_csv)
+        _, _, sf = s2n.grid(xyz, values, args.nlat, args.nlon)
+        # Longitudes rolled to [-180, 180): the contour polyline then
+        # runs across the visible map and ends at its edges, instead of
+        # wrapping at lon 180 mid-map — the wrap segment would be
+        # clipped along the projection boundary, riding over the pole.
+        k = int(np.searchsorted(lons, 180.0))
+        shore = np.roll(sf, -k, axis=1)
+        shore_lons = np.concatenate([lons[k:] - 360.0, lons[:k]])
+
     def panel(ax, field, vmin, vmax, zoom=None):
         g = to_shgrid(lats, field)
-        pyslfp.plot(g, ax=ax, cmap="RdBu_r", coasts=True, gridlines=False,
-                    colorbar=False, vmin=vmin, vmax=vmax)
+        pyslfp.plot(g, ax=ax, cmap="RdBu_r", coasts=shore is None,
+                    gridlines=False, colorbar=False,
+                    norm=norm_of(vmin, vmax))
+        if shore is not None:
+            ax.contour(shore_lons, lats, shore,
+                       levels=[args.shore_level], colors="k",
+                       linewidths=0.8, transform=pc)
         if zoom is not None:
             ax.set_extent(zoom, crs=pc)
         ax.plot(args.obs_lon, args.obs_lat, marker="*", markersize=10,
@@ -250,8 +303,7 @@ def main() -> None:
         if not difference and key in done:
             continue
         done.add(key)
-        sm = plt.cm.ScalarMappable(
-            cmap="RdBu_r", norm=plt.Normalize(vmin=vmin, vmax=vmax))
+        sm = plt.cm.ScalarMappable(cmap="RdBu_r", norm=norm_of(vmin, vmax))
         axes = (col_axes[c] if difference else
                 [a for col in col_axes for a in col])
         fig.colorbar(sm, ax=axes, orientation="horizontal",

@@ -20,7 +20,7 @@
 
 % --- notation ---------------------------------------------------------------
 \newcommand{\R}{\mathbb{R}}
-\newcommand{\eps}{\mathbf{a}repsilon}
+\newcommand{\eps}{\varepsilon}
 \newcommand{\dS}{\,\mathrm{d}S}
 \newcommand{\dV}{\,\mathrm{d}V}
 \newcommand{\tr}{\operatorname{tr}}
@@ -1357,7 +1357,7 @@ the ocean--ice system. The water load $\sigma = \rho_wC\,SL_1 +
 The rotational feedback (\code{SetRotation}) adds further border columns,
 one per wander/spin component: the inertia perturbations are evaluated
 directly from the deformation by the tidal pairing
-$T(\psi_k) = (C\Psi_k)\cdot U + (\MF\Psi_k)\cdot\Phi$ --- the transpose of
+$T(\psi_k) = (C\Psi_k)\cdot U + (M_F\Psi_k)\cdot\Phi$ --- the transpose of
 the verified tidal-load machinery, so the signs are inherited, not
 re-derived --- and the dense closing block carries the background inertia
 differences. One convention is load-bearing: $\psi$ enters
@@ -1487,7 +1487,7 @@ bias is removed by iterated Tikhonov refinement (following Maitra \&
 Al-Attar \cite{MaitraAlAttar2024}, \S3.7.3). It is selected in the mixed
 class by construction: \emph{no} \code{FluidRegion}s; the fluid attributes
 join the displacement SubMesh, the rheology gives them $\kappa_f$ with zero
-shear, the density covers them, and \code{SetFluid(marker, mu, GaugePenaltyOptions\{\ldots\}, map)} adds the
+shear, the density covers them, and \code{SetFluid(marker, mu, GaugePenaltyOptions\char`\{\ldots\char`\}, map)} adds the
 penalty. The machinery lives in the base class
 (\S\ref{sec:nograv}) and is reused by the referential and slip classes.
 
@@ -1598,7 +1598,7 @@ Dahlen (\S\ref{sec:mixed}) & Gauged \\
 displacement on the solid SubMesh & displacement on the whole body \\
 (F1): $A_{\phi\phi} = (K+\DtN)/4\pi G + M_F$, $M_F\le0$, near-indefinite for steep cores & no (F1): plain Laplace--DtN, SPD with margin \\
 interface terms (F2), (F3) & none: interface conditions are natural \\
-$c(\phi,\vv) = \int_{\MS}\rho\grad\phi\cdot\vv - \int_\Sigma\rho_F\phi(\vm\cdot\vv)$ & $c(\phi,\vv) = \int_M\rho\grad\phi\cdot\vv$ \\
+$c(\phi,\vv) = \int_{\MS}\rho\grad\phi\cdot\vv - \int_{\SF}\rho_F\phi(\vm\cdot\vv)$ &$c(\phi,\vv) = \int_M\rho\grad\phi\cdot\vv$ \\
 tidal load on the potential row, $-M_F\Psi$ & none (density perturbation is $-\divg(\rho\vu)$) \\
 2-D constant-mode inconsistency & consistent \\
 needs $\rho'_F$, level surfaces, interface conventions & needs $\kappa_f$ and the penalty \\
@@ -2063,7 +2063,7 @@ level in displacement for strongly elliptical bodies (the example
 
 \paragraph{Conventions.} $\xi: B\to\tilde B$ is a diffeomorphism of the
 reference ball onto the physical domain, the identity on and outside the
-DtN sphere (so $\code{SurfaceHarmonics}$, the DtN and boundary harmonic
+DtN sphere (so \code{SurfaceHarmonics}, the DtN and boundary harmonic
 analysis are unchanged; interface and surface topography live entirely in
 $\xi$, the reference interfaces staying spheres so that the SubMesh coupling
 is untouched). $F_{iA} = \partial\xi_i/\partial x_A$, $J = \det F > 0$.
@@ -2309,9 +2309,9 @@ variables themselves. First, the water feedback
 \eqref{eq:zetazeta-water} and the $\Phi_g$ border are rigid-inert, so
 the projected solver and the sea-level terms coexist without
 interaction. Second, the traditional rotation row (Yu et al.\
-\cite{Yu2025} eq.~15) couples to $\vu$ \emph{not} through $\zeta^1$ —
+\cite{Yu2025} eq.~15) couples to $\vu$ \emph{not} through $\zeta^1$ ---
 $\int_M \rho\,\vu\cdot\grad\psi'\dV$ is a volume term with no
-$\zeta$-representation — and is therefore rigid-sensitive unless the
+$\zeta$-representation --- and is therefore rigid-sensitive unless the
 model's inertia tensor is isotropic (their eq.~20, \S2.4): the
 referential variables make the pathology of the traditional theory
 visible as the one feedback term that escapes the collapse. The
@@ -2323,9 +2323,9 @@ Maitra--Al-Attar linearised Euler equation, taken with $\bm{\Omega}$ along
 a principal axis of the model's equilibrium inertia tensor
 $I^{(0)}$, reproduces the traditional row \emph{verbatim} with
 $D = \operatorname{diag}(C_3-C_1,\, C_3-C_2,\, -C_3)$ built from the \emph{model's
-own} principal moments — the wander denominators come from the frame
+own} principal moments --- the wander denominators come from the frame
 term $\mathrm{ad}_\Omega(I^{(0)}-\lambda)$, not from bare conservation
-— and with the displacement pinned by the Tisserand condition
+--- and with the displacement pinned by the Tisserand condition
 $\int_M \tilde\rho\,\varphi_e\times\vu\dV = 0$ (the derivation:
 \code{doc/planning/generalised\_rotation\_note.md}, ``The secular
 reduction''). The implementation is therefore three deltas on the
@@ -2338,8 +2338,8 @@ representative of the rigid null space, whose mapped-rotation basis
 pins exactly the condition above; the solve's tail preserves that
 representative rather than re-projecting Euclidean. The ensemble makes
 $\omega$ invariant under rigid re-gauges of $\vu$ on \emph{any} model
-— the invariance the traditional theory has only at isotropic inertia
-— at the cost of requiring a figure-realistic model. On a simplified
+--- the invariance the traditional theory has only at isotropic inertia
+--- at the cost of requiring a figure-realistic model. On a simplified
 (near-spherical) model the \emph{input-inertia option},
 \code{SetRotation(Omega, moments)} $+$ \code{SetTisserandGauge(true)},
 keeps the gauge-borne uniqueness while taking $D$ as data; the
@@ -2348,8 +2348,8 @@ I_{\mathrm{model}}|)$ and are reported, not gated. On a model with
 fluid regions the whole-body Tisserand condition is itself
 relabelling-gauge-dependent (a fluid core's rigid swirls are
 relabellings and carry angular momentum), so there the gauge metric
-restricts to the \emph{solid} attributes — the mantle frame of
-Earth-rotation theory — while the row integrals, being exactly
+restricts to the \emph{solid} attributes --- the mantle frame of
+Earth-rotation theory --- while the row integrals, being exactly
 relabelling-invariant, stay whole-body (the note, ``The fluid-core
 wrinkle'').
 
@@ -2906,16 +2906,16 @@ A commercial finite element approach to modelling Glacial Isostatic
 Adjustment on spherical self-gravitating compressible earth models,
 \emph{Geophys.\ J.\ Int.}, 235, 2231--2256.
 
+\bibitem{KomatitschTromp2002}
+D.~Komatitsch \& J.~Tromp, 2002.
+Spectral-element simulations of global seismic wave propagation---I.
+Validation, \emph{Geophys.\ J.\ Int.}, 149, 390--412.
+
 \bibitem{Lardy1975}
 L.~J.~Lardy, 1975.
 A series representation for the generalized inverse of a closed linear
 operator, \emph{Atti Accad.\ Naz.\ Lincei Rend.\ Cl.\ Sci.\ Fis.\ Mat.\
 Natur.\ (8)}, 58, 152--157.
-
-\bibitem{KomatitschTromp2002}
-D.~Komatitsch \& J.~Tromp, 2002.
-Spectral-element simulations of global seismic wave propagation---I.
-Validation, \emph{Geophys.\ J.\ Int.}, 149, 390--412.
 
 \bibitem{Latychev2005}
 K.~Latychev, J.~X.~Mitrovica, J.~Tromp, M.~E.~Tamisiea, D.~Komatitsch \&

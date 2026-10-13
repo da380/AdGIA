@@ -19,7 +19,7 @@ Nothing is transposed anywhere — the elastostatic operator is
 self-adjoint, the bordered blocks (water, rotation) are symmetric by
 construction, and the Maxwell evolution reverses cleanly.
 
-With T the time-reversal map (T f)(t) = f(t₁ − t + t₀) (involutary,
+With T the time-reversal map (T f)(t) = f(t₁ − t + t₀) (involutory,
 anticommutes with d/dt, self-adjoint on L²(I); paper eqs. 43–45), the
 adjoint fields (u†, ζ†, ω†, m†, SL†₁, σ†) satisfy, in reversed time:
 

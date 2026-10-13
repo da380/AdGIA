@@ -112,15 +112,18 @@ void RunCase(int order, const std::string& label) {
   });
   FunctionCoefficient sigma_d(MeltLoad);
 
-  auto run = [&](bool monolithic, bool water, bool rotate) {
+  // route: 0 elimination (the reference), 1 monolithic, 2 Picard border.
+  auto run = [&](int route, bool water, bool rotate) {
     auto p = std::make_unique<LinearQuasiStaticMixedSelfGravitatingProblem>(
         &fes_u, &fes_phi, rheology, rho, kG, kDtNDegree);
     p->SetSolverType(
         LinearQuasiStaticMixedSelfGravitatingProblem::SolverType::
             BlockMINRES);
     p->SetRelTol(1e-12);
-    if (monolithic) {
+    if (route == 1) {
       p->SetMonolithicBorder();
+    } else if (route == 2) {
+      p->SetPicardBorder();
     }
     if (water) {
       p->SetWaterLoad(w, sigma_d, surface);
@@ -135,9 +138,8 @@ void RunCase(int order, const std::string& label) {
       p->SetRotation(0.1, moments);
     }
     p->AssembleForce(0.0);
-    Check(p->Solve() ? 0.0 : 1.0, 0.0,
-          label + (monolithic ? ": monolithic" : ": elimination") +
-              " solve");
+    const char* names[] = {": elimination", ": monolithic", ": picard"};
+    Check(p->Solve() ? 0.0 : 1.0, 0.0, label + names[route] + " solve");
     return p;
   };
 
@@ -149,22 +151,36 @@ void RunCase(int order, const std::string& label) {
   for (const Config cfg : {Config{true, false, "water"},
                            Config{false, true, "rotation"},
                            Config{true, true, "composed"}}) {
-    auto pe = run(false, cfg.water, cfg.rotate);
-    auto pm = run(true, cfg.water, cfg.rotate);
-    Check(RelDiff(pm->Displacement(), pe->Displacement()), 1e-8,
-          label + ": " + cfg.name + " displacement");
-    Check(RelDiff(pm->Potential(), pe->Potential()), 1e-8,
-          label + ": " + cfg.name + " potential");
-    if (cfg.water) {
-      Check(pm->UniformPotentialTerm() - pe->UniformPotentialTerm(),
-            1e-8 * std::abs(pe->UniformPotentialTerm()),
-            label + ": " + cfg.name + " Phi_g");
-    }
-    if (cfg.rotate) {
-      Vector dw(pm->AngularVelocity());
-      dw -= pe->AngularVelocity();
-      Check(dw.Norml2() / (pe->AngularVelocity().Norml2() + 1e-300), 1e-7,
-            label + ": " + cfg.name + " omega");
+    auto pe = run(0, cfg.water, cfg.rotate);
+    for (int route : {1, 2}) {
+      auto pm = run(route, cfg.water, cfg.rotate);
+      const std::string rname =
+          std::string(cfg.name) + (route == 1 ? " monolithic" : " picard");
+      Check(RelDiff(pm->Displacement(), pe->Displacement()), 1e-8,
+            label + ": " + rname + " displacement");
+      Check(RelDiff(pm->Potential(), pe->Potential()), 1e-8,
+            label + ": " + rname + " potential");
+      if (cfg.water) {
+        Check(pm->UniformPotentialTerm() - pe->UniformPotentialTerm(),
+              1e-8 * std::abs(pe->UniformPotentialTerm()),
+              label + ": " + rname + " Phi_g");
+      }
+      if (cfg.rotate) {
+        Vector dw(pm->AngularVelocity());
+        dw -= pe->AngularVelocity();
+        Check(dw.Norml2() / (pe->AngularVelocity().Norml2() + 1e-300),
+              1e-7, label + ": " + rname + " omega");
+      }
+      if (route == 2) {
+        // Genuinely converged (no elimination fallback), identically on
+        // every rank — the pass loop is rank-collective.
+        Check(pm->LastPicardPasses() > 0 ? 0.0 : 1.0, 0.0,
+              label + ": " + rname + " converged without fallback");
+        if (Mpi::Root()) {
+          std::cout << "picard passes (" << cfg.name
+                    << "): " << pm->LastPicardPasses() << "\n";
+        }
+      }
     }
   }
 }

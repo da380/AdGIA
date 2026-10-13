@@ -346,6 +346,151 @@ TEST_P(ShorelineTest, ComposesWithRotation) {
   EXPECT_GT(mig.p->AngularVelocity().Norml2(), 0.0);
 }
 
+// --- Migration inside the time stepper (SetStepCorrector) -------------------
+
+// A Maxwell problem on the Case's spaces; tau in problem units.
+std::unique_ptr<LinearQuasiStaticMixedSelfGravitatingProblem>
+MaxwellProblem(Case& c, Rheology& rheology) {
+  auto p = std::make_unique<LinearQuasiStaticMixedSelfGravitatingProblem>(
+      c.fes_u.get(), c.fes_phi.get(), rheology, c.rho, kG, kDtNDegree);
+  p->SetRelTol(1e-12);
+  return p;
+}
+
+TEST_P(ShorelineTest, SteppingCorrectorMatchesStaticLimit) {
+  // At dt << tau the effective modulus is the unrelaxed one and the
+  // internal variables stay at zero, so two migrating trapezoid steps
+  // under the constant melt load must land on the STATIC migrating
+  // elastic solve. Gates the SetStepCorrector/Correct() chain against
+  // the established Solve() orchestration.
+  const auto [dim, order] = GetParam();
+  if (order > 1) {
+    GTEST_SKIP() << "covered at order 1";
+  }
+  Case c(dim, order);
+  auto grad_phi0 = c.GradPhi0();
+  FunctionCoefficient sl0(SL0), ice0(Ice0);
+  FunctionCoefficient dice([](const Vector& x) { return -0.5 * Ice0(x); });
+
+  auto stat = Migrate(c, grad_phi0, sl0, ice0, dice, true, false, kShore,
+                      /*inexact=*/0.0);
+
+  ConstantCoefficient tau(1.0);
+  auto maxwell =
+      IsotropicMaxwellRheology::Maxwell(dim, c.kappa, c.mu, tau);
+  auto p = MaxwellProblem(c, maxwell);
+  ShorelineMigration::Options opt;
+  opt.tol = 1e-6;
+  opt.shore = kShore;
+  opt.inexact = 0.0;
+  ShorelineMigration mig(*p, grad_phi0, sl0, ice0, dice, kRhoW, kRhoI,
+                         c.surface, opt);
+  ViscoelasticOperator visco(*p);
+  visco.SetStepCorrector([&](double) { return mig.Correct(); });
+  ExponentialTrapezoidSolver ode;
+  ode.Init(visco);
+  Vector m(visco.Height());
+  m = 0.0;
+  double t = 0.0;
+  ASSERT_TRUE(visco.SolveElastic(m, t));
+  for (int k = 0; k < 2; k++) {
+    mig.BeginStep();
+    double dt = 1e-7;
+    ode.Step(m, t, dt);
+    EXPECT_GT(mig.Iterations(), 0);  // the corrector engaged
+    mig.RecordStep(t);
+  }
+  GridFunction du(p->Displacement());
+  du -= stat.p->Displacement();
+  EXPECT_LT(L2Norm(du),
+            1e-4 * (L2Norm(stat.p->Displacement()) + 1e-30));
+  EXPECT_LE(mig.LastShorelineChange(), opt.tol);
+  EXPECT_EQ(mig.RecordedSteps(), 2);
+}
+
+TEST_P(ShorelineTest, SteppingRecordsAndPlaysBack) {
+  // A relaxing history with migration per step (the production
+  // pattern): the corrector settles each step in a few passes, the
+  // recorded-C stack reproduces the forward ocean exactly on playback
+  // (the adjoint's reversed-C input), and the route comparison prints
+  // the stage-2 economy (per-step water refreshes are the Picard
+  // border's regime).
+  const auto [dim, order] = GetParam();
+  if (order > 1) {
+    GTEST_SKIP() << "covered at order 1";
+  }
+  Case c(dim, order);
+  auto grad_phi0 = c.GradPhi0();
+  FunctionCoefficient sl0(SL0), ice0(Ice0);
+  FunctionCoefficient dice([](const Vector& x) { return -0.5 * Ice0(x); });
+  ConstantCoefficient tau(1.0);
+  auto maxwell =
+      IsotropicMaxwellRheology::Maxwell(dim, c.kappa, c.mu, tau);
+
+  const int n = 5;
+  auto run = [&](bool picard_border) {
+    auto p = MaxwellProblem(c, maxwell);
+    if (picard_border) {
+      p->SetPicardBorder();
+    }
+    // Rotation on: the production deglacial stack is four-bordered,
+    // the regime the route comparison is about (a single water border
+    // belongs to the elimination).
+    Vector moments(3);
+    moments[0] = 1.2;
+    moments[1] = 1.3;
+    moments[2] = 2.0;
+    p->SetRotation(0.1, moments);
+    ShorelineMigration::Options opt;
+    opt.tol = 1e-6;
+    opt.shore = kShore;
+    opt.inexact = 0.0;
+    auto mig = std::make_unique<ShorelineMigration>(
+        *p, grad_phi0, sl0, ice0, dice, kRhoW, kRhoI, c.surface, opt);
+    ViscoelasticOperator visco(*p);
+    visco.SetStepCorrector(
+        [mp = mig.get()](double) { return mp->Correct(); });
+    ExponentialTrapezoidSolver ode;
+    ode.Init(visco);
+    Vector m(visco.Height());
+    m = 0.0;
+    double t = 0.0;
+    EXPECT_TRUE(visco.SolveElastic(m, t));
+    std::vector<double> frac;
+    double dt = 0.5;
+    for (int k = 0; k < n; k++) {
+      mig->BeginStep();
+      ode.Step(m, t, dt);
+      EXPECT_LE(mig->LastShorelineChange(), opt.tol);
+      EXPECT_LE(mig->Iterations(), 6);
+      mig->RecordStep(t);
+      frac.push_back(c.SurfaceIntegral(mig->OceanFraction()));
+    }
+    return std::tuple{std::move(p), std::move(mig), frac};
+  };
+
+  auto [pe, mige, frace] = run(false);
+  auto [pp, migp, fracp] = run(true);
+
+  // The routes agree (same discrete system per pass).
+  GridFunction du(pp->Displacement());
+  du -= pe->Displacement();
+  EXPECT_LT(L2Norm(du), 1e-6 * (L2Norm(pe->Displacement()) + 1e-30));
+  std::cout << "migrating stepping: elimination "
+            << pe->TotalIterations() << " its, picard-border "
+            << pp->TotalIterations() << " its\n";
+
+  // The ocean genuinely migrated over the relaxation, and the playback
+  // reproduces every recorded step's ocean exactly (same stored data).
+  EXPECT_GT(std::abs(frace.back() - frace.front()),
+            1e-10 * std::abs(frace.front()));
+  for (int k = n - 1; k >= 0; k--) {  // reversed, as the adjoint sweeps
+    mige->SetRecordedTime(0.5 * (k + 1));
+    const double f = c.SurfaceIntegral(mige->OceanFraction());
+    EXPECT_NEAR(f, frace[k], 1e-12 * std::abs(frace[k]));
+  }
+}
+
 INSTANTIATE_TEST_SUITE_P(Shoreline, ShorelineTest,
                          testing::Values(Param{3, 1}, Param{3, 2}));
 

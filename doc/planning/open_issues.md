@@ -649,6 +649,39 @@ parallel.
 
 ---
 
+## Solvers
+
+### Fresh BoomerAMG on a small-shear pure-Neumann operator returns NaN at np 2
+
+**Status:** open; found 12 October 2026 while building the
+modulus-flavour cache, which works around it by keeping the
+preconditioner shared across flavours.
+
+On `TestViscoelasticPar`'s power-law traction case (3-D hex, order 2,
+pure Neumann with the rigid-mode projector), a BoomerAMG built fresh on
+the EFFECTIVE operator (power-law relaxation at dt = 2τ₀ collapses the
+effective shear) produces NaN in its application at np 2 — PCG reports
+a -nan reduction factor within a few iterations — while np 1 and np 4
+are fine, and a fresh AMG on the equally singular UNRELAXED operator is
+fine at every rank count. Reachable in the shipped library:
+`SetPreconditionerReuse(1.0)` on that problem fails the test today;
+production never sees it only because the reuse heuristic happens
+never to rebuild on that operator. The same pathology would fire
+whenever an iteration spike forces a rebuild while a strongly relaxed
+effective operator is active (adaptive stepping). Presumably the
+near-incompressible AMG weakness (`solvers.md`, "Near-incompressible
+and high-contrast effective operators") in its sharpest form — a
+singular coarse-level solve — so the mixed (u, p) preconditioning work
+is the natural home for the fix; a cheap interim candidate is a
+NaN-guarded rebuild-or-refuse in `SetupDefaultPreconditioner`.
+
+**See:** `src/quasi_static_problem.cpp`
+(`SetupDefaultPreconditioner`); `tests/TestViscoelasticPar.cpp` (the
+power-law block); `doc/planning/solvers.md` ("Border-column cache
+against the stepper's modulus switches" records the discovery chain).
+
+---
+
 ## Benchmark results not yet explained
 
 ### `fluid_core` h-ladder: residual items
@@ -788,7 +821,7 @@ during the rewrite: the gauge-ε window (bias 2.6e-2 at ε = 1e-1;
 `fluid_core`, `h = 0.3`); the AL/KKT measurements (θ cliff;
 16.9k / 27.7k / 49.5k; 22.9k; 79.4k; the AL-against-KKT table); the
 gauge-KKT 30k iterations; the combined-solve numbers
-(`love_numbers/README.md`); the 2-D Schur/MINRES timing
+(`benchmarks/love_numbers/README.md`); the 2-D Schur/MINRES timing
 (`doc/self_gravitation.md`); the 3 % near-null leakage and the 6e-5 AL
 floor (2-D test meshes). The prestress ellipse table and every number of
 the CMB, ladder, model-sweep, cross-method, identity and perturbation

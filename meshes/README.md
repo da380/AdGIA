@@ -53,7 +53,8 @@ poetry run python meshes/layered_earth.py --all --scale 0.5 --out <build>/data
 ```
 
 The last writes half-size (so roughly 4x in 2-D, 8x in 3-D) versions of
-the four layered-Earth meshes over the canned ones in the build tree,
+the sixteen layered-Earth meshes (four spherical, twelve aspherical) over
+the canned ones in the build tree,
 and the examples and tests on them then run at that resolution; the
 build puts the coarse version back only when the script next changes.
 `make_all.py` forwards `--scale` to every script it runs, for a finer
@@ -82,10 +83,11 @@ gitignored. Pass `--out <build>/data` to replace the canned meshes.
 | `homogeneous_body.py --preset disc` | `disc_2d.msh` | transformed_diffusion |
 | `homogeneous_body.py --preset ball` | `ball_3d.msh` | transformed_diffusion, anisotropic_elasticity |
 | `offset_disc.py` | `offset_disc_2d.msh` | poisson_dtn, submesh_injection |
-| `homogeneous_body.py --preset disc-buffer` | `disc_buffer_2d.msh` | elastogravity_layered, equilibrium_stress, lateral_viscosity, love_numbers, referential_elastogravity; tests |
+| `homogeneous_body.py --preset disc-buffer` | `disc_buffer_2d.msh` | elastogravity_layered, equilibrium_stress, lateral_viscosity, love_numbers, referential_elastogravity, rotational_feedback; tests |
 | `homogeneous_body.py --preset disc-buffer-wide` | `disc_buffer_wide_2d.msh` (buffer out to radius 2, for strongly non-trivial equilibrium mappings) | prestress_loading |
-| `homogeneous_body.py --preset ball-buffer-coarse` | `ball_buffer_coarse_3d.msh` | coupled_poisson, elastogravity_layered, love_numbers, referential_elastogravity, viscoelastic_love_numbers; tests |
-| `layered_earth.py --all --shape none` | `earth_fluidcore_2d.msh` | elastogravity_layered, equilibrium_density, gauged_fluid_cavity, self_gravitating_relaxation, self_gravitating_solvers, sliding_fluid_ellipse; tests |
+| `homogeneous_body.py --preset ball-buffer` | `ball_buffer_3d.msh` | gia_kernels |
+| `homogeneous_body.py --preset ball-buffer-coarse` | `ball_buffer_coarse_3d.msh` | coupled_poisson, elastogravity_layered, generalised_rotation, ice_age_loading, love_numbers, referential_elastogravity, shoreline_refinement, viscoelastic_love_numbers; tests |
+| `layered_earth.py --all --shape none` | `earth_fluidcore_2d.msh` | adjoint_elasticity, elastogravity_layered, equilibrium_density, gauged_fluid_cavity, relabelled_elasticity, self_gravitating_relaxation, self_gravitating_solvers, sliding_fluid_ellipse, viscoelastic_adjoint; tests |
 | | `earth_innercore_2d.msh` | elastogravity_layered, equilibrium_density, self_gravitating_relaxation; tests |
 | | `earth_fluidcore_3d.msh` | equilibrium_density |
 | | `earth_innercore_3d.msh` | elastogravity_layered, equilibrium_density, gauged_fluid_cavity, self_gravitating_relaxation; tests |

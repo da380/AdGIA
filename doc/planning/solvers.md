@@ -19,6 +19,43 @@ The gauged, referential and slipping methods pay the fluid-gauge premium
 (about 7× Dahlen), the slipping methods in addition the interface
 constraint.
 
+## Where to start (the measured ordering, 12 October 2026)
+
+The AMG rigid-rotation route is measured out (four configurations,
+no win — "Near-incompressible and high-contrast effective operators"
+below), which orders the remaining work:
+
+1. the frozen moderate-ε preconditioner for the Maxwell continuation
+   ("The Maxwell endgame's own lever") — **measured, no win locally
+   (12 October 2026)**: the default reuse already holds the
+   physical-phase preconditioner to the end of the continuation, and
+   freezing lower degrades cost and quality both; the knob
+   (`MaxwellRelaxationOptions::prec_eps`, `-mxpe`) stays for the
+   server h-ladder;
+2. the border-column cache per operator flavour ("Border-column cache
+   against the stepper's modulus switches") — **done 12 October 2026**,
+   merged with the unrelaxed/effective operator caching into the
+   modulus-flavour cache (alternation gate: 13 → 2 assemblies);
+3. the mixed (u, p) pressure-robust block preconditioner, prototyped
+   on the box contrast case before any gravitating class ("Options"
+   of the near-incompressible item; deflation is the fallback);
+4. the Picard feedback inside the time stepper ("Picard feedback
+   inside the time stepper") — **delivered 13 October 2026** as the
+   gated `SetPicardBorder()` route; wins 25 % in operator-changing
+   stepping, loses to the flavour-cached elimination at frozen
+   operators; the promotion decision waits on the migrating
+   production loop (its real regime);
+5. the decisions already measured: combined-degree solves as the
+   campaign default, the monolithic border with a border-aware
+   refinement stop, the increment-relative stopping test;
+6. the calibration harness (below) once 1–4 exist;
+7. server-scale confirmations: the `-amg-rbm` h-ladder, the
+   strong/weak-scaling ladder, `prem_6`.
+
+Not pursued: partial assembly / matrix-free operators (they conflict
+with the AMG-on-assembled-matrices stack at production orders), and
+fluid-formulation changes in pursuit of conditioning.
+
 ---
 
 ## The slip constraint
@@ -442,16 +479,32 @@ deflation. The flag stays for h-ladder confirmation on the server
 profile (the local meshes are small, and the degradation grows
 with resolution).
 
-*The Maxwell endgame's own lever.* The escalation already reuses its
-AMG across ε changes until the iteration count spikes past
-`prec_reuse_` × baseline. The untested refinement: build the
-preconditioner DELIBERATELY at a moderate ε_prec (1e-2-ish) and keep
-it for the whole continuation — the solid-everywhere spectrum
-argument (above) bounds the preconditioned spectrum away from zero
-uniformly in the operator's ε, so the tiny-ε solves should cost
-near the moderate-ε rate rather than degrading until the spike
-heuristic fires. One measurement on the fluid_core continuation
-decides it.
+*The Maxwell endgame's own lever: measured, no win (12 Oct 2026).*
+The escalation already reuses its AMG across ε changes until the
+iteration count spikes past `prec_reuse_` × baseline; the proposed
+refinement was to build the preconditioner DELIBERATELY at a moderate
+ε_prec and hold it for the whole continuation
+(`MaxwellRelaxationOptions::prec_eps`, benchmark flag `-mxpe`; 0 keeps
+the heuristic). Measured at np 4, order 2, h = 0.3, l = 2: pinning at
+the physical-phase ε₀ = 1/(1 + β₀) = 0.25 is digit-identical to the
+default on BOTH `fluid_core` (2706 iterations, 32 steps) and `aw_core`
+(1583 iterations, 15 steps) — the spike heuristic never fires on these
+continuations, so the default reuse already holds the moderate-ε
+preconditioner to the end and there is no rebuild-on-a-degraded-operator
+cost to remove. Freezing deliberately lower is harmful both ways: at
+ε_prec = 1e-1–1e-3 on `fluid_core` the iterations rise to 2904–3080
+(+7–14 %) and the returned state degrades (solid increment
+1.26e-4 → ~2.5e-3, spurious 0.0044 → 0.0099). The spectrum bound is
+uniform only in the operator's ε ≤ ε_prec; the physical phase at
+ε₀ > ε_prec is the bad direction, its steps cost more iterations under
+the mismatched preconditioner, and the iteration-sensitive stopping
+rules (`iter_budget`, the solver floor) then end the escalation at
+step 16 instead of 32 — preconditioner quality feeds the returned
+physics through the stopping heuristics, not just the wall time. The
+knob stays for the server h-ladder (a spike that never fires at
+h = 0.3 may fire at production resolution); locally the endgame lever
+moves to the remaining candidates, the mixed (u, p) block
+preconditioner and deflation.
 
 **See:** `doc/benchmarks.tex`, "Box: viscosity contrasts", "Sphere: the
 integrators with lateral viscosity variations";
@@ -524,22 +577,27 @@ integrators on a homogeneous body" (cost), "Box: viscosity contrasts";
 
 ### Caching unrelaxed and effective operators
 
-**Status:** proposal (wait and see).
-
-Adjoint calculations will apply load jumps that need the unrelaxed moduli
-at every observation time, possibly many, interleaved with effective-
-modulus steps. That is the use case for caching both stiffness versions
-(matrix and preconditioner keyed by relaxation state) instead of
-reassembling on every switch (`UseUnrelaxedOperator`). Decide when the
-adjoint work starts.
+**Status:** DONE 12 October 2026 — the modulus-flavour cache; one
+mechanism with the border-column item, see "Border-column cache
+against the stepper's modulus switches" (which also records why the
+preconditioner stays shared rather than per-flavour).
 
 **See:** `doc/viscoelasticity.md` §3; `src/viscoelastic.cpp`
-(`UseUnrelaxedOperator`); `include/AdGIA/quasi_static_problem.hpp`
-(`SetPreconditionerReuse`).
+(`UseUnrelaxedOperator`, `SetEffectiveModulus`);
+`include/AdGIA/quasi_static_problem.hpp`
+(`RestoreRelaxationWeights`).
 
 ---
 
 ## Bordered solves (sea level and rotation)
+
+**Route policy (David, 13 October 2026): all routes stay, and the
+defaults stay — block-MINRES for the coupled (u, φ) solve, the
+ELIMINATION for the borders — until server-scale measurements exist
+(none of the local np 4 verdicts is trusted at production rank counts;
+the scaling ladder of "Parallel efficiency" below is where they could
+invert). Monolithic and Picard remain gated options; the per-problem
+route choice is a calibration-harness knob.**
 
 The bordered system `[K B; Bᵀ Db]` (the Φ_g and ω borders of the
 sea-level machinery) has three solve routes, all gated to agree:
@@ -577,41 +635,170 @@ same near-cancellation seen from the elimination side.
 
 ### Picard feedback inside the time stepper
 
-**Status:** proposal, measured.
+**Status:** DELIVERED 13 October 2026 as the problem-level
+`SetPicardBorder()` route (gated, elimination stays the default);
+promotion decision deferred to the migration stage, where its target
+regime lives.
 
-The water and rotation feedbacks iterated as explicit loads around the
-plain elastic operator converge at the physical loop gain (water
-0.07–0.2 per pass; with rotation at Earth's near-neutral moments, 17
-passes, no stall), and the warm-started per-pass Krylov counts decay
-fast (66 → 59 → … → 4 at h 0.4/o2), so a cold loop costs ~3.7× one
-elastic solve. Inside viscoelastic stepping — where each step starts
-from the previous step's converged state, far down that decay curve —
-the route should approach one elastic solve per step with no borders
-at all. Requirements before productionising: the ψ-dependent
-instruments must use the interpolant convention throughout (the
-experiment's analytic-ψ integrals leave ω ~8 % off at near-neutral
-moments), and the loop belongs inside the stepper rather than per
-solve.
+*What was built.* Block Gauss–Seidel on the already-assembled bordered
+system — @f$K x = b - B y@f$ with the current border scalars, then the
+dense rows @f$D_b y = r - B^T x@f$ — i.e. the water and rotation
+feedbacks as explicit loads over the SAME discrete system as the
+elimination, which makes the routes agree at solver grade by
+construction (gated in `TestMonolithicBorder(.Par)`, np 1/2/4, with
+the near-neutral moments) and removes the earlier instrument's
+ψ-convention and mass-bookkeeping requirements entirely. The border
+scalars warm-start from the previous Solve(). Plain Gauss–Seidel
+STALLS at near-neutral moments (the loop gain reaches 1; measured:
+50-pass cap hit), so the pass loop is Anderson-mixed on the nb ≤ 4
+border scalars — GMRES on the tiny affine Schur map, converging in
+about nb + 1 passes regardless of the gain (rank-replicated scalars:
+no communication, and the dots are the plain update's own). On
+non-convergence the route warns and falls back to the elimination.
 
-**See:** `benchmarks/sea_level/sea_level_benchmark.cpp`
-(`-feedback picard`); the plan's settled decisions
-(`sea_level_plan.md`).
+*Measured (np 4, two-layer ball).* One-shot composed (water +
+rotation, homogeneous h 0.4 o2): elimination 0.580 s, monolithic
+0.332 s, picard-border 0.459 s (8 passes), the fully-explicit
+instrument 0.949 s (13 passes) — cold, the monolithic stays the
+one-shot winner. Cold pass counts: water 3, rotation 9–10, composed 8.
+Stepping (the small sea-level test, 6 trapezoid steps): at FIXED dt
+the elimination + the modulus-flavour cache wins 2× (560 vs 1060
+iterations) — the cached columns are exact probes of the frozen
+operator, the optimal algorithm there; at VARYING dt (the operator
+reassembles each step: adaptive stepping, nonlinear correctors,
+migration) picard-border wins 25 % (1397 → 1049). ANDERSON-RECYCLING
+ACROSS SOLVES was tried and reverted: residual differences are
+load-independent in exact arithmetic, but the warm-start-tolerance
+noise of nearly-converged pairs pollutes later solves (fixed-dt
+stepping 1060 → 1520 iterations), and the frozen-operator regime
+belongs to the elimination anyway.
+
+*Stage 2 — migration merged (13 October 2026).* The migration loop
+now runs INSIDE the stepper: `ViscoelasticOperator::SetStepCorrector`
+fires a load-law corrector in the implicit and trapezoid pass loops,
+and `ShorelineMigration::Correct()` is that corrector — one combined
+fixed point per step (C, the borders and, when nonlinear, the
+relaxation times together), settling in a few passes per step. The
+converged ocean is recorded per step (`RecordStep`) and played back by
+`SetRecordedTime` (left-limit, memoised) — the recorded-C stack the
+adjoint's reversed playback consumes (WP8.4). Gates
+(`TestShorelineMigration(.Par)`): two migrating trapezoid steps at
+dt ≪ τ land on the static migrating solve (1e-4); the per-step
+corrector settles within 6 passes on a relaxing rotating history;
+playback reproduces the forward ocean exactly; routes agree at 1e-6.
+MEASURED on the rotating migrating history (5 steps, serial, the
+small two-layer ball): elimination 1846 iterations, picard-border
+1548 — a 16 % win in the production-shaped regime (no rotation the
+single border still belongs to the elimination, measured 796 vs
+1299). The promotion decision stays with the route policy above
+(server scale pending); production-scale timing on `ice_age_loading`
+when migration lands there.
+
+**See:** `include/AdGIA/mixed_problem.hpp` (`SetPicardBorder`,
+`LastPicardPasses`); `src/mixed_problem.cpp::SolveBorderedPicard`;
+`tests/TestMonolithicBorder(.Par).cpp`;
+`tests/TestSeaLevelViscoelastic(.Par).cpp` (`PicardBorderStepping`);
+`benchmarks/sea_level/sea_level_benchmark.cpp`
+(`-feedback picard-border`; `-feedback picard` remains the
+fully-explicit instrument).
+
+### Anderson mixing: where it helps and where it hurts
+
+**Status:** record (consolidated 13 October 2026 — the findings were
+previously only in the API docs).
+
+- *Maxwell memory fixed point* (`MaxwellRelaxationOptions::anderson`,
+  depth 4, measured before 9 October 2026): mixing the FIELD-SIZED
+  memory vectors gave ~40 % fewer steps and wall −10–35 % in serial
+  2-D and on the 3-D ball (347 vs 539 iterations at the default β),
+  but **+70 % on a small parallel 2-D case** — the mixed updates
+  degrade the inner solves' warm starts and tighten the inexact
+  tolerances sooner. Opt-in; a calibration-harness decision.
+- *Picard border scalars* (13 October 2026): mixing the nb ≤ 4
+  rank-replicated border scalars is load-bearing, not an optimisation
+  — plain Gauss–Seidel stalls at near-neutral moments, mixed it
+  converges in ~nb + 1 passes — and has no parallel cost (no
+  communication; the dots are the plain update's own). Measured at
+  np 4 throughout.
+- *Recycling Anderson pairs across solves*: reverted — see the Picard
+  item above (warm-start-tolerance noise in nearly-converged pairs).
+
+**See:** `include/AdGIA/quasi_static_problem.hpp`
+(`MaxwellRelaxationOptions::anderson`);
+`src/mixed_problem.cpp::SolveBorderedPicard`.
 
 ### Border-column cache against the stepper's modulus switches
 
-**Status:** open; see also "Caching unrelaxed and effective operators"
-above.
+**Status:** DONE 12 October 2026, together with "Caching unrelaxed and
+effective operators" — one mechanism, the modulus-flavour cache.
 
-The border-column cache is keyed on `OperatorVersion()`, so the
-exponential-trapezoid stepper's per-step switch between the unrelaxed
-and effective operators invalidates it each step (measured: the water
-history keeps the full −43 % economy because its passes share one
-operator era; the rotating stack keeps only −23 %). Caching the
-columns per operator *flavour* alongside the cached operators would
-restore the full economy for schemes that alternate.
+The problem base keeps the assembled operator state of the unrelaxed
+and the last relaxed stiffness in two slots
+(`RestoreRelaxationWeights()`; `ViscoelasticOperator` re-engages an
+unchanged weight set through it), so a stepper alternating between the
+two — effective steps interleaved with unrelaxed observation or
+adjoint impulse solves, the adjoint sweep against epoch-resolved
+observations being the production case — swaps cached matrices and
+operator versions instead of reassembling. The revived version revives
+every version-keyed cache; `BorderedElimination` keeps two column
+sets (most recently used first), so both flavours hold their columns.
+Any non-flavour mutation goes through `MarkOperatorDirty()` and drops
+the slots — a revived version never outlives the state it keyed.
+Steady-dt stepping alone never alternates (the trapezoid's end state
+is unrelaxed-consistent, so the plain history was already at two
+assemblies); the win is wherever observation solves break the step
+cache: the alternation gate
+(`TestSeaLevelViscoelastic.AlternationRestoresFlavors` + the par
+twin's section 4) runs water + rotation with a per-step invalidated
+observation solve at 2 assemblies against 13 before (wall 640 → 334 ms
+on the gate; mass row checked at every flip, fresh-problem identity at
+1e-8).
 
-**See:** `src/mixed_problem.cpp::SolveLinearSystem`;
-`tests/TestSeaLevelViscoelastic.cpp` (the iteration prints).
+THE PRECONDITIONER IS DELIBERATELY NOT PER-FLAVOUR: it keeps the
+shared-reuse policy. A first per-flavour version exposed a LATENT
+PRECONDITIONER FRAGILITY (now in `open_issues.md`): a fresh BoomerAMG
+built on the power-law EFFECTIVE traction operator (pure Neumann,
+small effective shear) returns NaN at np 2 — reachable in the
+pre-cache library through `SetPreconditionerReuse(1.0)`, and masked in
+production only because the reuse heuristic happens never to rebuild
+on that operator. Until the near-incompressible preconditioning item
+above lands, cross-flavour prec reuse is the behaviour-preserving
+choice; the slots carry explicit keep-alives (`prec_ref_slot_`, the
+referential fold hook) so the shared preconditioner's matrices
+survive slot swaps.
+
+**See:** `src/quasi_static_problem.cpp`
+(`StashFlavor`/`TryRestoreFlavor`/`ReleaseFlavorSlot`);
+`include/AdGIA/bordered.hpp`; `src/viscoelastic.cpp`
+(`SetEffectiveModulus`); `tests/TestSeaLevelViscoelastic(.Par).cpp`.
+
+---
+
+## Automated solver calibration
+
+### A per-problem calibration harness
+
+**Status:** proposal (agreed 8 October 2026); queued behind the
+preconditioning and stepping items above.
+
+Applications are viscoelastic loops re-solving the same elastic system
+hundreds of times, so a ~20-solve one-off calibration amortises
+immediately. Sketch: `CalibrateSolver(t0, opts)` (its own header,
+driven through the public interface) draws its candidate set FROM the
+active configuration — the `FluidTreatment` slot makes the knobs
+discoverable: penalty ε grid with refinement counts derived from the
+measured contraction, Maxwell β₀ ∈ {3, 10, 30} and the inexact factor,
+the relative tolerance, preconditioner reuse, Anderson depth on/off —
+scored by wall time per solve under an observable-drift guard against
+the tightest candidate. Calibrate at BOTH the unrelaxed and the
+relaxed effective moduli, since the operator drifts over a time
+integration; apply the winner and report. This is also the natural
+home of per-problem decisions the measurements left open (the
+Anderson default, β₀ on non-neutral cores).
+
+**See:** `include/AdGIA/quasi_static_problem.hpp` (`SetFluid`,
+`SetPreconditionerReuse`, the Anderson options);
+`doc/static_fluid_core.tex`, "The Maxwell relaxation method".
 
 ---
 

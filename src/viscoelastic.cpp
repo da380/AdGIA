@@ -743,14 +743,21 @@ void ViscoelasticOperator::LocalExponentialUpdate(int k, real_t dt, Vector& m_k,
 }
 
 void ViscoelasticOperator::SetEffectiveModulus(real_t dt, Scheme scheme) const {
-  if (scheme == scheme_ && dt == effective_dt_ &&
-      effective_version_ == tau_version_) {
+  const bool values_ok = scheme == scheme_ && dt == effective_dt_ &&
+                         effective_version_ == tau_version_;
+  if (values_ok && relax_engaged_) {
     return;
   }
   MFEM_VERIFY(problem_.SupportsRelaxationWeights(),
               "ViscoelasticOperator: this scheme needs a quasi-static problem "
               "supporting SetRelaxationWeights(); use an explicit solver or "
               "ExponentialEulerSolver instead.");
+  if (values_ok && problem_.RestoreRelaxationWeights()) {
+    // The beta_ values still hold this (scheme, dt, tau) set and the
+    // problem restored its cached effective-flavour operator.
+    relax_engaged_ = true;
+    return;
+  }
   // Nodal weights beta_k: the effective modulus is C_inf + sum_k beta_k C_k
   // after eliminating m_k^{n+1}.
   if (scheme == Scheme::ExponentialTrapezoid) {
@@ -771,6 +778,7 @@ void ViscoelasticOperator::SetEffectiveModulus(real_t dt, Scheme scheme) const {
   scheme_ = scheme;
   effective_dt_ = dt;
   effective_version_ = tau_version_;
+  relax_engaged_ = true;
 }
 
 void ViscoelasticOperator::EnsureTrapezoidWeights(real_t dt) const {
@@ -796,10 +804,12 @@ void ViscoelasticOperator::EnsureTrapezoidWeights(real_t dt) const {
 }
 
 void ViscoelasticOperator::UseUnrelaxedOperator() const {
-  if (scheme_ != Scheme::None) {
+  // Keeps the weight memo (scheme_, effective_dt_): the beta_ values
+  // are untouched, so switching back can restore the problem's cached
+  // effective flavour.
+  if (relax_engaged_) {
     problem_.ClearRelaxationWeights();
-    scheme_ = Scheme::None;
-    effective_dt_ = -1.0;
+    relax_engaged_ = false;
   }
 }
 
@@ -920,13 +930,21 @@ void ViscoelasticOperator::ImplicitSolve(real_t dt, const Vector& m,
       }
     }
     last_passes_ = pass;
-    if (linear_ || pass >= max_corrector_) {
-      break;
+    bool more = false;
+    if (!linear_ && pass < max_corrector_) {
+      // Corrector: times at the end state (d^{n+1}, m^{n+1}).
+      old_itau_ = itau_;
+      EvaluateRelaxationTimes(d_, cached_m_);
+      more = RelaxationTimeChange(old_itau_) >= corrector_tol_;
     }
-    // Corrector: times at the end state (d^{n+1}, m^{n+1}).
-    old_itau_ = itau_;
-    EvaluateRelaxationTimes(d_, cached_m_);
-    if (RelaxationTimeChange(old_itau_) < corrector_tol_) {
+    if (step_corrector_ && pass < step_corrector_cap_) {
+      // Fired every pass (not short-circuited), so the load-law hook
+      // tracks the latest state even when the time corrector already
+      // demands another pass.
+      const bool hook_more = step_corrector_(t);
+      more = more || hook_more;
+    }
+    if (!more) {
       break;
     }
   }
@@ -1026,19 +1044,27 @@ void ViscoelasticOperator::ExponentialTrapezoidStep(Vector& m, real_t& t,
       }
     }
     last_passes_ = pass;
-    if (linear_ || pass >= max_corrector_) {
-      break;
+    bool more = false;
+    if (!linear_ && pass < max_corrector_) {
+      // Corrector: times at the midpoint state.
+      old_itau_ = itau_;
+      m_mid_ = m;
+      m_mid_ += m_start_;
+      m_mid_ *= 0.5;
+      d_mid_ = d_;
+      d_mid_ += d_prev_;
+      d_mid_ *= 0.5;
+      EvaluateRelaxationTimes(d_mid_, m_mid_);
+      more = RelaxationTimeChange(old_itau_) >= corrector_tol_;
     }
-    // Corrector: times at the midpoint state.
-    old_itau_ = itau_;
-    m_mid_ = m;
-    m_mid_ += m_start_;
-    m_mid_ *= 0.5;
-    d_mid_ = d_;
-    d_mid_ += d_prev_;
-    d_mid_ *= 0.5;
-    EvaluateRelaxationTimes(d_mid_, m_mid_);
-    if (RelaxationTimeChange(old_itau_) < corrector_tol_) {
+    if (step_corrector_ && pass < step_corrector_cap_) {
+      // Fired every pass (not short-circuited), so the load-law hook
+      // tracks the latest state even when the time corrector already
+      // demands another pass.
+      const bool hook_more = step_corrector_(t + dt);
+      more = more || hook_more;
+    }
+    if (!more) {
       break;
     }
   }

@@ -220,7 +220,7 @@ TEST_P(SeaLevelViscoTest, ConservesMassOverHistory) {
   const double u1 = L2Norm(p->Displacement());
   EXPECT_GT(std::abs(u1 - u0) / u0, 1e-2);
   std::cout << "history outer iterations: " << p->TotalIterations()
-            << "\n";
+            << ", assemblies: " << p->NumAssemblies() << "\n";
 }
 
 TEST_P(SeaLevelViscoTest, FullStackComposes) {
@@ -257,7 +257,119 @@ TEST_P(SeaLevelViscoTest, FullStackComposes) {
   EXPECT_TRUE(std::isfinite(om));
   EXPECT_GT(om, 0.0);
   std::cout << "rotating-stack outer iterations: " << p->TotalIterations()
-            << "\n";
+            << ", assemblies: " << p->NumAssemblies() << "\n";
+}
+
+TEST_P(SeaLevelViscoTest, AlternationRestoresFlavors) {
+  const auto [dim, order] = GetParam();
+  if (order > 1) {
+    GTEST_SKIP() << "covered at order 1";
+  }
+  Case c(dim, order);
+  auto grad_phi0 = c.GradPhi0();
+  WaterLoad load(dim);
+
+  auto p = c.Problem(true);
+  p->SetWaterLoad(load.w, load.sigma_d, c.surface);
+  Vector moments(3);
+  moments[0] = 1.2;
+  moments[1] = 1.3;
+  moments[2] = 2.0;
+  p->SetRotation(0.1, moments);
+  ViscoelasticOperator visco(*p);
+  ExponentialTrapezoidSolver ode;
+  ode.Init(visco);
+  Vector m(visco.Height());
+  m = 0.0;
+  double t = 0.0;
+  ASSERT_TRUE(visco.SolveElastic(m, t));
+
+  // The adjoint-sweep pattern: effective-modulus steps interleaved
+  // with an unrelaxed observation solve whose displacement the step
+  // cache does not cover (an impulse jump invalidates it). Each cycle
+  // switches the modulus flavour twice; the problem's flavour cache
+  // restores the assembled operators, preconditioners and border
+  // columns, so the whole history assembles each flavour exactly once.
+  const int n = 6;
+  double dt = 0.5 * kTau;
+  for (int k = 0; k < n; k++) {
+    ode.Step(m, t, dt);
+    visco.InvalidateDisplacement();
+    ASSERT_TRUE(visco.SolveElastic(m, t));
+    // The restored border columns are the flavour's own: the mass row
+    // holds at every flip (a stale column set breaks it immediately).
+    EXPECT_LT(std::abs(MassResidual(c, *p, grad_phi0, load)), 2e-3);
+  }
+  EXPECT_EQ(p->NumAssemblies(), 2);
+
+  // The restored-flavour solve equals a fresh problem assembling the
+  // same operator at the same state.
+  auto p2 = c.Problem(true);
+  p2->SetWaterLoad(load.w, load.sigma_d, c.surface);
+  p2->SetRotation(0.1, moments);
+  ViscoelasticOperator visco2(*p2);
+  ASSERT_TRUE(visco2.SolveElastic(m, t));
+  GridFunction du(p->Displacement());
+  du -= p2->Displacement();
+  EXPECT_LT(L2Norm(du), 1e-8 * (L2Norm(p2->Displacement()) + 1e-30));
+}
+
+TEST_P(SeaLevelViscoTest, PicardBorderStepping) {
+  const auto [dim, order] = GetParam();
+  if (order > 1) {
+    GTEST_SKIP() << "covered at order 1";
+  }
+  Case c(dim, order);
+  WaterLoad load(dim);
+  Vector moments(3);
+  moments[0] = 1.2;
+  moments[1] = 1.3;
+  moments[2] = 2.0;
+
+  // Two stepping regimes: fixed dt (the operator is frozen, so the
+  // elimination's cached columns already amortise) and varying dt (the
+  // operator reassembles each step and the elimination re-solves its
+  // columns, the regime the Picard border targets — in production,
+  // adaptive stepping, nonlinear rheologies and shoreline migration).
+  auto run = [&](bool picard, bool vary_dt) {
+    auto p = c.Problem(true);
+    p->SetWaterLoad(load.w, load.sigma_d, c.surface);
+    p->SetRotation(0.1, moments);
+    if (picard) {
+      p->SetPicardBorder();
+    }
+    ViscoelasticOperator visco(*p);
+    ExponentialTrapezoidSolver ode;
+    ode.Init(visco);
+    Vector m(visco.Height());
+    m = 0.0;
+    double t = 0.0;
+    EXPECT_TRUE(visco.SolveElastic(m, t));
+    for (int k = 0; k < 6; k++) {
+      double dt = 0.5 * kTau * (vary_dt ? 1.0 + 0.1 * k : 1.0);
+      ode.Step(m, t, dt);
+    }
+    EXPECT_TRUE(visco.SolveElastic(m, t));
+    if (picard) {
+      EXPECT_GT(p->LastPicardPasses(), 0);  // no fallback at the end
+    }
+    return p;
+  };
+  for (bool vary_dt : {false, true}) {
+    auto pe = run(false, vary_dt);
+    auto pp = run(true, vary_dt);
+    GridFunction du(pp->Displacement());
+    du -= pe->Displacement();
+    EXPECT_LT(L2Norm(du), 1e-6 * (L2Norm(pe->Displacement()) + 1e-30));
+    Vector dw(pp->AngularVelocity());
+    dw -= pe->AngularVelocity();
+    EXPECT_LT(dw.Norml2() / (pe->AngularVelocity().Norml2() + 1e-300),
+              1e-6);
+    std::cout << "stepping (" << (vary_dt ? "varying" : "fixed")
+              << " dt): elimination " << pe->TotalIterations()
+              << " its, picard " << pp->TotalIterations()
+              << " its, last passes " << pp->LastPicardPasses() << "\n";
+  }
 }
 
 INSTANTIATE_TEST_SUITE_P(SeaLevelViscoelastic, SeaLevelViscoTest,

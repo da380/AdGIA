@@ -144,9 +144,8 @@ tests run at 1, 2 and 4 ranks.
 
 Installation puts the library in `lib/`, the headers in `include/`, and the
 CMake package files in `lib/cmake/AdGIA`. With `BUILD_DOCS` the
-generated documentation directory `<build>/doc` is installed as
-`share/AdGIA/html/doc` (the HTML pages in its `html/`
-subdirectory).
+generated HTML pages, `<build>/doc/html`, are installed as
+`share/AdGIA/html`.
 
 ## Using the installed library
 

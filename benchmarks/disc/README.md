@@ -95,7 +95,7 @@ yet:
   eliminated; at l = 0 it uses the welded full-fluid solve). Degrees
   l = 0 and l >= 2; l = 1 is pending.
 - `solve_degree_maxwell(model, l, ...)` — the Maxwell relaxation (the
-default `SetFluid` treatment of the library, here as a 1-D calculation), the secular time-stepping
+  default `SetFluid` treatment of the library, here as a 1-D calculation), the secular time-stepping
   route: the core as an artificial Maxwell solid under a Heaviside
   load, backward Euler on the memory displacement, stopping on the
   SOLID displacement increment only (the fluid displacement does not

@@ -98,7 +98,7 @@ list.
 | constraint row `B_n` | ν | none — Nanson is side-free, also discretely |
 | `B_Σ` | π, ν, slip slot | none (post direction-slot fix) |
 | `[[ζ¹]] = b·[[v]]` row | b | same-side composition `F^{−T}∇ζ⁰`, either side |
-| `G_Σ` | b, q = b·ν, |b|², ν, slip slot | same-side b; the collapsed traction combination, never raw T_g (no explicit J or F⁻¹) |
+| `G_Σ` | b, q = b·ν, \|b\|², ν, slip slot | same-side b; the collapsed traction combination, never raw T_g (no explicit J or F⁻¹) |
 
 No side is preferred; the only requirement is internal consistency of
 b's two factors and use of the collapsed (continuous) coefficient

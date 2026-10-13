@@ -494,7 +494,7 @@ it gives a well-posed problem:
   (\S\ref{sec:maxwell}) covering the algorithm, the measured
   trajectory structure (which refines the naive ``relax for a few
   $\tau$'' picture in important ways), the implementation and the
-  costs. Its significance is sharpest asphericaly
+  costs. Its significance is sharpest aspherically
   (\S\ref{sec:dahlen}): where the Dahlen elimination does not
   survive the geometry, the dissipative route is the only practical
   computation of the secular response, and it works on any mesh this
@@ -627,7 +627,8 @@ geometrically. Three safeguards, each forced by a measured failure:
   probing past the conditioning floor.
 \end{itemize}
 
-\paragraph{Implementation.} \code{SetMaxwellFluid} on
+\paragraph{Implementation.} \code{SetFluid} (the Maxwell-relaxation
+overload, the front door's default treatment) on
 \code{LinearQuasiStaticProblemBase}: because the per-step operator is
 the gauge machinery's, every problem class inherits the mode through
 its existing virtual solve --- the referential self-gravitating

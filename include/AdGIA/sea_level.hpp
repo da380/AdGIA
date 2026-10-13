@@ -368,6 +368,48 @@ class ShorelineMigration {
    * final (migrated) solution. */
   bool Solve(mfem::real_t t);
 
+  /**
+   * @brief One migration correction against the problem's CURRENT
+   * solution, for a time stepper's pass loop
+   * (ViscoelasticOperator::SetStepCorrector): update the migrating
+   * state from the solution, measure the shoreline change
+   * (LastShorelineChange()), and when it exceeds Options::tol refresh
+   * the water load and return true — the stepper then runs another
+   * pass of the same step. The first correction of a step always
+   * refreshes when the step moved the sea level (the ocean function
+   * must track it); the within-step increments that follow are second
+   * order and settle in a pass or two. Solver tolerances belong to the
+   * stepper here (no inexact schedule, no polish); Solve() remains the
+   * static orchestration and must not be mixed with stepping use.
+   */
+  bool Correct();
+
+  /** @brief Reset the per-step pass count (Iterations()) at a step's
+   * start; optional bookkeeping for Correct() loops. */
+  void BeginStep() {
+    iterations_ = 0;
+    last_change_ = 0.0;
+  }
+
+  /**
+   * @brief Record the CURRENT migrated state as the ocean of time
+   * @p t (ascending times; call once per converged step): the
+   * recorded-C stack that the adjoint's reversed playback consumes.
+   */
+  void RecordStep(mfem::real_t t);
+
+  /**
+   * @brief Playback: restore the recorded ocean of the LATEST record
+   * at or before @p t (left-limit convention; before the first record
+   * the state is the initial ocean @f$C_0@f$) and refresh the water
+   * load. For the adjoint driver's time-sync hook on the reversed
+   * sweep; memoised per record, and not to be mixed with forward
+   * stepping or Solve().
+   */
+  void SetRecordedTime(mfem::real_t t);
+
+  int RecordedSteps() const { return static_cast<int>(record_.size()); }
+
   int Iterations() const { return iterations_; }
   /** @brief Outer solver iterations summed over every pass of the last
    * Solve(), the polish included — the inexact option's economy shows
@@ -418,6 +460,15 @@ class ShorelineMigration {
   bool g_valid_ = false;
   mfem::real_t last_change_ = 0.0;
   int iterations_ = 0, outer_its_total_ = 0;
+  // The recorded-C stack (RecordStep/SetRecordedTime): the per-step
+  // migrated SL1 state on the body and parent spaces, and the playback
+  // memo (-2: forward mode, -1: the initial ocean, k: record k).
+  struct RecordedState {
+    mfem::real_t t;
+    std::unique_ptr<mfem::GridFunction> body, parent;
+  };
+  std::vector<RecordedState> record_;
+  int playback_at_ = -2;
   bool parallel_ = false;
 #ifdef MFEM_USE_MPI
   MPI_Comm comm_ = MPI_COMM_NULL;

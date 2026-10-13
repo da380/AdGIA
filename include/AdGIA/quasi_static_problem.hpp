@@ -110,6 +110,17 @@ struct MaxwellRelaxationOptions {
    * trajectory, so plateau_mode ignores it and steps plainly. */
   int anderson = 0;
   bool plateau_mode = false;     ///< stop at the physical plateau instead
+  /** @brief Frozen preconditioner: with prec_eps > 0 the displacement
+   * preconditioner is built once on the operator at
+   * @f$\epsilon = @f$ prec_eps (the fluid made moderately solid) and
+   * held for the whole continuation. The solid-everywhere spectrum
+   * bound is uniform in the operator's @f$\epsilon@f$, so the
+   * small-@f$\epsilon@f$ endgame solves are expected to run near the
+   * moderate-@f$\epsilon@f$ rate instead of degrading until the
+   * iteration-spike heuristic rebuilds on the current — ever worse
+   * conditioned — operator. 0 keeps the spike-heuristic reuse
+   * (SetPreconditionerReuse). */
+  mfem::real_t prec_eps = 0.0;
 };
 
 /** @brief The gauge penalty's form: Deviatoric (a fluid: dev-dev
@@ -332,8 +343,10 @@ class LinearQuasiStaticProblem {
    * \beta_k C_k@f$, one weight coefficient per branch of the rheology
    * (typically nodal fields on the internal-variable mesh). The problem
    * must invalidate its solver setup and reassemble on every call (the same
-   * coefficient objects may carry new values). The coefficients must outlive
-   * the next call to SetRelaxationWeights() or ClearRelaxationWeights().
+   * coefficient objects may carry new values). The coefficients must stay
+   * alive while the problem may use them: until the next call to
+   * SetRelaxationWeights(), and RestoreRelaxationWeights() re-engages the
+   * same objects.
    */
   virtual void SetRelaxationWeights(
       const std::vector<mfem::Coefficient*>& /*beta*/) {
@@ -342,6 +355,17 @@ class LinearQuasiStaticProblem {
 
   /** @brief Restore the unrelaxed modulus @f$C_U@f$. */
   virtual void ClearRelaxationWeights() {}
+
+  /**
+   * @brief Re-engage the weight set of the last SetRelaxationWeights()
+   * call, PROMISING ITS VALUES UNCHANGED since then — the caller's
+   * assertion, which lets the problem restore a cached assembled
+   * operator (matrix, preconditioner, operator version) instead of
+   * reassembling. Returns false when no such cached state is held (the
+   * caller then falls back to SetRelaxationWeights()); true when the
+   * weights are engaged, restored or already active.
+   */
+  virtual bool RestoreRelaxationWeights() { return false; }
 
   /** @brief Register output fields with a DataCollection. */
   virtual void RegisterFields(mfem::DataCollection& dc) = 0;
@@ -395,6 +419,7 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   void SetRelaxationWeights(
       const std::vector<mfem::Coefficient*>& beta) override;
   void ClearRelaxationWeights() override;
+  bool RestoreRelaxationWeights() override;
 
   void RegisterFields(mfem::DataCollection& dc) override;
 
@@ -803,6 +828,10 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   /** True when the preconditioner was built on the current solver matrix
    * and is being reused, with that matrix not yet captured. */
   bool PreconditionerAwaitsCapture() const;
+  /** True when the live preconditioner's matrices sit in a flavour
+   * slot (so a derived capture must not treat the current matrices as
+   * its referents). */
+  bool PreconditionerMatricesSlotted() const { return prec_ref_slot_ >= 0; }
   /** Take @p src into prec_A_ (with its ownership) so it outlives the
    * next reassembly. */
   void CapturePreconditionerMatrix(mfem::OperatorHandle& src);
@@ -840,7 +869,34 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   std::unique_ptr<mfem::BilinearForm> a_solve_form_;
   mfem::OperatorHandle A_solve_;
   std::vector<mfem::real_t> gauge_residuals_;
-  bool eps_only_dirty_ = false;
+
+  /** @brief Mark the assembled operator out of date. EVERY mutation of
+   * operator data outside the modulus-flavour switch goes through here
+   * (never by writing the flag): it also drops the cached flavour
+   * states, whose revived operator versions would otherwise resurrect
+   * stale version-keyed caches (border columns). */
+  void MarkOperatorDirty();
+  /** @brief As MarkOperatorDirty() when only the gauge epsilon
+   * changed, keeping the cheap RescaleGaugeOperator() update path. */
+  void MarkGaugeEpsilonDirty();
+
+  /** @brief Flavour-cache hooks for derived classes whose solver
+   * matrices derive from the assembled displacement operator (the
+   * referential @f$E^T G E@f$ fold): move that state into / out of the
+   * derived class's own slot pair (0 unrelaxed, 1 relaxed). Stash and
+   * restore are called only on a successful base stash / restore;
+   * OnFlavorRelease(which, prec_referent) drops slot @p which, with
+   * @p prec_referent true when the live (reused) preconditioner may
+   * have been built on that slot's matrices — the hook then moves its
+   * pieces into its own keep-alive instead of destroying them. */
+  virtual void OnFlavorStash(int /*which*/) {}
+  virtual void OnFlavorRestore(int /*which*/) {}
+  virtual void OnFlavorRelease(int /*which*/, bool /*prec_referent*/) {}
+
+  /** @brief Transfer an OperatorHandle (pointer and ownership);
+   * @p from is left empty. For the flavour hooks. */
+  static void MoveHandle(mfem::OperatorHandle& from,
+                         mfem::OperatorHandle& to);
 
   /** @brief The engine's assembled @f$\epsilon\mu Q@f$ (for the
    * derived drivers' residuals and blocks). */
@@ -865,13 +921,56 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   mfem::real_t rel_tol_ = 1e-12;
   mfem::IterativeSolver::PrintLevel print_level_ =
       mfem::IterativeSolver::PrintLevel();
-  bool operator_dirty_ = true;
-  /** Bumped by every operator (re)assembly or rescale: anything derived
-   * from the assembled operator (cached border columns, unit responses)
-   * is valid exactly while this number stands still. */
+  /** Bumped by every operator (re)assembly or rescale, and REVERTED to
+   * a cached flavour's value when that flavour is restored: anything
+   * derived from the assembled operator (cached border columns, unit
+   * responses) is valid exactly while this number stands still. */
   int operator_version_ = 0;
   std::vector<mfem::Coefficient*> td_coefs_;
   std::vector<mfem::VectorCoefficient*> td_vcoefs_;
+
+ private:
+  // The modulus-flavour cache: the assembled matrices of the unrelaxed
+  // (slot 0) and the last relaxed (slot 1) stiffness, so a
+  // viscoelastic stepper alternating between the two (effective steps
+  // interleaved with unrelaxed observation solves) swaps cached
+  // matrices and operator versions instead of reassembling. THE
+  // PRECONDITIONER IS NOT PER-FLAVOUR: it keeps the shared-reuse
+  // policy (SetPreconditionerReuse, the iteration-spike staleness), so
+  // the cache changes which matrices are live, never which
+  // preconditioner serves them. Slots are dropped by
+  // MarkOperatorDirty() / MarkGaugeEpsilonDirty() — any non-flavour
+  // mutation — and slot 1 by SetRelaxationWeights() (its values may
+  // have changed; only RestoreRelaxationWeights() promises them
+  // unchanged).
+  struct FlavorSlot {
+    bool valid = false;
+    std::unique_ptr<mfem::BilinearForm> a, a_solve_form;
+    mfem::OperatorHandle A, A_solve;
+    int version = 0;
+    mfem::real_t gauge_eps = -1.0;
+  };
+  /** Move the clean assembled state into @p which (no-op marking the
+   * slot invalid when the live state is dirty or unassembled). */
+  void StashFlavor(int which);
+  /** Restore @p which into the live members and re-run SetupSolver();
+   * false when the slot is invalid or its gauge epsilon no longer
+   * matches the engine's. */
+  bool TryRestoreFlavor(int which);
+  /** Drop @p which's storage. When the live (reused) preconditioner
+   * was built on matrices the slot holds, they move into the
+   * prec_form_/prec_A_ keep-alive instead of dying (and the derived
+   * hook does the same for its pieces). */
+  void ReleaseFlavorSlot(int which);
+  void InvalidateFlavorSlots();
+
+  FlavorSlot flavor_[2];
+  std::vector<mfem::Coefficient*> relax_beta_;
+  // Which slot holds the matrices the LIVE preconditioner was built on
+  // (-1: they are live, captured, or there is no preconditioner).
+  int prec_ref_slot_ = -1;
+  bool operator_dirty_ = true;
+  bool eps_only_dirty_ = false;
 };
 
 /**

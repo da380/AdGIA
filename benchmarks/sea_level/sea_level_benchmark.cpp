@@ -59,7 +59,8 @@
 //   -mig-inexact-max  loosest per-pass relative tolerance of the inexact
 //                   Picard [1e-3]
 //   -mig-verbose    per-pass migration trace [off]
-//   -feedback       border | monolithic | picard [border]: the bordered
+//   -feedback       border | monolithic | picard | picard-border
+//                   [border]: the bordered
 //                   solve by column elimination; the same system as ONE
 //                   MINRES with a block preconditioner whose border
 //                   block is the preconditioner-probed Schur complement
@@ -289,7 +290,8 @@ int main(int argc, char* argv[]) {
                  "Per-pass migration trace (tolerances, increments, "
                  "Phi_g, guard events).");
   args.AddOption(&feedback, "-feedback", "--feedback",
-                 "border | monolithic | picard: the bordered solve, the "
+                 "border | monolithic | picard | picard-border: the "
+                 "bordered solve, the "
                  "same system as one block-preconditioned MINRES, or the "
                  "feedback as explicit loads around the plain elastic "
                  "operator.");
@@ -331,11 +333,14 @@ int main(int argc, char* argv[]) {
               "sea_level_benchmark: -mig needs the water load (-water)");
   const bool picard = std::string(feedback) == "picard";
   const bool monolithic = std::string(feedback) == "monolithic";
-  MFEM_VERIFY(picard || monolithic || std::string(feedback) == "border",
-              "-feedback is border, monolithic or picard");
-  MFEM_VERIFY(!referential || (!picard && !monolithic),
-              "sea_level_benchmark: -feedback picard/monolithic are "
-              "wired for the mixed class only (-feedback border).");
+  const bool picard_border = std::string(feedback) == "picard-border";
+  MFEM_VERIFY(picard || monolithic || picard_border ||
+                  std::string(feedback) == "border",
+              "-feedback is border, monolithic, picard or picard-border");
+  MFEM_VERIFY(!referential || (!picard && !monolithic && !picard_border),
+              "sea_level_benchmark: -feedback picard/monolithic/"
+              "picard-border are wired for the mixed class only "
+              "(-feedback border).");
   MFEM_VERIFY(!picard || (water && !migrate),
               "sea_level_benchmark: -feedback picard iterates the water "
               "feedback (no -no-water, no -mig)");
@@ -358,6 +363,11 @@ int main(int argc, char* argv[]) {
     // The same bordered system, solved as one MINRES with the probed
     // border Schur preconditioner instead of by column elimination.
     c.problem->SetMonolithicBorder();
+  } else if (picard_border) {
+    // The same bordered system, solved by the Anderson-accelerated
+    // border Gauss-Seidel (SetPicardBorder) — the feedbacks as explicit
+    // loads over the assembled border data, one base solve per pass.
+    c.problem->SetPicardBorder();
   }
   const Array<int>& surface = c.analyses[c.surface].radial->Marker();
 
@@ -668,6 +678,10 @@ int main(int argc, char* argv[]) {
         os << pass_its[k] << (k + 1 < pass_its.size() ? ", " : "");
       }
       os << "],\n";
+    }
+    if (picard_border) {
+      os << "  \"picard_border_passes\": " << c.problem->LastPicardPasses()
+         << ",\n";
     }
     os << "  \"water\": " << (water ? "true" : "false") << ",\n";
     os << "  \"migrate\": " << (migrate ? "true" : "false") << ",\n";

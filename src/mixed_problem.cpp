@@ -624,7 +624,7 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::AddRegionRotations(
   MFEM_VERIFY(added > 0, "AddRegionRotations: no new mode (empty region, or "
                          "its rotations are already in the null space).");
   SetupCoupledNullSpace();
-  operator_dirty_ = true;
+  MarkOperatorDirty();
 }
 
 void LinearQuasiStaticMixedSelfGravitatingProblem::SetupCoupledNullSpace() {
@@ -788,7 +788,7 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetWaterLoad(
   // AssembleForce.
   SetSurfaceLoad(sigma_data, surface_marker);
   BuildBorderCrossData();
-  operator_dirty_ = true;
+  MarkOperatorDirty();
 }
 
 void LinearQuasiStaticMixedSelfGravitatingProblem::BuildWaterPhiPhi() {
@@ -842,7 +842,7 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::RefreshWaterLoad() {
   BuildWaterPhiPhi();
   BuildWaterBorder();
   BuildBorderCrossData();
-  operator_dirty_ = true;
+  MarkOperatorDirty();
 }
 
 void LinearQuasiStaticMixedSelfGravitatingProblem::BuildSurfaceMassColumn(
@@ -914,7 +914,7 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetRotation(
     rot_psi_total_ = std::move(total);
   }
   BuildBorderCrossData();
-  operator_dirty_ = true;
+  MarkOperatorDirty();
 }
 
 Coefficient&
@@ -1031,14 +1031,14 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetMassWeightedGauge(bool on)
   }
   if (on != mass_gauge_) {
     mass_gauge_ = on;
-    operator_dirty_ = true;  // the solvers are rebuilt with the gauge
+    MarkOperatorDirty();  // the solvers are rebuilt with the gauge
   }
 }
 
 void LinearQuasiStaticMixedSelfGravitatingProblem::SetSolverType(SolverType type) {
   if (type != type_) {
     type_ = type;
-    operator_dirty_ = true;
+    MarkOperatorDirty();
   }
 }
 
@@ -1055,7 +1055,7 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetPreconditionerShift(
     real_t eps) {
   shift_ = eps;
   SetupPotentialPreconditioner();
-  operator_dirty_ = true;
+  MarkOperatorDirty();
 }
 
 void LinearQuasiStaticMixedSelfGravitatingProblem::SetInnerPrintLevel(
@@ -1078,7 +1078,7 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetBackgroundPotential(
   if (sea_enabled_) {
     RefreshWaterLoad();
   }
-  operator_dirty_ = true;
+  MarkOperatorDirty();
 }
 
 void LinearQuasiStaticMixedSelfGravitatingProblem::RegisterFields(
@@ -1640,6 +1640,30 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveLinearSystem(
     }
   }
 
+  if (picard_border_) {
+    bool converged = false;
+    if (!SolveBorderedPicard(Bu, Bphi, Db, r, B_in, X, converged)) {
+      return false;  // a base solve failed
+    }
+    if (converged) {
+      return true;
+    }
+    // The loop gain did not contract within the pass cap (possible as
+    // the moments approach neutrality): fall back to the elimination.
+    picard_passes_ = -1;
+    bool root = true;
+#ifdef MFEM_USE_MPI
+    if (pfes_) {
+      root = pfes_->GetMyRank() == 0;
+    }
+#endif
+    if (root) {
+      mfem::out << "SetPicardBorder WARNING: no contraction to " << picard_tol_
+                << " in " << picard_max_
+                << " passes; falling back to the border elimination.\n";
+    }
+  }
+
   if (monolithic_border_) {
     MFEM_VERIFY(type_ != SolverType::SchurCG && !gauge_kkt_ && !mass_gauge_,
                 "SetMonolithicBorder: the plain BlockMINRES/BlockCG path "
@@ -1701,6 +1725,154 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveLinearSystem(
   // the combined field.
   DistributePotential(Phi_true_);
   return ok;
+}
+
+bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveBorderedPicard(
+    const std::vector<Vector>& Bu, const std::vector<Vector>& Bphi,
+    const DenseMatrix& Db, const Vector& r, const Vector& B_in, Vector& X,
+    bool& converged) {
+  // Block Gauss-Seidel on [K B; B^T Db]: K x = b - B y with the current
+  // border scalars, then Db y = r - B^T x. Each pass is one
+  // warm-started base solve; the contraction is the physical loop gain
+  // rho(Db^{-1} B^T K^{-1} B). The scalars start from the previous
+  // Solve() (phi_g_, omega_), so successive solves of a time
+  // integration enter far down the contraction.
+  const int nb = static_cast<int>(Bu.size());
+  const int ns = sea_enabled_ ? 1 : 0;
+  const int nw = nb - ns;
+  picard_passes_ = 0;
+  converged = false;
+
+  Vector y(nb), g(nb), rhs_y(nb);
+  if (ns) {
+    y[0] = phi_g_;
+  }
+  for (int k = 0; k < nw; k++) {
+    y[ns + k] = omega_.Size() == nw ? omega_[k] : 0.0;
+  }
+  DenseMatrix Db_f(Db);
+  DenseMatrixInverse Db_inv(Db_f);
+
+  // Anderson mixing on the scalar fixed point y -> G(y): the map is
+  // AFFINE in the nb border scalars, so the mixing (GMRES on the
+  // nb-dimensional Schur system, one base solve per matvec) terminates
+  // in about nb + 1 passes regardless of the plain loop gain — plain
+  // Gauss-Seidel stalls at near-neutral moments, where the gain
+  // reaches 1 — while a warm-started solve still stops after the one
+  // pass that verifies its residual. The difference pairs are NOT
+  // recycled across solves: measured, the warm-start-tolerance noise
+  // of nearly-converged pairs pollutes later solves, and at a frozen
+  // operator the elimination's exactly-probed cached columns are the
+  // better algorithm anyway — this route targets the
+  // operator-changing regimes.
+  const int depth = nb + 1;
+  Vector f(nb);
+  std::vector<Vector> dY, dF;
+  Vector prev_y(nb), prev_f(nb);
+  bool have_prev = false;
+  auto anderson_next = [&]() {
+    if (have_prev) {
+      Vector dy(nb), df(nb);
+      for (int c = 0; c < nb; c++) {
+        dy[c] = y[c] - prev_y[c];
+        df[c] = f[c] - prev_f[c];
+      }
+      if (df.Norml2() > 0.0) {
+        dY.push_back(dy);
+        dF.push_back(df);
+        while (static_cast<int>(dY.size()) > depth) {
+          dY.erase(dY.begin());
+          dF.erase(dF.begin());
+        }
+      }
+    }
+    prev_y = y;
+    prev_f = f;
+    have_prev = true;
+    const int m = static_cast<int>(dY.size());
+    if (m == 0) {
+      y = g;
+      return;
+    }
+    // min ||f - sum_j a_j dF_j||, then y <- g - sum_j a_j (dY_j + dF_j)
+    // (Anderson type II in differences; dG = dY + dF).
+    DenseMatrix N(m);
+    Vector rhs(m), alpha(m);
+    for (int i = 0; i < m; i++) {
+      for (int j = i; j < m; j++) {
+        const real_t v = dF[i] * dF[j];
+        N(i, j) = v;
+        N(j, i) = v;
+      }
+      rhs[i] = dF[i] * f;
+    }
+    for (int i = 0; i < m; i++) {
+      N(i, i) += 1e-12 * (N(i, i) + 1.0);  // near-collinearity guard
+    }
+    DenseMatrixInverse Ninv(N);
+    Ninv.Mult(rhs, alpha);
+    y = g;
+    for (int j = 0; j < m; j++) {
+      for (int c = 0; c < nb; c++) {
+        y[c] -= alpha[j] * (dY[j][c] + dF[j][c]);
+      }
+    }
+  };
+
+  const Vector Bphi_save(B_phi_);
+  Vector bu_mod(B_in.Size()), col(B_phi_.Size());
+  bool ok = true;
+  for (int k = 0; k < picard_max_; k++) {
+    bu_mod = B_in;
+    col = 0.0;
+    for (int j = 0; j < nb; j++) {
+      bu_mod.Add(-y[j], Bu[j]);
+      col.Add(y[j], Bphi[j]);
+    }
+    // The 2-D compatibility fix on the summed border load, as the
+    // elimination applies it per column (linear, so equivalent).
+    MakeCompatible(col);
+    B_phi_ = Bphi_save;
+    B_phi_ -= col;
+    ok = SolveUnbordered(bu_mod, X);
+    if (!ok) {
+      break;
+    }
+    picard_passes_++;
+    // The plain update from the dense rows, and the fixed-point
+    // residual it implies for the CURRENT pass.
+    for (int i = 0; i < nb; i++) {
+      rhs_y[i] = r[i] - Dot(Bu[i], X) - Dot(Bphi[i], Phi_true_);
+    }
+    Db_inv.Mult(rhs_y, g);
+    real_t df = 0.0, ymax = 0.0;
+    for (int i = 0; i < nb; i++) {
+      f[i] = g[i] - y[i];
+      df = std::max(df, std::abs(f[i]));
+      ymax = std::max(ymax, std::abs(g[i]));
+    }
+    if (df <= picard_tol_ * std::max(ymax, real_t{1e-300})) {
+      y = g;  // row-2-exact for the returned state
+      converged = true;
+      break;
+    }
+    anderson_next();
+  }
+  B_phi_ = Bphi_save;
+  if (!ok || !converged) {
+    return ok;  // SolveLinearSystem falls back to the elimination
+  }
+
+  phi_g_ = sea_enabled_ ? y[0] : 0.0;
+  for (int k = 0; k < nw; k++) {
+    omega_[k] = y[ns + k];
+  }
+  if (rot_enabled_) {
+    static_cast<CentrifugalPotential*>(rot_psi_total_.get())
+        ->SetAmplitudes(omega_);
+  }
+  DistributePotential(Phi_true_);
+  return true;
 }
 
 namespace {
