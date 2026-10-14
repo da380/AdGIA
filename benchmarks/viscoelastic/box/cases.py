@@ -33,6 +33,10 @@ MODELS (layers bottom-up; a layer with no branches is elastic):
     gradient      one Maxwell layer [0, 0.8] whose tau varies geometrically
                   from 1/contrast at the base to 1 at its top, elastic lid
                   [0.8, 1] (column, mode 0, only)
+    visco_lid     one Maxwell material: weak mantle tau 1/contrast [0, 0.6],
+                  rapid geometric ramp to tau 100 over [0.6, 0.8], lid at
+                  tau 100 [0.8, 1] — effectively elastic over the window by
+                  viscosity alone (the lithosphere-as-viscosity-limit case)
 
 The mesh comes first: every layer interface is a multiple of 0.2, the
 cell size of the coarsest mesh of the ladders (nz = 5), so that every
@@ -139,12 +143,27 @@ def model(name: str, contrast: float = 100.0) -> tuple[str, list[dict]]:
                            "tau": {"kind": "geometric_z",
                                    "bottom": 1.0 / contrast, "top": 1.0}}]},
             elastic_layer("lid", 1.0)]
+    if name == "visco_lid":
+        # One Maxwell material throughout: a weak mantle (tau = 1/C), a
+        # rapid-but-smooth geometric ramp over [0.6, 0.8], and a lid whose
+        # viscosity (tau = 100 >> the output window) makes it effectively
+        # elastic without being elastic — the lithosphere-as-viscosity-limit
+        # variant of the lid models, spanning 2 + log10(C) decades of tau
+        # across 0.2 of height.
+        return "slab", [
+            maxwell_layer("mantle", 0.6, 1.0 / contrast),
+            {"name": "ramp", "top": 0.8, "kappa": KAPPA, "mu_inf": 0.0,
+             "branches": [{"mu": 1.0,
+                           "tau": {"kind": "geometric_z",
+                                   "bottom": 1.0 / contrast,
+                                   "top": 100.0}}]},
+            maxwell_layer("lid", 1.0, 100.0)]
     raise SystemExit(f"unknown model {name!r}")
 
 
 MODELS = ("maxwell", "sls", "burgers", "prony_wide", "maxwell_slab", "lid",
           "channel", "sls_stack", "burgers_lid", "prony_lid", "contrast",
-          "gradient")
+          "gradient", "visco_lid")
 
 
 def output_times(t_final: float, n: int, history: hist.History) -> list[float]:

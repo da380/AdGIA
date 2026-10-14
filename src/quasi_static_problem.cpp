@@ -1329,13 +1329,45 @@ void LinearQuasiStaticProblemBase::AssemblePressureSplitOperator() {
   // The preconditioner blocks: the house AMG on the kappa-free
   // full-gradient operator 2 mu eps : eps, and the diagonal of the
   // pressure mass weighted by 1/kappa + 1/(2 mu) (spectrally equivalent
-  // to the Schur complement, Stokes-fashion).
+  // to the Schur complement, Stokes-fashion). The essential diagonal is
+  // KEPT at its assembled value, not set to one: with a collapsed
+  // effective shear the clamped boundary can sit in a region where the
+  // kappa-free block's entries are many orders below one, and unit
+  // essential rows put an artificial jump there that derails the AMG
+  // (MINRES dies on a NaN preconditioner application). The operator
+  // blocks stay DIAG_ONE; a preconditioner only needs to stay SPD, and
+  // the kept diagonal is the assembled (positive) one.
   psplit_aprec_form_ = detail::MakeBilinearForm(fes_);
   psplit_aprec_form_->AddDomainIntegrator(
       new ElasticityIntegrator(*mu, 0.0, 1.0));
+  psplit_aprec_form_->SetDiagonalPolicy(Operator::DIAG_KEEP);
   psplit_aprec_form_->Assemble();
-  set_type(psplit_Aprec_);
-  psplit_aprec_form_->FormSystemMatrix(ess_tdof_list_, psplit_Aprec_);
+#ifdef MFEM_USE_MPI
+  if (pfes_) {
+    // The legacy parallel elimination hard-codes unit diagonals, so keep
+    // them by hand: save the assembled diagonal at the essential dofs,
+    // eliminate, and write it back (the diagonal block is rank-local).
+    auto* pform = static_cast<ParBilinearForm*>(psplit_aprec_form_.get());
+    pform->Finalize();
+    HypreParMatrix* Afull = pform->ParallelAssemble();
+    SparseMatrix dblk;
+    Afull->GetDiag(dblk);
+    Vector keep(ess_tdof_list_.Size());
+    for (int i = 0; i < ess_tdof_list_.Size(); i++) {
+      keep[i] = dblk(ess_tdof_list_[i], ess_tdof_list_[i]);
+    }
+    delete Afull->EliminateRowsCols(ess_tdof_list_);
+    Afull->GetDiag(dblk);
+    for (int i = 0; i < ess_tdof_list_.Size(); i++) {
+      dblk(ess_tdof_list_[i], ess_tdof_list_[i]) = keep[i];
+    }
+    psplit_Aprec_.Reset(Afull, true);
+  } else
+#endif
+  {
+    set_type(psplit_Aprec_);
+    psplit_aprec_form_->FormSystemMatrix(ess_tdof_list_, psplit_Aprec_);
+  }
 
   psplit_schur_form_ = detail::MakeBilinearForm(psplit_fes_.get());
   psplit_schur_form_->AddDomainIntegrator(new MassIntegrator(*schur_w));

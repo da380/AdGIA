@@ -1045,7 +1045,7 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   std::unique_ptr<mfem::Solver> psplit_amg_, psplit_schur_prec_;
   std::unique_ptr<mfem::BlockOperator> psplit_op_;
   std::unique_ptr<mfem::BlockDiagonalPreconditioner> psplit_prec_;
-  std::unique_ptr<mfem::MINRESSolver> psplit_minres_;
+  std::unique_ptr<mfem::IterativeSolver> psplit_minres_;
   mfem::Array<int> psplit_offsets_;
   // The operator version the blocks were assembled at: a primal assembly
   // (SystemMatrix() diagnostics) clears operator_dirty_ without touching

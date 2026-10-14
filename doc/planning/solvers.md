@@ -586,6 +586,85 @@ not notice, and the near-zero-mu A_mu block leaves the fluid
 relabelling null space to the continuation exactly as today. Deflation
 remains the fallback if the extension disappoints.
 
+*The region-restricted split (David's question, 14 Oct 2026: primal
+solid solver in the solid, pressure split in the fluid, continuity
+weak at the interface).* Yes — and there is a lighter version that
+needs no interface machinery at all. Nothing forces the pressure to
+live everywhere: keep ONE conforming displacement space, keep the
+primal form kappa div·div + 2 mu dev·dev on the solid elements, and
+split only the fluid's volumetric term — p on a pressure space over
+the FLUID elements only, B the divergence coupling restricted to the
+fluid marker. Continuity of u is then automatic (the space is
+conforming), no weak coupling, no mortar, and the saddle overhead and
+the Taylor–Hood pressure are paid only where the collapse lives. The
+preconditioner follows: the house AMG on [solid primal + fluid
+full-gradient] plus the fluid-only weighted pressure mass. The open
+technical point is the inf-sup condition for the restricted pair
+(divergence of fluid-supported conforming fields against the fluid
+pressure space, with the interface acting as that subproblem's
+boundary) — standard domain-restricted Taylor–Hood territory, to be
+checked rather than assumed. The weak-continuity (Nitsche / mortar)
+variant David describes becomes necessary only when the two regions
+also want DIFFERENT displacement discretisations or a genuinely
+slipping interface — and there it would meet the existing slip-class
+multiplier machinery rather than new code. Since the Maxwell fluid
+treatment runs on the welded space (slip emerges as its inviscid
+asymptotics), the conforming region-restricted split is the natural
+first implementation for the fluid-core target, and it composes with
+the stepping question above: the solid's solves stay well-conditioned
+for ANY stepper, the fluid keeps its continuation.
+
+*Round 2 (14 Oct, after David's framing): the viscosity-limit
+lithosphere and multiple time scales.* The new box model `visco_lid` is
+the elastic-lid-as-viscosity-limit case: ONE Maxwell material, weak
+mantle (tau = 1/C) on [0, 0.6], a rapid geometric ramp to tau = 100
+over [0.6, 0.8], and a tau = 100 lid, effectively elastic over the
+window by viscosity alone. Measured (np 4, o2, exptrap, dt 0.25,
+iterations per solve):
+
+| case | primal | split |
+|---|---|---|
+| C = 1e2 column / slab | 119 / 162 | 161 / 318 |
+| C = 1e4 column / slab | 348 / 921 | 226 / 664 |
+| C = 1e6 column / slab | 527 / 2865 | 287 / 1208 |
+| C = 1e6 column, nz 40 | 4217 | 788 |
+| C = 1e6 slab, nz 20 / 40 | **CG FAILS (10000-cap)** | see below |
+
+Unlike the sharp layered `contrast` cases, here the split wins on BOTH
+column and slab from C = 1e4 up (1.5–2.4x at nz 10, 5x at nz 40), and
+the primal route does not merely degrade — on the C = 1e6 slab it FAILS
+OUTRIGHT at nz 20/40 (CG hits the iteration cap and the step aborts).
+The production reading: an effectively-elastic lithosphere realised by
+viscosity is the graded regime, and it is where the primal breaks first.
+
+Multiple time scales behave as the mu_inf floor predicts: `prony_lid`
+(mu_inf = 0.1) keeps kappa/mu_eff <= ~17 at every dt — primal 66–89
+its/solve flat, split ~250 (the saddle overhead, no win); `burgers_lid`
+(mu_inf = 0) grows toward the Maxwell regime as dt collapses both
+branches (primal 76 -> 228, split ~250–365). A nonzero long-term shear
+modulus caps the hazard; the hard cases are mu_inf ~ 0 materials and
+graded/rapid transitions.
+
+**Open issue — the outer Krylov on the extreme split systems
+(14 Oct):** on some `visco_lid` configurations (first seen at C = 1e6,
+column, nz 15–30) MINRES ABORTS with `beta = -nan` a few iterations in:
+the P-inner-product recurrence evaluates sqrt((v, Pv)) by cancellation
+across the preconditioner's ~1e6 coefficient spread and roundoff flips
+the sign. The preconditioned SYSTEM is healthy — full (unrestarted)
+GMRES with the same block preconditioner solves the worst config at
+~200 iterations/solve, right in the split's robust band — and
+restarted GMRES(60) stalls (restart truncation on the indefinite
+spectrum), so this is a Krylov-numerics engineering choice, not a
+method defect. Candidate resolutions, to measure: (a) GMRES with a
+large restart as the route's solver (memory cost at production sizes),
+(b) hardening MINRES against the sign flip (clamp the Dot at zero /
+detect breakdown and restart), (c) symmetric diagonal equilibration of
+the block system so the Lanczos vectors see commensurate components.
+Fixed along the way and kept: the preconditioner block's essential
+diagonal is now KEPT at its assembled value rather than set to one
+(unit rows in a collapsed-shear clamped region put an artificial 1e6
+jump under the AMG); the operator blocks stay DIAG_ONE.
+
 Implementation notes recorded along the way: serial
 `RecoverFEMSolution` assumes the solver wrote through FormLinearSystem's
 aliased true-dof vector — a block solver must copy its solution back
@@ -661,6 +740,38 @@ integrators on a homogeneous body" (cost), "Box: viscosity contrasts";
 `include/AdGIA/viscoelastic.hpp`
 (`AdaptiveExponentialTrapezoidSolver`, `SetStepBounds`);
 `src/viscoelastic.cpp` (`ErrorEstimate`).
+
+### Implicit against explicit stepping: revisit per model
+
+**Status:** question recorded (David, 14 Oct 2026), to revisit once the
+pressure-split promotion is settled; no new measurements yet.
+
+The house default is implicit (L-stable / exponential-trapezoid)
+stepping, chosen for accuracy at large dt. The solver-side cost
+structure cuts the other way: implicit steps solve with the EFFECTIVE
+operator, whose conditioning collapses exactly where dt is large
+against tau, while the explicit and exponential-explicit schemes (ETD1,
+RK4) solve with the UNRELAXED operator and sit at the flat ~50–65
+iterations per solve at every contrast (the box measurements). So the
+total-cost comparison — few expensive ill-conditioned solves against
+many cheap well-conditioned ones — is MODEL-DEPENDENT, and the answer
+shifts with everything this item's work changes: the pressure-split
+route flattens the implicit solve cost (weakening the explicit case),
+while a model with mu_inf > 0 everywhere caps the implicit penalty by
+itself (the prony_lid finding). The revisit must carry the known
+accuracy/stability constraints from the stepper survey, which are not
+solver-side folklore but measured: RK4 is stability-bound at
+dt < 2.8/C, and ETD1 does not converge at large contrast on slabs
+(error 0.5–0.8 at C >= 1e4 — its start-of-step relaxation misses the
+slow redistribution; column-only convergence). A serious explicit
+contender therefore needs either resolved fast time scales (many
+steps) or a better exponential corrector. A related half-way option is
+an IMEX / region-split step: implicit only where dt >> tau, explicit
+(unrelaxed) elsewhere — which meets the region-splitting idea of the
+pressure-split item above.
+
+**See:** `doc/benchmarks.tex`, "Box: viscosity contrasts" (the ETD1 and
+RK4 findings); "The pressure-split (u, p) solve" above.
 
 ### Caching unrelaxed and effective operators
 
