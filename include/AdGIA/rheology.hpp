@@ -111,6 +111,23 @@ class ElasticStiffness {
   /** @brief Whether relaxation weights are currently set (never for a
    * purely elastic rheology). */
   virtual bool IsRelaxed() const = 0;
+
+  /**
+   * @brief The isotropic split behind the integrators, when there is one:
+   * on return @p kappa is the bulk modulus and @p mu the *current* shear
+   * modulus — the unrelaxed one, or the effective @f$\mu_\infty + \sum_k
+   * \beta_k \mu_k@f$ while relaxation weights are set. The pointers stay
+   * valid across weight changes (they read the live values) and for the
+   * stiffness's lifetime. Returns false, leaving the arguments untouched,
+   * when the stiffness is not an isotropic split (anisotropic rheologies,
+   * composites with an anisotropic region).
+   */
+  virtual bool IsotropicSplit(mfem::Coefficient*& kappa,
+                              mfem::Coefficient*& mu) {
+    (void)kappa;
+    (void)mu;
+    return false;
+  }
 };
 
 /**

@@ -38,7 +38,14 @@ below), which orders the remaining work:
    modulus-flavour cache (alternation gate: 13 → 2 assemblies);
 3. the mixed (u, p) pressure-robust block preconditioner, prototyped
    on the box contrast case before any gravitating class ("Options"
-   of the near-incompressible item; deflation is the fallback);
+   of the near-incompressible item; deflation is the fallback) —
+   **prototype delivered and measured 14 October 2026** (the
+   pressure-split solve, below): parameter-robust as predicted, a
+   ~2x saddle overhead where the primal AMG copes, 2.5–3x the other
+   way on the graded column where it does not; the promotion
+   decision is re-aimed at the production targets, graded 3-D
+   viscosity and the Maxwell fluid-core endgame (see the item's
+   "Measured" paragraph);
 4. the Picard feedback inside the time stepper ("Picard feedback
    inside the time stepper") — **delivered 13 October 2026** as the
    gated `SetPicardBorder()` route; wins 25 % in operator-changing
@@ -508,9 +515,87 @@ h = 0.3 may fire at production resolution); locally the endgame lever
 moves to the remaining candidates, the mixed (u, p) block
 preconditioner and deflation.
 
+*The pressure-split (u, p) solve: prototype delivered and measured
+(14 Oct 2026).* `SetPressureSplitSolver()` on the clamped solid routes
+Solve() through the mixed reformulation with `p = kappa div u`
+eliminated from the stress: MINRES on the symmetric block system
+`[[A_mu, B^T], [B, -M_{1/kappa}]]` with `A_mu` the deviatoric stiffness,
+`B` the divergence coupling onto a continuous pressure space one order
+below the displacement (Taylor–Hood), preconditioned block-diagonally by
+the house nodal-systems AMG on the kappa-free full-gradient operator
+`2 mu eps:eps` and the diagonal of the pressure mass weighted by
+`1/kappa + 1/(2 mu)` (the Schur equivalent). The AMG never sees kappa:
+both degradation regimes — near incompressibility and collapsed
+effective shear — move into the Schur block, where a weighted mass
+matrix absorbs them. The rheology side supplies `(kappa, mu_eff)`
+through the new `ElasticStiffness::IsotropicSplit()` (the live
+redirectable effective shear; piecewise attribute dispatch for
+composites, purely elastic regions beside viscoelastic ones included —
+the production lithosphere/mantle shape, gated in `TestPressureSplit`).
+Prototype scope: clamped solid only (no rigid-mode projection, no
+fluid treatments, order >= 2); the modulus-flavour cache is bypassed
+(every weight switch reassembles the blocks); the discrete solution is
+the Taylor–Hood one — locking-free, but its continuous pressure smears
+the pressure jump at material interfaces at discretisation level.
+Benchmark flag `-up` (box driver).
+
+Measured at np 4, order 2, exptrap, dt 0.25, 40 solves (`contrast` and
+`gradient` cases of the box family; iterations per solve, wall for the
+run):
+
+| case | primal its | split its | primal wall | split wall |
+|---|---|---|---|---|
+| C = 1, column, nz 10 | 55 | 129 | 0.57 s | 1.34 s |
+| C = 1e4, column | 140 | 203 | 1.7 s | 2.0 s |
+| C = 1e4, slab | 267 | 424 | 5.6 s | 7.3 s |
+| C = 1e6, column | 210 | 202 | 2.0 s | 2.4 s |
+| C = 1e6, slab | 287 | 365 | 3.8 s | 5.3 s |
+| gradient C = 1e6, nz 20 | 1102 | 367 | 7.7 s | 3.1 s |
+| gradient, nz 40 | 2337 | 760 | 21.8 s | 7.8 s |
+| gradient, nz 80 | 4115 | 1756 | 41.1 s | 19.8 s |
+
+The reading: the split is parameter-robust — its column count is flat
+across the whole ladder (129 → 203 → 202) — but carries a ~2x saddle
+overhead per solve, so on the LAYERED cases, where the nodal AMG
+copes with a weak layer sandwiched by elastic support, the primal
+route stays ahead. It wins exactly where the primal collapses: the
+smoothly GRADED column (2.5–3x in iterations and wall, and the stakes
+grow with resolution — the primal reaches 4115 iterations per solve at
+nz 80). On the harsher two-region test configuration (weak-branch
+weight 1e-6, no stiff support) the gap is 5–7x (168 vs 932 at np 1,
+flat to np 4), and there the primal does not merely slow down, it
+LOCKS — the discretisations disagree at O(1), which is a correctness
+point for the primal route, not just a cost one.
+
+The promotion decision (David's framing, 14 Oct): the layered box
+cases are not the production shape. The production targets are
+(a) smoothly graded / 3-D viscosity in the mantle — the gradient
+case's regime, where the split already wins — and above all (b) the
+Maxwell fluid-core treatment, which drives the core's effective shear
+`eps mu_c -> 0` BY DESIGN: the most extreme kappa/mu contrast in the
+codebase (the 2706-iteration continuation measured on `fluid_core`).
+There `p = kappa div u` stays healthy in the fluid while the vanishing
+shear moves into the Schur weight. The next rung is therefore the
+extension to the mixed gravitating class — the displacement block of
+the (u, phi) solve with the fluid region's effective shear as one more
+piecewise split region — measured on `fluid_core` against the Maxwell
+continuation's current cost. Open questions for that rung: the
+potential block rides along (the split changes only the u-block solve
+inside SolveLinearSystem's block structure), the bordered rows must
+not notice, and the near-zero-mu A_mu block leaves the fluid
+relabelling null space to the continuation exactly as today. Deflation
+remains the fallback if the extension disappoints.
+
+Implementation notes recorded along the way: serial
+`RecoverFEMSolution` assumes the solver wrote through FormLinearSystem's
+aliased true-dof vector — a block solver must copy its solution back
+into that vector before recovering (see `doc/mfem_notes.md`); the
+flavour-cache guards live in `StashFlavor`/`TryRestoreFlavor`.
+
 **See:** `doc/benchmarks.tex`, "Box: viscosity contrasts", "Sphere: the
 integrators with lateral viscosity variations";
-`src/quasi_static_problem.cpp` (`SetupDefaultPreconditioner`).
+`src/quasi_static_problem.cpp` (`SetupDefaultPreconditioner`,
+`AssemblePressureSplitOperator`); `tests/TestPressureSplit.cpp`.
 
 ---
 

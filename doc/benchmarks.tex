@@ -2440,6 +2440,17 @@ settles at the $n_z=10$ spatial error ($4.5\times10^{-4}$), like $C=1$
   the graded column, with $\tau$ varying smoothly over $C$, they reach
   500--2500 at $C\ge10^6$. ETD1 and RK4 solve with the unrelaxed operator
   and stay at about 50--65 at every contrast.
+\item \emph{The pressure-split route} (\code{-up}: the mixed $(u,p)$
+  Taylor--Hood solve of \code{SetPressureSplitSolver}, MINRES on
+  $[A_\mu,\,B^T;\,B,\,-M_{1/\kappa}]$ with the AMG on the $\kappa$-free
+  block) is parameter-robust --- 130--420 iterations per solve across the
+  whole ladder --- at a $\sim$2$\times$ saddle overhead. On the layered
+  cases the primal AMG stays ahead; on the graded column, where the
+  primal collapses, the split wins 2.5--3$\times$ in iterations and wall
+  (1102 vs.\ 367 per solve at $n_z=20$, $C=10^6$, growing to 4115 vs.\
+  1756 at $n_z=80$). Measurements and the promotion decision:
+  \code{doc/planning/solvers.md}, ``Near-incompressible and
+  high-contrast effective operators''.
 \item \emph{RK4} is bound by $\Delta t\lesssim2.8/C$ and is not run beyond
   $C=100$.
 \item \emph{ETD1 does not converge at large contrast on the slab.} Its

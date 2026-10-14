@@ -77,6 +77,8 @@ if(USE_MPI)
     target_link_libraries(TestQuasiStaticProblemPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestViscoelasticPar TestViscoelasticPar.cpp)
     target_link_libraries(TestViscoelasticPar PRIVATE AdGIA MPI::MPI_CXX)
+    add_executable(TestPressureSplitPar TestPressureSplitPar.cpp)
+    target_link_libraries(TestPressureSplitPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestMixedProblemPar TestMixedProblemPar.cpp)
     target_link_libraries(TestMixedProblemPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestBoundaryNormalIntegratorsPar TestBoundaryNormalIntegratorsPar.cpp)
@@ -143,6 +145,9 @@ if(USE_MPI)
         add_test(NAME TestViscoelasticPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestViscoelasticPar>)
+        add_test(NAME TestPressureSplitPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestPressureSplitPar>)
         add_test(NAME TestAdjointPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestAdjointPar>)
@@ -258,6 +263,10 @@ gtest_discover_tests(TestElasticTensor)
 add_executable(TestViscoelastic TestViscoelastic.cpp)
 target_link_libraries(TestViscoelastic PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestViscoelastic)
+
+add_executable(TestPressureSplit TestPressureSplit.cpp)
+target_link_libraries(TestPressureSplit PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestPressureSplit)
 
 add_executable(TestAdjoint TestAdjoint.cpp)
 target_link_libraries(TestAdjoint PRIVATE AdGIA gtest_main)
