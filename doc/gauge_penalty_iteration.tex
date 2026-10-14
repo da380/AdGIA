@@ -154,8 +154,9 @@ So a single solve of \eqref{eq:penalised} produces a perfectly
 gauge-fixed answer whose \emph{physics} is wrong by
 $O(\eps/\lambda_{\min})$. The classical dilemma follows immediately:
 shrinking $\eps$ shrinks the bias but sends the condition number
-$\kappa(A_{\eps}) \sim \lambda_{\max}^{A}/(\eps\,\lambda_{\min}^{Q})$ to
-infinity --- the preconditioner degrades exactly as the answer improves.
+$\operatorname{cond}(A_{\eps}) \sim
+\lambda_{\max}^{A}/(\eps\,\lambda_{\min}^{Q})$ to
+infinity ($\kappa$ stays the bulk modulus in this note) --- the preconditioner degrades exactly as the answer improves.
 This is Tikhonov regularisation in its ridge-regression form, and the
 dilemma is the textbook one.
 
@@ -196,11 +197,12 @@ and in the eigenbasis \eqref{eq:gevp} the iteration matrix is diagonal:
 \end{equation}
 Three consequences:
 \begin{enumerate}
-\item On \textbf{physical modes} the relative bias after $k$ solves is
+\item On \textbf{physical modes} the relative bias after $k$ solves
+  (the initial solve plus $k-1$ refinements) is
   $\le (\eps/(\lambda_{\min}+\eps))^{k}$: with
-  $\lambda_{\min} = O(1)$ and $\eps = 10^{-2}$, two or three
-  refinements reach $10^{-4}$--$10^{-6}$, which is below discretisation
-  error. The contraction factor per step is
+  $\lambda_{\min} = O(1)$ and $\eps = 10^{-2}$, two or three solves ---
+  one or two refinements --- reach $10^{-4}$--$10^{-6}$, which is below
+  discretisation error. The contraction factor per step is
   \begin{equation}
     \rho \;=\; \frac{\eps}{\lambda_{\min} + \eps}
     \;\approx\; \frac{\eps}{\lambda_{\min}} .
@@ -239,7 +241,7 @@ This is a structural property of the pair $(A, Q)$, not a tuning
 question, and the two applications in the code sit on opposite sides of
 it.
 
-\paragraph{Gauged fluid: the condition holds.}
+\paragraph{Gauged fluid: the condition holds at neutral stratification.}
 Here $Q$ is a deviatoric elasticity form with modulus $\mu_{g}$ and $A$
 contains genuine elastic stiffness (solid regions, and the fluid's own
 $\kappa$-volumetric term) of the same differential order. Both scale
@@ -247,7 +249,11 @@ identically under mesh refinement, so the generalised spectrum is
 $h$-independent and $\lambda_{\min} \sim \mu_{\mathrm{solid}}/\mu_{g}$
 up to geometry-dependent constants. The observed contraction per
 refinement is $\rho \approx \eps\,\mu_{g}/\mu_{\mathrm{solid}}$,
-uniformly across meshes and orders --- the benign case.
+uniformly across meshes and orders --- the benign case, for a neutrally
+stratified fluid, whose near-kernel is pure gauge. At $N^2 \neq 0$ the
+near-kernel carries stratification energy and the condition holds only
+to the stratification band (the second mechanism of the operating-point
+notes below).
 
 \paragraph{Ball-wide vacuum extension: the condition fails.}
 In the buffer the physical operator has \emph{no stiffness at all}:
@@ -420,14 +426,17 @@ gauge data, shared rather than mapped). Further:
 \texttt{GaugeRefine()}, \texttt{GaugeResiduals()},
 \texttt{WarnGaugeContraction()}, \texttt{SetGaugeEpsilon()},
 \texttt{SetGaugeRefinements()}, \texttt{ApplyGaugePenalty()},
-\texttt{ClearFluid()}. Block overrides of \texttt{GaugeRefine()}:
-\texttt{LinearQuasiStaticMixedSelfGravitatingProblem} in
-\texttt{src/mixed\_problem.cpp} (gauged fluid) and
-\texttt{LinearQuasiStaticReferentialSelfGravitatingProblem} in
-\texttt{src/referential\_problem.cpp} (gauged fluid, with the
-Deviatoric penalty mapped through the rheology's equilibrium mapping by
-default; and the ball-wide vacuum extension \texttt{SetVacuumExtension},
-the case of \S\ref{sec:failure}). The slipping-interface class sets its
+\texttt{ClearFluid()}. \texttt{GaugeRefine()} is non-virtual: each
+refinement is the warm-started full solve through the virtual
+\texttt{SolveLinearSystem}, which
+\texttt{LinearQuasiStaticMixedSelfGravitatingProblem}
+(\texttt{src/mixed\_problem.cpp}) and
+\texttt{LinearQuasiStaticReferentialSelfGravitatingProblem}
+(\texttt{src/referential\_problem.cpp}) supply for their coupled blocks
+(the referential class maps the Deviatoric penalty through the
+rheology's equilibrium mapping by default; its ball-wide vacuum
+extension \texttt{SetVacuumExtension} is the case of
+\S\ref{sec:failure}). The slipping-interface class sets its
 fluid penalty with \texttt{SetFluidGauge()}.
 Tests: \texttt{TestFluidGauge} (contraction, $\eps$-independence of the
 observables), \texttt{TestMixedProblemGauged} (contraction rates, the

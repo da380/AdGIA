@@ -191,9 +191,10 @@ problem"):
   relabelling pull-back, as for `ElasticTensorIntegrator`.
 
 The two mapped constructors are therefore not interchangeable. The
-covariant gauge penalty of a fluid
-(`LinearQuasiStaticProblemBase::SetFluid` with `GaugePenaltyOptions` and a
-non-identity map, and the fluid penalty of the slip problem) is assembled with
+covariant deviatoric fluid form
+(`LinearQuasiStaticProblemBase::SetFluid` — either treatment, the
+Maxwell relaxation or the gauge penalty — with any non-null map, the
+identity included, and the fluid penalty of the slip problem) is assembled with
 `ElasticTensorIntegrator(C_dev, map)`, where `C_dev` is the isotropic
 deviatoric tensor of the penalty (λ = −2εμ_g/d, μ = εμ_g).
 `MaterialStiffnessIntegrator` would be wrong here because it expects a

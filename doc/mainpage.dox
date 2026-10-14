@@ -206,6 +206,9 @@
  *   derivation, discretisation, constraint enforcement, verification.
  * - `doc/gauge_penalty_iteration.tex`: gauge penalties and their iterated
  *   refinement.
+ * - `doc/generalised_rotation.md`: the generalised (Maitra & Al-Attar)
+ *   rotational theory — the traditional border's gauge ambiguity, the
+ *   Tisserand resolution and its secular reduction.
  * - `doc/mappings.md`: the mapping (relabelling) layer.
  * - `doc/submesh_coupling.md`, `doc/viscoelasticity.md`,
  *   `doc/elastic_tensors.md`, `doc/null_space.md`, `doc/mfem_notes.md`:

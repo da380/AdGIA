@@ -32,7 +32,8 @@
   - The load's own potential does not feel the fluid mass term: it is the
     same with rho'_F set to zero.
   - The approximate CMB conditions ('uniform', 'winkler') keep the operator
-    symmetric and change the answer.
+    symmetric and change the answer; the named FluidRegion::Treatment rungs
+    reproduce the hand-assembled configurations exactly.
 */
 
 namespace {
@@ -488,6 +489,118 @@ TEST(MixedProblemFluidCMB, ApproximateConditions) {
   // The approximations are not no-ops on the stratified test model.
   EXPECT_GT(RelDiff(phi_full, phi_uniform), 1e-3);
   EXPECT_GT(RelDiff(phi_uniform, phi_winkler), 1e-3);
+
+  // The named treatments own the same degradations, so the enum route
+  // must reproduce the hand-assembled rungs exactly (same coefficients,
+  // same assembly, same solver path).
+  auto by_treatment = [&](FluidRegion::Treatment t) {
+    std::vector<FluidRegion> regions;
+    auto f = OuterCore(*c.solid, c.rho_f);
+    f.treatment = t;
+    if (t != FluidRegion::Treatment::NoMass) {
+      f.uniform_density = 1.1;  // rho_c's value
+    }
+    regions.push_back(f);
+    auto p = c.Problem(true, true, &regions);
+    p->AssembleForce(0.0);
+    EXPECT_TRUE(p->Solve());
+    return p;
+  };
+  auto uniform_t = by_treatment(FluidRegion::Treatment::UniformCore);
+  EXPECT_LT(RelDiff(uniform_t->Potential(), phi_uniform), 1e-12);
+  auto winkler_t = by_treatment(FluidRegion::Treatment::Winkler);
+  EXPECT_LT(RelDiff(winkler_t->Potential(), phi_winkler), 1e-12);
+
+  // NoMass against its hand-assembled form (zero gradient alone).
+  std::vector<FluidRegion> nomass_regions;
+  {
+    auto f = OuterCore(*c.solid, c.rho_f);
+    f.density_gradient = &zero;
+    nomass_regions.push_back(f);
+  }
+  auto nomass_hand = c.Problem(true, true, &nomass_regions);
+  nomass_hand->AssembleForce(0.0);
+  ASSERT_TRUE(nomass_hand->Solve());
+  auto nomass_t = by_treatment(FluidRegion::Treatment::NoMass);
+  EXPECT_LT(RelDiff(nomass_t->Potential(), nomass_hand->Potential()), 1e-12);
+}
+
+// The literature's condition models nothing below the CMB, so under a
+// non-Full treatment an enclosed solid (the inner core) may be dropped
+// from the displacement SubMesh with its attributes folded into the
+// FluidRegion. Gates: the background potential is unchanged (the folded
+// region's mass still sources Phi_0), the folding is load-bearing
+// (leaving the inner core out of the region loses its mass), the system
+// stays symmetric (the two solvers agree), and the physics is still a
+// perturbation of the kept-inner-core answer.
+TEST(MixedProblemFluidCMB, DroppedInnerCore) {
+  const int dim = 2, order = 2;
+  Case c(dim, order);
+
+  // Reference: inner core meshed, fluid region {2}, UniformCore.
+  std::vector<FluidRegion> meshed{OuterCore(*c.solid, c.rho_f)};
+  meshed[0].treatment = FluidRegion::Treatment::UniformCore;
+  meshed[0].uniform_density = 1.1;
+  auto keep = c.Problem(true, true, &meshed);
+  keep->AssembleForce(0.0);
+  ASSERT_TRUE(keep->Solve());
+
+  // Mantle-only SubMesh; the whole core {1, 2} is one unmeshed region.
+  Array<int> mantle_attr({3});
+  SubMesh mantle(SubMesh::CreateFromDomain(*c.parent, mantle_attr));
+  FiniteElementSpace fes_u(&mantle, c.fec.get(), dim);
+  Array<int> surface = SurfaceMarker(mantle);
+  // Region density by attribute: the solid profile on the inner core, the
+  // fluid profile on the outer core. Attribute-keyed is safe here: under
+  // UniformCore the region density is never evaluated on boundary
+  // elements (the interface density is the owned constant).
+  FunctionCoefficient rho_inner(SolidDensity);
+  PWCoefficient rho_core;
+  rho_core.UpdateCoefficient(1, rho_inner);
+  rho_core.UpdateCoefficient(2, c.rho_f);
+
+  auto make = [&](const Array<int>& attributes, Coefficient& density) {
+    FluidRegion core;
+    core.attributes = attributes;
+    core.density = &density;
+    core.treatment = FluidRegion::Treatment::UniformCore;
+    core.uniform_density = 1.1;
+    core.interface_marker.SetSize(mantle.bdr_attributes.Max());
+    core.interface_marker = 0;
+    core.interface_marker[1] = 1;  // the CMB; the ICB is unmeshed
+    std::vector<FluidRegion> regions{core};
+    auto p = std::make_unique<LinearQuasiStaticMixedSelfGravitatingProblem>(
+        &fes_u, c.fes_phi.get(), *c.rheology, c.rho_s, kG, kDtNDegree,
+        nullptr, regions);
+    p->SetSurfaceLoad(c.sigma, surface);
+    p->SetRelTol(1e-11);
+    p->AssembleForce(0.0);
+    EXPECT_TRUE(p->Solve());
+    return p;
+  };
+
+  auto drop = make(Array<int>({1, 2}), rho_core);
+  // Mass bookkeeping: identical density distribution, identical Phi_0.
+  EXPECT_LT(
+      RelDiff(drop->BackgroundPotential(), keep->BackgroundPotential()),
+      1e-8);
+  // Negative control: without the inner core in the region its mass is
+  // lost and Phi_0 moves.
+  auto lost = make(Array<int>({2}), c.rho_f);
+  EXPECT_GT(
+      RelDiff(lost->BackgroundPotential(), keep->BackgroundPotential()),
+      1e-3);
+  // Symmetry survives the folding: the two solvers agree.
+  GridFunction phi_drop(drop->Potential());
+  drop->SetSolverType(
+      LinearQuasiStaticMixedSelfGravitatingProblem::SolverType::SchurCG);
+  drop->AssembleForce(0.0);
+  ASSERT_TRUE(drop->Solve());
+  EXPECT_LT(RelDiff(drop->Potential(), phi_drop), 1e-6);
+  // The dropped inner core is an approximation, not a different problem:
+  // the potential stays within a modest band of the kept-core answer.
+  EXPECT_LT(RelDiff(phi_drop, keep->Potential()), 0.5);
+  EXPECT_GT(L2Norm(drop->Displacement()), 0.0);
 }
 
 INSTANTIATE_TEST_SUITE_P(MixedProblemFluid, MixedProblemFluidTest,

@@ -62,7 +62,7 @@ problem:
   theory — quantify the nonlinear correction over a glacial cycle.
 
 **See:** `doc/gravitating_elasticity.md`;
-`generalised_rotation_note.md`; "Equilibrium backgrounds with
+`../generalised_rotation.md`; "Equilibrium backgrounds with
 surface water" above.
 
 The two subsections below — the nonlinear slip map and the buffer
@@ -608,19 +608,24 @@ the stacks at the FINAL node set after.
 material functions); `planetmodel_coastline_sizing_plan.md`;
 `Mesh::GeneralRefinement`, `ParMesh::GeneralRefinement`.
 
-### The referential sea-level leg and the generalised rotational theory
+### The referential sea-level leg: open residue
 
-**Status:** proposal — design pass written, awaiting review
-([`referential_sea_level_plan.md`](referential_sea_level_plan.md):
-phases, gates and the open design questions).
+**Status:** WP7 DELIVERED 11 Oct 2026 — the ζζ collapse, the Φ_g and
+rotation borders, the mapped gates and the generalised (M&A) door,
+gated G1–G8d
+([`referential_sea_level_plan.md`](referential_sea_level_plan.md)
+holds the record; the derivation note has graduated to
+[`../generalised_rotation.md`](../generalised_rotation.md), whose
+fluid-core frame choice — the Tisserand gauge pinning the mantle
+frame — is settled and gated). Open:
 
-Port the sea-level boundary terms to the referential class, where the
-combination `u·∇Φ + φ` is the referential potential ζ and the water
-feedback collapses to a single ζζ boundary mass (the condensed system
-of `sea_level_plan.md`); gate against the mixed-class results. The
-Maitra & Al-Attar (2024) generalised rotational theory hangs off this
-leg: the traditional theory implicitly assumes an isotropic background
-inertia tensor (Yu et al. §2.4), which bites for 3-D models.
+1. the Mitrovica & Wahr viscoelastic numerical check (the emergence
+   test of "Equilibrium backgrounds with surface water" below), as
+   part of checking the secular reduction against the viscoelastic
+   time-stepping layer (what the stepper holds fixed per step);
+2. whether the translations' momentum condition ever needs the
+   mantle-frame treatment (loads with net force are excluded by the
+   existing machinery; expected inert).
 
 **See:** `sea_level_plan.md` ("The condensed system in our
 variables"); `doc/Elasticity/ggae092.pdf`.
@@ -688,11 +693,11 @@ run on a spherical model with input moments including the excess
 should reproduce the corrected Mitrovica et al. (2005) stability
 behaviour, and degrade to the classical over-wandering when the
 excess is removed (the W&M numerical check of
-`generalised_rotation_note.md`).
+`../generalised_rotation.md`).
 
 **See:** `equilibrium_figures.md`; `equilibrium_shape_plan.md`;
 `sea_level_plan.md`; `referential_sea_level_plan.md`;
-`generalised_rotation_note.md` (the input-inertia section);
+`../generalised_rotation.md` (the input-inertia section);
 `doc/Elasticity/annurev-earth-040610-133404.pdf`.
 
 ### Ice-age production runs

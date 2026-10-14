@@ -93,8 +93,9 @@ degree-0 content.
 
 - **Classes and order:** mixed/Dahlen first (delivered); the
   referential leg (the ζζ collapse) and the Maitra & Al-Attar
-  generalised rotational theory are the WP7 extension
-  (`future_work.md`).
+  generalised rotational theory are the WP7 extension — delivered
+  11 Oct 2026
+  ([`referential_sea_level_plan.md`](referential_sea_level_plan.md)).
 - **Signs:** the physicist convention throughout (Φ < 0 attractive,
   gravity = −∇Φ, `u·∇Φ₀ = g u_r` at the surface).
 - **Surface representation:** H1 fields at the displacement trace order
@@ -182,6 +183,10 @@ border|monolithic|picard`).
 - Border-solver questions — monolithic promotion, refinement economy,
   Picard-feedback mode in the stepper, the loose-tolerance Φ_g
   amplification: `solvers.md`.
-- WP7 referential leg + generalised rotational theory, equilibrium
-  backgrounds with water (the foundational-caveat fix), ice-age
-  production runs: `future_work.md`.
+- WP7 referential leg + generalised rotational theory: delivered
+  11 Oct 2026 (`referential_sea_level_plan.md`; the derivation is the
+  reference note `../generalised_rotation.md`); its residue (the
+  Mitrovica & Wahr viscoelastic check, the translations' momentum
+  question), equilibrium backgrounds with water (the
+  foundational-caveat fix) and ice-age production runs:
+  `future_work.md`.

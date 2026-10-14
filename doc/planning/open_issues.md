@@ -425,7 +425,8 @@ point of the band.
 `doc/gauged_fluid.md` §2 "Tangential slip and the welded space",
 "Equivalence and the Adams–Williamson condition";
 `doc/slip_interface.tex` (introduction);
-`doc/quasi_static_models.tex`, "The mixed problem with a gauged fluid",
+`doc/quasi_static_models.tex`, "The mixed problem with a welded fluid:
+Maxwell relaxation and gauge penalty",
 "The slipping-interface problem" ("When it is needed; assumptions");
 `examples/sliding_fluid_ellipse.cpp`; `tests/TestSlipProblem.cpp`
 (`TwoLayerBarotropicCrossCheck`); `tests/TestReferentialProblem.cpp`
@@ -800,6 +801,15 @@ its degree-4 point; the gap predates the combined-degree mode.
    amplitude sweep (`talk_data/`) and the dense viscoelastic histories
    (`viscoelastic_series/`). Campaign stages (or a `--stages docs` group)
    would make the whole documentation reproducible with one command.
+   The `prem_4` CMB runs additionally predate the 13 Oct 2026 default
+   (non-full rungs now drop the enclosed inner core; the recorded
+   numbers correspond to `-cmb-keep-inner`), so the CMB stage needs a
+   re-measure under the new default, with the keep/drop delta worth
+   recording alongside. The rewrite of the CMB-results text on those
+   new figures also owes two deferred doc-review fixes (13 Oct): the
+   winkler 17 % sentence mixes `fluid_core` and `prem_4` numbers, and
+   the degree-0/Maxwell bullets beside it carry two error-measure
+   slips (absolute vs relative).
 2. ~~Scripts that write relative to the working directory without the
    source-tree guard.~~ Done (6 Oct 2026): every benchmark script now
    passes its output root through `common/outputs.py::outside_source`.
@@ -844,24 +854,27 @@ Al-Attar & Crawford 2016; Al-Attar & Woodhouse 2010; Huang et al. 2023;
 Latychev et al. 2005; Maitra & Al-Attar 2021, 2024; Martinec 1999; Spada
 et al. 2011 (full author list); CitcomSVE-3.0 (pages); Yu et al. 2025;
 Woodhouse & Deuss 2007 (start page 31; end page 65 and the editor from the
-printed headers).
+printed headers). Verified from the publisher (13 Oct 2026): Valette 1986
+(GJRAS 85, 179–208).
 
 Not verifiable from the repository: Al-Attar & Tromp 2014; Crawford et al.
 2017; Dahlen & Tromp 1998; Dahlen 1974; Engl, Hanke & Neubauer 1996;
 Fortin & Glowinski 1983; Friedman & Schutz 1978; Golub & Greif 2003;
 Hestenes 1969; Lardy 1975; Marsden & Hughes 1983; Martinec 2000; Murphy,
 Golub & Wathen 2000; Powell 1969 (pages missing: pp. 283–298 in Fletcher
-(ed.)); Simo & Hughes 1998; Tromp & Mitrovica 1999; Valette 1986;
-Valette 1991 (only the first page, 555, is known; title as in
-`doc/gravitating_elasticity.md`); Wohlmuth 2001; Wu & Ni 1996; Wu &
-Peltier 1982; Zhong et al. 2003. Girault & Raviart 1986 and Galdi (cited
+(ed.)); Simo & Hughes 1998; Tromp & Mitrovica 1999; Wohlmuth 2001;
+Wu & Ni 1996; Wu & Peltier 1982; Zhong et al. 2003. Girault & Raviart 1986 and Galdi (cited
 above for the lifting lemma) are not in the bibliographies.
 
-Decided: the Valette (1986, 1991) PDFs are not needed in
-`doc/Elasticity/` — the slip-interface derivation covers their content
+Decided: the Valette (1986) PDF is not needed in
+`doc/Elasticity/` — the slip-interface derivation covers its content
 (the Weingarten-operator treatment of the interface terms) in greater
-generality; the citation suffices. Only their bibliographic details
-remain to check.
+generality; the citation suffices. RESOLVED 13 Oct 2026: the "Valette
+1991" entry was a phantom — GJI 104(3), 555–563 (1991) is Vermeersen &
+Vlaar, "The gravito-elastodynamics of a pre-stressed elastic earth",
+and no Valette 1991 GJI paper exists; David confirmed the intended
+reference is Valette (1986) alone, and every citation and bibitem now
+says so.
 
 **See:** bibliographies of `doc/quasi_static_models.tex`,
 `doc/slip_interface.tex`, `doc/benchmarks.tex`; sources list of

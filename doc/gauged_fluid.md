@@ -102,8 +102,10 @@ coarse test mesh at `eps = 1e-2`, k = 3, growing like `k / eps` beyond
 (`TestMixedProblemGauged`); physical (degree-2) loads do not sit on the
 near-kernel. The mathematics is `doc/gauge_penalty_iteration.tex`.
 
-The window above is the neutrally stratified one. At `N^2 != 0` the
-near-kernel is no longer a harmless gauge: the discrete near-kernel modes
+The window above is the numerical one, and its measurements include the
+non-neutral `fluid_core`; as a *physical* operating window it belongs to
+neutrally stratified fluids (`aw_core`, the near-neutral PREM cores). At
+`N^2 != 0` the near-kernel is no longer a harmless gauge: the discrete near-kernel modes
 carry a restoring (or, in an unstably stratified fluid, a destabilising)
 energy, and the semi-convergent growth of the refinement is Rayleigh–Taylor
 growth of the stratification-unstable modes. The answers are then defined
@@ -182,10 +184,13 @@ integrates over the whole SubMesh:
 | needs `rho'_F`, level surfaces, interface conventions | needs `kappa_f` and the penalty |
 | fluid block absent; well-conditioned | displacement block has the `1/eps` fluid near-kernel |
 
-The refinement on the coupled system is `GaugeRefine()` overridden: zero
-potential load and no tidal term in the refinement solves, the potential
-accumulated alongside the displacement, and the accumulated pair left as
-the warm start of the next `Solve()`.
+The refinement on the coupled system needs no override: `GaugeRefine()`
+is non-virtual on the base class, and each refinement is the
+warm-started full solve `(A + eps Q) u_{k+1} = f + eps Q u_k` through
+the virtual `SolveLinearSystem`, so the potential block rides along with
+its loads reapplied (equivalent, by linearity, to accumulating
+zero-companion-load increments); the final pair is the warm start of the
+next `Solve()`.
 
 ### Equivalence and the Adams–Williamson condition
 
@@ -252,23 +257,23 @@ The machinery lives in `LinearQuasiStaticProblemBase`
   `RegularizedMatrix()` exposes it. `SetGaugeEpsilon()`,
   `SetGaugeRefinements()` and `ClearFluid()` adjust or remove it.
 - `Solve()` runs `SolveLinearSystem` once, warm-started from the previous
-  solution, then `GaugeRefine()`: `r = eps Q delta`, one further
-  `SolveLinearSystem` per refinement, each **cold-started** from zero (the
-  increment, not the solution, is solved for). `GaugeResiduals()` reports
-  `|eps Q delta|` per step — their decay is the observed contraction, and
-  `WarnGaugeContraction()` checks it at the end of every `GaugeRefine()`
-  (base, mixed and referential).
-- Block overrides of `GaugeRefine()`: the mixed class
-  (`src/mixed_problem.cpp`) and the referential class
-  (`src/referential_problem.cpp`) solve the coupled increment with zero
-  potential load, accumulate the potential alongside the displacement and
-  leave the accumulated pair as the next warm start. The referential class
-  also overrides the configuration hook of `SetFluid` to assemble the Deviatoric penalty
-  covariantly through the rheology's equilibrium mapping when no map is
-  passed, and uses the same machinery with the Harmonic penalty for its
-  ball-wide vacuum extension (`SetVacuumExtension`; see
-  `doc/gauge_penalty_iteration.tex` for why that mode fails to converge
-  under refinement).
+  solution, then `GaugeRefine()`: one further full solve
+  `(A + eps Q) u_{k+1} = f + eps Q u_k` per refinement through the
+  virtual `SolveLinearSystem`, warm-started from `u_k`, the companion
+  loads reapplied (equivalent, by linearity, to accumulating
+  cold-started zero-companion-load increments). `GaugeResiduals()`
+  reports `|eps Q delta|` per step — their decay is the observed
+  contraction, and `WarnGaugeContraction()` checks it at the end of
+  every `GaugeRefine()`.
+- There are no block overrides of `GaugeRefine()`: the virtual
+  `SolveLinearSystem` is the extension point, so the mixed and
+  referential classes inherit the refinement unchanged. The referential
+  class overrides the configuration hook of `SetFluid` to assemble the
+  Deviatoric penalty covariantly through the rheology's equilibrium
+  mapping when no map is passed, and uses the same machinery with the
+  Harmonic penalty for its ball-wide vacuum extension
+  (`SetVacuumExtension`; see `doc/gauge_penalty_iteration.tex` for why
+  that mode fails to converge under refinement).
 - The slipping-interface class
   `LinearQuasiStaticReferentialSelfGravitatingSlipProblem` keeps the fluid
   on its own space and refuses `SetFluid()`; its fluid gauge is set

@@ -75,15 +75,14 @@ The short version:
   next to, say, three-dimensional viscosity variations. The interest
   of the result is conceptual, and for bodies or observables where
   core stratification itself is the target (\S\ref{sec:persp}).
-\item The dissipative selection is not only the theory but now the
-  \emph{method}: making the fluid regions an artificial Maxwell
+\item The dissipative selection is also the \emph{method}: making the fluid regions an artificial Maxwell
   solid, applying the load as a step, and relaxing until the
   \emph{solid} stops moving computes the secular response with
   nothing but welded elastic solves --- no fluid machinery, no slip
   interface, no kernel handling beyond rigid modes, on any geometry.
-  Implemented generically in the problem layer and, after
-  optimisation, \emph{cheaper} in three dimensions than the welded
-  static solve it replaces (\S\ref{sec:maxwell}).
+  Implemented generically in the problem layer, and \emph{cheaper}
+  in three dimensions than the welded static solve it replaces
+  (\S\ref{sec:maxwell}).
 \item The formulations are ranked accordingly. Free slip is the
   $\eta \to 0$ asymptotics of a viscous boundary layer --- correct
   about the interface once the layer has collapsed, silent about the
@@ -203,7 +202,8 @@ depends on the stratification:
   $\bw\cdot\bn = 0$ --- the ``trivial displacements''. This is a much
   larger group; in particular every tangential boundary field is the
   trace of some member, so every slip is removable
-  (\code{doc/planning/open\_issues.md}, the removability item).
+  (\code{doc/gravitating\_elasticity.md} \S5; the measured
+  adjudication is in \S\ref{sec:evidence}).
 \end{itemize}
 Solutions of the static equations, when they exist, are determined
 only up to the relevant class: the physically meaningful object is
@@ -309,8 +309,7 @@ loss of compactness: minimising sequences push the violation of
 infimum is approached but not attained, and the limit object leaves
 the space. For $N^2 < 0$ the same occurs in saddle form. Turning
 this paragraph into a theorem (non-closed range; characterisation of
-the compatible loads) is open and worth doing if this material is
-published.
+the compatible loads) is open.
 \end{remark}
 
 \begin{remark}[what computations produce instead]
@@ -489,9 +488,8 @@ it gives a well-posed problem:
   relaxation time $\tau$), apply the load as a step, and relax. At
   every Laplace frequency $s > 0$ the moduli are shifted and the
   problem is uniformly well posed, and the $t \to \infty$ limit is
-  the secular state. This is no longer a thought experiment: it is
-  the library's production static method, with its own section
-  (\S\ref{sec:maxwell}) covering the algorithm, the measured
+  the secular state. This is the library's production static
+  method; \S\ref{sec:maxwell} covers the algorithm, the measured
   trajectory structure (which refines the naive ``relax for a few
   $\tau$'' picture in important ways), the implementation and the
   costs. Its significance is sharpest aspherically
@@ -505,7 +503,7 @@ it gives a well-posed problem:
   answer depends on $\eps_{\mathrm{reg}}$ with no limit --- measured,
   and expected, since a static regulariser supplies no arrow of time.
   Likewise the frequency-domain route: the response exists for every
-  $\sigma \neq 0$ but has no limit as $\sigma \to 0$ (the limit point
+  $s \neq 0$ but has no limit as $s \to 0$ (the limit point
   sits on the essential spectrum); the static limit is genuinely
   non-uniform, which is the spectral restatement of the whole
   phenomenon and connects to the classical secular-constant
@@ -530,8 +528,7 @@ closure choice explicitly.
 
 \emph{Status: implemented (serial and parallel, every problem class),
 measured in one, two and three dimensions; the algorithmic facts
-below are measured unless marked otherwise.} The idea
-(8 October): since every dissipative completion selects the secular
+below are measured unless marked otherwise.} The idea: since every dissipative completion selects the secular
 answer, run one. Make the fluid regions an artificial Maxwell solid,
 apply the load as a Heaviside step, and time-step the quasi-static
 system by backward Euler until the \emph{solid} region stops moving.
@@ -561,9 +558,12 @@ inaccuracy lives entirely in the transient, which is discarded
 (measured: the limit moves by $10^{-13}$ under $\mu_c \times 4$ and
 $\Delta t$ halving). (ii) The per-step operator \emph{is} the
 gauge-penalty machinery's $A + \eps\mu_c Q$ at
-$\eps = 1/(1+\beta)$, and the $\beta \to \infty$ limit of
+$\eps = 1/(1+\beta)$, and at large \emph{fixed} $\beta$ --- where the
+memory update collapses to $w_{n+1} \to u_{n+1}$ ---
 \eqref{eq:maxwell-step} is precisely the iterated Tikhonov gauge
-refinement of \code{doc/gauged\_fluid.md} --- so the long-observed
+refinement of \code{doc/gauged\_fluid.md} at that $\eps$ (the
+$\beta \to \infty$ limit itself sends $\eps \to 0$, whereas iterated
+Tikhonov holds it fixed) --- so the long-observed
 semi-convergence of those refinements on non-neutral cores was the
 Rayleigh--Taylor growth below, seen without knowing it. (iii)
 Backward Euler is L-stable, so \emph{escalating} $\beta$ damps every
@@ -637,7 +637,7 @@ serial-and-parallel code path. The escalation updates the operator
 by scaled sparse addition of a cached unit-penalty matrix (no finite
 element reassembly per level). Validated against the exact
 gravity-free Lam\'e solutions with a fluid core
-(\code{tests/TestFluidGauge*}), and as the seventh architecture of
+(\code{tests/TestFluidGauge*}), and as architecture 5 of the seven in
 \code{examples/self\_gravitating\_solvers}.
 
 \paragraph{Cost (measured, degree-2 load).} On the two-dimensional
@@ -655,12 +655,12 @@ space. On \code{fluid\_core} the solver stops honestly at the
 plateau (increment floor $7\times10^{-4}$), landing between the
 welded and slip answers --- inside the band, as it must.
 
-\paragraph{The one caveat, now measured.} The discrete limit is the
+\paragraph{The one caveat.} The discrete limit is the
 \emph{welded} limit: the fluid-relabelling suppression of the welded
 space is inherited, not released (the welded--slip gap at
 $N^2 \ne 0$ is gravitational, not elastic, so zero shear does not
-remove it). The three-dimensional adjudication (8 October,
-\code{love\_benchmark}, \code{-method maxwell}): on the neutral
+remove it). The three-dimensional adjudication
+(\code{love\_benchmark -method maxwell}): on the neutral
 control \code{aw\_core} the degree-1 welded, slip and Maxwell
 answers coincide to $6\times10^{-5}$ --- the suppression vanishes
 with $N^2$, as it must; on \code{fluid\_core} the Maxwell answer
@@ -682,14 +682,14 @@ cores the band closes and with it the caveat.
 \section{Numerical evidence}
 \label{sec:evidence}
 
-All measurements 7--8 October 2026, with the per-degree radial reference
+The measurements use the per-degree radial reference
 of the two-dimensional disc family
 (\code{benchmarks/disc/disc\_radial.py}; the $\theta$-reduction of
 this library's weak forms, solved by one-dimensional $hp$ finite
 elements and validated against closed-form solutions of the
 gravity-free problems at $10^{-9}$--$10^{-13}$), and with the
 finite-element example \code{examples/self\_gravitating\_solvers}
-(all six solver architectures of the library on one model and load).
+(all seven solver architectures of the library on one model and load).
 Models: \code{fluid\_core\_2d} (uniform-density core, $N^2 < 0$) and
 its mass-matched neutral twin \code{aw\_core\_2d} ($N^2 = 0$ in
 closed form); degree-2 loading unless stated.
@@ -714,10 +714,10 @@ Dahlen under $\kappa \times 30$ & --- & unchanged to $10^{-11}$ &
   $\kappa$-blindness \\
 band about Dahlen vs $N^2\times\frac{1}{30}$ & --- & shrinks
   $\sim 14\times$ (noisy) & band $\to 0$ with $N^2$ \\
-FE six-architecture null & all within $1.2\times10^{-3}$ &
+FE null (six non-Maxwell) & all within $1.2\times10^{-3}$ &
   genuine spreads & the FE replica \\
 Maxwell route, escalated limit & joins the null ($10^{-10}$) &
-  $1.2\times10^{-3}$ from Dahlen & \S\ref{sec:regular} \\
+  $1.2\times10^{-3}$ from Dahlen & \S\ref{sec:maxwell} \\
 Maxwell route, physical plateau & $=$ limit (no band) &
   $3.5\,\%$ from the limit & the band, in time \\
 \bottomrule
@@ -725,7 +725,7 @@ Maxwell route, physical plateau & $=$ limit (no band) &
 \end{center}
 
 \medskip\noindent
-\textbf{The Maxwell-core run (8 October).} The proposed experiment of
+\textbf{The Maxwell-core run.} The proposed experiment of
 \S\ref{sec:regular}, in the radial tool
 (\code{solve\_degree\_maxwell}): backward Euler on the memory
 displacement, stopping on the solid increment, step escalation on
@@ -758,7 +758,8 @@ vanishes at $N^2 = 0$ (class K removes every slip) and is measured as
 the $10^{-10}$ null above, but at $N^2 \neq 0$ its magnitude on these
 models is likewise inside the band at $\ell \ge 2$ (in three
 dimensions it is visible at degree~1, riding the soft core--shell
-translation; see \code{doc/planning/open\_issues.md}).
+translation; \code{doc/benchmarks.tex}, ``The degree-1
+adjudication'').
 
 %=====================================================================
 \section{Perspective, implications, and open items}
@@ -797,7 +798,7 @@ loading timescale exceeds the buoyancy timescale. Even a core
 stratification as feeble as $N^2 \sim 10^{-15}\,\mathrm{s}^{-2}$ ---
 six orders below commonly discussed outer-core values --- gives
 buoyancy periods of order years, against GIA loading periods of
-millennia: $\sigma/N \lesssim 10^{-3}$ in the most unfavourable
+millennia: $s/N \lesssim 10^{-3}$ in the most unfavourable
 reading, and $\sim 10^{-7}$ for plausible values. For GIA, therefore,
 the Dahlen closure is simply correct, the elastic-static band is
 transient physics the Earth has long since relaxed through, and the
@@ -819,39 +820,19 @@ defined only up to the secular closure, Dahlen computes that closure,
 and the distance to any finite-time (partially relaxed) state is a
 transient that requires the dissipative physics to evaluate.
 
-\paragraph{Relation to the dynamic ill-posedness argument.}
-A sketched argument of the author's holds that
-the \emph{dynamic} equations in a non-neutrally stratified fluid are
-ill-posed through a loss of regularity: writing the fluid
-elasto-dynamic operator as $A = C^*(C+D+E) + FC$, with $C$ the
-divergence-type operator and $F$ the buoyancy coupling that
-\emph{vanishes exactly in the neutral case}, the kernel sector of
-the resolvent reduction is driven by the acoustic sector through the
-composite $FC$ --- energy transfer from acoustic to internal modes.
-The essential mechanism is a \emph{loss of regularity}: because of
-the factor of $C$ the coupling is an operator of order one, so the
-internal sector is forced by a quantity one derivative rougher than
-its space, and the $\ker C$ dynamics (free, with no smoothing)
-cannot pay the derivative back --- $u_0$ does not remain in the
-right space, at any frequency. The explicit $p^{-1}$ factor is the
-additional low-frequency amplification on top of this. The present
-note is the $p \to 0$ endpoint of the same structure: at $F = 0$
-the kernel sector decouples as pure gauge and the static quotient
-problem is well posed (Proposition~\ref{prop:quotient}); at
-$F \neq 0$ the driving has no static limit, which is
-Claim~\ref{claim:nonexist},
-the non-uniform $\sigma \to 0$ limit of \S\ref{sec:regular}, and
-the measured band, while the interfacial loss of compactness is the
-spatial face of the dynamic loss of regularity. The two gradations
-are consistent: dynamically, mild solutions survive while
-derivatives are progressively lost; statically, where there is no
-time left to lose them in, existence itself fails. In particular the open theorem below and the dynamic
-argument are one piece of mathematics --- the
-essential-spectrum characterisation there reduces to the Fredholm
-property of $1_Z - p^{-1}D\,(QB|_{\ker C} + p\,1)^{-1}QF$, whose
-$p \to 0$ corner is exactly the static solvability question ---
-and the measurements of \S\ref{sec:evidence} are numerical evidence
-for the dynamic conjecture as well.
+\paragraph{Relation to the dynamic problem.}
+The static pathology has a dynamic counterpart (a sketched argument of
+the author's, not reproduced here). Qualitatively: for $N^2 \neq 0$ the
+buoyancy coupling between the acoustic and internal sectors --- which
+vanishes exactly in the neutral case --- gives the fluid operator an
+essential spectrum touching the origin, so the static problem sits at
+the edge of a continuum. With the coupling off, the kernel sector
+decouples as pure gauge and the static quotient problem is well posed
+(Proposition~\ref{prop:quotient}); with it on, the driving has no
+static limit (Claim~\ref{claim:nonexist}, the non-uniform $s \to 0$
+limit of \S\ref{sec:regular}), and the measurements of
+\S\ref{sec:evidence} are numerical evidence for the dynamic picture as
+well.
 
 \paragraph{Open items.}
 (i) The functional-analytic theorem behind
@@ -859,7 +840,7 @@ Claim~\ref{claim:nonexist} and Proposition~\ref{prop:quotient} ---
 now best approached jointly with the dynamic argument above.
 (ii) The Maxwell relaxation (\S\ref{sec:maxwell}): the degree-1
 adjudication and the first benchmark-grade Love-number runs are done
-(8 October; the measured paragraph of \S\ref{sec:maxwell} and
+(the measured paragraph of \S\ref{sec:maxwell} and
 \code{doc/benchmarks.tex}, ``The degree-1 adjudication''), and the
 welded referential methods now solve \emph{tidal} problems as well
 (\code{SetTidalLoad}; dahlen--maxwell fluid-core tides agree to the

@@ -43,8 +43,10 @@ below), which orders the remaining work:
    inside the time stepper") — **delivered 13 October 2026** as the
    gated `SetPicardBorder()` route; wins 25 % in operator-changing
    stepping, loses to the flavour-cached elimination at frozen
-   operators; the promotion decision waits on the migrating
-   production loop (its real regime);
+   operators; measured in its real regime the same day (stage 2 of
+   the Picard item below: 16 % win on the rotating migrating
+   history), so the promotion decision now sits with the route
+   policy — server scale pending;
 5. the decisions already measured: combined-degree solves as the
    campaign default, the monolithic border with a border-aware
    refinement stop, the increment-relative stopping test;
@@ -554,7 +556,7 @@ step instead of one).
 The cost of the conservative estimate is measured:
 
 - Under sustained periodic forcing (box benchmarks) the adaptive scheme
-  is the most expensive choice, 1400–23000 solves, because the estimate
+  is the most expensive choice, 1400–13000 solves, because the estimate
   keeps every step small.
 - At contrast C = 1e8 (box column) it takes 35000 solves to reach
   rtol 1e-1, because the estimate tracks the transient of the τ = 1e-8

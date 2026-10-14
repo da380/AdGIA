@@ -1,7 +1,16 @@
-# The generalised rotational theory (WP7.5): derivation note
+# The generalised rotational theory
 
-*Status: **derivation for review** (no code; WP7.5 of
-[`referential_sea_level_plan.md`](referential_sea_level_plan.md)).
+*The Maitra & Al-Attar (2024) rotational theory as the library
+implements it: why the traditional rotational-feedback border is
+gauge-ambiguous off spherical models, the Tisserand-frame resolution,
+its secular reduction onto the existing bordered machinery, the
+input-reference-inertia option, and the fluid-core frame choice.
+Implemented on the mixed and referential classes —
+`SetRotation(Omega)` is the self-consistent door (model inertia +
+Tisserand gauge), `SetRotation(Omega, moments)` with
+`SetTisserandGauge(true)` the input-inertia one; the demonstration
+example is `examples/generalised_rotation.cpp`, and the measurements
+are under "Verification" below.
 Sources: Yu, Al-Attar, Syvret & Lloyd (2025, "the paper",
 `doc/Elasticity/ggae388.pdf`) §2.3–2.4 for the traditional theory and
 its diagnosis; Maitra & Al-Attar (2024, "M&A",
@@ -12,7 +21,8 @@ plastering this supersedes.*
 
 ## The traditional theory, and its two defects
 
-The traditional rotational feedback (our WP2/WP4 border) solves the
+The traditional rotational feedback (the library's traditional
+rotation border, `SetRotation(Omega, moments)`) solves the
 elastostatic loading problem in a **non-rotating** model for (u, φ)
 given the load σ and a centrifugal potential perturbation
 ψ(ω), and determines ω from the paper's eq. (15),
@@ -50,8 +60,8 @@ with ψ' = −(Ω×x)·(ω'×x) and D = diag(C₃−C₁, C₃−C₂, −C₃) 
    gauge freedom is harmless; on a 3-D model it is an O(1) ambiguity
    with no small parameter — and the formula above *predicts* the
    shift from the model's inertia tensor alone, which is the
-   quantitative certificate for the WP7.6 demonstration (gate G8, the
-   deliverable of plan decision 3).
+   quantitative certificate of the triaxial demonstration (G8b under
+   "Verification"; `examples/generalised_rotation.cpp`).
 
 ## The M&A resolution
 
@@ -89,13 +99,13 @@ pieces that matter for quasi-statics are:
   with I⁽⁰⁾ the **model's own** equilibrium inertia and I⁽¹⁾(u, σ) the
   exact inertia perturbation (the load's direct contribution plus the
   deformation's). The quasi-static (secular) reading for GIA drops the
-  wobble dynamics (ω̇ and the Chandler-band terms) and is the
-  conservation statement δ(IΩ) = 0 resolved for ω; the full eq. (224)
+  wobble dynamics (ω̇ and the Chandler-band terms) and is derived
+  under "The secular reduction" below; the full eq. (224)
   is there when the wobble is ever wanted. In fluid regions the
   inertia integrals are FRL-invariant — as they must be, since the
   relabelling is unobservable — so the gauged fluid treatments
   evaluate them on any representative, and the referential class uses
-  its actual fluid displacements directly (plan decision 5). For
+  its actual fluid displacements directly. For
   Dahlen-style treatments the paper's appendix gives the Eulerian
   fluid-region formula.
 
@@ -107,7 +117,7 @@ plastering is unnecessary *provided the model's figure is realistic*
 condition before ω is ever computed, so ω is manifestly re-gauge
 invariant — the G8 invariance certificate.
 
-## The secular reduction, worked (WP7.6's opening derivation)
+## The secular reduction, worked
 
 Two identities pin the quasi-static form of eq. (224) completely.
 
@@ -120,8 +130,8 @@ and using the triple product twice,
 and likewise ∫σψ' dS = −ω'·δI(σ)·Ω with
 δI(σ)_ij = ∫σ(|x|²δ_ij − x_i x_j) dS: δI(u) + δI(σ) is exactly the
 linearised inertia perturbation I⁽¹⁾. The traditional row (paper
-eq. 15) therefore reads **D·ω = I⁽¹⁾(u,σ)·Ω** — the ω-row data our
-WP2/WP4 machinery assembles through the ψ pairing *is* the inertia
+eq. 15) therefore reads **D·ω = I⁽¹⁾(u,σ)·Ω** — the ω-row data the
+border machinery assembles through the ψ pairing *is* the inertia
 perturbation, no separate assembly needed.
 
 **The secular limit of eq. (224).** Take Ω = Ω e₃ along a principal
@@ -138,9 +148,7 @@ and the axial component integrates to conservation. Componentwise:
 **This is exactly the paper's eq. (15) with D = diag(C₃−C₁, C₃−C₂,
 −C₃)** — the (C₃−C₁) wander denominators come from the frame term
 ad_Ω(I⁽⁰⁾−λ), not from bare conservation (naive δ(IΩ) = 0 would give
-C₁ in place of C₃−C₁ and is *not* the right secular statement; the
-note's earlier shorthand "δ(IΩ) = 0 resolved for ω" stands corrected
-by this derivation).
+C₁ in place of C₃−C₁ and is *not* the right secular statement).
 
 **The consequence for the implementation.** The generalised
 quasi-static door is the traditional border machinery *verbatim*,
@@ -160,7 +168,7 @@ with exactly three deltas:
 Gate G8a is thereby trivialised (input moments + the gauge reproduce
 the traditional border identically on models where eq. 20 holds), and
 the substantive gates are the gauge-invariance demonstration (G8b)
-and the certificates (G8c, G8d).
+and the certificates (G8c, G8d), all under "Verification" below.
 
 ## Reduction to our variables
 
@@ -168,38 +176,44 @@ The key structural fact: **the discrete Tisserand condition already
 exists in the library.** `NullSpaceProjector::SetGauge` with the
 ρ-weighted vector mass matrix (the `SetMassWeightedGauge` door, F4)
 chooses the rigid-mode representative with zero net momentum *and
-angular momentum* — exactly the linearised Tisserand gauge. So the
-expected implementation shape, to be verified in WP7.6:
+angular momentum* — exactly the linearised Tisserand gauge. The
+implementation shape:
 
 1. The Krylov solve is unchanged (Euclidean projector for the
    symmetric PAP, as `null_space.hpp` prescribes); the **mass-weighted
-   gauge supplies the Tisserand representative** of the solution. One
-   mechanism, no new constraint machinery — the DRY outcome of plan
-   decision 4. The gauge must be applied before any ω row is read.
-2. The ω-row data I⁽¹⁾(u, σ) assembles as direct linear forms (the
-   WP2 pattern: no MacCullagh, no degree-2 extraction,
-   aspherical-safe), referentially with ρ̃ and composition with φ_e.
+   gauge supplies the Tisserand representative** of the solution — one
+   mechanism, no new constraint machinery. Under a non-identity
+   equilibrium mapping the null basis is the mapped rotations
+   (b×φ_e), so the ρ̃-mass metric pins exactly ∫ρ̃ φ_e×u dV = 0 with
+   no extra wiring. The gauge is applied before any ω row is read,
+   and the referential solve's tail skips its Euclidean rigid
+   clean-up when the Tisserand gauge is on, so the representative
+   survives the solve.
+2. The ω-row data I⁽¹⁾(u, σ) assembles as direct linear forms (no
+   MacCullagh, no degree-2 extraction, aspherical-safe),
+   referentially with ρ̃ and composition with φ_e; the referential
+   row is read off the raw assembled surface-load form before the
+   compatibility projection, matching the mixed class.
 3. I⁽⁰⁾ is assembled once from the model (a volume integral of the
    density; on the equilibrium mapping's image where one is set).
 4. The centrifugal feedback columns enter through `SetTidalLoad`
    (∇ψ_k ∘ φ_e as analytic data — the door its header anticipates),
    and the whole thing is a 3-column border on the shared
-   `BorderedElimination` engine, composable with the water border
-   exactly as in WP4.
+   `BorderedElimination` engine, composable with the water border.
 
 The spherical gate: with I⁽⁰⁾ isotropic the balance loses its wander
 restoring terms just as the traditional D does with model moments —
 which is why the spherical-model comparison against the traditional
-border (gate G8's first leg) is run with the *input-inertia option*
-below.
+border (the verification's spherical leg) is run with the
+*input-inertia option* below.
 
 ## The input-reference-inertia option
 
-David's requirement (plan, WP7.5 insert): applied to a simplified
-model the self-consistent theory inherits that model's degenerate
-rotational response, so the generalised door also wants an option to
-input a reference inertia (observed values) in place of I⁽⁰⁾. What
-survives, derived rather than assumed:
+Applied to a simplified model, the self-consistent theory inherits
+that model's degenerate rotational response, so the generalised door
+also provides an option to input a reference inertia (observed
+values) in place of I⁽⁰⁾. What survives, derived rather than
+assumed:
 
 - **Uniqueness survives intact.** The re-gauge invariance of ω comes
   from the Tisserand gauge-fixing of u, not from the inertia data;
@@ -216,11 +230,11 @@ survives, derived rather than assumed:
   self-consistent configuration and only *reported* on the
   input-inertia one.
 - The long-run resolution is a model whose own figure is realistic —
-  the equilibrium-figures ladder (`future_work.md`, "Equilibrium
-  backgrounds with surface water", including the observed-sea-level
-  density inverse), after which nothing is imposed.
+  the equilibrium-figures programme (`doc/equilibrium_figures.tex`;
+  its surface-water extension, with the observed-sea-level density
+  inverse, is future work), after which nothing is imposed.
 
-## The fluid-core wrinkle (G8c, worked to its design question)
+## The fluid-core frame choice (G8c)
 
 A fluid relabelling (FRL) of a fluid region F is v with div(ρv) = 0 in
 F and v·n̂ = 0 on ∂F: unobservable, so every physical reading must be
@@ -242,7 +256,7 @@ cannot certify:
   gauge. (The degree-1 FRL non-removability seen in the slip
   benchmarks is the same freedom in different clothes.)
 
-**The resolution (David, 11 Oct 2026): fix via the mantle.** The
+**The resolution: fix the frame via the mantle.** The
 rigid representative is pinned by the SOLID-region Tisserand
 condition — the mantle frame of Earth-rotation theory:
 `SetTisserandGauge` keeps the global rigid basis but assembles its
@@ -263,8 +277,8 @@ traditional border with fluid cores was never affected (its row is
 the invariant integral; its gauge pathology is the solid one G8b
 demonstrates).
 
-Why this is a frame choice and not a physics change (discussed and
-settled 11 Oct 2026): the "core follows the mantle on secular
+Why this is a frame choice and not a physics change: the "core
+follows the mantle on secular
 timescales" physics lives in the balance itself — D and the ω-row
 data are WHOLE-BODY integrals, and dropping ω̇ is precisely the
 assumption of one shared rigid rotation. The mantle restriction only
@@ -278,45 +292,26 @@ same reasoning covers the Maxwell-relaxation treatment: its core
 displacement is solve-determinate but artificial-path-dependent, so
 its momentum is a representative's, not physics.
 
-## What WP7.6 gates
+## Verification
 
 | gate | statement | status |
 |---|---|---|
 | G8a | spherical model, input inertia: generalised ≡ traditional border (route grade) | subsumed: the plumbing identity (`GeneralisedRotationDoor` (i)) is bitwise, and the spherical control runs in the example |
-| G8b | triaxial solid model: ω invariant under a rigid re-gauge of u; the traditional row's shift equals the closed form D⁻¹[ad_b, I]Ω (the quotable demonstration) | done — `TestGeneralisedRotation` (closed form 1e-10, solve-level shift O(1) of ω, pinning 4.7e-8, re-pin invariance) + `examples/generalised_rotation.cpp` (the gauge-sweep figure: traditional ≡ closed form, pinned at 1e-14, spherical control three orders down; ω_gen = ω_trad − D⁻¹[ad_bf,I]Ω at 1.2e-5) |
-| G8c | gauged-fluid configuration: inertia integrals invariant under the fluid-gauge representative (FRL certificate) | done — the row invariance is exact and gated as a quadrature identity; the momentum is NOT invariant, so the gauge pins the MANTLE frame (David's decision; the fluid-core section above), gated at solve level: mantle momentum 7.1e-9 of trace vs 333× ungauged, ω across fluid representatives 3.1e-7 |
+| G8b | triaxial solid model: ω invariant under a rigid re-gauge of u; the traditional row's shift equals the closed form D⁻¹[ad_b, I]Ω (the demonstration deliverable) | done — `TestGeneralisedRotation` (closed form 1e-10, solve-level shift O(1) of ω, pinning 4.7e-8, re-pin invariance) + `examples/generalised_rotation.cpp` (the gauge-sweep figure: traditional ≡ closed form, pinned at 1e-14, spherical control three orders down; ω_gen = ω_trad − D⁻¹[ad_bf,I]Ω at 1.2e-5) |
+| G8c | gauged-fluid configuration: inertia integrals invariant under the fluid-gauge representative (FRL certificate) | done — the row invariance is exact and gated as a quadrature identity; the momentum is NOT invariant, so the gauge pins the MANTLE frame (the fluid-core frame choice above), gated at solve level: mantle momentum 7.1e-9 of trace vs 333× ungauged, ω across fluid representatives 3.1e-7 |
 | G8d | self-consistent configuration: the secular balance (D ω)_k + ∫ρu·∇ψ_k + ∫σψ_k = 0 re-integrated at the solution, σ the TOTAL load including the water response (conservation certificate; reported, not gated, under input inertia) | done — `ConservationCertificate`, two tiers: STRICT via test-side reassembly on the library's pairing convention (8.0e-8 data load, 4.9e-6 composed water) and ROUTE against the exact ψ (3.1e-3 / 9.8e-4: the assembled data integrate σ against the interpolant with the forms' rules; D and the volume row agree at 1e-8); parallel twin case `water+generalised`, serial ≡ parallel at 1e-5, Tisserand 4.0e-5 at o1 → 1e-7-grade at o2 |
 
-## To verify in implementation
+What remains open — the secular reduction against the viscoelastic
+time-stepping layer (with the Mitrovica & Wahr comparison as a
+numerical check, not a theory input) and whether the translations'
+momentum condition ever needs the mantle-frame treatment — is tracked
+in `doc/planning/future_work.md` (the referential sea-level residue).
 
-- ~~The F4 metric under a non-identity mapping~~ — resolved by
-  inspection: the referential null basis is the *mapped* rotations
-  (b×φ_e), so the ρ̃-mass metric with that basis pins exactly
-  ∫ρ̃ φ_e×u dV = 0; nothing needed beyond the wiring.
-- ~~The gauge's survival through the solve~~ — found and fixed: the
-  referential solve's tail re-projected u with the Euclidean
-  projector, silently overwriting the gauge representative (measured:
-  |h| stuck at 7.7e-3 either way; after the fix 4.7e-8 gauged). The
-  tail now skips the Euclidean clean-up when the Tisserand gauge is
-  on.
-- The quasi-static secular reduction of eq. (224) against the
-  time-stepping layer (what the viscoelastic stepper holds fixed per
-  step; the Mitrovica & Wahr comparison belongs here as a *numerical*
-  check, not as theory input). Open.
-- Whether the translations' momentum condition needs the same
-  treatment in practice (loads with net force are excluded by the
-  existing machinery; expected inert). Open.
-- ~~The solution-level G8d re-integration~~ — done (the gates table).
-  One convention finding along the way: the referential ω-row data are
-  now read off the RAW surface-load form before the compatibility
-  projection, matching the mixed class (a 2-D no-op today, so
-  convention rather than bug).
-- ~~G8c beyond phase 1~~ — resolved via the mantle frame (David's
-  decision, the fluid-core section above); no Eulerian fluid-row
-  assembly needed, the whole-body row being relabelling-invariant.
-
-**See:** `referential_sea_level_plan.md` (phases, decisions);
+**See:** `doc/quasi_static_models.tex` (the referential class's
+sea-level and rotation section);
 `include/AdGIA/null_space.hpp` (`SetGauge`);
 `include/AdGIA/quasi_static_problem.hpp` (`SetMassWeightedGauge`);
+`examples/generalised_rotation.cpp`;
+`tests/TestGeneralisedRotation.cpp`;
 `doc/Elasticity/ggae388.pdf` §2.4; `doc/Elasticity/ggae092.pdf`
 eqs. 88, 100, 222, 224.

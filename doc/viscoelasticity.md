@@ -169,8 +169,8 @@ static response; it is the general method (any geometry, stratification and
 number of regions), and the artificial relaxation is distinct from the
 physical rheology of the solid. `SetFluid(marker, μ_g, GaugePenaltyOptions{ε,
 refinements, form}, map)` is the gauge penalty: `Solve()` removes the O(ε)
-bias by iterated Tikhonov refinement, each refinement solve starting from
-zero, clean only for neutrally stratified fluids. `ClearFluid()` removes
+bias by iterated Tikhonov refinement (warm-started full solves through the
+virtual `SolveLinearSystem`), clean only for neutrally stratified fluids. `ClearFluid()` removes
 either. The covariant assembly with a non-identity `map` follows the rule of
 `mappings.md` (Pitfalls). The formulations and their verification are in
 `gauged_fluid.md` and `static_fluid_core.tex`.
