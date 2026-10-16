@@ -685,7 +685,8 @@ the footwall (FW). The fault ends inside the body along its \emph{edge},
 where the displacement is single-valued; the edge is given as boundary
 attributes whose dofs carry no slip, in practice the extension of the
 fault plane to the outer boundary, which also makes the two sides
-separate volumes (\code{meshes/faulted\_box.py}). The slip $\hat\vs$ is
+separate volumes (\code{meshes/faulted\_box.py}, which also puts a
+topography on the free surface). The slip $\hat\vs$ is
 the motion of the hanging wall relative to the footwall, with $\nu$ the
 fault normal into the hanging wall:
 $[\![\vu]\!] = \vu_{\mathrm{HW}} - \vu_{\mathrm{FW}} = \hat\vs$ on $\Sigma$.
@@ -751,8 +752,8 @@ balanced by the footwall's; $\langle Gs, w\rangle = \langle s,
 G^Tw\rangle$ to solver tolerance; serial and parallel agree.
 \code{examples/coseismic\_fault.cpp} checks the same slip as a smoothed
 stress glut on the same mesh, whose gap is the glut's smoothing bias
-$O(\sigma^2/r^2)$ with $\sigma$ tied to the fault element size: in 2-D
-(order 2) $0.45\%$ of the peak, falling to $0.12\%$ and $0.03\%$ under
+$O(\sigma^2/r^2)$ with $\sigma$ tied to the fault element size: on the
+flat faulted box, in 2-D (order 2) $0.45\%$ of the peak, falling to $0.12\%$ and $0.03\%$ under
 two uniform halvings of the size field; in 3-D (order 1) $6.1\%$, falling
 to $1.6\%$ under one. Against \code{coseismic\_deformation} on its own
 structured mesh the peak uplift agrees to $0.05\%$ in 2-D and to $1.5\%$

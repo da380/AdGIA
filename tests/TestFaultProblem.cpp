@@ -48,9 +48,9 @@ std::string Label(int dim, int order) {
 }
 
 Vector RandomVector(int n, unsigned seed) {
-  std::mt19937 gen(seed);
-  std::normal_distribution<> distrib(0, 1);
-  Vector v(n);
+  auto gen = std::mt19937(seed);
+  auto distrib = std::normal_distribution<>(0, 1);
+  auto v = Vector(n);
   for (int i = 0; i < n; i++) {
     v(i) = distrib(gen);
   }
@@ -85,8 +85,8 @@ struct FaultCase {
         zero(dim) {
     zero = 0.0;
     traction = std::make_unique<VectorConstantCoefficient>(zero);
-    const int nb = mesh.bdr_attributes.Max();
-    const int na = mesh.attributes.Max();
+    const auto nb = mesh.bdr_attributes.Max();
+    const auto na = mesh.attributes.Max();
     ess = whole_cut
               ? Marker(nb, {box.clamped_footwall})
               : Marker(nb, {box.clamped_footwall, box.clamped_hanging_wall});
@@ -112,7 +112,7 @@ struct FaultCase {
 };
 
 Vector UniformSlip(int dim) {
-  Vector s(dim);
+  auto s = Vector(dim);
   s(0) = 0.3;
   s(dim - 1) = -0.2;
   if (dim == 3) {
@@ -124,16 +124,16 @@ Vector UniformSlip(int dim) {
 }  // namespace
 
 TEST(FaultProblem, MeshRecord) {
-  for (int dim : {2, 3}) {
-    Mesh mesh(MeshFile(dim).c_str(), 1, 1);
-    const FaultedBox box = ReadFaultedBox(RecordFile(dim));
+  for (auto dim : {2, 3}) {
+    auto mesh = Mesh(MeshFile(dim).c_str(), 1, 1);
+    const auto box = ReadFaultedBox(RecordFile(dim));
     EXPECT_EQ(box.dim, dim);
     EXPECT_EQ(mesh.Dimension(), dim);
     EXPECT_EQ(mesh.attributes.Max(), 2);
     EXPECT_EQ(mesh.bdr_attributes.Max(), 5);
 
     int wrong_side = 0;
-    Vector centre(dim);
+    auto centre = Vector(dim);
     for (int e = 0; e < mesh.GetNE(); e++) {
       mesh.GetElementCenter(e, centre);
       centre -= box.centre;
@@ -144,7 +144,7 @@ TEST(FaultProblem, MeshRecord) {
 
     int fault_faces = 0, extension_faces = 0, exterior_cut_faces = 0;
     for (int b = 0; b < mesh.GetNBE(); b++) {
-      const int a = mesh.GetBdrAttribute(b);
+      const auto a = mesh.GetBdrAttribute(b);
       if (a != box.fault && a != box.extension) {
         continue;
       }
@@ -161,9 +161,9 @@ TEST(FaultProblem, MeshRecord) {
 
 TEST(FaultProblem, RigidBlock) {
   for (auto [dim, order] : kCases) {
-    FaultCase s(dim, order, /*whole_cut=*/true);
-    const Vector slip = UniformSlip(dim);
-    VectorConstantCoefficient slip_c(slip);
+    auto s = FaultCase(dim, order, /*whole_cut=*/true);
+    const auto slip = UniformSlip(dim);
+    auto slip_c = VectorConstantCoefficient(slip);
     s.problem->SetSlip(slip_c);
     s.problem->AssembleForce(0.0);
     ASSERT_TRUE(s.problem->Solve());
@@ -174,16 +174,16 @@ TEST(FaultProblem, RigidBlock) {
 
     // The physical displacement, projected onto a discontinuous space
     // with the same nodes: s on the hanging wall, zero on the footwall.
-    L2_FECollection dg(order, dim, BasisType::GaussLobatto);
-    FiniteElementSpace dg_fes(&s.mesh, &dg, dim);
-    GridFunction u_dg(&dg_fes);
+    auto dg = L2_FECollection(order, dim, BasisType::GaussLobatto);
+    auto dg_fes = FiniteElementSpace(&s.mesh, &dg, dim);
+    auto u_dg = GridFunction(&dg_fes);
     u_dg.ProjectCoefficient(s.problem->PhysicalDisplacement());
-    VectorConstantCoefficient zero_c(s.zero);
+    auto zero_c = VectorConstantCoefficient(s.zero);
     Array<VectorCoefficient*> pieces(2);
     pieces[s.box.footwall - 1] = &zero_c;
     pieces[s.box.hanging_wall - 1] = &slip_c;
-    Array<int> attrs({1, 2});
-    PWVectorCoefficient exact(dim, attrs, pieces);
+    auto attrs = Array<int>({1, 2});
+    auto exact = PWVectorCoefficient(dim, attrs, pieces);
     EXPECT_LT(u_dg.ComputeL2Error(exact), 1e-8 * slip.Norml2())
         << Label(dim, order);
   }
@@ -191,21 +191,22 @@ TEST(FaultProblem, RigidBlock) {
 
 TEST(FaultProblem, SlipVanishesOnTheFaultEdge) {
   for (auto [dim, order] : kCases) {
-    FaultCase s(dim, order);
-    Vector slip(dim);
+    auto s = FaultCase(dim, order);
+    auto slip = Vector(dim);
     slip = 0.4;
     slip(0) = 0.7;
-    VectorConstantCoefficient slip_c(slip);
+    auto slip_c = VectorConstantCoefficient(slip);
     s.problem->SetSlip(slip_c);
-    Array<int> fault_vdofs, edge_vdofs;
+    auto fault_vdofs = Array<int>();
+    auto edge_vdofs = Array<int>();
     s.fes.GetEssentialVDofs(s.fault, fault_vdofs);
     s.fes.GetEssentialVDofs(s.edge, edge_vdofs);
-    const GridFunction& sh = s.problem->Slip();
+    const auto& sh = s.problem->Slip();
     int edge_vdof_count = 0, carrying_dofs = 0;
     real_t err = 0.0;
     for (int i = 0; i < s.fes.GetNDofs(); i++) {
       for (int c = 0; c < dim; c++) {
-        const int v = s.fes.DofToVDof(i, c);
+        const auto v = s.fes.DofToVDof(i, c);
         const bool on_edge = fault_vdofs[v] && edge_vdofs[v];
         const bool carries = fault_vdofs[v] && !on_edge;
         edge_vdof_count += on_edge;
@@ -217,8 +218,9 @@ TEST(FaultProblem, SlipVanishesOnTheFaultEdge) {
     // the fault shares with its extension.
     int edge_vertices = 2;
     if (dim == 3) {
-      std::set<int> on_fault, shared;
-      Array<int> v;
+      auto on_fault = std::set<int>();
+      auto shared = std::set<int>();
+      auto v = Array<int>();
       for (int b = 0; b < s.mesh.GetNBE(); b++) {
         if (s.mesh.GetBdrAttribute(b) == s.box.fault) {
           s.mesh.GetBdrElementVertices(b, v);
@@ -228,7 +230,7 @@ TEST(FaultProblem, SlipVanishesOnTheFaultEdge) {
       for (int b = 0; b < s.mesh.GetNBE(); b++) {
         if (s.mesh.GetBdrAttribute(b) == s.box.extension) {
           s.mesh.GetBdrElementVertices(b, v);
-          for (int i : v) {
+          for (auto i : v) {
             if (on_fault.count(i)) {
               shared.insert(i);
             }
@@ -246,14 +248,15 @@ TEST(FaultProblem, SlipVanishesOnTheFaultEdge) {
 
 TEST(FaultProblem, ReactionSymmetricPositiveBalanced) {
   for (auto [dim, order] : kCases) {
-    FaultCase s(dim, order);
+    auto s = FaultCase(dim, order);
     auto slip1 = TaperedSlip(s.box, 0.01);
-    VectorFunctionCoefficient slip2(dim, [dim](const Vector& x, Vector& v) {
-      v.SetSize(dim);
-      for (int i = 0; i < dim; i++) {
-        v(i) = std::sin(3.0 * x(0) + i) + 0.5 * x(dim - 1) * (i + 1);
-      }
-    });
+    auto slip2 =
+        VectorFunctionCoefficient(dim, [dim](const Vector& x, Vector& v) {
+          v.SetSize(dim);
+          for (int i = 0; i < dim; i++) {
+            v(i) = std::sin(3.0 * x(0) + i) + 0.5 * x(dim - 1) * (i + 1);
+          }
+        });
 
     auto reaction = [&](VectorCoefficient& c, Vector& slip_true, Vector& r) {
       s.problem->SetSlip(c);
@@ -262,26 +265,30 @@ TEST(FaultProblem, ReactionSymmetricPositiveBalanced) {
       s.problem->Slip().GetTrueDofs(slip_true);
       s.problem->FaultReaction(r);
     };
-    Vector s1, s2, r1, r2;
+    auto s1 = Vector();
+    auto s2 = Vector();
+    auto r1 = Vector();
+    auto r2 = Vector();
     reaction(slip1, s1, r1);
 
     // Equilibrium of the fault rows: the hanging wall's reaction is minus
     // the footwall's.
-    Array<int> footwall = Marker(s.mesh.attributes.Max(), {s.box.footwall});
-    LinearForm fw(&s.fes);
+    auto footwall = Marker(s.mesh.attributes.Max(), {s.box.footwall});
+    auto fw = LinearForm(&s.fes);
     fw.AddDomainIntegrator(
         new DomainLFFormActionIntegrator(s.problem->StiffnessIntegrators(),
                                          s.problem->Displacement()),
         footwall);
     fw.Assemble();
     real_t balance = 0.0;
-    for (int i : s.problem->SlipTrueDofs()) {
+    for (auto i : s.problem->SlipTrueDofs()) {
       balance = std::max(balance, std::abs(r1(i) + fw[i]));
     }
     EXPECT_LT(balance, 1e-8 * r1.Normlinf()) << Label(dim, order);
 
     reaction(slip2, s2, r2);
-    const real_t a = r1 * s2, b = r2 * s1;
+    const auto a = r1 * s2;
+    const auto b = r2 * s1;
     EXPECT_LT(std::abs(a - b), 1e-9 * r1.Norml2() * s2.Norml2())
         << Label(dim, order);
     EXPECT_GT(r1 * s1, 0.0) << Label(dim, order);
@@ -291,29 +298,30 @@ TEST(FaultProblem, ReactionSymmetricPositiveBalanced) {
 
 TEST(FaultProblem, FaultToSurfaceMap) {
   for (auto [dim, order] : kCases) {
-    FaultCase s(dim, order);
-    Array<int> fault_attr({s.box.fault}), surface_attr({s.box.surface});
+    auto s = FaultCase(dim, order);
+    auto fault_attr = Array<int>({s.box.fault});
+    auto surface_attr = Array<int>({s.box.surface});
     auto fault_mesh = SubMesh::CreateFromBoundary(s.mesh, fault_attr);
     auto surface_mesh = SubMesh::CreateFromBoundary(s.mesh, surface_attr);
     auto fault_fes = SubMeshDofInjection::MakeShadowSpace(s.fes, fault_mesh);
     auto surface_fes =
         SubMeshDofInjection::MakeShadowSpace(s.fes, surface_mesh);
-    FaultToSurfaceMap G(*s.problem, *fault_fes, *surface_fes);
+    auto G = FaultToSurfaceMap(*s.problem, *fault_fes, *surface_fes);
     ASSERT_EQ(G.Width(), fault_fes->GetTrueVSize());
     ASSERT_EQ(G.Height(), surface_fes->GetTrueVSize());
 
     // Mult against a direct solve with the same (interpolated) slip.
     auto slip_c = TaperedSlip(s.box, 0.01);
-    GridFunction slip_f(fault_fes.get());
+    auto slip_f = GridFunction(fault_fes.get());
     slip_f.ProjectCoefficient(slip_c);
-    Vector u_map;
+    auto u_map = Vector();
     G.Mult(slip_f, u_map);
     EXPECT_TRUE(G.Converged());
     s.problem->SetSlip(slip_c);
     s.problem->AssembleForce(0.0);
     ASSERT_TRUE(s.problem->Solve());
-    SubMeshDofInjection surface_injection(*surface_fes, s.fes);
-    Vector u_direct(surface_fes->GetTrueVSize());
+    auto surface_injection = SubMeshDofInjection(*surface_fes, s.fes);
+    auto u_direct = Vector(surface_fes->GetTrueVSize());
     surface_injection.MultTranspose(s.problem->Displacement(), u_direct);
     u_direct -= u_map;
     EXPECT_LT(u_direct.Normlinf(), 1e-9 * u_map.Normlinf())
@@ -321,18 +329,20 @@ TEST(FaultProblem, FaultToSurfaceMap) {
 
     // Reciprocity on random vectors, and no adjoint traction on the
     // fault-edge dofs.
-    const Vector sv = RandomVector(G.Width(), 11u + order + 7u * dim);
-    const Vector wv = RandomVector(G.Height(), 23u + order + 7u * dim);
-    Vector Gs, Gtw;
+    const auto sv = RandomVector(G.Width(), 11u + order + 7u * dim);
+    const auto wv = RandomVector(G.Height(), 23u + order + 7u * dim);
+    auto Gs = Vector();
+    auto Gtw = Vector();
     G.Mult(sv, Gs);
     G.MultTranspose(wv, Gtw);
     EXPECT_TRUE(G.Converged());
-    const real_t lhs = Gs * wv, rhs = sv * Gtw;
+    const auto lhs = Gs * wv;
+    const auto rhs = sv * Gtw;
     EXPECT_LT(std::abs(lhs - rhs), 1e-9 * Gs.Norml2() * wv.Norml2())
         << Label(dim, order);
 
-    SubMeshDofInjection fault_injection(*fault_fes, s.fes);
-    Array<int> edge_vdofs;
+    auto fault_injection = SubMeshDofInjection(*fault_fes, s.fes);
+    auto edge_vdofs = Array<int>();
     s.fes.GetEssentialVDofs(s.edge, edge_vdofs);
     real_t on_edge = 0.0;
     for (int i = 0; i < Gtw.Size(); i++) {

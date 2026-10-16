@@ -53,7 +53,7 @@ LinearQuasiStaticClampedFaultProblem::LinearQuasiStaticClampedFaultProblem(
       hanging_wall_(hanging_wall_marker),
       fault_(fault_marker),
       edge_(fault_edge_marker) {
-  const Mesh& mesh = *fes_->GetMesh();
+  const auto& mesh = *fes_->GetMesh();
   MFEM_VERIFY(hanging_wall_.Size() == mesh.attributes.Max(),
               "LinearQuasiStaticClampedFaultProblem: the hanging-wall marker "
               "must be sized to attributes.Max().");
@@ -70,22 +70,24 @@ LinearQuasiStaticClampedFaultProblem::LinearQuasiStaticClampedFaultProblem(
   // The slip-carrying dofs: the fault's minus the edge's, as a vdof mask
   // and as true dofs. Both queries are synchronised across ranks, so a
   // rank holding a fault dof without the fault face marks it too.
-  Array<int> fault_vdofs, edge_vdofs;
+  auto fault_vdofs = Array<int>();
+  auto edge_vdofs = Array<int>();
   fes_->GetEssentialVDofs(fault_, fault_vdofs);
   fes_->GetEssentialVDofs(edge_, edge_vdofs);
   slip_vdof_mask_.SetSize(fault_vdofs.Size());
   for (int i = 0; i < fault_vdofs.Size(); i++) {
     slip_vdof_mask_[i] = fault_vdofs[i] != 0 && edge_vdofs[i] == 0;
   }
-  Array<int> fault_tdofs, edge_tdofs;
+  auto fault_tdofs = Array<int>();
+  auto edge_tdofs = Array<int>();
   fes_->GetEssentialTrueDofs(fault_, fault_tdofs);
   fes_->GetEssentialTrueDofs(edge_, edge_tdofs);
-  Array<int> carries(fes_->GetTrueVSize());
+  auto carries = Array<int>(fes_->GetTrueVSize());
   carries = 0;
-  for (int i : fault_tdofs) {
+  for (auto i : fault_tdofs) {
     carries[i] = 1;
   }
-  for (int i : edge_tdofs) {
+  for (auto i : edge_tdofs) {
     carries[i] = 0;
   }
   for (int i = 0; i < carries.Size(); i++) {
@@ -138,15 +140,15 @@ void LinearQuasiStaticClampedFaultProblem::FaultReaction(Vector& r_true) {
   }
   add(*u_, *slip_, *reaction_field_);
   reaction_form_->Assemble();
-  Vector full(fes_->GetTrueVSize());
-  if (const Operator* P = fes_->GetProlongationMatrix()) {
+  auto full = Vector(fes_->GetTrueVSize());
+  if (const auto* P = fes_->GetProlongationMatrix()) {
     P->MultTranspose(*reaction_form_, full);
   } else {
     full = *reaction_form_;
   }
   r_true.SetSize(full.Size());
   r_true = 0.0;
-  for (int i : slip_tdofs_) {
+  for (auto i : slip_tdofs_) {
     r_true(i) = full(i);
   }
 }
@@ -175,7 +177,7 @@ FaultToSurfaceMap::FaultToSurfaceMap(
 }
 
 void FaultToSurfaceMap::Mult(const Vector& slip, Vector& u) const {
-  const FiniteElementSpace& fes = problem_->DisplacementSpace();
+  const auto& fes = problem_->DisplacementSpace();
   parent_true_.SetSize(fes.GetTrueVSize());
   pi_fault_->Mult(slip, parent_true_);
   problem_->SetSlipTrueDofs(parent_true_);
@@ -187,13 +189,13 @@ void FaultToSurfaceMap::Mult(const Vector& slip, Vector& u) const {
 }
 
 void FaultToSurfaceMap::MultTranspose(const Vector& w, Vector& r) const {
-  const FiniteElementSpace& fes = problem_->DisplacementSpace();
+  const auto& fes = problem_->DisplacementSpace();
   parent_true_.SetSize(fes.GetTrueVSize());
   pi_surface_->Mult(w, parent_true_);
   // The surface load as an L-vector dual whose prolongation transpose is
   // the true-dof load: each value on the dof's owner only.
   parent_l_.SetSize(fes.GetVSize());
-  if (const SparseMatrix* R = fes.GetRestrictionMatrix()) {
+  if (const auto* R = fes.GetRestrictionMatrix()) {
     R->MultTranspose(parent_true_, parent_l_);
   } else {
     parent_l_ = parent_true_;

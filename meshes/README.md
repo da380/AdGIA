@@ -84,7 +84,8 @@ gitignored. Pass `--out <build>/data` to replace the canned meshes.
 | `homogeneous_body.py --preset disc` | `disc_2d.msh` | transformed_diffusion |
 | `homogeneous_body.py --preset ball` | `ball_3d.msh` | transformed_diffusion, anisotropic_elasticity |
 | `offset_disc.py` | `offset_disc_2d.msh` | poisson_dtn, submesh_injection |
-| `faulted_box.py --all` | `faulted_box_{2d,3d}.msh` (the coseismic box cut by a planar fault extended to the box boundary: footwall and hanging wall as two volumes, the fault patch and its extension as interior boundaries, refined toward the fault and its tips; the JSON beside it is the script's own record, not a planetmodel manifest) | coseismic_fault; tests |
+| `faulted_box.py --all` | `faulted_box_{2d,3d}.msh` (the coseismic box under a mountain-range topography over the hanging wall, cut by a planar fault extended to the boundary: footwall and hanging wall as two volumes, the fault patch and its extension as interior boundaries, refined toward the fault and its tips; the JSON beside it is the script's own record, not a planetmodel manifest) | coseismic_fault; tests |
+| `faulted_box.py --all --topography flat --name flat` | `faulted_box_{2d,3d}_flat.msh` (the same with a flat free surface, as in coseismic_deformation) | coseismic_fault through `-m` |
 | `homogeneous_body.py --preset disc-buffer` | `disc_buffer_2d.msh` | elastogravity_layered, equilibrium_stress, lateral_viscosity, love_numbers, referential_elastogravity, rotational_feedback; tests |
 | `homogeneous_body.py --preset disc-buffer-wide` | `disc_buffer_wide_2d.msh` (buffer out to radius 2, for strongly non-trivial equilibrium mappings) | prestress_loading |
 | `homogeneous_body.py --preset ball-buffer` | `ball_buffer_3d.msh` | gia_kernels |

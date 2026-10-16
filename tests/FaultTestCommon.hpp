@@ -38,7 +38,7 @@ struct FaultedBox {
 };
 
 inline Vector JsonVector(const AdGIA::Json& j) {
-  Vector v(static_cast<int>(j.array.size()));
+  auto v = Vector(static_cast<int>(j.array.size()));
   for (int i = 0; i < v.Size(); i++) {
     v(i) = j.array[i].number;
   }
@@ -47,9 +47,9 @@ inline Vector JsonVector(const AdGIA::Json& j) {
 
 inline FaultedBox ReadFaultedBox(const std::string& path) {
   const AdGIA::Json record = AdGIA::ReadJsonFile(path);
-  FaultedBox box;
+  auto box = FaultedBox();
   box.dim = static_cast<int>(record.Find("dimension")->number);
-  const AdGIA::Json& fault = *record.Find("fault");
+  const auto& fault = *record.Find("fault");
   box.length = fault.Find("length")->number;
   box.centre = JsonVector(*fault.Find("centre"));
   box.normal = JsonVector(*fault.Find("normal"));
@@ -58,9 +58,9 @@ inline FaultedBox ReadFaultedBox(const std::string& path) {
     box.width = fault.Find("width")->number;
     box.strike = JsonVector(*fault.Find("strike_direction"));
   }
-  const AdGIA::Json& attrs = *record.Find("attributes");
-  const AdGIA::Json& dom = *attrs.Find("domain");
-  const AdGIA::Json& bdr = *attrs.Find("boundary");
+  const auto& attrs = *record.Find("attributes");
+  const auto& dom = *attrs.Find("domain");
+  const auto& bdr = *attrs.Find("boundary");
   auto attr = [](const AdGIA::Json& j, const char* key) {
     return static_cast<int>(j.Find(key)->number);
   };
@@ -75,7 +75,7 @@ inline FaultedBox ReadFaultedBox(const std::string& path) {
 }
 
 inline Array<int> Marker(int size, std::initializer_list<int> attrs) {
-  Array<int> m(size);
+  auto m = Array<int>(size);
   m = 0;
   for (auto a : attrs) {
     m[a - 1] = 1;
@@ -88,7 +88,7 @@ inline Array<int> Marker(int size, std::initializer_list<int> attrs) {
 // dip and along strike).
 inline VectorFunctionCoefficient TaperedSlip(const FaultedBox& box,
                                              real_t peak) {
-  const FaultedBox b = box;
+  const auto b = box;
   return VectorFunctionCoefficient(
       b.dim, [b, peak](const Vector& x, Vector& s) {
         auto taper = [](real_t t) {
@@ -103,7 +103,7 @@ inline VectorFunctionCoefficient TaperedSlip(const FaultedBox& box,
             eta += (x(i) - b.centre(i)) * b.strike(i);
           }
         }
-        real_t w = taper(xi / b.length);
+        auto w = taper(xi / b.length);
         if (b.dim == 3) {
           w *= taper(eta / b.width);
         }
@@ -120,16 +120,16 @@ inline VectorFunctionCoefficient TaperedSlip(const FaultedBox& box,
 // and zero elsewhere (on the cut, the footwall and the clamped boundary).
 inline real_t RigidBlockError(const GridFunction& u, const Array<int>& cut,
                               int hanging_wall_attr, const Vector& s) {
-  const FiniteElementSpace& fes = *u.FESpace();
-  Array<int> on_cut;
+  const auto& fes = *u.FESpace();
+  auto on_cut = Array<int>();
   fes.GetEssentialVDofs(cut, on_cut);
-  Array<int> on_hw(fes.GetNDofs());
+  auto on_hw = Array<int>(fes.GetNDofs());
   on_hw = 0;
-  Array<int> dofs;
+  auto dofs = Array<int>();
   for (int e = 0; e < fes.GetNE(); e++) {
     if (fes.GetMesh()->GetAttribute(e) == hanging_wall_attr) {
       fes.GetElementDofs(e, dofs);
-      for (int d : dofs) {
+      for (auto d : dofs) {
         on_hw[d >= 0 ? d : -1 - d] = 1;
       }
     }
@@ -137,8 +137,8 @@ inline real_t RigidBlockError(const GridFunction& u, const Array<int>& cut,
   real_t err = 0.0;
   for (int i = 0; i < fes.GetNDofs(); i++) {
     for (int c = 0; c < fes.GetVDim(); c++) {
-      const int v = fes.DofToVDof(i, c);
-      const real_t expected = on_hw[i] && !on_cut[v] ? s(c) : 0.0;
+      const auto v = fes.DofToVDof(i, c);
+      const auto expected = on_hw[i] && !on_cut[v] ? s(c) : 0.0;
       err = std::max(err, std::abs(u(v) - expected));
     }
   }

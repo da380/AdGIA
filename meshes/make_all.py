@@ -29,6 +29,7 @@ SCRIPTS = [
     ["homogeneous_body.py", "--preset", "ball"],
     ["offset_disc.py"],
     ["faulted_box.py", "--all"],
+    ["faulted_box.py", "--all", "--topography", "flat", "--name", "flat"],
     ["layered_earth.py", "--all"],
     ["aspherical_body.py", "--all"],
     ["earth_coastlines.py", "--field", "earth"],

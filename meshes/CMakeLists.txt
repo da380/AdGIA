@@ -152,6 +152,8 @@ meshes_add(homogeneous_body.py ball_buffer_coarse_3d
                                ARGS --preset ball-buffer-coarse)
 meshes_add(offset_disc.py      offset_disc_2d)
 meshes_add(faulted_box.py      faulted_box_2d faulted_box_3d ARGS --all)
+meshes_add(faulted_box.py      faulted_box_2d_flat faulted_box_3d_flat
+                               ARGS --all --topography flat --name flat)
 meshes_add(earth_coastlines.py earth_coastlines
                                ARGS --field earth
                                DEPENDS ice7g_topography_lmax64.npz)

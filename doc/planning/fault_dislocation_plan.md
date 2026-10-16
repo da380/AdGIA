@@ -53,7 +53,7 @@ generalisations only where they come essentially free.*
 
   w enters as a dual vector on the surface space (for an observable
   ∫ w_obs·u dS, w = M_surface w_obs). The output is a dual vector on the
-  fault space; the lumped fault mass turns it into a traction field.
+  fault space, which a Riesz map of the fault space turns into a field.
 
 Sign conventions are those of `examples/fault_box.hpp`: ν is the upward
 fault normal (pointing into the hanging wall), and the slip direction
@@ -96,14 +96,14 @@ Uncommitted.
 
 | Piece | Location |
 |---|---|
-| Mesh | `meshes/faulted_box.py --all` → `faulted_box_2d` (1723 triangles) and `faulted_box_3d` (14101 tetrahedra); `--scale` scales the size field uniformly |
+| Mesh | `meshes/faulted_box.py --all` → `faulted_box_2d` (1854 triangles) and `faulted_box_3d` (16077 tetrahedra) under a mountain-range topography over the hanging wall (David, 16 Oct: built into the gmsh geometry, so the fault stays planar), and `faulted_box_{2d,3d}_flat` with a flat surface; `--scale` scales the size field uniformly |
 | Load integrator | `DomainLFFormActionIntegrator` (`lininteg.hpp`) |
 | Class and map | `LinearQuasiStaticClampedFaultProblem` and `FaultToSurfaceMap` (`fault_problem.hpp`) |
 | Tests | `TestFaultProblem` (5 gtests over 2-D orders 1–2 and 3-D order 1) and `TestFaultProblemPar` (39 checks per rank count) |
 | Example | `examples/coseismic_fault.cpp` (2-D or 3-D by the mesh; rake in 3-D) |
 | Reference doc | `doc/quasi_static_models.tex`, "A meshed fault with prescribed slip" |
 
-Measured, with the default tapered thrust of peak 0.01:
+Measured on the flat box (the first canned meshes, before the topography; the `_flat` meshes reproduce them within discretisation), with the default tapered thrust of peak 0.01. With the topography the fault lies deeper below the raised surface and the peak uplift drops to 0.00173 (2-D, order 2) and 0.00062 (3-D, order 1); the checks below hold unchanged on it (glut gap 0.25 % in 2-D, J forward = adjoint to 1e-12, serial = 4 ranks to 3e-10).
 - **Moment:** equal to the glut's (2-D 0.0075, 3-D 0.005625).
 - **Glut gap**, meshed slip against the smoothed glut on the same mesh;
   it is the glut's smoothing bias, falling as σ²:
@@ -126,9 +126,35 @@ Measured, with the default tapered thrust of peak 0.01:
   dofs), 58 s at `--scale 0.5` (371k dofs); serial order 1 on the canned
   mesh, 1.1 s.
 
-Lumping: the example's traction and kernel profiles divide the dual
-vectors by the HRZ-lumped mass (the diagonal scaled to the area), since
-row sums vanish for the vertex functions of quadratic triangles.
+Refinement and relief (16 Oct): the example takes MFEM's `-rs`/`-rp` uniform refinements (glut width follows the refined fault size: 2-D gap 0.25 % → 0.064 % at `-rs 1`, 3-D 2.3 % → 0.53 % at `-rp 1`; serial `-rs 1` = 4 ranks `-rp 1` to 3e-10); the 3-D relief defaults to 2 (crest 0.72), the 2-D to 1.
+
+GLVis (16 Oct): in 3-D the volume windows are cut open along the dip section through the fault centre and seen along the strike (the cutting plane turned by the example's keys, the camera set by a `view` command, `GLVisWindow::SetView`; checked against a model of GLVis's plane arithmetic), and the fault windows are seen face on.
+
+Duals to fields (David, 16 Oct): the fault reaction and Gᵀw are dual
+vectors. The example maps them to fields with the Riesz maps of
+`riesz.hpp`, on the fault SubMesh space with the slip pinned on the fault
+edge (the SubMesh's boundary, attribute max + 1):
+- **Traction:** the L² map, giving the L² projection of σν onto the slip
+  space.
+- **Kernel:** its dual first projected onto the fault plane (the slip is
+  tangential; on a planar fault the projection commutes with the
+  component-wise metric), then the H^s map (`-sl` 0.1, `-so` 2, the
+  gia_kernels convention), giving the gradient of J with respect to
+  tangential slip.
+
+Measured trade-off on the canned meshes:
+- **The L² traction is faithful but noisy.** It matches the old lumped
+  profile to 1.6 % of the peak in 2-D away from the edge, but carries
+  mesh-scale noise on the unstructured 3-D mesh: about 10 % of the peak
+  at order 2 and worse at order 1. The reaction is assembled from the
+  stress of the hanging-wall element layer, and the consistent mass
+  passes that noise through.
+- **An H² map is the wrong metric for the traction.** It smooths the
+  noise but damps the stress drop (2-D: −0.016 → −0.012), and the pinned
+  edge erases the tip concentrations.
+- **Open (David):** whether a recovery from the stress itself would serve
+  the display better.
+
 
 ## Gates
 
