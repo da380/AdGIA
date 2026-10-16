@@ -38,7 +38,14 @@ below), which orders the remaining work:
    modulus-flavour cache (alternation gate: 13 → 2 assemblies);
 3. the mixed (u, p) pressure-robust block preconditioner, prototyped
    on the box contrast case before any gravitating class ("Options"
-   of the near-incompressible item; deflation is the fallback);
+   of the near-incompressible item; deflation is the fallback) —
+   **prototype delivered and measured 14 October 2026** (the
+   pressure-split solve, below): parameter-robust as predicted, a
+   ~2x saddle overhead where the primal AMG copes, 2.5–3x the other
+   way on the graded column where it does not; the promotion
+   decision is re-aimed at the production targets, graded 3-D
+   viscosity and the Maxwell fluid-core endgame (see the item's
+   "Measured" paragraph);
 4. the Picard feedback inside the time stepper ("Picard feedback
    inside the time stepper") — **delivered 13 October 2026** as the
    gated `SetPicardBorder()` route; wins 25 % in operator-changing
@@ -508,9 +515,177 @@ h = 0.3 may fire at production resolution); locally the endgame lever
 moves to the remaining candidates, the mixed (u, p) block
 preconditioner and deflation.
 
+*The pressure-split (u, p) solve: prototype delivered and measured
+(14 Oct 2026).* `SetPressureSplitSolver()` on the clamped solid routes
+Solve() through the mixed reformulation with `p = kappa div u`
+eliminated from the stress: MINRES on the symmetric block system
+`[[A_mu, B^T], [B, -M_{1/kappa}]]` with `A_mu` the deviatoric stiffness,
+`B` the divergence coupling onto a continuous pressure space one order
+below the displacement (Taylor–Hood), preconditioned block-diagonally by
+the house nodal-systems AMG on the kappa-free full-gradient operator
+`2 mu eps:eps` and the diagonal of the pressure mass weighted by
+`1/kappa + 1/(2 mu)` (the Schur equivalent). The AMG never sees kappa:
+both degradation regimes — near incompressibility and collapsed
+effective shear — move into the Schur block, where a weighted mass
+matrix absorbs them. The rheology side supplies `(kappa, mu_eff)`
+through the new `ElasticStiffness::IsotropicSplit()` (the live
+redirectable effective shear; piecewise attribute dispatch for
+composites, purely elastic regions beside viscoelastic ones included —
+the production lithosphere/mantle shape, gated in `TestPressureSplit`).
+Prototype scope: clamped solid only (no rigid-mode projection, no
+fluid treatments, order >= 2); the modulus-flavour cache is bypassed
+(every weight switch reassembles the blocks); the discrete solution is
+the Taylor–Hood one — locking-free, but its continuous pressure smears
+the pressure jump at material interfaces at discretisation level.
+Benchmark flag `-up` (box driver).
+
+Measured at np 4, order 2, exptrap, dt 0.25, 40 solves (`contrast` and
+`gradient` cases of the box family; iterations per solve, wall for the
+run):
+
+| case | primal its | split its | primal wall | split wall |
+|---|---|---|---|---|
+| C = 1, column, nz 10 | 55 | 129 | 0.57 s | 1.34 s |
+| C = 1e4, column | 140 | 203 | 1.7 s | 2.0 s |
+| C = 1e4, slab | 267 | 424 | 5.6 s | 7.3 s |
+| C = 1e6, column | 210 | 202 | 2.0 s | 2.4 s |
+| C = 1e6, slab | 287 | 365 | 3.8 s | 5.3 s |
+| gradient C = 1e6, nz 20 | 1102 | 367 | 7.7 s | 3.1 s |
+| gradient, nz 40 | 2337 | 760 | 21.8 s | 7.8 s |
+| gradient, nz 80 | 4115 | 1756 | 41.1 s | 19.8 s |
+
+The reading: the split is parameter-robust — its column count is flat
+across the whole ladder (129 → 203 → 202) — but carries a ~2x saddle
+overhead per solve, so on the LAYERED cases, where the nodal AMG
+copes with a weak layer sandwiched by elastic support, the primal
+route stays ahead. It wins exactly where the primal collapses: the
+smoothly GRADED column (2.5–3x in iterations and wall, and the stakes
+grow with resolution — the primal reaches 4115 iterations per solve at
+nz 80). On the harsher two-region test configuration (weak-branch
+weight 1e-6, no stiff support) the gap is 5–7x (168 vs 932 at np 1,
+flat to np 4), and there the primal does not merely slow down, it
+LOCKS — the discretisations disagree at O(1), which is a correctness
+point for the primal route, not just a cost one.
+
+The promotion decision (David's framing, 14 Oct): the layered box
+cases are not the production shape. The production targets are
+(a) smoothly graded / 3-D viscosity in the mantle — the gradient
+case's regime, where the split already wins — and above all (b) the
+Maxwell fluid-core treatment, which drives the core's effective shear
+`eps mu_c -> 0` BY DESIGN: the most extreme kappa/mu contrast in the
+codebase (the 2706-iteration continuation measured on `fluid_core`).
+There `p = kappa div u` stays healthy in the fluid while the vanishing
+shear moves into the Schur weight. The next rung is therefore the
+extension to the mixed gravitating class — the displacement block of
+the (u, phi) solve with the fluid region's effective shear as one more
+piecewise split region — measured on `fluid_core` against the Maxwell
+continuation's current cost. Open questions for that rung: the
+potential block rides along (the split changes only the u-block solve
+inside SolveLinearSystem's block structure), the bordered rows must
+not notice, and the near-zero-mu A_mu block leaves the fluid
+relabelling null space to the continuation exactly as today. Deflation
+remains the fallback if the extension disappoints.
+
+*The region-restricted split (David's question, 14 Oct 2026: primal
+solid solver in the solid, pressure split in the fluid, continuity
+weak at the interface).* Yes — and there is a lighter version that
+needs no interface machinery at all. Nothing forces the pressure to
+live everywhere: keep ONE conforming displacement space, keep the
+primal form kappa div·div + 2 mu dev·dev on the solid elements, and
+split only the fluid's volumetric term — p on a pressure space over
+the FLUID elements only, B the divergence coupling restricted to the
+fluid marker. Continuity of u is then automatic (the space is
+conforming), no weak coupling, no mortar, and the saddle overhead and
+the Taylor–Hood pressure are paid only where the collapse lives. The
+preconditioner follows: the house AMG on [solid primal + fluid
+full-gradient] plus the fluid-only weighted pressure mass. The open
+technical point is the inf-sup condition for the restricted pair
+(divergence of fluid-supported conforming fields against the fluid
+pressure space, with the interface acting as that subproblem's
+boundary) — standard domain-restricted Taylor–Hood territory, to be
+checked rather than assumed. The weak-continuity (Nitsche / mortar)
+variant David describes becomes necessary only when the two regions
+also want DIFFERENT displacement discretisations or a genuinely
+slipping interface — and there it would meet the existing slip-class
+multiplier machinery rather than new code. Since the Maxwell fluid
+treatment runs on the welded space (slip emerges as its inviscid
+asymptotics), the conforming region-restricted split is the natural
+first implementation for the fluid-core target, and it composes with
+the stepping question above: the solid's solves stay well-conditioned
+for ANY stepper, the fluid keeps its continuation.
+
+*Round 2 (14 Oct, after David's framing): the viscosity-limit
+lithosphere and multiple time scales.* The new box model `visco_lid` is
+the elastic-lid-as-viscosity-limit case: ONE Maxwell material, weak
+mantle (tau = 1/C) on [0, 0.6], a rapid geometric ramp to tau = 100
+over [0.6, 0.8], and a tau = 100 lid, effectively elastic over the
+window by viscosity alone. Measured (np 4, o2, exptrap, dt 0.25,
+iterations per solve):
+
+| case | primal | split |
+|---|---|---|
+| C = 1e2 column / slab | 119 / 162 | 161 / 318 |
+| C = 1e4 column / slab | 348 / 921 | 226 / 664 |
+| C = 1e6 column / slab | 527 / 2865 | 287 / 1208 |
+| C = 1e6 column, nz 40 | 4217 | 788 |
+| C = 1e6 slab, nz 20 / 40 | **CG FAILS (10000-cap)** | see below |
+
+Unlike the sharp layered `contrast` cases, here the split wins on BOTH
+column and slab from C = 1e4 up (1.5–2.4x at nz 10, 5x at nz 40), and
+the primal route does not merely degrade — on the C = 1e6 slab it FAILS
+OUTRIGHT at nz 20/40 (CG hits the iteration cap and the step aborts).
+The production reading: an effectively-elastic lithosphere realised by
+viscosity is the graded regime, and it is where the primal breaks first.
+
+Multiple time scales behave as the mu_inf floor predicts: `prony_lid`
+(mu_inf = 0.1) keeps kappa/mu_eff <= ~17 at every dt — primal 66–89
+its/solve flat, split ~250 (the saddle overhead, no win); `burgers_lid`
+(mu_inf = 0) grows toward the Maxwell regime as dt collapses both
+branches (primal 76 -> 228, split ~250–365). A nonzero long-term shear
+modulus caps the hazard; the hard cases are mu_inf ~ 0 materials and
+graded/rapid transitions.
+
+**Resolved (14 Oct, same day): the MINRES `beta = -nan` aborts on
+`visco_lid` were an INDEFINITE SCHUR MASS, root cause one level down.**
+The diagnosis chain: the NaN survived a provably-SPD all-Jacobi block
+preconditioner, which acquitted the AMG and pointed at the matrices;
+the assembled Schur mass had a MINIMUM DIAGONAL OF −5532 on the
+effective flavour. Mechanism: every stepping scheme's nodal relaxation
+weights lie in (0, 1], but the integrators read the nodal field's
+polynomial INTERPOLANT at quadrature points, and on a relaxation time
+varying by decades across one element the interpolant overshoots the
+bounds — below zero between nodes. The effective shear is linear in
+the weight, so the operator blocks barely notice (they stayed SPD,
+which is why full GMRES solved everything), but the Schur weight
+1/(2 mu_eff) turns a small undershoot into a hugely negative mass
+weight: indefinite preconditioner, MINRES breakdown. Two-level fix,
+both in: (1) `ViscoelasticOperator` clamps the weight evaluation to
+its exact bounds [0, 1] (`beta_clamped_`) — this protects EVERY
+consumer, the primal effective operator's definiteness included, and
+is a no-op wherever the interpolant respects the bounds (constant-tau
+cases digit-identical, suites green); (2) the split's Schur weight
+floors the shear at 1e-10 kappa (the natural local scale) —
+preconditioner-only, since the clamped interpolant can still TOUCH
+zero. Also kept from the chase: the preconditioner block's essential
+diagonal stays at its assembled value rather than one (unit rows in a
+collapsed-shear clamped region put an artificial ~1e6 jump under the
+AMG; the operator blocks stay DIAG_ONE). After the fix MINRES solves
+every previously-aborting configuration (nz 15/20 column ~700–830
+its/solve — genuinely harder ramp samplings than nz 10/40; C = 1e6
+slab nz 20 converges at ~5700/solve, the Schur floor active), while
+the PRIMAL still fails outright there — its cap-out is genuine
+conditioning, not the latent indefiniteness.
+
+Implementation notes recorded along the way: serial
+`RecoverFEMSolution` assumes the solver wrote through FormLinearSystem's
+aliased true-dof vector — a block solver must copy its solution back
+into that vector before recovering (see `doc/mfem_notes.md`); the
+flavour-cache guards live in `StashFlavor`/`TryRestoreFlavor`.
+
 **See:** `doc/benchmarks.tex`, "Box: viscosity contrasts", "Sphere: the
 integrators with lateral viscosity variations";
-`src/quasi_static_problem.cpp` (`SetupDefaultPreconditioner`).
+`src/quasi_static_problem.cpp` (`SetupDefaultPreconditioner`,
+`AssemblePressureSplitOperator`); `tests/TestPressureSplit.cpp`.
 
 ---
 
@@ -576,6 +751,38 @@ integrators on a homogeneous body" (cost), "Box: viscosity contrasts";
 `include/AdGIA/viscoelastic.hpp`
 (`AdaptiveExponentialTrapezoidSolver`, `SetStepBounds`);
 `src/viscoelastic.cpp` (`ErrorEstimate`).
+
+### Implicit against explicit stepping: revisit per model
+
+**Status:** question recorded (David, 14 Oct 2026), to revisit once the
+pressure-split promotion is settled; no new measurements yet.
+
+The house default is implicit (L-stable / exponential-trapezoid)
+stepping, chosen for accuracy at large dt. The solver-side cost
+structure cuts the other way: implicit steps solve with the EFFECTIVE
+operator, whose conditioning collapses exactly where dt is large
+against tau, while the explicit and exponential-explicit schemes (ETD1,
+RK4) solve with the UNRELAXED operator and sit at the flat ~50–65
+iterations per solve at every contrast (the box measurements). So the
+total-cost comparison — few expensive ill-conditioned solves against
+many cheap well-conditioned ones — is MODEL-DEPENDENT, and the answer
+shifts with everything this item's work changes: the pressure-split
+route flattens the implicit solve cost (weakening the explicit case),
+while a model with mu_inf > 0 everywhere caps the implicit penalty by
+itself (the prony_lid finding). The revisit must carry the known
+accuracy/stability constraints from the stepper survey, which are not
+solver-side folklore but measured: RK4 is stability-bound at
+dt < 2.8/C, and ETD1 does not converge at large contrast on slabs
+(error 0.5–0.8 at C >= 1e4 — its start-of-step relaxation misses the
+slow redistribution; column-only convergence). A serious explicit
+contender therefore needs either resolved fast time scales (many
+steps) or a better exponential corrector. A related half-way option is
+an IMEX / region-split step: implicit only where dt >> tau, explicit
+(unrelaxed) elsewhere — which meets the region-splitting idea of the
+pressure-split item above.
+
+**See:** `doc/benchmarks.tex`, "Box: viscosity contrasts" (the ETD1 and
+RK4 findings); "The pressure-split (u, p) solve" above.
 
 ### Caching unrelaxed and effective operators
 

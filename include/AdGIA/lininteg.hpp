@@ -1,7 +1,8 @@
 /**
  * @file lininteg.hpp
  * @brief Linear form integrators: the pairing of a matrix coefficient with
- * the deformation gradient of a vector test field.
+ * the deformation gradient of a vector test field, and the action of a
+ * bilinear form on a fixed field.
  */
 
 #pragma once
@@ -109,6 +110,57 @@ class DomainLFDeformationGradientIntegrator : public mfem::DeltaLFIntegrator {
    * any) are also accessible.
    */
   using mfem::LinearFormIntegrator::AssembleRHSElementVect;
+};
+
+/**
+ * @brief The action of a bilinear form on a fixed field, as a linear form:
+ * \f[
+ *   v \mapsto s \sum_k a_k(x, v),
+ * \f]
+ * with \f$a_k\f$ the domain integrators of @p form, each over the elements
+ * its own attribute marker selects, \f$x\f$ a grid function on the space
+ * of the linear form and \f$s\f$ a scale. Element by element the
+ * integrators' element matrices act on the element values of \f$x\f$, so
+ * the result is the assembled matrix times \f$x\f$ without assembling it,
+ * restricted to the elements the linear form's own marker selects.
+ * Elements on which \f$x\f$ vanishes are skipped.
+ *
+ * The integrators are borrowed: they read their coefficients at every
+ * assembly, so a form whose coefficients change (relaxation weights, say)
+ * is followed. A typical use is a lifting: the load \f$-a(x, v)\f$ of
+ * inhomogeneous data \f$x\f$ supported on part of the mesh, such as the
+ * prescribed slip of a meshed fault acting through the stiffness of one
+ * side of it (LinearQuasiStaticClampedFaultProblem).
+ *
+ * The space of @p x must be the space of the linear form the integrator is
+ * added to (a ParGridFunction with consistent shared values in parallel).
+ */
+class DomainLFFormActionIntegrator : public mfem::LinearFormIntegrator {
+ public:
+  /**
+   * @param form The bilinear form whose domain integrators act; not owned,
+   * must outlive the integrator.
+   * @param x The field acted on; not owned, read at every assembly.
+   * @param scale The factor \f$s\f$.
+   */
+  DomainLFFormActionIntegrator(mfem::BilinearForm& form,
+                               const mfem::GridFunction& x,
+                               mfem::real_t scale = 1.0)
+      : form_(form), x_(x), scale_(scale) {}
+
+  void AssembleRHSElementVect(const mfem::FiniteElement& el,
+                              mfem::ElementTransformation& Trans,
+                              mfem::Vector& elvect) override;
+
+  using mfem::LinearFormIntegrator::AssembleRHSElementVect;
+
+ private:
+  mfem::BilinearForm& form_;
+  const mfem::GridFunction& x_;
+  mfem::real_t scale_;
+  mfem::Array<int> vdofs_;
+  mfem::Vector xe_;
+  mfem::DenseMatrix elmat_;
 };
 
 }  // namespace AdGIA

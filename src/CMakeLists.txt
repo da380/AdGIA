@@ -15,6 +15,7 @@ target_sources(${PROJECT_NAME} PRIVATE null_space.cpp
                                        rheology.cpp
                                        relaxation_law.cpp
                                        quasi_static_problem.cpp
+                                       fault_problem.cpp
                                        referential_problem.cpp
     mixed_problem.cpp
                                        viscoelastic.cpp

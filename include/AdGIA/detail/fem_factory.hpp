@@ -76,6 +76,23 @@ inline std::unique_ptr<mfem::Solver> MakePreconditioner(
       *const_cast<mfem::OperatorHandle&>(A).As<mfem::SparseMatrix>());
 }
 
+/// A mixed bilinear form (trial, test), parallel if the spaces are (both
+/// must agree).
+inline std::unique_ptr<mfem::MixedBilinearForm> MakeMixedBilinearForm(
+    mfem::FiniteElementSpace* trial, mfem::FiniteElementSpace* test) {
+#ifdef MFEM_USE_MPI
+  auto* ptrial = dynamic_cast<mfem::ParFiniteElementSpace*>(trial);
+  auto* ptest = dynamic_cast<mfem::ParFiniteElementSpace*>(test);
+  MFEM_VERIFY(!ptrial == !ptest,
+              "MakeMixedBilinearForm: trial and test spaces must both be "
+              "serial or both parallel.");
+  if (ptrial) {
+    return std::make_unique<mfem::ParMixedBilinearForm>(ptrial, ptest);
+  }
+#endif
+  return std::make_unique<mfem::MixedBilinearForm>(trial, test);
+}
+
 /// A bilinear form on @p fes, borrowing the integrators of @p borrow_from
 /// when given (the returned form does not own them). When @p fes is parallel,
 /// @p borrow_from must be a ParBilinearForm (it is static_cast).

@@ -57,7 +57,18 @@ class GLVisWindow {
   void SetValueRange(double lo, double hi) {
     std::ostringstream os;
     os << "autoscale off\nvaluerange " << lo << " " << hi << "\n";
-    commands_ = os.str();
+    commands_ += os.str();
+  }
+
+  // Set the view angles (degrees; sent with the first frame, before the
+  // keys). GLVis rotates the scene by R_x(-theta) R_z(-phi), so the camera
+  // looks along (-sin(phi) sin(theta), cos(phi) sin(theta), -cos(theta)):
+  // 0 0 from above, 90 0 horizontally along +y with x to the right and z
+  // up. Keys that reset the view (R, r) undo it.
+  void SetView(double theta, double phi) {
+    std::ostringstream os;
+    os << "view " << theta << " " << phi << "\n";
+    commands_ += os.str();
   }
 
   // Send one frame: every rank calls this (collective in parallel).

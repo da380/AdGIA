@@ -75,8 +75,12 @@ if(USE_MPI)
     target_link_libraries(TestSubMeshMixedBilinearFormPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestQuasiStaticProblemPar TestQuasiStaticProblemPar.cpp)
     target_link_libraries(TestQuasiStaticProblemPar PRIVATE AdGIA MPI::MPI_CXX)
+    add_executable(TestFaultProblemPar TestFaultProblemPar.cpp)
+    target_link_libraries(TestFaultProblemPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestViscoelasticPar TestViscoelasticPar.cpp)
     target_link_libraries(TestViscoelasticPar PRIVATE AdGIA MPI::MPI_CXX)
+    add_executable(TestPressureSplitPar TestPressureSplitPar.cpp)
+    target_link_libraries(TestPressureSplitPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestMixedProblemPar TestMixedProblemPar.cpp)
     target_link_libraries(TestMixedProblemPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestBoundaryNormalIntegratorsPar TestBoundaryNormalIntegratorsPar.cpp)
@@ -140,9 +144,15 @@ if(USE_MPI)
         add_test(NAME TestQuasiStaticProblemPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestQuasiStaticProblemPar>)
+        add_test(NAME TestFaultProblemPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestFaultProblemPar>)
         add_test(NAME TestViscoelasticPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestViscoelasticPar>)
+        add_test(NAME TestPressureSplitPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestPressureSplitPar>)
         add_test(NAME TestAdjointPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestAdjointPar>)
@@ -251,6 +261,10 @@ add_executable(TestQuasiStaticProblem TestQuasiStaticProblem.cpp)
 target_link_libraries(TestQuasiStaticProblem PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestQuasiStaticProblem)
 
+add_executable(TestFaultProblem TestFaultProblem.cpp)
+target_link_libraries(TestFaultProblem PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestFaultProblem)
+
 add_executable(TestElasticTensor TestElasticTensor.cpp)
 target_link_libraries(TestElasticTensor PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestElasticTensor)
@@ -258,6 +272,10 @@ gtest_discover_tests(TestElasticTensor)
 add_executable(TestViscoelastic TestViscoelastic.cpp)
 target_link_libraries(TestViscoelastic PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestViscoelastic)
+
+add_executable(TestPressureSplit TestPressureSplit.cpp)
+target_link_libraries(TestPressureSplit PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestPressureSplit)
 
 add_executable(TestAdjoint TestAdjoint.cpp)
 target_link_libraries(TestAdjoint PRIVATE AdGIA gtest_main)

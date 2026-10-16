@@ -340,7 +340,17 @@ ViscoelasticOperator::ViscoelasticOperator(LinearQuasiStaticProblem& problem,
     *beta_.back() = 1.0;
     beta_coef_.push_back(
         std::make_unique<GridFunctionCoefficient>(beta_.back().get()));
-    beta_ptrs_.push_back(beta_coef_.back().get());
+    // The weights are clamped to their exact bounds at evaluation: every
+    // scheme's nodal beta lies in (0, 1], but the integrators read the
+    // nodal field's polynomial INTERPOLANT at quadrature points, and on a
+    // relaxation time varying by decades across one element it overshoots
+    // those bounds — below zero, the assembled effective operator (and
+    // anything built from the effective shear) loses definiteness.
+    beta_clamped_.push_back(std::make_unique<TransformedCoefficient>(
+        beta_coef_.back().get(), [](real_t b) {
+          return std::min(std::max(b, real_t{0.0}), real_t{1.0});
+        }));
+    beta_ptrs_.push_back(beta_clamped_.back().get());
 
     // The rows of B for the branch's nodes (an L2 node's row involves its
     // own element only, so these are the rows a form assembled on the

@@ -606,6 +606,49 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
    */
   void SetElasticityNearNull(bool on = true) { amg_rbm_ = on; }
 
+  /**
+   * @brief Route Solve() through the pressure-split @f$(u, p)@f$
+   * reformulation of the solid, @f$p = \kappa\,\mathrm{div}\,u@f$: MINRES
+   * on the symmetric block system
+   * @f[ \begin{pmatrix} A_\mu & B^T \\ B & -M_{1/\kappa} \end{pmatrix}
+   *     \begin{pmatrix} u \\ p \end{pmatrix} =
+   *     \begin{pmatrix} f \\ 0 \end{pmatrix}, @f]
+   * with @f$A_\mu@f$ the deviatoric stiffness @f$2\mu\,\mathrm{dev}\,
+   * \varepsilon : \mathrm{dev}\,\varepsilon@f$, @f$B@f$ the divergence
+   * coupling onto a continuous pressure space one order below the
+   * displacement (Taylor–Hood), and @f$M_{1/\kappa}@f$ the pressure mass
+   * weighted by @f$1/\kappa@f$; preconditioned block-diagonally by the
+   * house AMG on the full-gradient operator @f$2\mu\,\varepsilon :
+   * \varepsilon@f$ and the diagonal of the pressure mass weighted by
+   * @f$1/\kappa + 1/(2\mu)@f$. The point: the AMG never sees
+   * @f$\kappa@f$, so the regimes that degrade the primal preconditioner —
+   * near incompressibility, and effective shear moduli collapsed by
+   * @f$\Delta t \gg \tau@f$ viscosity contrasts — move into the Schur
+   * block, where a weighted mass matrix absorbs them (see
+   * doc/planning/solvers.md, "Near-incompressible and high-contrast
+   * effective operators").
+   *
+   * Scope (the box-contrast prototype): the plain clamped solid only —
+   * requires an isotropic(-split) rheology, displacement order >= 2 and no
+   * fluid treatment; classes with their own solver machinery (rigid-mode
+   * projection, gravity blocks) refuse. The modulus-flavour cache is
+   * bypassed: every weight switch reassembles the blocks. Note the
+   * discrete solution is the Taylor–Hood one, which differs from the
+   * primal discretisation at discretisation-error level (and is free of
+   * volumetric locking).
+   */
+  void SetPressureSplitSolver();
+
+  /** @brief Back to the primal displacement solve. */
+  void ClearPressureSplitSolver();
+
+  /** @brief Whether Solve() runs the pressure-split route. */
+  bool UsingPressureSplit() const { return pressure_split_; }
+
+  /** @brief The pressure of the last pressure-split solve (null before
+   * SetPressureSplitSolver()); on the internal pressure space. */
+  const mfem::GridFunction* Pressure() const { return psplit_p_.get(); }
+
   /** @brief Stagnation (plateau) stop for the SetGaugePreconditionerOnly
    * mode: the block solve runs as warm-started restarts of @p chunk
    * iterations and stops when the residual of a chunk exceeds @p ratio
@@ -696,6 +739,11 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   /** @brief Solve A X = B with the solver from SetupSolver(); return
    * convergence. Default: warm-started preconditioned CG. */
   virtual bool SolveLinearSystem(const mfem::Vector& B, mfem::Vector& X);
+
+  /** @brief Whether this class's Solve() path supports the pressure-split
+   * route: base solves without machinery of their own. Default false; the
+   * clamped class opts in. */
+  virtual bool SupportsPressureSplit() const { return false; }
 
   /** @brief Preconditioned CG (Gauss-Seidel serial, BoomerAMG with elasticity
    * options in parallel) in prec_/cg_, warm-started; the preconditioner is
@@ -971,6 +1019,40 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   int prec_ref_slot_ = -1;
   bool operator_dirty_ = true;
   bool eps_only_dirty_ = false;
+
+  // --- the pressure-split (u, p) solve ---------------------------------------
+  //
+  // State of SetPressureSplitSolver(): Taylor-Hood pressure space and
+  // field, the block operator's forms and matrices, and the MINRES stack.
+  // The blocks are (re)assembled by AssemblePressureSplitOperator()
+  // whenever the operator is dirty; the flavour cache is bypassed (its
+  // slots hold primal matrices only), so weight switches always mark
+  // dirty. The (kappa, mu) pointers come from the stiffness's
+  // IsotropicSplit() and track the live effective modulus.
+  bool pressure_split_ = false;
+  mfem::Coefficient* psplit_kappa_ = nullptr;
+  mfem::Coefficient* psplit_mu_ = nullptr;
+  std::vector<std::unique_ptr<mfem::Coefficient>> psplit_coefs_;
+  std::unique_ptr<mfem::FiniteElementCollection> psplit_fec_;
+  std::unique_ptr<mfem::FiniteElementSpace> psplit_fes_;
+  std::unique_ptr<mfem::GridFunction> psplit_p_;
+  std::unique_ptr<mfem::BilinearForm> psplit_amu_form_, psplit_aprec_form_,
+      psplit_mass_form_, psplit_schur_form_;
+  std::unique_ptr<mfem::MixedBilinearForm> psplit_b_form_;
+  mfem::OperatorHandle psplit_Amu_, psplit_Aprec_, psplit_B_, psplit_M_,
+      psplit_Mw_;
+  std::unique_ptr<mfem::TransposeOperator> psplit_BT_;
+  std::unique_ptr<mfem::Solver> psplit_amg_, psplit_schur_prec_;
+  std::unique_ptr<mfem::BlockOperator> psplit_op_;
+  std::unique_ptr<mfem::BlockDiagonalPreconditioner> psplit_prec_;
+  std::unique_ptr<mfem::IterativeSolver> psplit_minres_;
+  mfem::Array<int> psplit_offsets_;
+  // The operator version the blocks were assembled at: a primal assembly
+  // (SystemMatrix() diagnostics) clears operator_dirty_ without touching
+  // the blocks, so the split solve keys on the version, not the flag.
+  int psplit_version_ = -1;
+  void AssemblePressureSplitOperator();
+  bool PressureSplitSolve();
 };
 
 /**
@@ -1084,6 +1166,10 @@ class LinearQuasiStaticClampedProblem : public LinearQuasiStaticProblemBase {
 
  protected:
   void UpdateBoundaryValues(mfem::real_t t) override;
+
+  // The base solve path with essential conditions and no extra solver
+  // machinery: the pressure-split prototype's home (see solvers.md).
+  bool SupportsPressureSplit() const override { return true; }
 
  private:
   mfem::Array<int> ess_bdr_, marker_;

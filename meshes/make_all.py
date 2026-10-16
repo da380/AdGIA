@@ -7,7 +7,7 @@ The build does this itself through CMakeLists.txt; this is for running the
 set by hand — for instance `--scale 0.5` for a higher-resolution version
 of every mesh (forwarded to each script). SCRIPTS is the set the build
 makes (CMakeLists.txt here), `--all` forms of the multi-mesh scripts
-included: layered_earth.py and aspherical_body.py.
+included: layered_earth.py, aspherical_body.py and faulted_box.py.
 
 The unit ball and the three-layer 3D Earth take a minute or two each.
 """
@@ -28,6 +28,8 @@ SCRIPTS = [
     ["homogeneous_body.py", "--preset", "ball-buffer-coarse"],
     ["homogeneous_body.py", "--preset", "ball"],
     ["offset_disc.py"],
+    ["faulted_box.py", "--all"],
+    ["faulted_box.py", "--all", "--topography", "flat", "--name", "flat"],
     ["layered_earth.py", "--all"],
     ["aspherical_body.py", "--all"],
     ["earth_coastlines.py", "--field", "earth"],

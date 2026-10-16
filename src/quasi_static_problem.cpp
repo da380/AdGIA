@@ -316,8 +316,11 @@ void LinearQuasiStaticProblemBase::StashFlavor(int which) {
     ReleaseFlavorSlot(which);  // retained storage dies by the one rule
   }
   FlavorSlot& s = flavor_[which];
-  if (!a_ || operator_dirty_ || eps_only_dirty_) {
-    s.valid = false;  // no clean assembled state to keep
+  if (pressure_split_ || !a_ || operator_dirty_ || eps_only_dirty_) {
+    // No clean assembled state to keep — or the pressure-split route is
+    // on, whose block matrices the slots do not hold: a restore would
+    // clear the dirty flag over stale blocks.
+    s.valid = false;
     return;
   }
   // The shared preconditioner stays live (its reuse policy is
@@ -338,7 +341,7 @@ void LinearQuasiStaticProblemBase::StashFlavor(int which) {
 
 bool LinearQuasiStaticProblemBase::TryRestoreFlavor(int which) {
   FlavorSlot& s = flavor_[which];
-  if (!s.valid ||
+  if (pressure_split_ || !s.valid ||
       (fluid_op_.Active() ? fluid_op_.Epsilon() : -1.0) != s.gauge_eps) {
     if (s.valid) {
       ReleaseFlavorSlot(which);
@@ -510,6 +513,9 @@ bool LinearQuasiStaticProblemBase::Solve() {
   if (fluid_treatment_ == FluidTreatment::Maxwell) {
     return MaxwellSolve();
   }
+  if (pressure_split_) {
+    return PressureSplitSolve();
+  }
   EnsureOperator();
   rhs_ = *b_;
   rhs_ += increment_;
@@ -537,6 +543,8 @@ void LinearQuasiStaticProblemBase::SetFluid(
   MFEM_VERIFY(!gauge_prec_only_,
               "SetFluid: the Maxwell treatment is incompatible with "
               "SetGaugePreconditionerOnly.");
+  MFEM_VERIFY(!pressure_split_,
+              "SetFluid: no fluid treatments on the pressure-split route.");
   MFEM_VERIFY(opts.dt_over_tau > 0.0 && opts.escalate >= 1.0 &&
                   opts.beta_max >= opts.dt_over_tau && opts.max_steps > 0 &&
                   opts.prec_eps >= 0.0,
@@ -564,6 +572,8 @@ void LinearQuasiStaticProblemBase::SetFluid(
 void LinearQuasiStaticProblemBase::SetFluid(
     const Array<int>& fluid_marker, Coefficient& mu_scale,
     const GaugePenaltyOptions& opts, Diffeomorphism* map) {
+  MFEM_VERIFY(!pressure_split_,
+              "SetFluid: no fluid treatments on the pressure-split route.");
   ConfigureFluidOperator(fluid_marker, mu_scale, opts.epsilon, opts.form,
                          map);
   fluid_treatment_ = FluidTreatment::Penalty;
@@ -1171,6 +1181,321 @@ bool LinearQuasiStaticProblemBase::SolveLinearSystem(const Vector& B,
   cg_->Mult(B, X);
   NoteIterations(cg_->GetNumIterations());
   return cg_->GetConverged();
+}
+
+void LinearQuasiStaticProblemBase::SetPressureSplitSolver() {
+  if (pressure_split_) {
+    return;
+  }
+  MFEM_VERIFY(SupportsPressureSplit(),
+              "SetPressureSplitSolver: this class's solve carries machinery "
+              "(rigid-mode projection, gravity blocks, interface "
+              "constraints) the pressure-split route does not; it is "
+              "supported on the plain clamped solid.");
+  MFEM_VERIFY(fluid_treatment_ == FluidTreatment::None && !gauge_prec_only_,
+              "SetPressureSplitSolver: no fluid treatments on the "
+              "pressure-split route.");
+  Coefficient* kappa = nullptr;
+  Coefficient* mu = nullptr;
+  MFEM_VERIFY(stiffness_->IsotropicSplit(kappa, mu),
+              "SetPressureSplitSolver: needs an isotropic(-split) rheology "
+              "(a bulk and a shear modulus).");
+  MFEM_VERIFY(!Rheology().EquilibriumMapping(),
+              "SetPressureSplitSolver: non-natural reference states are not "
+              "carried by the prototype.");
+  const int dim = fes_->GetMesh()->Dimension();
+  const int order = fes_->GetMaxElementOrder();
+  MFEM_VERIFY(order >= 2,
+              "SetPressureSplitSolver: Taylor-Hood needs displacement order "
+              ">= 2 (the pressure runs one order below).");
+  real_t ness = ess_tdof_list_.Size();
+#ifdef MFEM_USE_MPI
+  if (pfes_) {
+    MPI_Allreduce(MPI_IN_PLACE, &ness, 1, MPITypeMap<real_t>::mpi_type,
+                  MPI_SUM, pfes_->GetComm());
+  }
+#endif
+  MFEM_VERIFY(ness > 0,
+              "SetPressureSplitSolver: essential boundary conditions "
+              "required (the route carries no rigid-mode projection).");
+
+  pressure_split_ = true;
+  psplit_kappa_ = kappa;
+  psplit_mu_ = mu;
+  psplit_fec_ = std::make_unique<H1_FECollection>(order - 1, dim);
+  psplit_fes_ = detail::MakeFESpace(*fes_, psplit_fec_.get());
+  psplit_p_ = detail::MakeGridFunction(psplit_fes_.get());
+  *psplit_p_ = 0.0;
+  // The route assembles its own blocks; the flavour slots hold primal
+  // matrices only and stay disabled while it is on (StashFlavor /
+  // TryRestoreFlavor guards), so a weight switch can never restore a
+  // stale primal state over the split's reassembly.
+  InvalidateFlavorSlots();
+  MarkOperatorDirty();
+}
+
+void LinearQuasiStaticProblemBase::ClearPressureSplitSolver() {
+  if (!pressure_split_) {
+    return;
+  }
+  pressure_split_ = false;
+  psplit_minres_.reset();
+  psplit_prec_.reset();
+  psplit_op_.reset();
+  psplit_amg_.reset();
+  psplit_schur_prec_.reset();
+  psplit_BT_.reset();
+  psplit_Amu_.Clear();
+  psplit_Aprec_.Clear();
+  psplit_B_.Clear();
+  psplit_M_.Clear();
+  psplit_Mw_.Clear();
+  psplit_amu_form_.reset();
+  psplit_aprec_form_.reset();
+  psplit_b_form_.reset();
+  psplit_mass_form_.reset();
+  psplit_schur_form_.reset();
+  psplit_coefs_.clear();
+  psplit_p_.reset();
+  psplit_fes_.reset();
+  psplit_fec_.reset();
+  psplit_kappa_ = nullptr;
+  psplit_mu_ = nullptr;
+  psplit_version_ = -1;
+  MarkOperatorDirty();
+}
+
+void LinearQuasiStaticProblemBase::AssemblePressureSplitOperator() {
+  operator_version_++;
+  const int dim = fes_->GetMesh()->Dimension();
+  // Re-read the split each assembly: the pointers track the live
+  // effective modulus (a redirectable, or a piecewise dispatch over the
+  // regions' redirectables), so a weight switch needs no re-wiring here,
+  // only this reassembly.
+  Coefficient* kappa = nullptr;
+  Coefficient* mu = nullptr;
+  MFEM_VERIFY(stiffness_->IsotropicSplit(kappa, mu),
+              "AssemblePressureSplitOperator: the rheology lost its "
+              "isotropic split.");
+  psplit_kappa_ = kappa;
+  psplit_mu_ = mu;
+  psplit_coefs_.clear();
+  psplit_coefs_.push_back(std::make_unique<RatioCoefficient>(1.0, *kappa));
+  Coefficient* inv_kappa = psplit_coefs_.back().get();
+  // The Schur weight inverts the effective shear, so it is floored at a
+  // tiny multiple of kappa (the bulk modulus is the natural local scale):
+  // the clamped weight interpolant can still touch zero between internal
+  // nodes on a rapidly varying relaxation time, and 1/(2 mu) would turn
+  // that into an unbounded (or, unclamped, indefinite) mass weight. The
+  // floor lives in the PRECONDITIONER only — the operator blocks use mu
+  // as assembled — so it costs preconditioner quality at the affected
+  // points, never correctness.
+  psplit_coefs_.push_back(std::make_unique<TransformedCoefficient>(
+      mu, kappa, [](real_t m, real_t k) {
+        return std::max(m, real_t{1e-10} * k);
+      }));
+  Coefficient* mu_floored = psplit_coefs_.back().get();
+  psplit_coefs_.push_back(std::make_unique<RatioCoefficient>(0.5, *mu_floored));
+  Coefficient* inv_mu2 = psplit_coefs_.back().get();
+  psplit_coefs_.push_back(
+      std::make_unique<SumCoefficient>(*inv_kappa, *inv_mu2));
+  Coefficient* schur_w = psplit_coefs_.back().get();
+
+  auto set_type = [this](OperatorHandle& h) {
+    h.Clear();
+#ifdef MFEM_USE_MPI
+    if (pfes_) {
+      h.SetType(Operator::Hypre_ParCSR);
+      return;
+    }
+#endif
+    h.SetType(Operator::MFEM_SPARSEMAT);
+  };
+  Array<int> none;
+
+  // A_mu = 2 mu dev eps : dev eps, essential dofs eliminated (DIAG_ONE,
+  // as the primal path).
+  psplit_amu_form_ = detail::MakeBilinearForm(fes_);
+  psplit_amu_form_->AddDomainIntegrator(
+      new ElasticityIntegrator(*mu, -2.0 / dim, 1.0));
+  psplit_amu_form_->Assemble();
+  set_type(psplit_Amu_);
+  psplit_amu_form_->FormSystemMatrix(ess_tdof_list_, psplit_Amu_);
+
+  // B = (q, div u); the essential trial columns are eliminated, their
+  // boundary data returning through the lift per solve.
+  psplit_b_form_ = detail::MakeMixedBilinearForm(fes_, psplit_fes_.get());
+  psplit_b_form_->AddDomainIntegrator(new VectorDivergenceIntegrator());
+  psplit_b_form_->Assemble();
+  set_type(psplit_B_);
+  psplit_b_form_->FormRectangularSystemMatrix(ess_tdof_list_, none,
+                                              psplit_B_);
+
+  // The compressibility block, assembled positively as (1/kappa) M_p and
+  // applied with weight -1 in the block operator.
+  psplit_mass_form_ = detail::MakeBilinearForm(psplit_fes_.get());
+  psplit_mass_form_->AddDomainIntegrator(new MassIntegrator(*inv_kappa));
+  psplit_mass_form_->Assemble();
+  set_type(psplit_M_);
+  psplit_mass_form_->FormSystemMatrix(none, psplit_M_);
+
+  // The preconditioner blocks: the house AMG on the kappa-free
+  // full-gradient operator 2 mu eps : eps, and the diagonal of the
+  // pressure mass weighted by 1/kappa + 1/(2 mu) (spectrally equivalent
+  // to the Schur complement, Stokes-fashion). The essential diagonal is
+  // KEPT at its assembled value, not set to one: with a collapsed
+  // effective shear the clamped boundary can sit in a region where the
+  // kappa-free block's entries are many orders below one, and unit
+  // essential rows put an artificial jump there that derails the AMG
+  // (MINRES dies on a NaN preconditioner application). The operator
+  // blocks stay DIAG_ONE; a preconditioner only needs to stay SPD, and
+  // the kept diagonal is the assembled (positive) one.
+  psplit_aprec_form_ = detail::MakeBilinearForm(fes_);
+  psplit_aprec_form_->AddDomainIntegrator(
+      new ElasticityIntegrator(*mu, 0.0, 1.0));
+  psplit_aprec_form_->SetDiagonalPolicy(Operator::DIAG_KEEP);
+  psplit_aprec_form_->Assemble();
+#ifdef MFEM_USE_MPI
+  if (pfes_) {
+    // The legacy parallel elimination hard-codes unit diagonals, so keep
+    // them by hand: save the assembled diagonal at the essential dofs,
+    // eliminate, and write it back (the diagonal block is rank-local).
+    auto* pform = static_cast<ParBilinearForm*>(psplit_aprec_form_.get());
+    pform->Finalize();
+    HypreParMatrix* Afull = pform->ParallelAssemble();
+    SparseMatrix dblk;
+    Afull->GetDiag(dblk);
+    Vector keep(ess_tdof_list_.Size());
+    for (int i = 0; i < ess_tdof_list_.Size(); i++) {
+      keep[i] = dblk(ess_tdof_list_[i], ess_tdof_list_[i]);
+    }
+    delete Afull->EliminateRowsCols(ess_tdof_list_);
+    Afull->GetDiag(dblk);
+    for (int i = 0; i < ess_tdof_list_.Size(); i++) {
+      dblk(ess_tdof_list_[i], ess_tdof_list_[i]) = keep[i];
+    }
+    psplit_Aprec_.Reset(Afull, true);
+  } else
+#endif
+  {
+    set_type(psplit_Aprec_);
+    psplit_aprec_form_->FormSystemMatrix(ess_tdof_list_, psplit_Aprec_);
+  }
+
+  psplit_schur_form_ = detail::MakeBilinearForm(psplit_fes_.get());
+  psplit_schur_form_->AddDomainIntegrator(new MassIntegrator(*schur_w));
+  psplit_schur_form_->Assemble();
+  set_type(psplit_Mw_);
+  psplit_schur_form_->FormSystemMatrix(none, psplit_Mw_);
+
+#ifdef MFEM_USE_MPI
+  if (pfes_) {
+    auto amg =
+        std::make_unique<HypreBoomerAMG>(*psplit_Aprec_.As<HypreParMatrix>());
+    // The nodal-systems settings of SetupDefaultPreconditioner.
+    amg->SetSystemsOptions(pfes_->GetVDim(), true);
+    HYPRE_BoomerAMGSetNodal(*amg, 4);
+    HYPRE_BoomerAMGSetNodalDiag(*amg, 1);
+    HYPRE_BoomerAMGSetCycleRelaxType(*amg, 8, 3);
+    amg->SetPrintLevel(0);
+    psplit_amg_ = std::move(amg);
+    psplit_schur_prec_ =
+        std::make_unique<HypreDiagScale>(*psplit_Mw_.As<HypreParMatrix>());
+  } else
+#endif
+  {
+    // Serial: Jacobi on both blocks (MINRES needs a symmetric positive
+    // definite preconditioner, which rules the serial Gauss-Seidel out);
+    // the serial path is kept working, not tuned.
+    psplit_amg_ =
+        std::make_unique<DSmoother>(*psplit_Aprec_.As<SparseMatrix>());
+    psplit_schur_prec_ =
+        std::make_unique<DSmoother>(*psplit_Mw_.As<SparseMatrix>());
+  }
+
+  psplit_offsets_.SetSize(3);
+  psplit_offsets_[0] = 0;
+  psplit_offsets_[1] = fes_->GetTrueVSize();
+  psplit_offsets_[2] = psplit_offsets_[1] + psplit_fes_->GetTrueVSize();
+  psplit_op_ = std::make_unique<BlockOperator>(psplit_offsets_);
+  psplit_op_->SetBlock(0, 0, psplit_Amu_.Ptr());
+  psplit_BT_ = std::make_unique<TransposeOperator>(psplit_B_.Ptr());
+  psplit_op_->SetBlock(0, 1, psplit_BT_.get());
+  psplit_op_->SetBlock(1, 0, psplit_B_.Ptr());
+  psplit_op_->SetBlock(1, 1, psplit_M_.Ptr(), -1.0);
+
+  psplit_prec_ =
+      std::make_unique<BlockDiagonalPreconditioner>(psplit_offsets_);
+  psplit_prec_->SetDiagonalBlock(0, psplit_amg_.get());
+  psplit_prec_->SetDiagonalBlock(1, psplit_schur_prec_.get());
+
+#ifdef MFEM_USE_MPI
+  if (pfes_) {
+    psplit_minres_ = std::make_unique<MINRESSolver>(pfes_->GetComm());
+  } else
+#endif
+  {
+    psplit_minres_ = std::make_unique<MINRESSolver>();
+  }
+  // Operator before preconditioner, as in SetupCG.
+  psplit_minres_->SetOperator(*psplit_op_);
+  psplit_minres_->SetPreconditioner(*psplit_prec_);
+  psplit_minres_->SetRelTol(rel_tol_);
+  psplit_minres_->SetAbsTol(0.0);
+  psplit_minres_->SetMaxIter(10000);
+  psplit_minres_->SetPrintLevel(print_level_);
+  psplit_minres_->iterative_mode = true;
+
+  psplit_version_ = operator_version_;
+  operator_dirty_ = false;
+  eps_only_dirty_ = false;
+  assemblies_++;
+  prec_setups_++;
+}
+
+bool LinearQuasiStaticProblemBase::PressureSplitSolve() {
+  if (operator_dirty_ || eps_only_dirty_ ||
+      psplit_version_ != operator_version_) {
+    AssemblePressureSplitOperator();
+  }
+  rhs_ = *b_;
+  rhs_ += increment_;
+  // u row: fold the boundary data into the reduced system on the scratch
+  // copy rhs_, warm start from the interior of u_ (copy_interior = 1).
+  Vector Xu, Bu;
+  psplit_amu_form_->FormLinearSystem(ess_tdof_list_, *u_, rhs_, psplit_Amu_,
+                                     Xu, Bu, 1);
+  // p row: the reduced right-hand side is minus the divergence coupling
+  // of the boundary lift (the equation's own data is zero).
+  Vector zero_p(psplit_fes_->GetVSize());
+  zero_p = 0.0;
+  Array<int> none;
+  Vector Xtmp, Bp;
+  psplit_b_form_->FormRectangularLinearSystem(ess_tdof_list_, none, *u_,
+                                              zero_p, psplit_B_, Xtmp, Bp);
+  BlockVector X(psplit_offsets_), B(psplit_offsets_);
+  X.GetBlock(0) = Xu;
+  Vector Xp;
+  psplit_p_->GetTrueDofs(Xp);
+  X.GetBlock(1) = Xp;  // the pressure warm start
+  B.GetBlock(0) = Bu;
+  B.GetBlock(1) = Bp;
+  bool ok = true;
+  if (SetWarmStartTolerance(*psplit_minres_, *psplit_prec_, B)) {
+    psplit_minres_->Mult(B, X);
+    NoteIterations(psplit_minres_->GetNumIterations());
+    ok = psplit_minres_->GetConverged();
+  } else {
+    X = 0.0;
+  }
+  // Copy the solved block back into the FormLinearSystem vector BEFORE the
+  // recovery: in serial Xu ALIASES u_'s data and RecoverFEMSolution is a
+  // no-op that assumes the solver wrote through it; in parallel the
+  // recovery prolongates whatever vector it is given.
+  Xu = X.GetBlock(0);
+  psplit_amu_form_->RecoverFEMSolution(Xu, rhs_, *u_);
+  psplit_p_->SetFromTrueDofs(X.GetBlock(1));
+  return ok;
 }
 
 std::unique_ptr<BilinearForm> LinearQuasiStaticProblemBase::AssembleMassOperator(

@@ -8,6 +8,7 @@
 #include "AdGIA/descent.hpp"
 #include "AdGIA/elastic_tensor.hpp"
 #include "AdGIA/equilibrium_figures.hpp"
+#include "AdGIA/fault_problem.hpp"
 #include "AdGIA/index.hpp"
 #include "AdGIA/json.hpp"
 #include "AdGIA/lininteg.hpp"

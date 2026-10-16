@@ -75,11 +75,13 @@ void IsotropicMandelTensor(int dim, real_t lambda, real_t mu, DenseMatrix& C) {
 }
 
 /// Stiffness of a branchless rheology: fixed integrators, weights no-ops.
+/// An isotropic one passes its (kappa, mu) for IsotropicSplit().
 class ElasticOnlyStiffness : public ElasticStiffness {
  public:
   explicit ElasticOnlyStiffness(
-      std::function<void(BilinearForm&, Array<int>*)> add)
-      : add_(std::move(add)) {}
+      std::function<void(BilinearForm&, Array<int>*)> add,
+      Coefficient* kappa = nullptr, Coefficient* mu = nullptr)
+      : add_(std::move(add)), kappa_(kappa), mu_(mu) {}
 
   void AddIntegrators(BilinearForm& form, Array<int>* marker) override {
     add_(form, marker);
@@ -95,8 +97,19 @@ class ElasticOnlyStiffness : public ElasticStiffness {
 
   bool IsRelaxed() const override { return false; }
 
+  bool IsotropicSplit(Coefficient*& kappa, Coefficient*& mu) override {
+    if (!kappa_) {
+      return false;
+    }
+    kappa = kappa_;
+    mu = mu_;
+    return true;
+  }
+
  private:
   std::function<void(BilinearForm&, Array<int>*)> add_;
+  Coefficient* kappa_;
+  Coefficient* mu_;
 };
 
 }  // namespace
@@ -139,7 +152,8 @@ std::unique_ptr<ElasticStiffness> IsotropicElasticRheology::MakeStiffness()
   return std::make_unique<ElasticOnlyStiffness>(
       [this](BilinearForm& form, Array<int>* marker) {
         AddIsotropicIntegrators(form, dim_, *kappa_, *mu_, marker);
-      });
+      },
+      kappa_, mu_);
 }
 
 // ---------------------------------------------------------------------------
@@ -229,6 +243,14 @@ class IsotropicStiffness : public ElasticStiffness {
   }
 
   bool IsRelaxed() const override { return relaxed_; }
+
+  bool IsotropicSplit(Coefficient*& kappa, Coefficient*& mu) override {
+    kappa = &r_->BulkModulus();
+    // The redirectable target: the unrelaxed mu_U, or the live effective
+    // chain while weights are set.
+    mu = &mu_current_;
+    return true;
+  }
 
  private:
   const IsotropicMaxwellRheology* r_;
@@ -504,10 +526,40 @@ class CompositeStiffness : public ElasticStiffness {
 
   bool IsRelaxed() const override { return relaxed_; }
 
+  bool IsotropicSplit(Coefficient*& kappa, Coefficient*& mu) override {
+    // Attribute-dispatched piecewise coefficients over the regions' own
+    // splits, built once: the parts' pointers are live (they track weight
+    // changes), so the dispatch never needs rebuilding.
+    if (!split_kappa_) {
+      auto kpw = std::make_unique<PWCoefficient>();
+      auto mpw = std::make_unique<PWCoefficient>();
+      for (int i = 0; i < r_->NumRegions(); i++) {
+        Coefficient* k = nullptr;
+        Coefficient* m = nullptr;
+        if (!parts_[i]->IsotropicSplit(k, m)) {
+          return false;  // an anisotropic region: no global split
+        }
+        const Array<int>& base = r_->RegionMarker(i);
+        for (int a = 0; a < base.Size(); a++) {
+          if (base[a]) {
+            kpw->UpdateCoefficient(a + 1, *k);
+            mpw->UpdateCoefficient(a + 1, *m);
+          }
+        }
+      }
+      split_kappa_ = std::move(kpw);
+      split_mu_ = std::move(mpw);
+    }
+    kappa = split_kappa_.get();
+    mu = split_mu_.get();
+    return true;
+  }
+
  private:
   const CompositeRheology* r_;
   std::vector<Array<int>> markers_;  ///< owned copies, referenced by forms
   std::vector<std::unique_ptr<ElasticStiffness>> parts_;
+  std::unique_ptr<PWCoefficient> split_kappa_, split_mu_;
   bool relaxed_ = false;
 };
 

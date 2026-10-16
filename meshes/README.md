@@ -2,7 +2,8 @@
 
 The gmsh meshes the examples and tests read are made here (and the
 aspherical meshes in MFEM's own format), with
-[planetmodel](https://github.com/da380/planetmodel) driving gmsh, and
+[planetmodel](https://github.com/da380/planetmodel) driving gmsh (the
+faulted box, which is not a planetary model, drives gmsh directly), and
 land in the build tree's `data/` directory; none is kept in the
 repository. Each script builds one kind of mesh and is short enough to
 read in a minute; copy the nearest one and change the skeleton, the
@@ -83,6 +84,8 @@ gitignored. Pass `--out <build>/data` to replace the canned meshes.
 | `homogeneous_body.py --preset disc` | `disc_2d.msh` | transformed_diffusion |
 | `homogeneous_body.py --preset ball` | `ball_3d.msh` | transformed_diffusion, anisotropic_elasticity |
 | `offset_disc.py` | `offset_disc_2d.msh` | poisson_dtn, submesh_injection |
+| `faulted_box.py --all` | `faulted_box_{2d,3d}.msh` (the coseismic box under a mountain-range topography over the hanging wall, cut by a planar fault extended to the boundary: footwall and hanging wall as two volumes, the fault patch and its extension as interior boundaries, refined toward the fault and its tips; the JSON beside it is the script's own record, not a planetmodel manifest) | coseismic_fault; tests |
+| `faulted_box.py --all --topography flat --name flat` | `faulted_box_{2d,3d}_flat.msh` (the same with a flat free surface, as in coseismic_deformation) | coseismic_fault through `-m` |
 | `homogeneous_body.py --preset disc-buffer` | `disc_buffer_2d.msh` | elastogravity_layered, equilibrium_stress, lateral_viscosity, love_numbers, referential_elastogravity, rotational_feedback; tests |
 | `homogeneous_body.py --preset disc-buffer-wide` | `disc_buffer_wide_2d.msh` (buffer out to radius 2, for strongly non-trivial equilibrium mappings) | prestress_loading |
 | `homogeneous_body.py --preset ball-buffer` | `ball_buffer_3d.msh` | gia_kernels |
@@ -192,8 +195,11 @@ starts, is declared a knot of the displacement. These meshes are
 
 - **planetmodel** owns the model and the mesher: skeletons, geometries and
   mappings, the sizing rules, shells, the manifest and the MFEM export.
-  Anything geometric that a mesh here needs and planetmodel lacks is a
-  planetmodel change, not a script here. planetmodel 1.2.4 or later is
+  Anything geometric that a planetary mesh here needs and planetmodel
+  lacks is a planetmodel change, not a script here. The one exception is
+  `faulted_box.py`: a box with an embedded fault is not a planetary
+  model, so the script drives gmsh's own Python API and writes its own
+  JSON record (box, fault frame, sizes, attribute dictionary). planetmodel 1.2.4 or later is
   required: it writes manifest schema 5 and runs gmsh's linear-mesh
   optimiser before curving, which removes the slivers the Delaunay mesher
   leaves between interfaces.

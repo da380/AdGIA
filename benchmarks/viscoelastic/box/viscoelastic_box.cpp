@@ -107,6 +107,7 @@ int main(int argc, char* argv[]) {
   bool conform = true;
   real_t rtol = 1e-4, atol = 1e-10;
   bool amg_rbm = false;
+  bool psplit = false;
 
   OptionsParser args(argc, argv);
   args.AddOption(&case_file, "-c", "--case", "Case file (cases.py).");
@@ -121,6 +122,10 @@ int main(int argc, char* argv[]) {
                  "-no-amg-rbm", "--no-amg-rigid-rotations",
                  "Rigid-rotation GM-2 interpolation vectors on the "
                  "displacement AMG (off = the nodal-systems default).");
+  args.AddOption(&psplit, "-up", "--pressure-split", "-no-up",
+                 "--no-pressure-split",
+                 "Route the solid solves through the pressure-split (u, p) "
+                 "MINRES (Taylor-Hood; clamped cases, order >= 2).");
   args.AddOption(&rheology_mode, "-rheology", "--rheology",
                  "composite (one region per layer, by element centre) or "
                  "pointwise (layers looked up at every point).");
@@ -420,6 +425,9 @@ int main(int argc, char* argv[]) {
   if (amg_rbm) {
     problem->SetElasticityNearNull();
   }
+  if (psplit) {
+    problem->SetPressureSplitSolver();  // refuses the uniaxial_stress case
+  }
   problem->SetPrintLevel(IterativeSolver::PrintLevel().None());
 
   ViscoelasticOperator visco(*problem);
@@ -624,7 +632,8 @@ int main(int argc, char* argv[]) {
        << ",\n  \"ranks\": " << Mpi::WorldSize()
        << ",\n  \"conform\": " << (conform ? "true" : "false")
        << ",\n  \"rheology\": \""
-       << mode << "\",\n  \"branches\": " << nb << ",\n  \"scheme\": \""
+       << mode << "\",\n  \"pressure_split\": " << (psplit ? "true" : "false")
+       << ",\n  \"branches\": " << nb << ",\n  \"scheme\": \""
        << scheme_name << "\",\n  \"dt\": " << Num(dt)
        << ",\n  \"min_steps\": " << min_steps << ",\n  \"align\": "
        << (align ? "true" : "false") << ",\n  \"rtol\": " << Num(rtol)
