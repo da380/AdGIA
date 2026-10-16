@@ -645,25 +645,36 @@ branches (primal 76 -> 228, split ~250–365). A nonzero long-term shear
 modulus caps the hazard; the hard cases are mu_inf ~ 0 materials and
 graded/rapid transitions.
 
-**Open issue — the outer Krylov on the extreme split systems
-(14 Oct):** on some `visco_lid` configurations (first seen at C = 1e6,
-column, nz 15–30) MINRES ABORTS with `beta = -nan` a few iterations in:
-the P-inner-product recurrence evaluates sqrt((v, Pv)) by cancellation
-across the preconditioner's ~1e6 coefficient spread and roundoff flips
-the sign. The preconditioned SYSTEM is healthy — full (unrestarted)
-GMRES with the same block preconditioner solves the worst config at
-~200 iterations/solve, right in the split's robust band — and
-restarted GMRES(60) stalls (restart truncation on the indefinite
-spectrum), so this is a Krylov-numerics engineering choice, not a
-method defect. Candidate resolutions, to measure: (a) GMRES with a
-large restart as the route's solver (memory cost at production sizes),
-(b) hardening MINRES against the sign flip (clamp the Dot at zero /
-detect breakdown and restart), (c) symmetric diagonal equilibration of
-the block system so the Lanczos vectors see commensurate components.
-Fixed along the way and kept: the preconditioner block's essential
-diagonal is now KEPT at its assembled value rather than set to one
-(unit rows in a collapsed-shear clamped region put an artificial 1e6
-jump under the AMG); the operator blocks stay DIAG_ONE.
+**Resolved (14 Oct, same day): the MINRES `beta = -nan` aborts on
+`visco_lid` were an INDEFINITE SCHUR MASS, root cause one level down.**
+The diagnosis chain: the NaN survived a provably-SPD all-Jacobi block
+preconditioner, which acquitted the AMG and pointed at the matrices;
+the assembled Schur mass had a MINIMUM DIAGONAL OF −5532 on the
+effective flavour. Mechanism: every stepping scheme's nodal relaxation
+weights lie in (0, 1], but the integrators read the nodal field's
+polynomial INTERPOLANT at quadrature points, and on a relaxation time
+varying by decades across one element the interpolant overshoots the
+bounds — below zero between nodes. The effective shear is linear in
+the weight, so the operator blocks barely notice (they stayed SPD,
+which is why full GMRES solved everything), but the Schur weight
+1/(2 mu_eff) turns a small undershoot into a hugely negative mass
+weight: indefinite preconditioner, MINRES breakdown. Two-level fix,
+both in: (1) `ViscoelasticOperator` clamps the weight evaluation to
+its exact bounds [0, 1] (`beta_clamped_`) — this protects EVERY
+consumer, the primal effective operator's definiteness included, and
+is a no-op wherever the interpolant respects the bounds (constant-tau
+cases digit-identical, suites green); (2) the split's Schur weight
+floors the shear at 1e-10 kappa (the natural local scale) —
+preconditioner-only, since the clamped interpolant can still TOUCH
+zero. Also kept from the chase: the preconditioner block's essential
+diagonal stays at its assembled value rather than one (unit rows in a
+collapsed-shear clamped region put an artificial ~1e6 jump under the
+AMG; the operator blocks stay DIAG_ONE). After the fix MINRES solves
+every previously-aborting configuration (nz 15/20 column ~700–830
+its/solve — genuinely harder ramp samplings than nz 10/40; C = 1e6
+slab nz 20 converges at ~5700/solve, the Schur floor active), while
+the PRIMAL still fails outright there — its cap-out is genuine
+conditioning, not the latent indefiniteness.
 
 Implementation notes recorded along the way: serial
 `RecoverFEMSolution` assumes the solver wrote through FormLinearSystem's

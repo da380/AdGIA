@@ -1282,7 +1282,20 @@ void LinearQuasiStaticProblemBase::AssemblePressureSplitOperator() {
   psplit_coefs_.clear();
   psplit_coefs_.push_back(std::make_unique<RatioCoefficient>(1.0, *kappa));
   Coefficient* inv_kappa = psplit_coefs_.back().get();
-  psplit_coefs_.push_back(std::make_unique<RatioCoefficient>(0.5, *mu));
+  // The Schur weight inverts the effective shear, so it is floored at a
+  // tiny multiple of kappa (the bulk modulus is the natural local scale):
+  // the clamped weight interpolant can still touch zero between internal
+  // nodes on a rapidly varying relaxation time, and 1/(2 mu) would turn
+  // that into an unbounded (or, unclamped, indefinite) mass weight. The
+  // floor lives in the PRECONDITIONER only — the operator blocks use mu
+  // as assembled — so it costs preconditioner quality at the affected
+  // points, never correctness.
+  psplit_coefs_.push_back(std::make_unique<TransformedCoefficient>(
+      mu, kappa, [](real_t m, real_t k) {
+        return std::max(m, real_t{1e-10} * k);
+      }));
+  Coefficient* mu_floored = psplit_coefs_.back().get();
+  psplit_coefs_.push_back(std::make_unique<RatioCoefficient>(0.5, *mu_floored));
   Coefficient* inv_mu2 = psplit_coefs_.back().get();
   psplit_coefs_.push_back(
       std::make_unique<SumCoefficient>(*inv_kappa, *inv_mu2));

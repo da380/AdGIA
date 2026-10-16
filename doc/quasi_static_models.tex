@@ -273,6 +273,8 @@ Class (prefix \code{LinearQuasiStatic}) & Gravity & Reference state & Fluid regi
 \midrule
 \code{TractionProblem}, \code{ClampedProblem} (\S\ref{sec:nograv})
   & none & general $(\Ch,\Se,\varphi_e)$ via rheology & optional: Maxwell (default) or gauge penalty (\code{SetFluid}) & (projected) CG \\
+\code{ClampedFaultProblem} (\S\ref{sec:fault}; extends the clamped class)
+  & none & as the clamped class & none & CG \\
 \code{MixedSelfGravitating\-Problem} (\S\ref{sec:mixed}, \S\ref{sec:gauged})
   & Eulerian $\phi$ & hydrostatic and natural, \emph{required} & Dahlen (\code{FluidRegion}); Maxwell (default) or gauge penalty (\code{SetFluid}) & block MINRES; Schur CG \\
 \code{ReferentialSelf\-GravitatingProblem} (\S\ref{sec:referential})
@@ -671,6 +673,90 @@ gauge-penalty fluid regions (\code{SetFluid} with
 \code{GaugePenaltyOptions}), used without gravity for
 the cavity tests of \S\ref{sec:gauged-verif}; the machinery is described
 in \S\ref{sec:gauged}.
+
+\subsection{A meshed fault with prescribed slip}
+\label{sec:fault}
+
+\code{LinearQuasiStaticClampedFaultProblem} adds to the clamped problem a
+prescribed displacement discontinuity across an interior surface
+$\Sigma$, a fault, given by boundary attributes, whose one side, the
+\emph{hanging wall} (HW), is a set of element attributes and the other
+the footwall (FW). The fault ends inside the body along its \emph{edge},
+where the displacement is single-valued; the edge is given as boundary
+attributes whose dofs carry no slip, in practice the extension of the
+fault plane to the outer boundary, which also makes the two sides
+separate volumes (\code{meshes/faulted\_box.py}). The slip $\hat\vs$ is
+the motion of the hanging wall relative to the footwall, with $\nu$ the
+fault normal into the hanging wall:
+$[\![\vu]\!] = \vu_{\mathrm{HW}} - \vu_{\mathrm{FW}} = \hat\vs$ on $\Sigma$.
+Continuously, this is the source of the stress glut
+$C:(\hat\vs\otimes\nu)\,\delta_\Sigma$, for tangential slip on an isotropic
+body the moment density $\mu(\hat\vs\nu^T + \nu\hat\vs^T)$.
+
+\paragraph{The split-node method.} The finite element space broken across
+$\Sigma$ (duplicated dofs on the fault, not on its edge) is the
+continuous space $V_h$ plus the hanging-wall shape functions of the fault
+dofs, so its fields are $\vu = \vu_w + \chi_{\mathrm{HW}}\hat\vs_h$ with
+$\vu_w \in V_h$, $\hat\vs_h \in V_h$ the slip interpolated at the fault
+dofs (zero on the edge and everywhere else) and $\chi_{\mathrm{HW}}$ the
+indicator of the hanging-wall elements; the jump of $\vu$ is
+$\hat\vs_h$ exactly. Minimising the energy at fixed jump leaves the
+problem for $\vu_w$,
+\begin{equation}
+  a(\vu_w, \vv) = \langle f, \vv\rangle - a_{\mathrm{HW}}(\hat\vs_h, \vv)
+  \qquad \forall\,\vv \in V_{h,0},
+  \label{eq:splitnode}
+\end{equation}
+with $a_{\mathrm{HW}}$ the stiffness over the hanging-wall elements: one
+solve of the unbroken system, exact in the broken space (equal to the
+Lagrange-multiplier solution with an equal-order multiplier). The load is
+the integrator \code{DomainLFFormActionIntegrator}, the problem's own
+stiffness integrators acting element by element on $\hat\vs_h$ (so
+anisotropic, composite and relaxed rheologies follow), in
+\code{ExternalLoad()}. \code{Displacement()} is $\vu_w$;
+\code{PhysicalDisplacement()} is $\vu$, which differs from $\vu_w$ only on
+the hanging-wall elements touching the fault (the surface displacement of
+a buried fault is $\vu_w$).
+
+\paragraph{Fault reaction.} On the slip-carrying dofs
+$r = A_{\mathrm{HW}}(\vu_w + \hat\vs_h) = -A_{\mathrm{FW}}\vu_w$ (the fault
+rows of \eqref{eq:splitnode}), the consistent nodal form of $-\tau$,
+$\tau = \sigma\nu$ the traction change on the fault. As a function of the
+slip, $r$ is the Schur complement of the broken stiffness onto the jump
+dofs: symmetric and positive.
+
+\paragraph{Slip to surface, and the adjoint.} \code{FaultToSurfaceMap}
+is the operator $G$ from a slip on the fault (a shadow space on the
+fault's boundary SubMesh) to $\vu_w$ on an observation surface (a shadow
+space on its boundary SubMesh), through the true-dof injections of
+\code{submesh.hpp}. Its transpose takes a surface load $w$, for an
+observable $J = \int w_{\mathrm{obs}}\cdot\vu\dS$ the dual
+$w = M_{\mathrm{surface}}w_{\mathrm{obs}}$, solves the clamped problem
+under it with zero slip, and returns the traction the solution $\mathbf{y}$
+induces on the fault in consistent nodal form; by Volterra reciprocity
+$J = \int_\Sigma \hat\vs\cdot\sigma(\mathbf{y})\nu\dS$, so its shear part is
+the sensitivity kernel of $J$ to slip. Each application is one solve.
+
+\paragraph{Restrictions.} Faults that reach the outer boundary are not
+supported. Viscoelastic stepping is consistent when the elements touching
+the fault are elastic: the strain map of the viscoelastic layer sees
+$\vu_w$, not the strain of the hanging-wall lifting.
+
+\paragraph{Verification.} \code{tests/TestFaultProblem.cpp} and its MPI
+twin (1, 2, 4 ranks), in 2-D (orders 1, 2) and 3-D (order 1): a cut
+through the whole body with only the footwall clamped and uniform slip
+translates the hanging wall rigidly, $\vu_w$ to $10^{-8}$; the slip
+vanishes on the edge dofs; the reaction is symmetric, positive and
+balanced by the footwall's; $\langle Gs, w\rangle = \langle s,
+G^Tw\rangle$ to solver tolerance; serial and parallel agree.
+\code{examples/coseismic\_fault.cpp} checks the same slip as a smoothed
+stress glut on the same mesh, whose gap is the glut's smoothing bias
+$O(\sigma^2/r^2)$ with $\sigma$ tied to the fault element size: in 2-D
+(order 2) $0.45\%$ of the peak, falling to $0.12\%$ and $0.03\%$ under
+two uniform halvings of the size field; in 3-D (order 1) $6.1\%$, falling
+to $1.6\%$ under one. Against \code{coseismic\_deformation} on its own
+structured mesh the peak uplift agrees to $0.05\%$ in 2-D and to $1.5\%$
+in 3-D (order 2 on both, the structured mesh the coarser).
 
 %==========================================================================
 \section{The mixed self-gravitating problem (Dahlen organisation)}

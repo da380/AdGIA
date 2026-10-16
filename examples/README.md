@@ -225,6 +225,33 @@ the moduli kappa and mu; the CSV plots the surface displacement profile.
 `./coseismic_deformation`, `./coseismic_deformation -dip 60 -s -0.01`,
 `./coseismic_deformation -d 3 -o 1 -rake 0`
 
+**`coseismic_fault`**: the same coseismic problem with the fault
+**meshed**: the slip is a displacement discontinuity across an interior
+fault surface (`LinearQuasiStaticClampedFaultProblem`, the split-node
+load), on the faulted box of `meshes/faulted_box.py`, 2-D or 3-D (the
+mesh decides). In 2-D thrust or normal dip-slip, in 3-D any rake,
+cos^2-tapered to zero at the fault edge by default, over the moduli
+factor of `coseismic_deformation`. Reports the moment, the surface peaks, and the
+traction change on the fault (a stress drop where it slips,
+concentrations at the tips). With `-compare` (default) the same slip as a
+smoothed stress glut on the same mesh, the surface profiles side by side
+(in 2-D within 0.5% of the peak; the gap is the glut's own smoothing
+bias, falling as the square of its width under refinement). Then
+`FaultToSurfaceMap` and its adjoint: a surface observable (the mean
+uplift in a Gaussian window, `-sx`, `-sw`) computed forward and by the
+adjoint, whose output — the traction the surface load induces on the
+fault — is the sensitivity kernel of the observable to slip; and with
+`-green k` the uplift of unit slip on each of k sub-faults (the columns of
+a slip inversion's Green's matrix). Shows: the physical u_z,
+discontinuous at the fault, and the displacement vector (`d` displaces the
+mesh by it, showing the offset); the CSVs plot the surface profile
+(`coseismic_fault.csv`), the slip, traction change and kernel along dip
+(`coseismic_fault_fault.csv`) and the Green's functions
+(`coseismic_fault_green.csv`).
+`./coseismic_fault`, `./coseismic_fault -s -0.01`,
+`./coseismic_fault -no-taper`, `./coseismic_fault -sx 1 -green 8`,
+`./coseismic_fault -m ../data/faulted_box_3d.msh -o 1 -rake 0`
+
 **`postseismic_deformation`**: post-seismic relaxation of the same box
 and fault (shared through `fault_box.hpp`): an elastic lid of a whole
 number of element rows (the discontinuity is meshed) over a standard

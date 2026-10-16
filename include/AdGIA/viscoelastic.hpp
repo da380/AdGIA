@@ -375,6 +375,10 @@ class ViscoelasticOperator : public mfem::TimeDependentOperator {
   std::vector<int> num_params_;
   std::vector<std::unique_ptr<mfem::GridFunction>> beta_;  ///< nodal weights
   std::vector<std::unique_ptr<mfem::GridFunctionCoefficient>> beta_coef_;
+  // The clamp of the interpolated weights to their exact bounds [0, 1]
+  // (rapidly varying tau makes the interpolant overshoot them between
+  // nodes, costing the effective operator its definiteness).
+  std::vector<std::unique_ptr<mfem::TransformedCoefficient>> beta_clamped_;
   std::vector<mfem::Coefficient*> beta_ptrs_;
   std::vector<std::unique_ptr<mfem::GridFunction>> m_out_;
   std::function<void(mfem::real_t)> force_hook_;  ///< see SetForceHook

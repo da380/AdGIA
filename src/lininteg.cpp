@@ -85,4 +85,25 @@ void DomainLFDeformationGradientIntegrator::AssembleRHSElementVect(
   }
 }
 
+void DomainLFFormActionIntegrator::AssembleRHSElementVect(
+    const mfem::FiniteElement& el, mfem::ElementTransformation& Trans,
+    mfem::Vector& elvect) {
+  x_.FESpace()->GetElementVDofs(Trans.ElementNo, vdofs_);
+  x_.GetSubVector(vdofs_, xe_);
+  elvect.SetSize(vdofs_.Size());
+  elvect = 0.0;
+  if (xe_.Normlinf() == 0.0) {
+    return;
+  }
+  const auto& integrators = *form_.GetDBFI();
+  const auto& markers = *form_.GetDBFI_Marker();
+  for (int k = 0; k < integrators.Size(); k++) {
+    if (markers[k] && (*markers[k])[Trans.Attribute - 1] == 0) {
+      continue;
+    }
+    integrators[k]->AssembleElementMatrix(el, Trans, elmat_);
+    elmat_.AddMult_a(scale_, xe_, elvect);
+  }
+}
+
 }  // namespace AdGIA
