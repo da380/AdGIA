@@ -737,6 +737,16 @@ under it with zero slip, and returns the traction the solution $\mathbf{y}$
 induces on the fault in consistent nodal form; by Volterra reciprocity
 $J = \int_\Sigma \hat\vs\cdot\sigma(\mathbf{y})\nu\dS$, so its shear part is
 the sensitivity kernel of $J$ to slip. Each application is one solve.
+Between function spaces, with $A\colon\hat\vs\mapsto\vu_w|_S$ taking
+tangential slip in $H^s(\Sigma)$, zero on the edge, to the surface
+displacement, the kernel as a field is the Hilbert adjoint
+$A^*w_{\mathrm{obs}} = R^{-1}P\,G^TM_{\mathrm{surface}}w_{\mathrm{obs}}$,
+with $P$ the projection onto the fault plane and $R$ the Gram operator of
+the $H^s$ metric (\code{SobolevRieszMap}, \code{riesz.hpp}): the gradient
+of $J = \langle A\hat\vs, w_{\mathrm{obs}}\rangle$ in that metric. A point
+observable $J = d\cdot\vu(x_0)$, $w_{\mathrm{obs}} = d\,\delta_{x_0}$, is
+admissible: its load is that of a delta coefficient, and the pairing is
+bounded because the surface displacement of a buried fault is smooth.
 
 \paragraph{Restrictions.} Faults that reach the outer boundary are not
 supported. Viscoelastic stepping is consistent when the elements touching
@@ -757,7 +767,9 @@ flat faulted box, in 2-D (order 2) $0.45\%$ of the peak, falling to $0.12\%$ and
 two uniform halvings of the size field; in 3-D (order 1) $6.1\%$, falling
 to $1.6\%$ under one. Against \code{coseismic\_deformation} on its own
 structured mesh the peak uplift agrees to $0.05\%$ in 2-D and to $1.5\%$
-in 3-D (order 2 on both, the structured mesh the coarser).
+in 3-D (order 2 on both, the structured mesh the coarser). The example's
+two point observables agree forward and by the adjoint to $10^{-11}$, and
+with the displacement sampled through the volume mesh to $0.2\%$.
 
 %==========================================================================
 \section{The mixed self-gravitating problem (Dahlen organisation)}

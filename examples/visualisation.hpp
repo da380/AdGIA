@@ -147,8 +147,9 @@ inline std::string DefaultKeys(int dim) {
 }
 
 // A table of numbers written as CSV with "# key: value" header lines for
-// plot_csv.py. Rows are buffered and written on Write (or on destruction);
-// only the root rank writes. An empty file name disables the table.
+// plot_csv.py (or another script, PlotCommand). Rows are buffered and
+// written on Write (or on destruction); only the root rank writes. An empty
+// file name disables the table.
 class CsvTable {
  public:
   CsvTable(std::string file, std::vector<std::string> columns)
@@ -161,6 +162,13 @@ class CsvTable {
   // (see plot_csv.py).
   CsvTable& Meta(const std::string& key, const std::string& value) {
     meta_.emplace_back(key, value);
+    return *this;
+  }
+
+  // The plotting command the write reports, for a table plot_csv.py does
+  // not draw.
+  CsvTable& PlotCommand(std::string command) {
+    plot_ = std::move(command);
     return *this;
   }
 
@@ -202,12 +210,13 @@ class CsvTable {
     for (const auto& r : rows_) {
       os << r << "\n";
     }
-    std::cout << "Wrote " << file_ << " (plot: python3 plot_csv.py " << file_
+    std::cout << "Wrote " << file_ << " (plot: "
+              << (plot_.empty() ? "python3 plot_csv.py " + file_ : plot_)
               << ")\n";
   }
 
  private:
-  std::string file_;
+  std::string file_, plot_;
   std::vector<std::string> columns_;
   std::vector<std::pair<std::string, std::string>> meta_;
   std::vector<std::string> rows_;
