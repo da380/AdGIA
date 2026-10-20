@@ -9,7 +9,9 @@
   check, in 2-D and 3-D. Also checked: the gauge-residual count and decay
   (under this conformal load the first residual sits at the near-kernel
   noise floor; the contraction rate proper is asserted in the serial
-  suite), and the epsilon-independence of the refined solution.
+  suite), and, in 2-D only, the epsilon-independence of the refined
+  solution (the 3-D re-solve would repeat the same cross-rank machinery
+  at the suite's largest cost).
 */
 
 #include <mpi.h>
@@ -153,13 +155,17 @@ void RunCase(int dim, double tol, const std::string& label) {
     Check(res[1] / res[0], 0.5, label + " residual decay");
   }
 
-  // Epsilon-independence of the converged solution.
-  prob.SetGaugeEpsilon(1.0e-3);
-  prob.AssembleForce(0.0);
-  Check(prob.Solve() ? 0.0 : 1.0, 0.0, label + " solve, eps 1e-3");
-  GridFunction& u2 = const_cast<GridFunction&>(prob.Displacement());
-  const double err2 = u2.ComputeL2Error(exact) / u2.ComputeL2Error(z);
-  Check(std::abs(err2 - err), 0.5 * tol, label + " eps independence");
+  // Epsilon-independence of the converged solution, in 2-D only: the
+  // re-solve exercises the same cross-rank machinery as the first, and
+  // the serial suite asserts the epsilon behaviour proper.
+  if (dim == 2) {
+    prob.SetGaugeEpsilon(1.0e-3);
+    prob.AssembleForce(0.0);
+    Check(prob.Solve() ? 0.0 : 1.0, 0.0, label + " solve, eps 1e-3");
+    GridFunction& u2 = const_cast<GridFunction&>(prob.Displacement());
+    const double err2 = u2.ComputeL2Error(exact) / u2.ComputeL2Error(z);
+    Check(std::abs(err2 - err), 0.5 * tol, label + " eps independence");
+  }
 }
 
 // The Maxwell (secular) relaxation mode: the relaxed solve must

@@ -236,6 +236,21 @@ if(USE_MPI)
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestDescentPar>)
     endforeach()
+
+    # The expensive MPI binaries (3-D solves on the production meshes,
+    # tens of seconds per instance) carry the "slow" label at np 2 and 4.
+    # CI's MPI phase runs with -LE slow, so it keeps every path's np1
+    # instance; the full rank sweep is a local run (plain ctest, or
+    # ctest -L slow for the labelled set alone).
+    foreach(np 2 4)
+        set_tests_properties(
+            TestAdjointPar_np${np}
+            TestFluidGaugePar_np${np}
+            TestBoundaryNormalIntegratorsPar_np${np}
+            TestMixedProblemFluidPar_np${np}
+            TestEquilibriumFiguresPar_np${np}
+            PROPERTIES LABELS "slow")
+    endforeach()
 endif()
 
 

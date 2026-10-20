@@ -126,8 +126,11 @@ jobs:
           # The single-process tests run concurrently; the MPI tests (named
           # *_np<N>, up to 4 ranks) one at a time, so ranks never outnumber
           # the runner's cores. The MPI phase takes several minutes, and the
-          # timeout turns a hang into a failure naming the test.
+          # timeout turns a hang into a failure naming the test. The np 2/4
+          # instances of the expensive binaries are labelled "slow" and
+          # excluded: CI keeps every path's np1 instance, the full rank
+          # sweep runs locally (tests/CMakeLists.txt).
           ctest -E '_np[0-9]+$' -j "$(nproc)" --timeout 600 --output-on-failure
           if [[ ${{ matrix.mode }} == parallel ]]; then
-            ctest -R '_np[0-9]+$' --timeout 600 --output-on-failure
+            ctest -R '_np[0-9]+$' -LE slow --timeout 600 --output-on-failure
           fi
