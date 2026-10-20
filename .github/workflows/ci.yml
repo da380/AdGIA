@@ -47,8 +47,10 @@ jobs:
         run: |
           sudo apt-get update
           # gmsh (pulled in by planetmodel) needs the X and GL libraries even
-          # when it runs headless.
+          # when it runs headless; libnetcdf-dev is for planetmodel's C++
+          # model file.
           packages="libglu1-mesa libxrender1 libxcursor1 libxft2 libxinerama1"
+          packages="$packages libnetcdf-dev"
           if [[ ${{ matrix.mode }} == parallel ]]; then
             packages="$packages openmpi-bin libopenmpi-dev libmetis-dev"
           fi

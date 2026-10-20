@@ -33,8 +33,8 @@ known to work — the full test suite passes on both.
 
 ## Prerequisites
 
-1. **CMake** 3.15 or later.
-2. **A C++20 compiler** (GCC 10, Clang 11 or later).
+1. **CMake** 3.26 or later.
+2. **A C++23 compiler** (GCC 13, Clang 17 or later).
 3. **MFEM**, built or installed. For the parallel build, a parallel MFEM
    (with hypre and METIS). See the [MFEM build
    instructions](https://mfem.org/building/). CMake needs the directory
@@ -45,9 +45,14 @@ known to work — the full test suite passes on both.
    works on a workstation too.
 4. **MPI** (optional), for the parallel build: the same MPI that hypre and
    MFEM were built with, for the compiler and for `mpiexec`.
-5. **Python 3.12 or later** (examples, tests, benchmarks and earth-data
+5. **netCDF-C** (the development package, `libnetcdf-dev` on Ubuntu), for
+   the model files of planetmodel's C++ library, which the build fetches
+   automatically. When the MPI compiler's prefix ships its own libnetcdf
+   (a PETSc install does, built against parallel HDF5), the parallel build
+   links that copy instead of the system one.
+6. **Python 3.12 or later** (examples, tests, benchmarks and earth-data
    tools only); see "The Python environment" below.
-6. **Doxygen** (optional), for the API documentation.
+7. **Doxygen** (optional), for the API documentation.
 
 ## The Python environment
 

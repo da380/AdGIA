@@ -1,11 +1,13 @@
-cmake_minimum_required(VERSION 3.15)
+# 3.26 for $<BUILD_LOCAL_INTERFACE:...> (which keeps FetchContent'd
+# dependencies out of the installed export set); planetmodel needs 3.24.
+cmake_minimum_required(VERSION 3.26)
 
 project(
     AdGIA
     VERSION 0.0.1
     LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Prohibit in-source builds
@@ -57,7 +59,52 @@ if(USE_MPI)
 endif()
 
 
-# Set up the library 
+# planetmodel's C++ library (header-only): the mesh manifest and JSON
+# readers, the model file (over netCDF-C) and the radial readers. netCDF-C
+# is found by its CMake config or by pkg-config. A parallel build whose MPI
+# prefix ships its own libnetcdf (a PETSc install does, built against
+# parallel HDF5) must link that copy — the system library clashes with it
+# on the rpath — so when that prefix has a netcdf.pc, the system CMake
+# config is skipped and pkg-config is pointed at the prefix.
+include(FetchContent)
+FetchContent_Declare(planetmodel
+    GIT_REPOSITORY https://github.com/da380/planetmodel.git
+    GIT_TAG        v1.3.0
+    SOURCE_SUBDIR  cpp)
+if(USE_MPI)
+    get_filename_component(_mpi_bin_dir "${CMAKE_CXX_COMPILER}" DIRECTORY)
+    get_filename_component(_mpi_prefix "${_mpi_bin_dir}" DIRECTORY)
+    if(EXISTS "${_mpi_prefix}/lib/pkgconfig/netcdf.pc")
+        set(CMAKE_DISABLE_FIND_PACKAGE_netCDF TRUE)
+        set(ENV{PKG_CONFIG_PATH}
+            "${_mpi_prefix}/lib/pkgconfig:$ENV{PKG_CONFIG_PATH}")
+        message(STATUS
+            "netCDF-C: taken from the MPI prefix ${_mpi_prefix}")
+    endif()
+endif()
+# NumericConcepts (fetched transitively, through Interpolation) honours
+# the deprecated unprefixed spellings BUILD_TESTS and BUILD_DOCS, so this
+# project's settings would leak into it: its tests would join this suite,
+# and its doc target collides with this project's. The two cache entries
+# are hidden while the dependencies configure and restored afterwards.
+if(DEFINED CACHE{BUILD_TESTS})
+    set(_saved_build_tests "$CACHE{BUILD_TESTS}")
+    unset(BUILD_TESTS CACHE)
+endif()
+if(DEFINED CACHE{BUILD_DOCS})
+    set(_saved_build_docs "$CACHE{BUILD_DOCS}")
+    unset(BUILD_DOCS CACHE)
+endif()
+FetchContent_MakeAvailable(planetmodel)
+if(DEFINED _saved_build_tests)
+    set(BUILD_TESTS "${_saved_build_tests}" CACHE BOOL "Build the test programs")
+endif()
+if(DEFINED _saved_build_docs)
+    set(BUILD_DOCS "${_saved_build_docs}" CACHE BOOL "Build documentation")
+endif()
+
+
+# Set up the library
 add_library(${PROJECT_NAME} STATIC)
 
 # Add in linked libraries.
@@ -66,6 +113,10 @@ if(USE_MPI)
 else()
     target_link_libraries(${PROJECT_NAME} PUBLIC mfem)
 endif()
+# $<BUILD_LOCAL_INTERFACE:...> keeps planetmodel (a FetchContent'd target,
+# in no export set of its own) out of the installed AdGIA export.
+target_link_libraries(${PROJECT_NAME}
+    PUBLIC $<BUILD_LOCAL_INTERFACE:planetmodel::planetmodel>)
 
 
 # Add in the source files. 
