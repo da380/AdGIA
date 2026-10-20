@@ -46,12 +46,13 @@ using namespace AdGIA;
 using namespace benchmark;
 using namespace vebench;
 
-int main(int argc, char* argv[]) {
+int main(int argc, char* argv[]) try {
   Mpi::Init(argc, argv);
   Hypre::Init();
   const bool root = Mpi::Root();
 
   const char* case_file = "case.json";
+  const char* model_file = "";
   const char* out_file = "results.json";
   int order = 2;
   int refine = 0;
@@ -60,6 +61,13 @@ int main(int argc, char* argv[]) {
 
   OptionsParser args(argc, argv);
   args.AddOption(&case_file, "-c", "--case", "Case file (cases.py).");
+  args.AddOption(&model_file, "-model", "--model-file",
+                 "Maxwell times from the viscosity of this netCDF model "
+                 "file (model_file.py; tau = eta / mu per branch, so a "
+                 "layer the file covers must have one branch) instead of "
+                 "the case's analytic fields. 3-D only: a disc reads a "
+                 "file on the equatorial plane, where the lateral cases' "
+                 "axis differs.");
   args.AddOption(&out_file, "-out", "--output", "Results file (JSON).");
   args.AddOption(&order, "-o", "--order", "Displacement order.");
   args.AddOption(&refine, "-r", "--refine",
@@ -92,10 +100,26 @@ int main(int argc, char* argv[]) {
 
   // --- the case and the mesh --------------------------------------------------
 
-  const Json json = ReadJsonFile(case_file);
-  const std::string case_name = Member(json, "name").string;
-  const MeshManifest manifest(Member(json, "mesh").string);
-  Mesh serial = manifest.LoadMesh();
+  const Json json = planetmodel::ReadJsonFile(case_file);
+  const std::string case_name = Member(json, "name").AsString();
+  const planetmodel::MeshManifest manifest(Member(json, "mesh").AsString());
+  Mesh serial = LoadMesh(manifest);
+  std::optional<planetmodel::ModelFile> model;
+  std::unique_ptr<ModelScalarCoefficient> eta_model;
+  if (*model_file) {
+    MFEM_VERIFY(serial.Dimension() == 3,
+                "-model: 3-D only (a disc reads the file on the "
+                "equatorial plane, where the lateral cases' axis "
+                "differs).");
+    model.emplace(planetmodel::ReadModelFile(model_file));
+    CheckModelMatchesManifest(*model, manifest);
+    eta_model =
+        std::make_unique<ModelScalarCoefficient>(*model, "viscosity");
+    if (root) {
+      std::cout << "Maxwell times from the model file " << model_file
+                << " (tau = eta / mu)\n";
+    }
+  }
   const int dim = serial.Dimension();
   MFEM_VERIFY(dim == static_cast<int>(Number(json, "dim")),
               "Case: dim does not match the mesh.");
@@ -106,11 +130,11 @@ int main(int argc, char* argv[]) {
   // The case's layers, centre outward, matched to the manifest's.
   std::vector<Layer> layers;
   {
-    std::vector<const MeshManifest::Layer*> body;
+    std::vector<const planetmodel::MeshManifest::Layer*> body;
     for (const auto& l : manifest.Layers()) {
       if (l.in_geometry) body.push_back(&l);
     }
-    const auto& entries = Member(json, "layers").array;
+    const auto& entries = Member(json, "layers").AsArray();
     MFEM_VERIFY(entries.size() == body.size(),
                 "Case: " << entries.size() << " layers for a mesh of "
                          << body.size() << ".");
@@ -162,7 +186,20 @@ int main(int argc, char* argv[]) {
     } else {
       std::vector<MaxwellBranch> branches;
       for (const Branch& b : l.branches) {
-        branches.push_back({&single(b.mu), &single(b.tau), nullptr});
+        Coefficient& mu_branch = single(b.mu);
+        Coefficient* tau_c;
+        if (eta_model && eta_model->HasLayer(l.attribute)) {
+          MFEM_VERIFY(l.branches.size() == 1,
+                      "-model: the file's viscosity defines one Maxwell "
+                      "branch (tau = eta / mu), but layer "
+                          << l.name << " has " << l.branches.size() << ".");
+          coefs.push_back(
+              std::make_unique<RatioCoefficient>(*eta_model, mu_branch));
+          tau_c = coefs.back().get();
+        } else {
+          tau_c = &single(b.tau);
+        }
+        branches.push_back({&mu_branch, tau_c, nullptr});
       }
       maxwell.push_back(std::make_unique<IsotropicMaxwellRheology>(
           dim, kappa, mu_inf, branches));
@@ -186,7 +223,7 @@ int main(int argc, char* argv[]) {
       });
   const int nbdr = mesh.bdr_attributes.Max();
   const Array<int> surface =
-      MeshManifest::Marker(Array<int>({manifest.SurfaceAttribute()}), nbdr);
+      Marker(Array<int>({manifest.SurfaceAttribute()}), nbdr);
   LinearQuasiStaticTractionProblem problem(&fes, rheology, traction,
                                            surface);
   problem.SetPrintLevel(IterativeSolver::PrintLevel().None());
@@ -283,4 +320,7 @@ int main(int argc, char* argv[]) {
     std::cout << "Wrote " << out_file << "\n";
   }
   return 0;
+} catch (const planetmodel::Error& e) {
+  std::cerr << e.what() << "\n";
+  return 1;
 }

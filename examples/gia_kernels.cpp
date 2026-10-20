@@ -166,7 +166,7 @@ Vector UnitDir(double lat_deg, double lon_deg) {
 
 }  // namespace
 
-int main(int argc, char* argv[]) {
+int main(int argc, char* argv[]) try {
 #ifdef MFEM_USE_MPI
   Mpi::Init(argc, argv);
   Hypre::Init();
@@ -611,6 +611,30 @@ int main(int argc, char* argv[]) {
       WriteGreatCircleSlice(km, sg, n_obs, 0.05, 0.995,
                             181, 48, "visc_kernel_sobolev_slice.csv");
     }
+    // The interchange form: the kernel as a planetmodel model file,
+    // which the Python reads back and draws (the CSVs above stay for
+    // quick looks). The manifest beside the mesh gives the layers.
+    std::string mpath(mesh_file);
+    const auto dot = mpath.rfind('.');
+    if (dot != std::string::npos) {
+      mpath = mpath.substr(0, dot) + ".json";
+    }
+    if (std::ifstream(mpath).good()) {
+      const planetmodel::MeshManifest manifest(mpath);
+      WriteKernelModelFile(
+          "visc_kernel.nc", manifest,
+          {{.name = "K_eta",
+            .field = &kg,
+            .dimensions = {.mass = -1, .length = -2, .time = 1},
+            .meaning = "derivative of the observation with respect to "
+                       "the viscosity, per unit volume, in the run's "
+                       "units"}},
+          {.name = "gia_kernels viscosity kernel"});
+      std::cout << "Wrote visc_kernel.nc (" << mpath << "'s layers)\n";
+    } else {
+      std::cout << "No manifest beside " << mesh_file
+                << ": visc_kernel.nc not written.\n";
+    }
   }
   if (IsRoot()) {
     std::cout << "\nkernels of the present-day windowed sea-level "
@@ -792,4 +816,7 @@ int main(int argc, char* argv[]) {
     ws.Send(sea.SurfaceMesh(), last);
   }
   return 0;
+} catch (const planetmodel::Error& e) {
+  std::cerr << e.what() << "\n";
+  return 1;
 }

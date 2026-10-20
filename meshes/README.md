@@ -23,9 +23,9 @@ setting it back regenerates the canned set.
 
 The Python used is `MESHES_PYTHON` if set, else the one CMake finds (3.12
 or later). It must import `planetmodel.mesh3d` and `mfem.ser` (PyMFEM, which
-writes the aspherical meshes) and have planetmodel 1.2.4 or later; if the
+writes the aspherical meshes) and have planetmodel 1.3.0 or later; if the
 found Python does not, a virtual environment is made at
-`<build>/meshes-venv` and `planetmodel[meshing,mfem]>=1.2.4` installed into
+`<build>/meshes-venv` and `planetmodel[meshing,mfem]>=1.3.0` installed into
 it with pip (the requirement is the cache variable
 `PLANETMODEL_REQUIREMENT`).
 To reuse an environment you already have:
@@ -47,7 +47,7 @@ earth-data tools; see INSTALL.md), made once:
 
 ```
 cd <repo>
-poetry install                       # planetmodel[meshing,mfem]>=1.2.4 among others
+poetry install                       # planetmodel[meshing,mfem]>=1.3.0 among others
 poetry run python meshes/homogeneous_body.py -h    # any one script; -h lists its options
 poetry run python meshes/make_all.py --out /some/dir
 poetry run python meshes/layered_earth.py --all --scale 0.5 --out <build>/data
@@ -199,19 +199,21 @@ starts, is declared a knot of the displacement. These meshes are
   lacks is a planetmodel change, not a script here. The one exception is
   `faulted_box.py`: a box with an embedded fault is not a planetary
   model, so the script drives gmsh's own Python API and writes its own
-  JSON record (box, fault frame, sizes, attribute dictionary). planetmodel 1.2.4 or later is
+  JSON record (box, fault frame, sizes, attribute dictionary). planetmodel 1.3.0 or later is
   required: it writes manifest schema 5 and runs gmsh's linear-mesh
   optimiser before curving, which removes the slivers the Delaunay mesher
   leaves between interfaces.
 - **`meshes/`** owns the recipes: which skeleton, which sizes, which
   shells, which file name.
-- **The C++ side** reads the mesh files. `MeshManifest`
-  (`mesh_manifest.hpp`) reads the manifest and answers questions such as
-  "which attributes are solid" or "which boundary is the surface" as the
-  attribute lists and markers the problem classes take; the benchmarks and
-  `tests/TestMeshManifest.cpp` use it. The examples identify layers by
-  position instead (for instance `attributes.Max()` tells the two- and
-  three-layer Earth apart).
+- **The C++ side** reads the mesh files. `planetmodel::MeshManifest`
+  (planetmodel's C++ library, fetched by the build) reads the manifest and
+  answers questions such as "which attributes are solid" or "which
+  boundary is the surface"; the glue in `include/AdGIA/manifest.hpp` opens
+  the mesh and the fields and turns the attribute lists into the markers
+  the problem classes take. The benchmarks and `tests/TestManifest.cpp`
+  use them. The examples identify layers by position instead (for
+  instance `attributes.Max()` tells the two- and three-layer Earth
+  apart).
 
 A realistic Earth skeleton comes from planetmodel's `PREM()`, coarsened as
 needed, through a script like `layered_earth.py`.
@@ -228,7 +230,9 @@ elements come out consistently oriented, so MFEM has nothing to fix on
 load.
 
 Beside each mesh file is a JSON **manifest** of the same name (schema
-`planetmodel.mesh.manifest/5`; `MeshManifest` also reads /4) listing the
+`planetmodel.mesh.manifest/5`; an export with `model_file=` also writes
+the model itself as a netCDF model file beside the mesh and records it
+under `model`) listing the
 layers and interfaces with their attributes, names and radii, and, for an
 exported model, which layers are fluid, the fields written beside the mesh
 and the model's units and constants. It is what a reader consults instead

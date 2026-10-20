@@ -23,6 +23,10 @@
 // mesh does not contain (a shell outside the body, a fluid-core gap that is
 // not part of the mesh) are written as 0. These are plain functions of a
 // serial Mesh and GridFunction, with no MPI.
+//
+// The CSVs are for quick looks; the interchange form of a kernel is the
+// planetmodel model file of AdGIA/model_export.hpp, which both examples
+// write beside them (visc_kernel.nc).
 // ============================================================================
 
 #pragma once

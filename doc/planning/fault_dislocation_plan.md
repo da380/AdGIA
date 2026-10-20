@@ -82,11 +82,13 @@ the same source.
 4. **Fault-to-surface map and its adjoint** — `FaultToSurfaceMap` (an
    `mfem::Operator`): `Mult` is the forward map (slip to surface
    displacement); `MultTranspose` is the adjoint (surface traction to
-   fault traction). Also its reciprocity test, and in the example a
-   Green's-function demo plus an adjoint demo: a surface observable (for
-   example the uplift at one station, or a window average) and its fault
-   sensitivity, the tangential traction profile along the fault,
-   checked against the forward map.
+   fault traction). Also its reciprocity test, and in the example an
+   adjoint demo: a surface observable (for example the uplift at one
+   station, or a window average) and its fault sensitivity, the
+   tangential traction profile along the fault, checked against the
+   forward map. The example works in the function-space frame of the
+   inversion: A from H^s slip to surface displacement and its Hilbert
+   adjoint A\* (no Green's matrix), with point observables.
 
 ## Where it stands (16 Oct 2026)
 
@@ -116,8 +118,13 @@ Measured on the flat box (the first canned meshes, before the topography; the `_
   - 3-D, order 2: 0.001072 at `--scale 0.5` against 0.001058 on the
     coarser structured mesh.
 - **Adjoint:** forward J against adjoint J agree to 1e-12 (2-D and 3-D).
-- **Green's functions:** the sub-fault sum matches the whole fault to
-  1e-11.
+- **The map figure** (17 Oct): s and A s, then for two point
+  observables J_k = d_k · u(x_k) (MFEM delta loads, the stations put on
+  the faceted surface first) the tractions t_k and kernels A\* t_k, on
+  refined element samples of the fault and surface SubMeshes
+  (`plot_fault_map.py`). J forward = adjoint to 1e-11; J_k against the
+  volume-sampled surface profile to 0.2 %; serial against 1, 4 and 8
+  ranks to 9e-10, a station on a shared vertex counted once.
 - **Serial against 4 ranks:** the example's tables agree to 4e-10 in 2-D
   and 3-D.
 - **Mutation check:** flipping the sign of the slip load, or dropping the

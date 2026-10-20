@@ -2,7 +2,7 @@ include(FetchContent)
 FetchContent_Declare(
   googletest
   GIT_REPOSITORY https://github.com/google/googletest.git
-  GIT_TAG main
+  GIT_TAG v1.15.2
 )
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
@@ -99,6 +99,10 @@ if(USE_MPI)
     target_link_libraries(TestNullSpacePar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestCompositeRheologyPar TestCompositeRheologyPar.cpp)
     target_link_libraries(TestCompositeRheologyPar PRIVATE AdGIA MPI::MPI_CXX)
+    add_executable(TestModelCoefficientPar TestModelCoefficientPar.cpp)
+    target_link_libraries(TestModelCoefficientPar PRIVATE AdGIA MPI::MPI_CXX)
+    add_executable(TestModelExportPar TestModelExportPar.cpp)
+    target_link_libraries(TestModelExportPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestSeaLevelPar TestSeaLevelPar.cpp)
     target_link_libraries(TestSeaLevelPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestRotationPar TestRotationPar.cpp)
@@ -186,6 +190,12 @@ if(USE_MPI)
         add_test(NAME TestCompositeRheologyPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestCompositeRheologyPar>)
+        add_test(NAME TestModelCoefficientPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestModelCoefficientPar>)
+        add_test(NAME TestModelExportPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestModelExportPar>)
         add_test(NAME TestSeaLevelPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestSeaLevelPar>)
@@ -237,9 +247,18 @@ add_executable(TestRelaxationLaw TestRelaxationLaw.cpp)
 target_link_libraries(TestRelaxationLaw PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestRelaxationLaw)
 
-add_executable(TestMeshManifest TestMeshManifest.cpp)
-target_link_libraries(TestMeshManifest PRIVATE AdGIA gtest_main)
-gtest_discover_tests(TestMeshManifest)
+add_executable(TestManifest TestManifest.cpp)
+target_link_libraries(TestManifest PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestManifest)
+
+add_executable(TestModelCoefficient TestModelCoefficient.cpp)
+target_link_libraries(TestModelCoefficient PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestModelCoefficient)
+
+add_executable(TestModelExport TestModelExport.cpp)
+target_link_libraries(TestModelExport PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestModelExport)
+
 
 add_executable(TestSphericalHarmonics TestSphericalHarmonics.cpp)
 target_link_libraries(TestSphericalHarmonics PRIVATE AdGIA gtest_main)

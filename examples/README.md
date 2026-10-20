@@ -67,7 +67,9 @@ It needs numpy and matplotlib (`pip install numpy matplotlib`). A table
 describes its own plot in `# key: value` lines above its header (title,
 which columns, panels, log axes); a column called `<name>_exact` is drawn
 dashed beside `<name>`. `python3 plot_csv.py -h` lists the keys, which
-makes the script usable for tables of your own.
+makes the script usable for tables of your own. `coseismic_fault`'s map
+tables, fields on a fault and a surface, are drawn by a script of their
+own, `plot_fault_map.py`.
 
 ### ParaView
 
@@ -237,28 +239,41 @@ traction change on the fault (a stress drop where it slips,
 concentrations at the tips). With `-compare` (default) the same slip as a
 smoothed stress glut on the same mesh, the surface profiles side by side
 (in 2-D within 0.5% of the peak; the gap is the glut's own smoothing
-bias, falling as the square of its width under refinement). Then
-`FaultToSurfaceMap` and its adjoint: a surface observable (the mean
-uplift in a Gaussian window, `-sx`, `-sw`) computed forward and by the
-adjoint, whose output — the traction the surface load induces on the
-fault, a dual vector — gives, projected onto the fault plane and mapped by
-a Sobolev Riesz map (`-sl`, `-so`; `riesz.hpp`), the gradient of the
-observable with respect to tangential slip (the traction change is mapped
-by the L2 map); and with
-`-green k` the uplift of unit slip on each of k sub-faults (the columns of
-a slip inversion's Green's matrix). Shows: the physical u_z,
-discontinuous at the fault, and the displacement vector (`d` displaces the
-mesh by it, showing the offset), in 3-D cut open along the dip section
-through the fault centre and seen along the strike; in 3-D also the slip,
-the shear traction change and the kernel as vector fields on the fault
-itself, seen face on (its boundary SubMesh,
+bias, falling as the square of its width under refinement). Then the map
+A from tangential slip on the fault to the surface displacement,
+`FaultToSurfaceMap`, and its adjoint A\*, from surface tractions to
+tangential tractions on the fault, for two point observables: the
+displacement at a surface station along a direction, J_k = d_k · u(x_k)
+= ⟨A s, t_k⟩ with the point traction t_k = d_k δ(x − x_k) (an MFEM
+`VectorDeltaCoefficient`; by default the uplift at x = −1.5 and u_x at
+x = 1.5, in 3-D at y = 1 and −1, off the fault's strike midline; `-sx`,
+`-sy`, `-sd` and `-sx2`, `-sy2`, `-sd2`), each computed forward and by the
+adjoint. A\* t_k is the traction t_k induces on the fault (a dual vector),
+projected onto the fault plane and lifted to H^s by a Sobolev Riesz map
+(`-sl`, `-so`; `riesz.hpp`): the gradient of J_k with respect to the slip,
+its sensitivity kernel (the traction change is mapped by the L2 map).
+Shows: the physical u_z, discontinuous at the fault, and the displacement
+vector (`d` displaces the mesh by it, showing the offset), in 3-D cut open
+along the dip section through the fault centre and seen along the strike;
+in 3-D also the slip, the shear traction change and the two kernels as
+vector fields on the fault itself, seen face on (its boundary SubMesh,
 drawn as a surface: black arrows, colour the magnitude, `F` cycling it
-through the x, y, z components); the CSVs plot the surface profile with the
-surface height (`coseismic_fault.csv`), the slip, traction change and kernel along dip
-(`coseismic_fault_fault.csv`) and the Green's functions
-(`coseismic_fault_green.csv`).
+through the x, y, z components); the CSVs plot the surface profile with
+the surface height (`coseismic_fault.csv`) and the slip, traction change
+and kernels along dip (`coseismic_fault_fault.csv`). The map tables
+(`coseismic_fault_map_fault.csv`, `coseismic_fault_map_surface.csv`) have
+a script of their own, `python3 plot_fault_map.py coseismic_fault`
+(writes `coseismic_fault_map.png`): s and A s across the top, then A\* t_k
+and t_k for each observable, the fault on the left and the surface on the
+right. In 2-D the fields are curves and each traction an arrow at its
+station on a section through the surface and the fault; in 3-D they are
+maps (the fault in its own plane seen from the hanging wall, the surface
+from above with the fault's outline; colour the component along the slip
+or the vertical, arrows the rest), each traction drawn over contours of
+the surface height (arrow its horizontal part, a circled dot or cross its
+vertical part).
 `./coseismic_fault`, `./coseismic_fault -s -0.01`,
-`./coseismic_fault -no-taper`, `./coseismic_fault -sx 1 -green 8`,
+`./coseismic_fault -no-taper`, `./coseismic_fault -sx -2.5 -sd2 "0 1"`,
 `./coseismic_fault -m ../data/faulted_box_3d.msh -o 1 -rake 0`,
 `./coseismic_fault -m ../data/faulted_box_2d_flat.msh`,
 `./coseismic_fault -rs 1` (`-rs`/`-rp`: uniform refinements before/after

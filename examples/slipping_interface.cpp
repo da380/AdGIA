@@ -671,7 +671,7 @@ struct Row {
 
 }  // namespace
 
-int main(int argc, char* argv[]) {
+int main(int argc, char* argv[]) try {
 #ifdef MFEM_USE_MPI
   Mpi::Init(argc, argv);
   Hypre::Init();
@@ -818,12 +818,13 @@ int main(int argc, char* argv[]) {
     bool contradiction = false;
     std::string message;
     if (has_manifest) {
-      const MeshManifest manifest(mpath);
+      const planetmodel::MeshManifest manifest(mpath);
       auto adopt = [&](const char* key, real_t& value) {
-        if (!manifest.HasMeta(key)) {
+        const auto* recorded_json = manifest.Meta().Find(key);
+        if (!recorded_json) {
           return;
         }
-        const real_t recorded = manifest.MetaNumber(key);
+        const real_t recorded = recorded_json->AsNumber();
         if (!std::isnan(value) && std::abs(value - recorded) > 1e-12) {
           contradiction = true;
           message += std::string(" -") + key + " " + std::to_string(value) +
@@ -1345,4 +1346,7 @@ int main(int argc, char* argv[]) {
     }
   }
   return 0;
+} catch (const planetmodel::Error& e) {
+  std::cerr << e.what() << "\n";
+  return 1;
 }

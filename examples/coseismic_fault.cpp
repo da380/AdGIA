@@ -33,26 +33,42 @@
 //     their largest difference relative to the peak: two discretisations
 //     of one source, which agree away from the fault and converge together
 //     under refinement (meshes/faulted_box.py --scale);
-//   - FaultToSurfaceMap, the linear map from fault slip to surface
-//     displacement, and its adjoint: the observable J = mean uplift in a
-//     Gaussian window (centre x = -sx, y = 0, width -sw) is computed
-//     forward, J = <G s, w>, and by the adjoint, J = <s, G^T w>, where
-//     G^T w is the traction the surface load w induces on the fault, in
-//     consistent nodal form: a dual vector, whose part tangential to the
-//     fault, mapped to a field by a Riesz map, is the gradient of J with
-//     respect to (tangential) slip; with -green k, the surface uplift of
-//     unit slip on each of
-//     k equal sub-faults along dip (the columns of the Green's matrix of a
-//     slip inversion), whose sum is checked against the response to
-//     uniform slip.
+//   - the map A from tangential slip on the fault to the displacement of
+//     the surface, A: H^s(fault) -> L2(surface), and its adjoint A*, from
+//     surface tractions back to tangential tractions on the fault. On the
+//     discrete spaces A is FaultToSurfaceMap, G, and A* t = R^-1 P G^T M t:
+//     the surface traction t as a dual vector (M t, the load of t), the
+//     traction it induces on the fault in consistent nodal form (G^T), its
+//     part tangential to the fault (P) and the Riesz map R of H^s (order
+//     -so, smoothing length -sl, the slip pinned on the fault edge). Two
+//     observables, each the displacement at a station x_k on the surface
+//     along a unit vector d_k (by default the uplift at x = -1.5 and u_x
+//     at x = 1.5, beyond the down-dip end of the fault, and in 3-D at
+//     y = 1 and -1, off the fault's strike midline on either side, so
+//     neither kernel is (nearly) symmetric along strike): J_k = d_k . u(x_k)
+//     = <A s, t_k> with the point traction t_k = d_k delta(x - x_k), whose
+//     load is that of MFEM's VectorDeltaCoefficient. A point traction is
+//     not in L2, but the pairing is bounded on the range of A (the fault is
+//     buried, so the surface displacement is smooth) and the Riesz map
+//     smooths its kernel further. A* t_k is the gradient of J_k with
+//     respect to the slip in H^s: its sensitivity kernel. Each J_k is
+//     computed both ways, <A s, t_k> = (s, A* t_k) in H^s.
 //
 // Output: the screen reports the moment, the surface peaks, the glut
-// comparison, J both ways and the Green's-function linearity check. CSV
-// tables (python3 plot_csv.py <file>): <csv>.csv, the surface displacement
-// (with the glut's beside it) and the surface height; <csv>_fault.csv,
-// along dip: the slip, the
-// traction change and the kernel; <csv>_green.csv, the Green's functions.
-// The traction and the kernel come out of the solves as dual vectors (the
+// comparison and each J both ways. CSV tables (python3 plot_csv.py
+// <file>): <csv>.csv, the surface displacement (with the glut's beside it)
+// and the surface height; <csv>_fault.csv, along dip: the slip, the
+// traction change and the kernels. The map tables (python3
+// plot_fault_map.py <csv>): <csv>_map_fault.csv and <csv>_map_surface.csv,
+// the slip and the kernels, and A s, sampled in the elements of the fault
+// and the surface, with the stations and directions as header lines; the
+// script draws them in rows, s and A s, then t_k and A* t_k for each
+// observable, the fault on the left and the surface on the right: in 2-D
+// as curves along the fault and the surface, t_k as an arrow at its
+// station on a section through the surface and the fault; in 3-D as maps,
+// the fault in its own plane seen from the hanging wall and the surface
+// from above, colour a component and arrows the rest.
+// The traction and the kernels come out of the solves as dual vectors (the
 // fault reaction and G^T w) and are mapped to fields by Riesz maps of the
 // fault space (riesz.hpp), the slip pinned to zero on the fault edge (the
 // boundary of the fault SubMesh). The traction, a physical density, by the
@@ -61,19 +77,19 @@
 // hanging-wall side, so on an unstructured mesh the projection carries
 // mesh-scale noise; a Sobolev map would smooth it, but would also damp its
 // amplitude and, through the pinned edge, the concentrations at the tips).
-// The kernel — its dual first projected onto the fault plane, the slip
+// A kernel — its dual first projected onto the fault plane, the slip
 // being tangential (on a planar fault the projection commutes with the
 // component-wise metric) — by the Sobolev map of smoothing length -sl and
-// order -so: the gradient of J in that metric (-sl 0: in L2). With -vis (the
+// order -so: the gradient of J_k in that metric (-sl 0: in L2). With -vis (the
 // default) GLVis shows the physical u_z, discontinuous at the fault, on the
 // colour scale of the surface peaks, and the physical displacement vector (2-D:
 // d displaces the mesh by it, which shows the offset). In 3-D both are cut open
 // along the dip section through the fault centre and seen along the strike, so
-// the fault shows its dip; and three vector fields are shown on the fault
+// the fault shows its dip; and four vector fields are shown on the fault
 // itself, its boundary SubMesh drawn as a surface seen face on from the
 // hanging wall: the slip, the shear (tangential) traction change and the
-// kernel, each with black arrows, coloured by magnitude (F cycles the colour
-// through the x, y and z components).
+// two kernels, each with black arrows, coloured by magnitude (F cycles the
+// colour through the x, y and z components).
 //
 // One source serves the serial and the parallel build; the differences are
 // the partitioned mesh and submeshes, the preconditioner inside the
@@ -103,12 +119,14 @@
 //   -ns      glut patches along strike (3-D) [12].
 //   -smooth  glut Gaussian width in fault element sizes (0: point
 //            sources) [1].
-//   -sx      x of the centre of the observation window [-0.5].
-//   -sw      width (sigma) of the observation window [0.25].
+//   -sx, -sy  position of the first station on the surface (-sy: 3-D)
+//            [-1.5, 1].
+//   -sd      direction of its observed displacement, normalised, e.g.
+//            "1 0 1" ("": vertical, the uplift) [""].
+//   -sx2, -sy2, -sd2   the second station [1.5, -1, "": along x].
 //   -sl      Sobolev smoothing length of the kernel's Riesz map (0: L2)
 //            [0.1].
 //   -so      Sobolev order s of the kernel's Riesz map [2].
-//   -green   number of sub-faults for the Green's functions (0: none) [5].
 //   -vis / -no-vis   GLVis windows [on].
 //   -csv     prefix of the CSV tables ("": none) [coseismic_fault].
 //
@@ -117,9 +135,9 @@
 //    ./coseismic_fault -s -0.01                          (normal fault)
 //    ./coseismic_fault -no-taper                         (uniform slip)
 //    ./coseismic_fault -beta 2 -gamma 0.5 -bz 1
-//    ./coseismic_fault -sx 1 -green 8
+//    ./coseismic_fault -sx -2.5 -sd2 "0 1"   (footwall uplift; u_z at x = 1.5)
 //    ./coseismic_fault -m ../data/faulted_box_3d.msh -o 1
-//    ./coseismic_fault -m ../data/faulted_box_3d.msh -o 1 -rake 0 -sw 0.5
+//    ./coseismic_fault -m ../data/faulted_box_3d.msh -o 1 -rake 0 -sx 0 -sy 1.5
 //    ./coseismic_fault -m ../data/faulted_box_2d_flat.msh     (flat surface)
 //    ./coseismic_fault -rs 1                             (refined once)
 //
@@ -137,10 +155,12 @@
 #include <cmath>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <numbers>
-#include <utility>
+#include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "AdGIA.hpp"
@@ -150,6 +170,7 @@
 using namespace std;
 using namespace mfem;
 using namespace AdGIA;
+using planetmodel::Json;
 
 namespace {
 
@@ -190,23 +211,21 @@ struct FaultRecord {
 };
 
 Vector JsonVector(const Json& j) {
-  auto v = Vector(static_cast<int>(j.array.size()));
+  auto v = Vector(static_cast<int>(j.Size()));
   for (int i = 0; i < v.Size(); i++) {
-    v(i) = j.array[i].number;
+    v(i) = j.At(static_cast<std::size_t>(i)).AsNumber();
   }
   return v;
 }
 
 FaultRecord ReadRecord(const string& mesh_file) {
   const auto path = mesh_file.substr(0, mesh_file.rfind('.')) + ".json";
-  const auto rec = ReadJsonFile(path);
-  auto find = [&](const Json& j, const char* key) -> const Json& {
-    const auto* v = j.Find(key);
-    MFEM_VERIFY(v, path << ": missing \"" << key << "\".");
-    return *v;
+  const auto rec = planetmodel::ReadJsonFile(path);
+  auto find = [](const Json& j, const char* key) -> const Json& {
+    return j.At(key);
   };
   auto num = [&](const Json& j, const char* key) {
-    return find(j, key).number;
+    return find(j, key).AsNumber();
   };
   auto attr = [&](const Json& j, const char* key) {
     return static_cast<int>(num(j, key));
@@ -236,11 +255,11 @@ FaultRecord ReadRecord(const string& mesh_file) {
   r.z_max = num(topography, "z_max");
   r.max_curvature = num(topography, "max_curvature");
   const auto& profile = find(topography, "profile");
-  for (const auto& v : find(profile, "x").array) {
-    r.profile_x.push_back(v.number);
+  for (const auto& v : find(profile, "x").AsArray()) {
+    r.profile_x.push_back(v.AsNumber());
   }
-  for (const auto& v : find(profile, "z").array) {
-    r.profile_z.push_back(v.number);
+  for (const auto& v : find(profile, "z").AsArray()) {
+    r.profile_z.push_back(v.AsNumber());
   }
   MFEM_VERIFY(
       r.profile_x.size() == r.profile_z.size() && r.profile_x.size() > 1,
@@ -404,6 +423,121 @@ void ParentToFault(const Operator& injection, const Vector& parent_true,
   fault.SetFromTrueDofs(fault_true);
 }
 
+// Vector coefficients on a SubMesh (a fault or a surface) as table rows on
+// the root: in each element, at the points of its refinement into
+// `subdivisions` parts per edge, the point and the values of each
+// coefficient in turn, the ranks in order (points on element boundaries
+// appear once for each element). Collective; the other ranks get no rows.
+vector<vector<double>> SubMeshRows(Mesh& submesh, int subdivisions,
+                                   const vector<VectorCoefficient*>& fields) {
+  const auto sdim = submesh.SpaceDimension();
+  auto width = sdim;
+  for (auto* field : fields) {
+    width += field->GetVDim();
+  }
+  auto values = vector<double>();
+  auto x = Vector(sdim);
+  auto v = Vector();
+  for (int e = 0; e < submesh.GetNE(); e++) {
+    auto* T = submesh.GetElementTransformation(e);
+    const auto* refined = GlobGeometryRefiner.Refine(
+        submesh.GetElementBaseGeometry(e), subdivisions);
+    for (int k = 0; k < refined->RefPts.GetNPoints(); k++) {
+      const auto& ip = refined->RefPts.IntPoint(k);
+      T->SetIntPoint(&ip);
+      T->Transform(ip, x);
+      values.insert(values.end(), x.begin(), x.end());
+      for (auto* field : fields) {
+        field->Eval(v, *T, ip);
+        values.insert(values.end(), v.begin(), v.end());
+      }
+    }
+  }
+#ifdef MFEM_USE_MPI
+  const auto size = Mpi::WorldSize();
+  auto count = static_cast<int>(values.size());
+  auto counts = vector<int>(size), displs = vector<int>(size);
+  MPI_Gather(&count, 1, MPI_INT, counts.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
+  auto total = 0;
+  for (int r = 0; r < size; r++) {
+    displs[r] = total;
+    total += counts[r];
+  }
+  auto all = vector<double>(total);
+  MPI_Gatherv(values.data(), count, MPI_DOUBLE, all.data(), counts.data(),
+              displs.data(), MPI_DOUBLE, 0, MPI_COMM_WORLD);
+  values = std::move(all);
+#endif
+  auto rows = vector<vector<double>>();
+  for (size_t k = 0; k + width <= values.size(); k += width) {
+    rows.emplace_back(values.begin() + k, values.begin() + k + width);
+  }
+  return rows;
+}
+
+// The point of a surface SubMesh over a horizontal position h (x, and y in
+// 3-D): the surface is a graph over the horizontal plane, its elements
+// straight-sided simplices (segments in 2-D, triangles in 3-D), so its
+// height there is the linear interpolant in the element whose horizontal
+// projection contains h. Collective.
+Vector SurfacePoint(Mesh& surface, const Vector& h) {
+  const auto sdim = surface.SpaceDimension(), nh = sdim - 1;
+  constexpr auto missing = -std::numeric_limits<real_t>::max();
+  auto height = missing;
+  auto verts = Array<int>();
+  auto J = DenseMatrix(nh);
+  auto r = Vector(nh), lambda = Vector(nh);
+  for (int e = 0; e < surface.GetNE(); e++) {
+    surface.GetElementVertices(e, verts);
+    MFEM_VERIFY(verts.Size() == nh + 1, "SurfacePoint: simplices only.");
+    const auto* p0 = surface.GetVertex(verts[0]);
+    for (int i = 0; i < nh; i++) {
+      r(i) = h(i) - p0[i];
+      for (int j = 0; j < nh; j++) {
+        J(i, j) = surface.GetVertex(verts[j + 1])[i] - p0[i];
+      }
+    }
+    if (std::abs(J.Det()) < 1e-14) {
+      continue;
+    }
+    J.Invert();
+    J.Mult(r, lambda);
+    constexpr auto tol = 1e-10;
+    if (lambda.Min() < -tol || lambda.Sum() > 1.0 + tol) {
+      continue;
+    }
+    auto z = (1.0 - lambda.Sum()) * p0[nh];
+    for (int j = 0; j < nh; j++) {
+      z += lambda(j) * surface.GetVertex(verts[j + 1])[nh];
+    }
+    height = std::max(height, z);
+  }
+#ifdef MFEM_USE_MPI
+  MPI_Allreduce(MPI_IN_PLACE, &height, 1, MPITypeMap<real_t>::mpi_type, MPI_MAX,
+                MPI_COMM_WORLD);
+#endif
+  MFEM_VERIFY(height > missing,
+              "SurfacePoint: the position is not over "
+              "the surface.");
+  auto x = Vector(sdim);
+  for (int i = 0; i < nh; i++) {
+    x(i) = h(i);
+  }
+  x(nh) = height;
+  return x;
+}
+
+// A vector as "a b c" (for the table header lines) or "(a, b, c)".
+string Words(const Vector& v, bool brackets = false) {
+  auto os = ostringstream();
+  os << (brackets ? "(" : "");
+  for (int i = 0; i < v.Size(); i++) {
+    os << (i ? (brackets ? ", " : " ") : "") << v(i);
+  }
+  os << (brackets ? ")" : "");
+  return os.str();
+}
+
 // The GLVis view angles (degrees) of a camera looking along the unit
 // vector d (GLVisWindow::SetView).
 std::pair<real_t, real_t> ViewAngles(const Vector& d) {
@@ -450,7 +584,7 @@ DipSection DipSectionView(const FaultRecord& f) {
 
 }  // namespace
 
-int main(int argc, char* argv[]) {
+int main(int argc, char* argv[]) try {
 #ifdef MFEM_USE_MPI
   Mpi::Init(argc, argv);
   Hypre::Init();
@@ -467,8 +601,8 @@ int main(int argc, char* argv[]) {
   bool compare = true;
   int nd = 12, ns = 12;
   real_t smooth = 1.0;
-  real_t station_x = -0.5, station_w = 0.25;
-  int n_green = 5;
+  real_t station_x[] = {-1.5, 1.5}, station_y[] = {1.0, -1.0};
+  Vector station_dir[2];
   int serial_refinements = 0, parallel_refinements = 0;
   real_t sobolev_length = 0.1;
   int sobolev_order = 2;
@@ -507,17 +641,25 @@ int main(int argc, char* argv[]) {
   args.AddOption(&smooth, "-smooth", "--source-smoothing",
                  "Glut Gaussian width in fault element sizes (0: point "
                  "sources).");
-  args.AddOption(&station_x, "-sx", "--station-x",
-                 "x of the centre of the surface observation window.");
-  args.AddOption(&station_w, "-sw", "--station-width",
-                 "Width (sigma) of the surface observation window.");
+  args.AddOption(&station_x[0], "-sx", "--station-x",
+                 "x of the first surface station.");
+  args.AddOption(&station_y[0], "-sy", "--station-y",
+                 "y of the first surface station (3-D).");
+  args.AddOption(&station_dir[0], "-sd", "--station-direction",
+                 "Observed displacement direction at the first station, "
+                 "e.g. \"1 0 1\" (default: vertical).");
+  args.AddOption(&station_x[1], "-sx2", "--station2-x",
+                 "x of the second surface station.");
+  args.AddOption(&station_y[1], "-sy2", "--station2-y",
+                 "y of the second surface station (3-D).");
+  args.AddOption(&station_dir[1], "-sd2", "--station2-direction",
+                 "Observed displacement direction at the second station "
+                 "(default: along x).");
   args.AddOption(&serial_refinements, "-rs", "--refine-serial",
                  "Uniform refinements of the mesh before it is partitioned.");
   args.AddOption(&parallel_refinements, "-rp", "--refine-parallel",
                  "Uniform refinements of the partitioned mesh (a serial "
                  "build adds them to -rs).");
-  args.AddOption(&n_green, "-green", "--green-subfaults",
-                 "Sub-faults for the Green's functions (0: none).");
   args.AddOption(&sobolev_length, "-sl", "--sobolev-length",
                  "Sobolev smoothing length of the kernel's Riesz map "
                  "(0: L2).");
@@ -545,6 +687,20 @@ int main(int argc, char* argv[]) {
   auto smesh = Mesh(mesh_file, 1, 1);
   const auto dim = smesh.Dimension();
   MFEM_VERIFY(dim == f.dim, "The mesh and its record differ in dimension.");
+  // The observed directions, normalised: by default the first vertical
+  // (the uplift), the second along x.
+  for (int k = 0; k < 2; k++) {
+    auto& d = station_dir[k];
+    if (d.Size() == 0) {
+      d.SetSize(dim);
+      d = 0.0;
+      d(k == 0 ? dim - 1 : 0) = 1.0;
+    }
+    MFEM_VERIFY(d.Size() == dim && d.Norml2() > 0.0,
+                "Station " << k + 1 << ": the direction needs " << dim
+                           << " components, not all zero.");
+    d /= d.Norml2();
+  }
   for (int l = 0; l < serial_refinements; l++) {
     smesh.UniformRefinement();
   }
@@ -809,106 +965,77 @@ int main(int argc, char* argv[]) {
     }
   }
 
-  // The map from fault slip to surface displacement and its adjoint.
+  // The map A from slip to surface displacement and its adjoint A*: on the
+  // discrete spaces G = FaultToSurfaceMap and A* t = R^-1 P G^T M t.
   auto surface_attr = Array<int>({f.surface});
   auto surface_mesh = SubMeshType::CreateFromBoundary(mesh, surface_attr);
   auto surface_fes = SubMeshDofInjection::MakeShadowSpace(fes, surface_mesh);
   auto G = FaultToSurfaceMap(problem, *fault_fes, *surface_fes);
 
-  // The observable: the mean uplift in a Gaussian window, J = <u, w> /
-  // integral of the window, w the surface dual of the window weight.
-  auto window_c = FunctionCoefficient([=](const Vector& x) {
-    auto r2 = (x(0) - station_x) * (x(0) - station_x);
-    if (dim == 3) {
-      r2 += x(1) * x(1);
-    }
-    return std::exp(-0.5 * r2 / (station_w * station_w));
-  });
-  auto weight_c = ScalarVectorProductCoefficient(window_c, e_z_c);
-  auto w_form = LFType(surface_fes.get());
-  w_form.AddDomainIntegrator(new VectorDomainLFIntegrator(weight_c));
-  w_form.Assemble();
-  const auto w = TrueDual(w_form);
-  auto e_z_surface = FieldType(surface_fes.get());
-  e_z_surface.ProjectCoefficient(e_z_c);
-  auto e_z_true = Vector(surface_fes->GetTrueVSize());
-  e_z_surface.GetTrueDofs(e_z_true);
-  const auto window = Dot(w, e_z_true);
-
+  // The slip on the fault space and its surface displacement A s.
   auto slip_f = FieldType(fault_fes.get());
   slip_f.ProjectCoefficient(slip_c);
   auto s_true = Vector(fault_fes->GetTrueVSize());
   slip_f.GetTrueDofs(s_true);
   auto Gs = Vector();
-  auto Gtw = Vector();
   G.Mult(s_true, Gs);
-  const auto J_forward = Dot(Gs, w) / window;
-  G.MultTranspose(w, Gtw);
-  const auto J_adjoint = Dot(s_true, Gtw) / window;
-  if (Root()) {
-    cout << "Mean uplift in the window at x = " << station_x
-         << ": J = " << J_forward << " (forward), " << J_adjoint
-         << " (adjoint); relative difference "
-         << std::abs(J_forward - J_adjoint) /
-                std::max(std::abs(J_forward), real_t{1e-300})
-         << "\n";
+
+  // The observables J_k = d_k . u(x_k) = <A s, t_k>, the point tractions
+  // t_k = d_k delta(x - x_k) loaded through delta coefficients (MFEM finds
+  // x_k in the surface mesh, the station first put on its faceted surface
+  // over the given horizontal position), and their kernels A* t_k: the
+  // tangential part of G^T w_k mapped by the kernel's Riesz map. Each J_k
+  // both ways: <A s, t_k> = <G s, w_k>, and (s, A* t_k) in H^s =
+  // s . P G^T w_k = s . G^T w_k, the slip being tangential and zero on the
+  // fault edge.
+  struct Observable {
+    Vector station, direction;
+    Vector kernel;                    // A* t_k, fault true dofs
+    vector<double> kernel_along_dip;  // its samples along dip
+    real_t forward = 0.0, adjoint = 0.0;
+  };
+  auto observables = vector<Observable>();
+  for (int k = 0; k < 2; k++) {
+    auto horizontal = Vector(dim - 1);
+    horizontal(0) = station_x[k];
+    if (dim == 3) {
+      horizontal(1) = station_y[k];
+    }
+    auto o = Observable{SurfacePoint(surface_mesh, horizontal), station_dir[k]};
+    auto t_c = VectorDeltaCoefficient(o.direction);
+    t_c.SetDeltaCenter(o.station);
+    auto w_form = LFType(surface_fes.get());
+    w_form.AddDomainIntegrator(new VectorDomainLFIntegrator(t_c));
+    w_form.Assemble();
+    const auto w = TrueDual(w_form);
+    MFEM_VERIFY(Dot(w, w) > 0.0,
+                "Station " << k + 1 << " was not found in the surface mesh.");
+    auto Gtw = Vector();
+    G.MultTranspose(w, Gtw);
+    o.forward = Dot(Gs, w);
+    o.adjoint = Dot(s_true, Gtw);
+    ProjectTangential(Gtw, *fault_fes, f.normal);
+    kernel_riesz.Mult(Gtw, o.kernel);
+    auto kernel = FieldType(&fes);
+    FaultToParent(*pi_fault, o.kernel, kernel);
+    o.kernel_along_dip = on_fault.Sample(kernel);
+    if (Root()) {
+      cout << "Station " << k + 1 << " at " << Words(o.station, true)
+           << ", displacement along " << Words(o.direction, true)
+           << ": J = " << o.forward << " (forward), " << o.adjoint
+           << " (adjoint); relative difference "
+           << std::abs(o.forward - o.adjoint) /
+                  std::max(std::abs(o.forward), real_t{1e-300})
+           << "\n";
+    }
+    observables.push_back(std::move(o));
   }
 
-  // The gradient of J with respect to tangential slip: the dual G^T w /
-  // (window integral), its tangential part mapped by the kernel's Riesz
-  // map; on the parent space for sampling.
-  auto kernel_dual = Vector(Gtw);
-  auto kernel_f = Vector();
-  kernel_dual /= window;
-  ProjectTangential(kernel_dual, *fault_fes, f.normal);
-  kernel_riesz.Mult(kernel_dual, kernel_f);
-  auto kernel = FieldType(&fes);
-  FaultToParent(*pi_fault, kernel_f, kernel);
-  const auto kernel_s = on_fault.Sample(kernel);
-
-  // Green's functions: the surface uplift of unit slip (in the slip
-  // direction) on each of n_green equal sub-faults along dip, and their
-  // sum against the response to unit slip on the whole fault.
-  auto green = vector<vector<double>>();
-  if (n_green > 0) {
-    const auto sense = slip < 0.0 ? -1.0 : 1.0;
-    auto unit_slip = [&](int k) {
-      return Slip(f, direction, [=](real_t xi, real_t eta) -> real_t {
-        if (std::abs(xi) >= 0.5 || std::abs(eta) >= 0.5) {
-          return 0.0;
-        }
-        const auto patch = std::min(
-            n_green - 1, static_cast<int>(std::floor((xi + 0.5) * n_green)));
-        return (k < 0 || patch == k) ? sense : 0.0;
-      });
-    };
-    auto sum = vector<double>(npts, 0.0);
-    for (int k = -1; k < n_green; k++) {
-      auto c = unit_slip(k);
-      slip_f.ProjectCoefficient(c);
-      slip_f.GetTrueDofs(s_true);
-      G.Mult(s_true, Gs);
-      const auto u = profile.Sample(problem.Displacement());
-      auto col =
-          vector<double>(u.begin() + (dim - 1) * npts, u.begin() + dim * npts);
-      if (k >= 0) {
-        for (int i = 0; i < npts; i++) {
-          sum[i] += col[i];
-        }
-      }
-      green.push_back(std::move(col));
-    }
-    double peak = 0.0, diff = 0.0;
-    for (int i = 0; i < npts; i++) {
-      peak = std::max(peak, std::abs(green[0][i]));
-      diff = std::max(diff, std::abs(green[0][i] - sum[i]));
-    }
-    if (Root()) {
-      cout << "Green's functions: " << n_green
-           << " sub-faults; their sum against the whole fault: relative "
-              "difference "
-           << diff / peak << "\n";
-    }
+  // The kernels as fields on the fault space.
+  auto kernel_fields = vector<std::unique_ptr<FieldType>>();
+  for (const auto& o : observables) {
+    kernel_fields.push_back(std::make_unique<FieldType>(fault_fes.get()));
+    kernel_fields.back()->SetFromTrueDofs(o.kernel);
   }
 
   // The tables.
@@ -960,52 +1087,159 @@ int main(int argc, char* argv[]) {
     }
     table.Write();
 
-    const auto metric = sobolev_length > 0.0
-                            ? "H^" + to_string(sobolev_order) + ", length " +
-                                  to_string(sobolev_length)
-                            : string("L2");
-    auto fault_table =
-        examples::CsvTable(prefix + "_fault.csv",
-                           {"xi", "slip", "tau_shear", "tau_normal", "kernel"});
-    fault_table.Meta("title", "Along dip: slip, traction change, kernel")
+    auto metric_os = ostringstream();
+    if (sobolev_length > 0.0) {
+      metric_os << "H^" << sobolev_order << ", length " << sobolev_length;
+    } else {
+      metric_os << "L2";
+    }
+    const auto metric = metric_os.str();
+    auto fault_table = examples::CsvTable(
+        prefix + "_fault.csv",
+        {"xi", "slip", "tau_shear", "tau_normal", "kernel_1", "kernel_2"});
+    fault_table.Meta("title", "Along dip: slip, traction change, kernels")
         .Meta("note",
               "shear: along the slip; normal: into the hanging wall; "
-              "traction in L2; kernel: gradient of J along the slip in " +
+              "traction in L2; kernels: gradients of J_1, J_2 along the "
+              "slip in " +
                   metric)
         .Meta("xlabel", "xi")
-        .Meta("y", "slip|tau_shear,tau_normal|kernel")
-        .Meta("ylabel", "slip|traction change|dJ/ds");
+        .Meta("y", "slip|tau_shear,tau_normal|kernel_1,kernel_2")
+        .Meta("ylabel", "slip|traction change|dJ_k/ds");
     for (int j = 0; j < nfault; j++) {
       fault_table.Row({xi_pts[j], along(slip_s, j, slip_dir),
                        along(tau_s, j, slip_dir), along(tau_s, j, f.normal),
-                       along(kernel_s, j, slip_dir)});
+                       along(observables[0].kernel_along_dip, j, slip_dir),
+                       along(observables[1].kernel_along_dip, j, slip_dir)});
     }
     fault_table.Write();
 
-    if (n_green > 0) {
-      auto gcols = vector<string>{"x", "whole_fault"};
-      for (int k = 0; k < n_green; k++) {
-        gcols.push_back("subfault_" + to_string(k + 1));
+    // The map tables: s and the kernels A* t_k on the fault, A s on the
+    // surface, sampled in each element at the points of its refinement,
+    // and the stations, directions and J_k as header lines. The fault in
+    // its own plane, seen from the hanging wall: in 2-D the distance down
+    // dip from its centre; in 3-D the distances along e_a and up dip, e_b,
+    // with e_a x e_b = nu (e_a is the strike or its opposite). The slip and
+    // the kernels along the slip, and in 3-D their components in
+    // (e_a, e_b) too.
+    const auto subdivisions = std::max(4, 2 * order);
+    auto up_dip = Vector(f.down_dip);
+    up_dip.Neg();
+    auto across = Vector(dim);
+    if (dim == 3) {
+      for (int c = 0; c < 3; c++) {
+        across(c) = up_dip((c + 1) % 3) * f.normal((c + 2) % 3) -
+                    up_dip((c + 2) % 3) * f.normal((c + 1) % 3);
       }
-      auto green_table = examples::CsvTable(prefix + "_green.csv", gcols);
-      green_table.Meta("title", "Green's functions: uplift per unit slip")
-          .Meta("note", "sub-faults numbered up-dip to down-dip")
-          .Meta("xlabel", "x")
-          .Meta("ylabel", "u_z");
-      for (int i = 0; i < npts; i++) {
-        auto row = vector<double>{surface_x[i]};
-        for (const auto& col : green) {
-          row.push_back(col[i]);
-        }
-        green_table.Row(row);
-      }
-      green_table.Write();
     }
+    auto slip_fault_c = VectorGridFunctionCoefficient(&slip_f);
+    auto kernel_cs = vector<std::unique_ptr<VectorGridFunctionCoefficient>>();
+    auto fault_fields = vector<VectorCoefficient*>{&slip_fault_c};
+    auto fault_cols = dim == 2 ? vector<string>{"x", "z", "down_dip", "slip"}
+                               : vector<string>{"x",           "y",
+                                                "z",           "along_strike",
+                                                "up_dip",      "slip_strike",
+                                                "slip_up_dip", "slip"};
+    for (size_t k = 0; k < observables.size(); k++) {
+      kernel_cs.push_back(std::make_unique<VectorGridFunctionCoefficient>(
+          kernel_fields[k].get()));
+      fault_fields.push_back(kernel_cs.back().get());
+      const auto name = "kernel_" + to_string(k + 1);
+      if (dim == 3) {
+        fault_cols.push_back(name + "_strike");
+        fault_cols.push_back(name + "_up_dip");
+      }
+      fault_cols.push_back(name);
+    }
+    auto map_fault = examples::CsvTable(prefix + "_map_fault.csv", fault_cols);
+    map_fault
+        .Meta("title",
+              "The map A from fault slip to surface displacement "
+              "and its adjoint")
+        .Meta("note", "kernels in " + metric)
+        .PlotCommand("python3 plot_fault_map.py " + prefix);
+    for (const auto& r : SubMeshRows(fault_mesh, subdivisions, fault_fields)) {
+      // A row: the point, then the slip and the kernels, dim components
+      // each.
+      auto offset = [&](const Vector& d) {
+        double a = 0.0;
+        for (int c = 0; c < dim; c++) {
+          a += (r[c] - f.centre(c)) * d(c);
+        }
+        return a;
+      };
+      auto component = [&](size_t field, const Vector& d) {
+        double a = 0.0;
+        for (int c = 0; c < dim; c++) {
+          a += r[field * dim + c] * d(c);
+        }
+        return a;
+      };
+      auto row = vector<double>(r.begin(), r.begin() + dim);
+      if (dim == 2) {
+        row.push_back(offset(f.down_dip));
+      } else {
+        row.insert(row.end(), {offset(across), offset(up_dip)});
+      }
+      for (size_t i = 1; i <= fault_fields.size(); i++) {
+        if (dim == 3) {
+          row.insert(row.end(), {component(i, across), component(i, up_dip)});
+        }
+        row.push_back(component(i, slip_dir));
+      }
+      map_fault.Row(row);
+    }
+    map_fault.Write();
+
+    // The surface, with the outline of the fault seen from above (in 2-D
+    // its ends).
+    auto Gs_field = FieldType(surface_fes.get());
+    Gs_field.SetFromTrueDofs(Gs);
+    auto Gs_c = VectorGridFunctionCoefficient(&Gs_field);
+    auto surface_cols =
+        dim == 2 ? vector<string>{"x", "z", "u_x", "u_z"}
+                 : vector<string>{"x", "y", "z", "u_x", "u_y", "u_z"};
+    auto map_surface =
+        examples::CsvTable(prefix + "_map_surface.csv", surface_cols);
+    auto outline = ostringstream();
+    auto separator = "";
+    // In (xi, eta), from the up-dip edge round to it again.
+    const auto corners =
+        dim == 2 ? vector<std::pair<real_t, real_t>>{{-0.5, 0.0}, {0.5, 0.0}}
+                 : vector<std::pair<real_t, real_t>>{
+                       {-0.5, -0.5}, {0.5, -0.5}, {0.5, 0.5}, {-0.5, 0.5}};
+    for (const auto& [xi, eta] : corners) {
+      auto corner = Vector(f.centre);
+      corner.Add(xi * f.length, f.down_dip);
+      if (dim == 3) {
+        corner.Add(eta * f.width, f.strike_dir);
+      }
+      outline << separator << corner(0);
+      separator = "; ";
+      if (dim == 3) {
+        outline << " " << corner(1);
+      }
+    }
+    map_surface.Meta("fault_outline", outline.str());
+    for (size_t k = 0; k < observables.size(); k++) {
+      const auto& o = observables[k];
+      const auto n = to_string(k + 1);
+      auto J = ostringstream();
+      J << o.forward << " " << o.adjoint;
+      map_surface.Meta("station_" + n, Words(o.station))
+          .Meta("direction_" + n, Words(o.direction))
+          .Meta("J_" + n, J.str());
+    }
+    map_surface.PlotCommand("python3 plot_fault_map.py " + prefix);
+    for (const auto& r : SubMeshRows(surface_mesh, subdivisions, {&Gs_c})) {
+      map_surface.Row(r);
+    }
+    map_surface.Write();
   }
 
   // The physical u_z on the colour scale of the surface peaks (the field
   // jumps at the fault), the physical displacement vector, and in 3-D the
-  // slip, the shear traction change and the kernel on the fault surface.
+  // slip, the shear traction change and the kernels on the fault surface.
   if (visualization) {
     auto dg_scalar = L2_FECollection(order, dim, BasisType::GaussLobatto);
     auto dg_z_fes = SpaceType(&mesh, &dg_scalar);
@@ -1038,12 +1272,10 @@ int main(int argc, char* argv[]) {
     if (dim == 3) {
       auto slip_fault = FieldType(fault_fes.get());
       auto tau_fault = FieldType(fault_fes.get());
-      auto kernel_fault = FieldType(fault_fes.get());
       ParentToFault(*pi_fault, slip_true_parent, slip_fault);
       auto shear = Vector(tau_f);
       ProjectTangential(shear, *fault_fes, f.normal);
       tau_fault.SetFromTrueDofs(shear);
-      kernel_fault.SetFromTrueDofs(kernel_f);
       // Seen face on, from the hanging-wall side.
       auto towards_fault = Vector(f.normal);
       towards_fault.Neg();
@@ -1052,15 +1284,22 @@ int main(int argc, char* argv[]) {
       auto slip_window = examples::GLVisWindow("fault: slip", fault_keys);
       auto tau_window =
           examples::GLVisWindow("fault: shear traction change", fault_keys);
-      auto kernel_window =
-          examples::GLVisWindow("fault: kernel dJ/ds", fault_keys);
-      for (auto* window : {&slip_window, &tau_window, &kernel_window}) {
+      for (auto* window : {&slip_window, &tau_window}) {
         window->SetView(face_theta, face_phi);
       }
       slip_window.Send(fault_mesh, slip_fault);
       tau_window.Send(fault_mesh, tau_fault);
-      kernel_window.Send(fault_mesh, kernel_fault);
+      for (size_t k = 0; k < kernel_fields.size(); k++) {
+        const auto n = to_string(k + 1);
+        auto kernel_window =
+            examples::GLVisWindow("fault: kernel dJ" + n + "/ds", fault_keys);
+        kernel_window.SetView(face_theta, face_phi);
+        kernel_window.Send(fault_mesh, *kernel_fields[k]);
+      }
     }
   }
   return ok && G.Converged() ? 0 : 1;
+} catch (const planetmodel::Error& e) {
+  std::cerr << e.what() << "\n";
+  return 1;
 }

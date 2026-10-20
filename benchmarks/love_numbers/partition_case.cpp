@@ -26,7 +26,7 @@
 using namespace mfem;
 using namespace AdGIA;
 
-int main(int argc, char* argv[]) {
+int main(int argc, char* argv[]) try {
   const char* manifest_file = "case.json";
   int parts = 8;
   OptionsParser args(argc, argv);
@@ -38,8 +38,8 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
-  const MeshManifest manifest(manifest_file);
-  Mesh mesh = manifest.LoadMesh();
+  const planetmodel::MeshManifest manifest(manifest_file);
+  Mesh mesh = LoadMesh(manifest);
   std::vector<std::string> names(std::begin(benchmark::kFields),
                                  std::end(benchmark::kFields));
   if (manifest.HasField("p0")) {
@@ -47,7 +47,7 @@ int main(int argc, char* argv[]) {
   }
   std::vector<std::unique_ptr<GridFunction>> fields;
   for (const std::string& name : names) {
-    fields.push_back(manifest.LoadField(mesh, name));
+    fields.push_back(LoadField(manifest, mesh, name));
   }
 
   const std::string directory = benchmark::PartsDirectory(manifest, parts);
@@ -75,4 +75,7 @@ int main(int argc, char* argv[]) {
   std::cout << "Wrote " << parts << " parts of " << mesh.GetNE()
             << " elements to " << directory << "\n";
   return 0;
+} catch (const planetmodel::Error& e) {
+  std::cerr << e.what() << "\n";
+  return 1;
 }

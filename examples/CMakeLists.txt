@@ -49,5 +49,6 @@ endforeach()
 
 
 # The examples write their curves as CSV tables (visualisation.hpp) into
-# the directory they run in; the plotting script sits beside them.
+# the directory they run in; the plotting scripts sit beside them.
 configure_file(plot_csv.py ${CMAKE_CURRENT_BINARY_DIR}/plot_csv.py COPYONLY)
+configure_file(plot_fault_map.py ${CMAKE_CURRENT_BINARY_DIR}/plot_fault_map.py COPYONLY)

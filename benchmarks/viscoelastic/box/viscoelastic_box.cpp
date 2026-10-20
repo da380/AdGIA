@@ -90,7 +90,7 @@ real_t SinSquared(real_t k, real_t L) { return k != 0.0 ? 0.5 * L : 0.0; }
 
 }  // namespace
 
-int main(int argc, char* argv[]) {
+int main(int argc, char* argv[]) try {
   Mpi::Init(argc, argv);
   Hypre::Init();
   const bool root = Mpi::Root();
@@ -162,13 +162,13 @@ int main(int argc, char* argv[]) {
 
   // --- the case ---------------------------------------------------------------
 
-  const Json json = ReadJsonFile(case_file);
-  const std::string case_name = Member(json, "name").string;
+  const Json json = planetmodel::ReadJsonFile(case_file);
+  const std::string case_name = Member(json, "name").AsString();
   const int dim = static_cast<int>(Number(json, "dim"));
   MFEM_VERIFY(dim == 2 || dim == 3, "Case: dim must be 2 or 3.");
   const int zdim = dim - 1;
   const Json& geometry = Member(json, "geometry");
-  const std::string kind = Member(geometry, "kind").string;
+  const std::string kind = Member(geometry, "kind").AsString();
   MFEM_VERIFY(kind == "box" || kind == "slab",
               "Case: geometry.kind must be box or slab.");
   const bool periodic = kind == "slab";
@@ -180,7 +180,7 @@ int main(int argc, char* argv[]) {
   std::vector<Layer> layers;
   {
     real_t bottom = 0.0;
-    for (const Json& l : Member(json, "layers").array) {
+    for (const Json& l : Member(json, "layers").AsArray()) {
       const real_t top = Number(l, "top");
       MFEM_VERIFY(top > bottom, "Case: layers must stack upwards.");
       layers.push_back(ParseLayer(l, bottom, top));
@@ -191,7 +191,7 @@ int main(int argc, char* argv[]) {
   }
 
   const Json& load = Member(json, "load");
-  const std::string load_kind = Member(load, "kind").string;
+  const std::string load_kind = Member(load, "kind").AsString();
   const real_t amplitude = Number(load, "amplitude");
   MFEM_VERIFY((load_kind == "surface") == periodic,
               "Case: the surface load goes with a slab, the uniaxial loads "
@@ -664,4 +664,7 @@ int main(int argc, char* argv[]) {
     std::cout << "Wrote " << out_file << "\n";
   }
   return 0;
+} catch (const planetmodel::Error& e) {
+  std::cerr << e.what() << "\n";
+  return 1;
 }

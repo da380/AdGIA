@@ -222,7 +222,7 @@ class PicardLoad : public Coefficient {
 
 }  // namespace
 
-int main(int argc, char* argv[]) {
+int main(int argc, char* argv[]) try {
   Mpi::Init(argc, argv);
   Hypre::Init();
 
@@ -702,4 +702,7 @@ int main(int argc, char* argv[]) {
               << ", wrote " << slcsv << " and " << out << "\n";
   }
   return 0;
+} catch (const planetmodel::Error& e) {
+  std::cerr << e.what() << "\n";
+  return 1;
 }

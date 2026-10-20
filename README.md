@@ -134,9 +134,14 @@ includes them all), are
   Sobolev metrics (`riesz.hpp`), and the descent toolkit over them — the
   constrained metric and the projected nonlinear-CG and
   Levenberg–Marquardt Gauss–Newton loops (`descent.hpp`);
-- the manifest that planetmodel writes beside a mesh, read into the
-  attribute lists and markers the problems take, with the mesh and the
-  fields of the model opened as it says (`mesh_manifest.hpp`).
+- the manifest that planetmodel writes beside a mesh, read by
+  planetmodel's own C++ library, with the mesh and the fields of the
+  model opened as it says and the attribute lists turned into the
+  markers the problems take (`manifest.hpp`); a netCDF model file
+  exported beside the mesh as MFEM coefficients, evaluated through
+  planetmodel's interpolants at the integration points
+  (`model_coefficient.hpp`), and fields on a mesh — sensitivity
+  kernels — written back out as model files (`model_export.hpp`).
 
 Serial and parallel (MPI) paths are provided throughout.
 `examples/love_numbers.cpp` shows the self-gravitating machinery end to end:

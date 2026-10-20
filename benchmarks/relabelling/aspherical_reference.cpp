@@ -231,7 +231,7 @@ class HarmonicCoefficient : public Coefficient {
 
 }  // namespace
 
-int main(int argc, char* argv[]) {
+int main(int argc, char* argv[]) try {
   Mpi::Init(argc, argv);
   Hypre::Init();
   const bool root = Mpi::Root();
@@ -286,12 +286,13 @@ int main(int argc, char* argv[]) {
     if (ext != std::string::npos) {
       mmpath = mmpath.substr(0, ext) + ".json";
       if (std::ifstream(mmpath).good()) {
-        const MeshManifest mesh_manifest(mmpath);
+        const planetmodel::MeshManifest mesh_manifest(mmpath);
         auto adopt = [&](const char* key, double& value, double def) {
-          if (!mesh_manifest.HasMeta(key)) {
+          const auto* recorded_json = mesh_manifest.Meta().Find(key);
+          if (!recorded_json) {
             return;
           }
-          const double recorded = mesh_manifest.MetaNumber(key);
+          const double recorded = recorded_json->AsNumber();
           MFEM_VERIFY(value == def || std::abs(value - recorded) < 1e-12,
                       "-" << key << " " << value
                           << " contradicts the mesh manifest (" << recorded
@@ -303,7 +304,7 @@ int main(int argc, char* argv[]) {
         adopt("eps", eps, kEpsDefault);
         adopt("beta", beta, kBetaDefault);
         adopt("buffer", buffer, kBufferDefault);
-        if (root && mesh_manifest.HasMeta("eps")) {
+        if (root && mesh_manifest.Meta().Contains("eps")) {
           std::cout << "shape from the mesh manifest: eps " << eps
                     << ", beta " << beta << ", buffer " << buffer << "\n";
         }
@@ -312,16 +313,13 @@ int main(int argc, char* argv[]) {
   }
 
   // The model data of the spherical case: profiles, reference, G.
-  const MeshManifest manifest(case_file);
+  const planetmodel::MeshManifest manifest(case_file);
   const real_t G = manifest.G();
-  const std::string& mpath = manifest.Path();
-  const auto slash = mpath.find_last_of('/');
-  const std::string dir =
-      slash == std::string::npos ? std::string() : mpath.substr(0, slash + 1);
-  RadialProfiles profiles(dir + "radial_profiles.txt");
-  RadialReference reference(dir + "reference_fields.txt");
-  MFEM_VERIFY(manifest.FluidAttributes().Size() == 0 &&
-                  manifest.SolidAttributes().Size() == 1,
+  const auto dir = manifest.Path().parent_path();
+  RadialProfiles profiles((dir / "radial_profiles.txt").string());
+  RadialReference reference((dir / "reference_fields.txt").string());
+  MFEM_VERIFY(manifest.FluidAttributes().empty() &&
+                  manifest.SolidAttributes().size() == 1,
               "aspherical_reference: a single solid layer (the strict, "
               "gauge-free regime).");
 
@@ -662,4 +660,7 @@ int main(int argc, char* argv[]) {
     std::cout << "\nWrote " << out_file << "\n";
   }
   return 0;
+} catch (const planetmodel::Error& e) {
+  std::cerr << e.what() << "\n";
+  return 1;
 }

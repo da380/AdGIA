@@ -84,7 +84,7 @@ real_t MaxErrorOver(const ParGridFunction& g, VectorCoefficient& f,
 
 }  // namespace
 
-int main(int argc, char* argv[]) {
+int main(int argc, char* argv[]) try {
   Mpi::Init(argc, argv);
   Hypre::Init();
   const bool root = Mpi::Root();
@@ -339,4 +339,7 @@ int main(int argc, char* argv[]) {
     std::cout << "Wrote " << out_file << "\n";
   }
   return 0;
+} catch (const planetmodel::Error& e) {
+  std::cerr << e.what() << "\n";
+  return 1;
 }

@@ -9,7 +9,9 @@ target_sources(${PROJECT_NAME} PRIVATE null_space.cpp
                                        lininteg.cpp
                                        mappings.cpp
                                        mesh.cpp
-                                       mesh_manifest.cpp
+                                       manifest.cpp
+                                       model_coefficient.cpp
+                                       model_export.cpp
                                        poisson.cpp
                                        spherical_harmonics.cpp
                                        rheology.cpp

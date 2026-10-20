@@ -1436,24 +1436,25 @@ xmp = ["defusedxml"]
 
 [[package]]
 name = "planetmodel"
-version = "1.2.5"
+version = "1.3.0"
 description = "Spherically layered planetary models: reference bodies, fields, mappings and meshes"
 optional = false
 python-versions = ">=3.12"
 groups = ["main"]
 files = [
-    {file = "planetmodel-1.2.5-py3-none-any.whl", hash = "sha256:ceb6ad77282cf40c700bb37c603f938afccaf21840e01e0b57e086115fd6ccd5"},
-    {file = "planetmodel-1.2.5.tar.gz", hash = "sha256:44b4fc30646ebbce7dfae22b907eea030ed7e84d191b9adba2531e4f315abae4"},
+    {file = "planetmodel-1.3.0-py3-none-any.whl", hash = "sha256:d69e7074d68756c561c93b4fc3dccb871bb7539822e4be6022abe28f52bd9f77"},
+    {file = "planetmodel-1.3.0.tar.gz", hash = "sha256:73f066d0d7de2607af0cabf185b26cc236c6f96392273cdad59ff2790d7405bc"},
 ]
 
 [package.dependencies]
+ducc0 = ">=0.41,<1"
 gmsh = {version = ">=4.13", optional = true, markers = "extra == \"meshing\""}
 mfem = {version = ">=4.8", optional = true, markers = "extra == \"mfem\""}
 numpy = ">=2.0,<3"
 scipy = ">=1.15,<2"
 
 [package.extras]
-harmonics = ["ducc0 (>=0.41)", "pyshtools (>=4.14)"]
+maps = ["cartopy (>=0.24,<1)", "matplotlib (>=3.11,<4)"]
 meshing = ["gmsh (>=4.13)"]
 mfem = ["mfem (>=4.8)"]
 netcdf = ["netCDF4 (>=1.7)"]
@@ -2259,4 +2260,4 @@ maps = ["cartopy", "pyshtools"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12"
-content-hash = "7ad6dc9bdb6e8dda79d9a09fc9fcba31110bb7fbfa235f7fac0975f7ffb18dce"
+content-hash = "6941452d77b88bd011c6b932ce089f01540d4d7de9a3bb91ee905b2fe58c4ea1"

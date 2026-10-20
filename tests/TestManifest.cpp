@@ -3,21 +3,22 @@
 #include <fstream>
 
 #include "TestCommon.hpp"
+#include "planetmodel/error.hpp"
 
 /*
-  Tests for mesh_manifest.hpp.
+  Tests for manifest.hpp: the MFEM glue over planetmodel::MeshManifest.
 
   - A schema-5 manifest written here beside a small mesh and a field: the
-    layers, interfaces and fields come back as written; layers[].fluid
-    gives the solid, fluid, body and shell attributes and the fluid-solid
-    interfaces; the interfaces' kinds and one-sided values are read;
-    scales, constants and meta are read; the mesh and the field are opened
-    and the field has the values saved.
-  - A schema-4 manifest without the model-derived records: still read, the
-    fluid layers from the meta.fluid_layers fallback.
+    mesh and the field are opened and the field has the values saved; the
+    attribute lists come back through ToArray; LoadField refuses a field
+    the manifest does not list.
   - Marker() sets the attributes within the size and ignores those above.
+  - The reader's deliberate refusals hold at this boundary: another
+    schema, and the fluidity queries on a manifest exported without a
+    model.
   - A manifest generated with the meshes of the build (three-layer Earth):
-    names, radii, the surface and the outer boundary, no fluid declared.
+    names, radii, the surface and the outer boundary; the mesh opens with
+    the attributes the manifest describes.
 */
 
 namespace {
@@ -58,26 +59,20 @@ const char* const kManifest = R"({
   "schema": "planetmodel.mesh.manifest/5"
 })";
 
-// The same mesh under schema 4, which lacks the model-derived records: the fluid layers then come from meta.fluid_layers.
+// The same mesh under the retired schema 4, which the reader refuses.
 const char* const kOldManifest = R"({
   "mesh": {"file": "manifest_test.mesh", "format": "mfem",
-           "nodes": "reference",
-           "read_options": {"generate_edges": 1, "refine": 0,
-                            "fix_orientation": false},
-           "displacement": null},
+           "nodes": "reference", "read_options": {}, "displacement": null},
   "layers": [
-    {"attribute": 1, "name": "core", "r_inner": 0.0, "r_outer": 0.5,
-     "in_geometry": true},
-    {"attribute": 2, "name": "mantle", "r_inner": 0.5, "r_outer": 1.0,
+    {"attribute": 1, "name": "body", "r_inner": 0.0, "r_outer": 1.0,
      "in_geometry": true}],
   "interfaces": [
-    {"attribute": 1, "name": "cmb", "radius": 0.5, "between_layers": [0, 1]},
-    {"attribute": 2, "name": "surface", "radius": 1.0,
-     "between_layers": [1, -1]}],
+    {"attribute": 1, "name": "surface", "radius": 1.0,
+     "between_layers": [0, -1]}],
   "fields": [],
   "scales": null,
   "constants": {},
-  "meta": {"fluid_layers": [1]},
+  "meta": {},
   "schema": "planetmodel.mesh.manifest/4"
 })";
 
@@ -126,104 +121,64 @@ void ExpectArray(const Array<int>& a, std::initializer_list<int> want) {
 
 }  // namespace
 
-TEST(MeshManifest, ReadsWhatWasWritten) {
+TEST(Manifest, AttributeListsAsArrays) {
   const Files files;
-  const MeshManifest m(files.manifest);
+  const planetmodel::MeshManifest m(files.manifest);
 
-  ASSERT_EQ(m.Layers().size(), 4u);
-  EXPECT_EQ(m.Layers()[1].name, "outer_core");
-  EXPECT_DOUBLE_EQ(m.Layers()[1].r_inner, 0.2);
-  EXPECT_DOUBLE_EQ(m.Layers()[3].r_outer, 1.2);
-  EXPECT_FALSE(m.Layers()[3].in_geometry);
-  EXPECT_TRUE(m.Layers()[1].fluid);
-  EXPECT_FALSE(m.Layers()[0].fluid);
+  ExpectArray(ToArray(m.SolidAttributes()), {1, 3});
+  ExpectArray(ToArray(m.FluidAttributes()), {2});
+  ExpectArray(ToArray(m.BodyAttributes()), {1, 2, 3});
+  ExpectArray(ToArray(m.ShellAttributes()), {4});
+  ExpectArray(ToArray(m.FluidSolidInterfaces()), {1, 2});
+  ExpectArray(ToArray(m.FluidSolidInterfaces(2)), {1, 2});
+  EXPECT_TRUE(m.FluidSolidInterfaces(1).empty());
 
-  ASSERT_EQ(m.Interfaces().size(), 4u);
-  EXPECT_EQ(m.InterfaceNamed("cmb").attribute, 2);
-  EXPECT_EQ(m.InterfaceNamed("cmb").below, 2);
-  EXPECT_EQ(m.InterfaceNamed("cmb").above, 3);
-  EXPECT_EQ(m.Interfaces()[3].above, 0);
-  EXPECT_EQ(m.LayerNamed("mantle").attribute, 3);
-
-  EXPECT_EQ(m.InterfaceNamed("cmb").kind, "fluid-solid");
-  EXPECT_EQ(m.InterfaceNamed("interface_4").kind, "outer");
-  // The fluid side of the cmb is the outer core, attribute 2, below it.
+  // The attribute of the layer on each side, as the glue's callers use it.
+  EXPECT_EQ(m.InterfaceNamed("cmb").BelowAttribute(), 2);
+  EXPECT_EQ(m.InterfaceNamed("cmb").AboveAttribute(), 3);
+  EXPECT_EQ(m.Interfaces()[3].AboveAttribute(), 0);
   EXPECT_DOUBLE_EQ(m.InterfaceNamed("cmb").ValueBeside("rho", 2), 11.0);
-  EXPECT_DOUBLE_EQ(m.InterfaceNamed("cmb").ValueBeside("rho", 3), 5.5);
-  EXPECT_TRUE(std::isnan(m.InterfaceNamed("surface").values.at("rho").second));
-  EXPECT_TRUE(m.InterfaceNamed("interface_4").values.empty());
-
-  ExpectArray(m.SolidAttributes(), {1, 3});
-  ExpectArray(m.FluidAttributes(), {2});
-  ExpectArray(m.BodyAttributes(), {1, 2, 3});
-  ExpectArray(m.ShellAttributes(), {4});
-  ExpectArray(m.FluidSolidInterfaces(), {1, 2});
-  ExpectArray(m.FluidSolidInterfaces(2), {1, 2});
-  EXPECT_EQ(m.FluidSolidInterfaces(1).Size(), 0);
-  EXPECT_EQ(m.SurfaceAttribute(), 3);
-  EXPECT_EQ(m.OuterAttribute(), 4);
-  EXPECT_DOUBLE_EQ(m.SurfaceRadius(), 1.0);
-  EXPECT_DOUBLE_EQ(m.OuterRadius(), 1.2);
-
-  EXPECT_TRUE(m.HasScales());
-  EXPECT_DOUBLE_EQ(m.LengthScale(), 6371000.0);
-  EXPECT_DOUBLE_EQ(m.TimeScale(), 1700.0);
-  // a density: mass length^-3
-  EXPECT_DOUBLE_EQ(m.ScaleFactor(1, -3, 0), 1.5e24 / std::pow(6371000.0, 3));
-  EXPECT_DOUBLE_EQ(m.G(), 1.25);
-  EXPECT_FALSE(m.HasConstant("c"));
-
-  EXPECT_EQ(m.MetaString("model"), "a \"test\"");
-  EXPECT_DOUBLE_EQ(m.MetaNumber("factor"), -0.25);
-  EXPECT_FALSE(m.HasMeta("absent"));
-
-  EXPECT_TRUE(m.HasField("rho"));
-  EXPECT_FALSE(m.HasField("mu"));
-  EXPECT_EQ(m.FieldNamed("rho").fe_space, "L2_3D_P1");
-  EXPECT_EQ(m.FieldNamed("rho").layers.size(), 3u);
-  EXPECT_EQ(m.FieldNamed("rho").radial_degree, 1);
-  EXPECT_FALSE(m.PhysicalNodes());
 }
 
-TEST(MeshManifest, OldSchemaWithMetaFallback) {
+TEST(Manifest, OpensTheMeshAndTheFields) {
   const Files files;
-  const MeshManifest m(files.old_manifest);
-  ExpectArray(m.FluidAttributes(), {1});
-  ExpectArray(m.SolidAttributes(), {2});
-  ExpectArray(m.FluidSolidInterfaces(), {1});
-  EXPECT_TRUE(m.InterfaceNamed("cmb").kind.empty());
-  EXPECT_TRUE(m.InterfaceNamed("cmb").values.empty());
-  EXPECT_FALSE(m.HasScales());
-}
-
-TEST(MeshManifest, OpensTheMeshAndTheFields) {
-  const Files files;
-  const MeshManifest m(files.manifest);
-  Mesh mesh = m.LoadMesh();
+  const planetmodel::MeshManifest m(files.manifest);
+  Mesh mesh = LoadMesh(m);
   EXPECT_EQ(mesh.GetNE(), 48);
-  const auto rho = m.LoadField(mesh, "rho");
+  const auto rho = LoadField(m, mesh, "rho");
   ASSERT_EQ(rho->Size(), 4 * 48);
   for (int i = 0; i < rho->Size(); i++) {
     EXPECT_DOUBLE_EQ((*rho)[i], 1.0 + 0.5 * i);
   }
+  EXPECT_THROW(LoadField(m, mesh, "mu"), planetmodel::Error);
 }
 
-TEST(MeshManifest, Marker) {
-  const Array<int> marker = MeshManifest::Marker(Array<int>({1, 3, 5}), 4);
+TEST(Manifest, Marker) {
+  const Array<int> marker = Marker(Array<int>({1, 3, 5}), 4);
   ExpectArray(marker, {1, 0, 1, 0});
+  const Array<int> from_vector = Marker(std::vector<int>{2}, 3);
+  ExpectArray(from_vector, {0, 1, 0});
 }
 
-TEST(MeshManifest, GeneratedManifest) {
-  const MeshManifest m("../data/earth_innercore_3d.json");
+TEST(Manifest, RefusesAnotherSchema) {
+  const Files files;
+  EXPECT_THROW(planetmodel::MeshManifest{files.old_manifest},
+               planetmodel::Error);
+}
+
+TEST(Manifest, GeneratedManifest) {
+  const planetmodel::MeshManifest m("../data/earth_innercore_3d.json");
   ASSERT_EQ(m.Layers().size(), 4u);
   EXPECT_EQ(m.Layers()[0].name, "inner_core");
   EXPECT_EQ(m.InterfaceNamed("surface").attribute, m.SurfaceAttribute());
   EXPECT_DOUBLE_EQ(m.SurfaceRadius(), 1.0);
   EXPECT_NEAR(m.InterfaceNamed("cmb").radius, 3483.0 / 6371.0, 1e-14);
   EXPECT_EQ(m.OuterAttribute(), 4);
-  EXPECT_EQ(m.FluidAttributes().Size(), 0);
   EXPECT_FALSE(m.HasScales());
-  Mesh mesh = m.LoadMesh();
+  // Exported without a model, so nothing says which layers are fluid, and
+  // the fluidity queries refuse rather than guess.
+  EXPECT_THROW(m.FluidAttributes(), planetmodel::Error);
+  Mesh mesh = LoadMesh(m);
   EXPECT_EQ(mesh.attributes.Max(), 4);
   EXPECT_EQ(mesh.bdr_attributes.Max(), 4);
 }
