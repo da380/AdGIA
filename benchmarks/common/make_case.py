@@ -115,7 +115,8 @@ def build_mesh(model: Model, out: Path, *, h: float, h_max: float, decay: float,
                ring_far: float | None = None,
                ring_decay: float | None = None,
                coast_grid: Path | None = None,
-               coast_width: float = 0.04) -> dict:
+               coast_width: float = 0.04,
+               model_file: bool = False) -> dict:
     """The mesh, the fields and the manifest; returns a summary."""
     refinements = []
     if rings or coast_grid is not None:
@@ -142,7 +143,8 @@ def build_mesh(model: Model, out: Path, *, h: float, h_max: float, decay: float,
     scratch = out / "gmsh"
     scratch.mkdir(parents=True, exist_ok=True)
     built = build_layered_mesh(spec, scratch / BASENAME, verbose=verbose)
-    export = export_mfem(built, out / BASENAME, model=model, fields=FIELDS)
+    export = export_mfem(built, out / BASENAME, model=model, fields=FIELDS,
+                         model_file=model_file)
     return {"h": h, "h_max": h_max, "decay": decay, "angular": angular,
             "thin": thin,
             "buffer": buffer, "optimised": optimise,
@@ -321,6 +323,10 @@ def main() -> None:
                    help="radii per layer in the reference's radial solutions")
     p.add_argument("--field-nodes", type=int, default=33,
                    help="Chebyshev nodes per layer in reference_fields.txt")
+    p.add_argument("--model-file", action="store_true",
+                   help="write the model beside the mesh as a netCDF model "
+                        "file too, recorded in the manifest (the "
+                        "coefficient route of the drivers)")
     p.add_argument("--reference-only", action="store_true",
                    help="write reference.json alone, leaving the mesh")
     p.add_argument("--verbose", action="store_true",
@@ -353,7 +359,8 @@ def main() -> None:
                          ring_size=args.ring_size, ring_far=args.ring_far,
                          ring_decay=args.ring_decay,
                          coast_grid=args.coast_grid,
-                         coast_width=args.coast_width)
+                         coast_width=args.coast_width,
+                         model_file=args.model_file)
     (args.out / "mesh_summary.json").write_text(json.dumps(summary, indent=1))
     print(f"{BASENAME}.mesh: {summary['summary']}")
 

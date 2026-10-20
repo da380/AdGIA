@@ -82,7 +82,7 @@ each override the shared environment with one of your own.
 Mesh generation alone does not need poetry: without the environment, a
 qualifying Python that CMake finds is used, and failing that a virtual
 environment `meshes-venv` is created under the build directory and
-`planetmodel[meshing,mfem]>=1.2.4` installed there with pip
+`planetmodel[meshing,mfem]>=1.3.0` installed there with pip
 (`-DGENERATE_MESHES=OFF` skips generation). See `meshes/README.md`,
 `benchmarks/README.md` and `earth_data/README.md`.
 

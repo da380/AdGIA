@@ -228,6 +228,7 @@ struct InterfaceAnalysis {
 // What a driver asks of a case.
 struct CaseOptions {
   const char* manifest = "case.json";
+  bool model_fields = false;
   int order = 2;
   int dtn_degree = 16;
   int lmax = 6;
@@ -390,6 +391,14 @@ struct CaseOptions {
                    "with a tight -rt and one tolerance serves every "
                    "degree. 0: off.");
     args.AddOption(&manifest, "-c", "--case", "Manifest of the case.");
+    args.AddOption(&model_fields, "-model-fields", "--model-fields",
+                   "-gf-fields", "--gf-fields",
+                   "Constitutive coefficients from the case's netCDF model "
+                   "file (make_case.py --model-file) instead of the "
+                   "exported .gf fields: planetmodel's own interpolants, "
+                   "evaluated at the integration points. Eulerian methods "
+                   "(dahlen, gauged); the .gf fields still carry the "
+                   "partitioning.");
     args.AddOption(&order, "-o", "--order", "Finite element order.");
     args.AddOption(&dtn_degree, "-deg", "--dtn-degree",
                    "DtN expansion degree.");
@@ -586,6 +595,28 @@ class Case {
     kappa_c_ = std::make_unique<GridFunctionCoefficient>(kappa_solid_.get());
     mu_c_ = std::make_unique<GridFunctionCoefficient>(mu_solid_.get());
     rho_parent_c_ = std::make_unique<GridFunctionCoefficient>(rho.get());
+    if (options.model_fields) {
+      MFEM_VERIFY(eulerian,
+                  "-model-fields: the Eulerian methods (the referential "
+                  "family still reads the .gf fields).");
+      model_file_.emplace(LoadModelFile(manifest));
+      rho_c_ = std::make_unique<ModelScalarCoefficient>(*model_file_, "rho");
+      kappa_c_ =
+          std::make_unique<ModelScalarCoefficient>(*model_file_, "kappa");
+      mu_c_ = std::make_unique<ModelScalarCoefficient>(*model_file_, "mu");
+      // On the parent mesh the buffer shell has no model data: zero there,
+      // as the exported rho field is.
+      model_rho_ =
+          std::make_unique<ModelScalarCoefficient>(*model_file_, "rho");
+      Array<int> body_marker =
+          Marker(ToArray(manifest.BodyAttributes()), parent->attributes.Max());
+      rho_parent_c_ =
+          std::make_unique<RestrictedCoefficient>(*model_rho_, body_marker);
+      if (root) {
+        std::cout << "Constitutive coefficients from the model file "
+                  << manifest.ModelFile().filename().string() << "\n";
+      }
+    }
 
     // The mass of the body and the gravity on its surface.
     {
@@ -1154,8 +1185,10 @@ class Case {
                                                 : "block_minres") +
                           "\""
                     : std::string())
-       << ",\n  \"method\": \"" << method
-       << "\",\n  \"fluid_treatment\": \""
+       << ",\n  \"method\": \"" << method << "\""
+       << (options_.model_fields ? ",\n  \"model_fields\": true"
+                                 : std::string())
+       << ",\n  \"fluid_treatment\": \""
        // dahlen keeps Dahlen's fluid; the gauged Eulerian and the welded
        // referential methods gauge it; maxwell relaxes it; the slip pair
        // lets it slip
@@ -1720,8 +1753,9 @@ class Case {
  private:
   std::vector<std::unique_ptr<ParFiniteElementSpace>> spaces_;
   std::unique_ptr<ParGridFunction> rho_solid_, kappa_solid_, mu_solid_;
-  std::unique_ptr<GridFunctionCoefficient> rho_c_, kappa_c_, mu_c_,
-      rho_parent_c_;
+  std::unique_ptr<Coefficient> rho_c_, kappa_c_, mu_c_, rho_parent_c_;
+  std::optional<planetmodel::ModelFile> model_file_;
+  std::unique_ptr<ModelScalarCoefficient> model_rho_;
   Vector fluid_side_;
   Array<int> gauge_marker_;
   std::unique_ptr<PWConstCoefficient> rho_interface_c_;

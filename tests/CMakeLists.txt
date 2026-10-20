@@ -99,6 +99,8 @@ if(USE_MPI)
     target_link_libraries(TestNullSpacePar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestCompositeRheologyPar TestCompositeRheologyPar.cpp)
     target_link_libraries(TestCompositeRheologyPar PRIVATE AdGIA MPI::MPI_CXX)
+    add_executable(TestModelCoefficientPar TestModelCoefficientPar.cpp)
+    target_link_libraries(TestModelCoefficientPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestSeaLevelPar TestSeaLevelPar.cpp)
     target_link_libraries(TestSeaLevelPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestRotationPar TestRotationPar.cpp)
@@ -186,6 +188,9 @@ if(USE_MPI)
         add_test(NAME TestCompositeRheologyPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestCompositeRheologyPar>)
+        add_test(NAME TestModelCoefficientPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestModelCoefficientPar>)
         add_test(NAME TestSeaLevelPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestSeaLevelPar>)
@@ -240,6 +245,10 @@ gtest_discover_tests(TestRelaxationLaw)
 add_executable(TestManifest TestManifest.cpp)
 target_link_libraries(TestManifest PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestManifest)
+
+add_executable(TestModelCoefficient TestModelCoefficient.cpp)
+target_link_libraries(TestModelCoefficient PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestModelCoefficient)
 
 
 add_executable(TestSphericalHarmonics TestSphericalHarmonics.cpp)

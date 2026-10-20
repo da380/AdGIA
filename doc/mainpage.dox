@@ -182,11 +182,14 @@
  * how problems with traction boundary conditions are solved (see
  * `examples/quasi_static_elasticity.cpp`).
  *
- * @subsection sec_manifest Mesh manifests
+ * @subsection sec_manifest Mesh manifests and model files
  * planetmodel's C++ library reads the JSON manifest that planetmodel
  * writes beside a mesh (`planetmodel::MeshManifest`); the glue in
  * `manifest.hpp` opens the mesh and the model fields it names and turns
- * its attribute lists into the markers the problems take.
+ * its attribute lists into the markers the problems take. A netCDF
+ * model file exported beside the mesh becomes MFEM coefficients through
+ * `model_coefficient.hpp`: planetmodel's interpolants evaluated at the
+ * integration points, the layer the element's attribute.
  *
  * @section docs Documentation index
  * Paths are relative to the source tree.

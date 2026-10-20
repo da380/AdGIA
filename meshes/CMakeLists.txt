@@ -4,8 +4,8 @@
 #
 # A Python able to `import planetmodel.mesh3d` and `import mfem.ser` (the
 # aspherical meshes are written through PyMFEM) is needed, with planetmodel
-# at least PLANETMODEL_MINIMUM_VERSION (1.2.4 added the Refinement protocol
-# and near_curve that the coastline meshes use). MESHES_PYTHON
+# at least PLANETMODEL_MINIMUM_VERSION (1.3.0 added the model file that
+# the coefficient route of the drivers reads). MESHES_PYTHON
 # names one; otherwise the root poetry environment (ADGIA_POETRY_PYTHON,
 # found by the top-level CMakeLists) is tried, then the Python found by
 # CMake, and failing those a virtual environment is created under the
@@ -14,7 +14,7 @@
 
 set(MESHES_PYTHON "" CACHE FILEPATH
     "Python interpreter with planetmodel[meshing]; found or created if empty")
-set(PLANETMODEL_MINIMUM_VERSION "1.2.4")
+set(PLANETMODEL_MINIMUM_VERSION "1.3.0")
 set(PLANETMODEL_REQUIREMENT
     "planetmodel[meshing,mfem]>=${PLANETMODEL_MINIMUM_VERSION}" CACHE STRING
     "pip requirement installed into the build's venv when no suitable Python is found")

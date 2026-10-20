@@ -401,6 +401,41 @@ operators").
 
 ## Earth models and benchmarks
 
+### Model files: the remaining readers and writers
+
+**Status:** the scalar route is done. `model_coefficient.hpp` turns a
+netCDF model file's scalar variables into coefficients (per-layer by
+attribute, planetmodel's interpolants at the integration points);
+`make_case.py --model-file` writes the file beside a case and the Love
+drivers' `-model-fields` consumes it; the sphere family's
+`model_file.py` + `-model` deliver a (lateral) viscosity as
+`tau = eta / mu`.
+
+Remaining, in rough order of need:
+
+- A `MatrixCoefficient` from a field of rank ≥ 1 (`Frame::Cartesian`
+  components into the Mandel conventions of `elastic_tensor.hpp`), for
+  anisotropic moduli and pre-stress from a file.
+- The generalised-Maxwell branch families (`relaxation_strength_k`,
+  `relaxation_time_k`, the fractions-of-μ form) and the power-law names
+  (`stress_exponent`, `transition_stress`, with
+  γ = (2 μ₀/σ_t)^(n−1) derived where the Crawford factor wants it).
+- The referential family's `-model-fields` leg (today Eulerian only:
+  the referential constructions still read the `.gf` fields).
+- A deformed mesh: fields live on the reference skeleton, so a mesh
+  with physical nodes asks the file's `Mapping()` before evaluating
+  (identity mappings are the only case exercised so far).
+- Kernels out through `planetmodel::ModelFile` (the writer), so the
+  Python reads them back with its own plotting; volumetric kernels as
+  layer fields, boundary and shape kernels on the `surfaces` group.
+- Retire `relabelling.hpp`'s hand-rolled Chebyshev profile reader in
+  favour of the model file or planetmodel's `radial.hpp` when a
+  benchmark next touches it; `examples/layered_model.hpp`'s hard-coded
+  PREM likewise when the examples are next reworked.
+
+**See:** `include/AdGIA/model_coefficient.hpp`; planetmodel's model-file
+format page; `benchmarks/README.md`, "The shared pieces".
+
 ### PREM Love numbers at production resolution
 
 **Status:** partly done. Elastic `prem_4` runs against pyslfp exist at

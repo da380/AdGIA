@@ -245,3 +245,15 @@ the units and G, says which layers are fluid, and holds the model's exact
 one-sided field values on each interface. The driver reads all of it
 through `planetmodel::MeshManifest` and sets nothing about the
 model itself. pyslfp solves the same model on its own radial mesh.
+
+Two delivery routes carry the material onto the problem. The `.gf`
+fields are the default and the FE-exact one (a discontinuity at an
+interface stays one). With `make_case.py --model-file` the case also
+holds the model as a netCDF model file, and a driver's `-model-fields`
+builds the constitutive coefficients from it instead
+(`model_coefficient.hpp`: planetmodel's own interpolants evaluated at
+the integration points) — the delivery route of models that exist only
+as files. The two routes agree to the solver tolerance on the
+piecewise-polynomial models; the viscoelastic sphere family's
+`model_file.py` and the driver's `-model` flag do the same for a
+(possibly lateral) viscosity, `tau = eta / mu` per Maxwell branch.

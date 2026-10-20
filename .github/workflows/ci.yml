@@ -99,7 +99,7 @@ jobs:
       - name: Mesh-generation Python
         run: |
           python -m venv "$MESHES_VENV"
-          "$MESHES_VENV/bin/pip" install --quiet "planetmodel[meshing,mfem]>=1.2.4"
+          "$MESHES_VENV/bin/pip" install --quiet "planetmodel[meshing,mfem]>=1.3.0"
 
       - name: Configure
         run: |

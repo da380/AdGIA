@@ -137,7 +137,10 @@ includes them all), are
 - the manifest that planetmodel writes beside a mesh, read by
   planetmodel's own C++ library, with the mesh and the fields of the
   model opened as it says and the attribute lists turned into the
-  markers the problems take (`manifest.hpp`).
+  markers the problems take (`manifest.hpp`); a netCDF model file
+  exported beside the mesh as MFEM coefficients, evaluated through
+  planetmodel's interpolants at the integration points
+  (`model_coefficient.hpp`).
 
 Serial and parallel (MPI) paths are provided throughout.
 `examples/love_numbers.cpp` shows the self-gravitating machinery end to end:
