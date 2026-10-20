@@ -183,9 +183,10 @@
  * `examples/quasi_static_elasticity.cpp`).
  *
  * @subsection sec_manifest Mesh manifests
- * MeshManifest (`mesh_manifest.hpp`) reads the JSON manifest that
- * planetmodel writes beside a mesh into the attribute lists and markers the
- * problems take, and opens the mesh and the model fields it names.
+ * planetmodel's C++ library reads the JSON manifest that planetmodel
+ * writes beside a mesh (`planetmodel::MeshManifest`); the glue in
+ * `manifest.hpp` opens the mesh and the model fields it names and turns
+ * its attribute lists into the markers the problems take.
  *
  * @section docs Documentation index
  * Paths are relative to the source tree.

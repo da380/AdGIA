@@ -41,33 +41,31 @@
 namespace vebench {
 
 using namespace mfem;
-using AdGIA::Json;
+using planetmodel::Json;
 using AdGIA::LinearQuasiStaticProblemBase;
 
 // --- the case ----------------------------------------------------------------
+//
+// Faults in a case file surface as planetmodel::Error exceptions naming the
+// file and the JSON path; the drivers catch them around main.
 
 inline const Json& Member(const Json& obj, const std::string& key) {
-  const Json* v = obj.Find(key);
-  MFEM_VERIFY(v, "Case: missing member '" << key << "'.");
-  return *v;
+  return obj.At(key);
 }
 
 inline real_t Number(const Json& obj, const std::string& key) {
-  const Json& v = Member(obj, key);
-  MFEM_VERIFY(v.type == Json::Type::Number,
-              "Case: '" << key << "' is not a number.");
-  return v.number;
+  return obj.At(key).AsNumber();
 }
 
 inline real_t NumberOr(const Json& obj, const std::string& key,
                        real_t fallback) {
   const Json* v = obj.Find(key);
-  return v && v->type == Json::Type::Number ? v->number : fallback;
+  return v && v->IsNumber() ? v->AsNumber() : fallback;
 }
 
 inline std::vector<real_t> Numbers(const Json& v) {
   std::vector<real_t> out;
-  for (const Json& e : v.array) out.push_back(e.number);
+  for (const Json& e : v.AsArray()) out.push_back(e.AsNumber());
   return out;
 }
 
@@ -90,22 +88,21 @@ class LoadHistory {
   LoadHistory() = default;
 
   explicit LoadHistory(const Json& h) {
-    for (const Json& p : Member(h, "pieces").array) {
+    for (const Json& p : Member(h, "pieces").AsArray()) {
       const Json* e = p.Find("end");
       pieces_.push_back(
           {Number(p, "start"),
-           e && e->type == Json::Type::Number
-               ? e->number
-               : std::numeric_limits<real_t>::infinity(),
+           e && e->IsNumber() ? e->AsNumber()
+                              : std::numeric_limits<real_t>::infinity(),
            NumberOr(p, "c0", 0.0), NumberOr(p, "c1", 0.0),
            NumberOr(p, "a", 0.0), NumberOr(p, "b", 0.0),
            NumberOr(p, "omega", 0.0)});
     }
     if (const Json* bp = h.Find("breakpoints")) {
-      for (const Json& b : bp->array) {
+      for (const Json& b : bp->AsArray()) {
         const Json* j = b.Find("jump");
         breakpoints_.push_back(
-            {Number(b, "time"), j && j->type == Json::Type::Bool && j->boolean});
+            {Number(b, "time"), j && j->IsBool() && j->AsBool()});
       }
     }
   }
@@ -156,13 +153,12 @@ struct Field {
     Field f;
     f.s0 = s0;
     f.s1 = s1;
-    if (v.type == Json::Type::Number) {
-      f.v0 = f.v1 = v.number;
+    if (v.IsNumber()) {
+      f.v0 = f.v1 = v.AsNumber();
       return f;
     }
-    MFEM_VERIFY(v.type == Json::Type::Object,
-                "Case: a field is a number or an object.");
-    const std::string& kind = Member(v, "kind").string;
+    MFEM_VERIFY(v.IsObject(), "Case: a field is a number or an object.");
+    const std::string& kind = Member(v, "kind").AsString();
     if (kind == "geometric_z" || kind == "geometric_r") {
       f.kind = Kind::Geometric;
       f.v0 = Number(v, "bottom");
@@ -220,12 +216,12 @@ struct Layer {
 // "branches": [{"mu", "tau"}]}), on [bottom, top].
 inline Layer ParseLayer(const Json& l, real_t bottom, real_t top) {
   Layer layer;
-  layer.name = Member(l, "name").string;
+  layer.name = Member(l, "name").AsString();
   layer.bottom = bottom;
   layer.top = top;
   layer.kappa = Field::Parse(Member(l, "kappa"), bottom, top);
   layer.mu_inf = Field::Parse(Member(l, "mu_inf"), bottom, top);
-  for (const Json& b : Member(l, "branches").array) {
+  for (const Json& b : Member(l, "branches").AsArray()) {
     layer.branches.push_back({Field::Parse(Member(b, "mu"), bottom, top),
                               Field::Parse(Member(b, "tau"), bottom, top)});
   }

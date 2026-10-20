@@ -102,7 +102,7 @@ struct Snapshot {
 
 }  // namespace
 
-int main(int argc, char* argv[]) {
+int main(int argc, char* argv[]) try {
   Mpi::Init(argc, argv);
   Hypre::Init();
   const bool root = Mpi::Root();
@@ -160,8 +160,8 @@ int main(int argc, char* argv[]) {
               "-scheme must be sdirk23, exptrap, be, etd1 or adaptive.");
 
   // The Maxwell time of every solid layer, by attribute.
-  const MeshManifest manifest(options.manifest);
-  const Array<int> solids = manifest.SolidAttributes();
+  const planetmodel::MeshManifest manifest(options.manifest);
+  const Array<int> solids = ToArray(manifest.SolidAttributes());
   std::vector<real_t> taus = ParseList(tau_arg);
   if (taus.size() == 1) {
     taus.assign(solids.Size(), taus[0]);
@@ -502,4 +502,7 @@ int main(int argc, char* argv[]) {
     std::cout << "Wrote " << out_file << "\n";
   }
   return 0;
+} catch (const planetmodel::Error& e) {
+  std::cerr << e.what() << "\n";
+  return 1;
 }

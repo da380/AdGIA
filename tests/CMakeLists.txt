@@ -237,9 +237,10 @@ add_executable(TestRelaxationLaw TestRelaxationLaw.cpp)
 target_link_libraries(TestRelaxationLaw PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestRelaxationLaw)
 
-add_executable(TestMeshManifest TestMeshManifest.cpp)
-target_link_libraries(TestMeshManifest PRIVATE AdGIA gtest_main)
-gtest_discover_tests(TestMeshManifest)
+add_executable(TestManifest TestManifest.cpp)
+target_link_libraries(TestManifest PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestManifest)
+
 
 add_executable(TestSphericalHarmonics TestSphericalHarmonics.cpp)
 target_link_libraries(TestSphericalHarmonics PRIVATE AdGIA gtest_main)

@@ -14,6 +14,7 @@
 
 #include "mfem.hpp"
 #include "AdGIA.hpp"
+#include "planetmodel/json.hpp"
 
 namespace fault_test {
 
@@ -37,32 +38,32 @@ struct FaultedBox {
       clamped_hanging_wall = 0;
 };
 
-inline Vector JsonVector(const AdGIA::Json& j) {
-  auto v = Vector(static_cast<int>(j.array.size()));
+inline Vector JsonVector(const planetmodel::Json& j) {
+  auto v = Vector(static_cast<int>(j.Size()));
   for (int i = 0; i < v.Size(); i++) {
-    v(i) = j.array[i].number;
+    v(i) = j.At(static_cast<std::size_t>(i)).AsNumber();
   }
   return v;
 }
 
 inline FaultedBox ReadFaultedBox(const std::string& path) {
-  const AdGIA::Json record = AdGIA::ReadJsonFile(path);
+  const auto record = planetmodel::ReadJsonFile(path);
   auto box = FaultedBox();
-  box.dim = static_cast<int>(record.Find("dimension")->number);
-  const auto& fault = *record.Find("fault");
-  box.length = fault.Find("length")->number;
-  box.centre = JsonVector(*fault.Find("centre"));
-  box.normal = JsonVector(*fault.Find("normal"));
-  box.down_dip = JsonVector(*fault.Find("down_dip"));
+  box.dim = record.At("dimension").AsInt();
+  const auto& fault = record.At("fault");
+  box.length = fault.At("length").AsNumber();
+  box.centre = JsonVector(fault.At("centre"));
+  box.normal = JsonVector(fault.At("normal"));
+  box.down_dip = JsonVector(fault.At("down_dip"));
   if (box.dim == 3) {
-    box.width = fault.Find("width")->number;
-    box.strike = JsonVector(*fault.Find("strike_direction"));
+    box.width = fault.At("width").AsNumber();
+    box.strike = JsonVector(fault.At("strike_direction"));
   }
-  const auto& attrs = *record.Find("attributes");
-  const auto& dom = *attrs.Find("domain");
-  const auto& bdr = *attrs.Find("boundary");
-  auto attr = [](const AdGIA::Json& j, const char* key) {
-    return static_cast<int>(j.Find(key)->number);
+  const auto& attrs = record.At("attributes");
+  const auto& dom = attrs.At("domain");
+  const auto& bdr = attrs.At("boundary");
+  auto attr = [](const planetmodel::Json& j, const char* key) {
+    return j.At(key).AsInt();
   };
   box.footwall = attr(dom, "footwall");
   box.hanging_wall = attr(dom, "hanging_wall");

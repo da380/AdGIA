@@ -243,5 +243,5 @@ GridFunctions on the mesh, so that a discontinuity at an interface stays
 one; the manifest beside the mesh names the layers and interfaces, records
 the units and G, says which layers are fluid, and holds the model's exact
 one-sided field values on each interface. The driver reads all of it
-through `MeshManifest` (`mesh_manifest.hpp`) and sets nothing about the
+through `planetmodel::MeshManifest` and sets nothing about the
 model itself. pyslfp solves the same model on its own radial mesh.

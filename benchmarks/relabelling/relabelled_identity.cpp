@@ -150,7 +150,7 @@ struct Side {
 
 }  // namespace
 
-int main(int argc, char* argv[]) {
+int main(int argc, char* argv[]) try {
   Mpi::Init(argc, argv);
   Hypre::Init();
   const bool root = Mpi::Root();
@@ -199,13 +199,13 @@ int main(int argc, char* argv[]) {
               "-map-surface: welded only (the slipping interface fixes "
               "its interfaces by design).");
 
-  const MeshManifest manifest(manifest_file);
-  if (root) manifest.Print(std::cout);
+  const planetmodel::MeshManifest manifest(manifest_file);
+  if (root) Print(manifest, std::cout);
   const real_t G = manifest.G();
   const real_t radius = manifest.SurfaceRadius();
 
   // The serial reference mesh, its nodal-image mesh, one partition.
-  Mesh serial = manifest.LoadMesh();
+  Mesh serial = LoadMesh(manifest);
   const int dim = serial.Dimension();
   std::vector<real_t> boundaries;
   for (const auto& layer : manifest.Layers()) {
@@ -224,15 +224,15 @@ int main(int argc, char* argv[]) {
   std::unique_ptr<int[]> partitioning(
       serial.GeneratePartitioning(Mpi::WorldSize()));
 
-  auto rho_s = manifest.LoadField(serial, "rho");
-  auto kappa_s = manifest.LoadField(serial, "kappa");
-  auto mu_s = manifest.LoadField(serial, "mu");
+  auto rho_s = LoadField(manifest, serial, "rho");
+  auto kappa_s = LoadField(manifest, serial, "kappa");
+  auto mu_s = LoadField(manifest, serial, "mu");
   MFEM_VERIFY(manifest.HasField("p0"),
               "The identity driver needs the p0 field: re-make the case.");
-  auto p0_s = manifest.LoadField(serial, "p0");
+  auto p0_s = LoadField(manifest, serial, "p0");
 
-  const Array<int> solid_attributes = manifest.SolidAttributes();
-  const Array<int> fluid_attributes = manifest.FluidAttributes();
+  const Array<int> solid_attributes = ToArray(manifest.SolidAttributes());
+  const Array<int> fluid_attributes = ToArray(manifest.FluidAttributes());
   MFEM_VERIFY(!map_surface || fluid_attributes.Size() == 0,
               "-map-surface: solid models only (the map moves interior "
               "interfaces too).");
@@ -400,8 +400,7 @@ int main(int argc, char* argv[]) {
           manifest.Interfaces()[b_itf - first].ValueBeside("p0",
                                                            fluid_attr);
       side->pi_c = std::make_unique<PWConstCoefficient>(pi_values);
-      Array<int> interface_marker =
-          MeshManifest::Marker(Array<int>({b_itf}), n_bdr);
+      Array<int> interface_marker = Marker(Array<int>({b_itf}), n_bdr);
       auto slip_problem =
           std::make_unique<LinearQuasiStaticReferentialSelfGravitatingSlipProblem>(
               side->fes_u.get(), side->fes_f.get(), side->fes_zeta.get(),
@@ -747,4 +746,7 @@ int main(int argc, char* argv[]) {
                        : "  MISMATCH: an unmapped assembly term\n");
   }
   return pass ? 0 : 1;
+} catch (const planetmodel::Error& e) {
+  std::cerr << e.what() << "\n";
+  return 1;
 }

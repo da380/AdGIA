@@ -170,6 +170,7 @@
 using namespace std;
 using namespace mfem;
 using namespace AdGIA;
+using planetmodel::Json;
 
 namespace {
 
@@ -210,23 +211,21 @@ struct FaultRecord {
 };
 
 Vector JsonVector(const Json& j) {
-  auto v = Vector(static_cast<int>(j.array.size()));
+  auto v = Vector(static_cast<int>(j.Size()));
   for (int i = 0; i < v.Size(); i++) {
-    v(i) = j.array[i].number;
+    v(i) = j.At(static_cast<std::size_t>(i)).AsNumber();
   }
   return v;
 }
 
 FaultRecord ReadRecord(const string& mesh_file) {
   const auto path = mesh_file.substr(0, mesh_file.rfind('.')) + ".json";
-  const auto rec = ReadJsonFile(path);
-  auto find = [&](const Json& j, const char* key) -> const Json& {
-    const auto* v = j.Find(key);
-    MFEM_VERIFY(v, path << ": missing \"" << key << "\".");
-    return *v;
+  const auto rec = planetmodel::ReadJsonFile(path);
+  auto find = [](const Json& j, const char* key) -> const Json& {
+    return j.At(key);
   };
   auto num = [&](const Json& j, const char* key) {
-    return find(j, key).number;
+    return find(j, key).AsNumber();
   };
   auto attr = [&](const Json& j, const char* key) {
     return static_cast<int>(num(j, key));
@@ -256,11 +255,11 @@ FaultRecord ReadRecord(const string& mesh_file) {
   r.z_max = num(topography, "z_max");
   r.max_curvature = num(topography, "max_curvature");
   const auto& profile = find(topography, "profile");
-  for (const auto& v : find(profile, "x").array) {
-    r.profile_x.push_back(v.number);
+  for (const auto& v : find(profile, "x").AsArray()) {
+    r.profile_x.push_back(v.AsNumber());
   }
-  for (const auto& v : find(profile, "z").array) {
-    r.profile_z.push_back(v.number);
+  for (const auto& v : find(profile, "z").AsArray()) {
+    r.profile_z.push_back(v.AsNumber());
   }
   MFEM_VERIFY(
       r.profile_x.size() == r.profile_z.size() && r.profile_x.size() > 1,
@@ -585,7 +584,7 @@ DipSection DipSectionView(const FaultRecord& f) {
 
 }  // namespace
 
-int main(int argc, char* argv[]) {
+int main(int argc, char* argv[]) try {
 #ifdef MFEM_USE_MPI
   Mpi::Init(argc, argv);
   Hypre::Init();
@@ -1300,4 +1299,7 @@ int main(int argc, char* argv[]) {
     }
   }
   return ok && G.Converged() ? 0 : 1;
+} catch (const planetmodel::Error& e) {
+  std::cerr << e.what() << "\n";
+  return 1;
 }

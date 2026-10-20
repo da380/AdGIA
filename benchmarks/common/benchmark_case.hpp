@@ -51,11 +51,10 @@ using Problem = LinearQuasiStaticMixedSelfGravitatingProblem;
 inline constexpr const char* kFields[] = {"rho", "kappa", "mu"};
 
 // Where the parts of a case for a number of ranks are (partition_case.cpp).
-inline std::string PartsDirectory(const MeshManifest& manifest, int ranks) {
-  const std::string& path = manifest.Path();
-  const auto slash = path.find_last_of('/');
-  return (slash == std::string::npos ? "" : path.substr(0, slash + 1)) +
-         "parts_" + std::to_string(ranks);
+inline std::string PartsDirectory(const planetmodel::MeshManifest& manifest,
+                                  int ranks) {
+  return (manifest.Path().parent_path() / ("parts_" + std::to_string(ranks)))
+      .string();
 }
 
 inline double Seconds(Clock::time_point since) {
@@ -93,7 +92,8 @@ inline std::string List(const Vector& v) {
 // weak form want the fluid's density on boundary elements of the solid,
 // which hold no fluid element to ask; the manifest holds the model's exact
 // value there.
-inline Vector FluidSideDensity(const MeshManifest& manifest, int size) {
+inline Vector FluidSideDensity(const planetmodel::MeshManifest& manifest,
+                               int size) {
   Vector rho(size);
   rho = 0.0;
   const int first = manifest.Interfaces().front().attribute;
@@ -219,7 +219,7 @@ inline Vector RadialFunction(ParMesh& mesh, int attribute, real_t r_inner,
 
 // The analysis of U, V and phi on one interface of the solid.
 struct InterfaceAnalysis {
-  MeshManifest::Interface interface;
+  planetmodel::MeshManifest::Interface interface;
   std::unique_ptr<BHC> radial, tangential, scalar;
   // The gravity of the background at the interface.
   real_t gravity = 0.0;
@@ -430,7 +430,7 @@ class Case {
     const auto start = Clock::now();
     MFEM_VERIFY(options.dtn_degree >= options.lmax,
                 "The DtN degree must reach lmax.");
-    if (root) manifest.Print(std::cout);
+    if (root) Print(manifest, std::cout);
     G = manifest.G();
     const int rank = Mpi::WorldRank();
     const std::string parts = PartsDirectory(manifest, Mpi::WorldSize());
@@ -455,12 +455,12 @@ class Case {
         p0 = read("p0");
       }
     } else {
-      Mesh serial = manifest.LoadMesh();
+      Mesh serial = LoadMesh(manifest);
       elements = serial.GetNE();
-      auto rho_s = manifest.LoadField(serial, "rho");
-      auto kappa_s = manifest.LoadField(serial, "kappa");
-      auto mu_s = manifest.LoadField(serial, "mu");
-      auto p0_s = manifest.HasField("p0") ? manifest.LoadField(serial, "p0")
+      auto rho_s = LoadField(manifest, serial, "rho");
+      auto kappa_s = LoadField(manifest, serial, "kappa");
+      auto mu_s = LoadField(manifest, serial, "mu");
+      auto p0_s = manifest.HasField("p0") ? LoadField(manifest, serial, "p0")
                                           : nullptr;
       std::unique_ptr<int[]> partitioning(
           serial.GeneratePartitioning(Mpi::WorldSize()));
@@ -526,8 +526,8 @@ class Case {
     // referential) the fluid layers as well (the member keeps the name
     // `solid` as "the displacement SubMesh"; the slipping methods give
     // the fluid its own SubMesh).
-    solid_attributes = manifest.SolidAttributes();
-    fluid_attributes = manifest.FluidAttributes();
+    solid_attributes = ToArray(manifest.SolidAttributes());
+    fluid_attributes = ToArray(manifest.FluidAttributes());
 
     const std::string cmb(options.cmb);
     MFEM_VERIFY(cmb == "full" || cmb == "nomass" || cmb == "uniform" ||
@@ -548,8 +548,11 @@ class Case {
       for (const int attribute : solid_attributes) {
         bool enclosed = true;
         for (const auto& f : manifest.Interfaces()) {
-          if (f.below == attribute || f.above == attribute) {
-            const int other = f.below == attribute ? f.above : f.below;
+          if (f.BelowAttribute() == attribute ||
+              f.AboveAttribute() == attribute) {
+            const int other = f.BelowAttribute() == attribute
+                                  ? f.AboveAttribute()
+                                  : f.BelowAttribute();
             enclosed = enclosed && fluid_attributes.Find(other) >= 0;
           }
         }
@@ -626,8 +629,10 @@ class Case {
         // so their background density sources Phi_0 through it.
         for (const int s : folded_attributes) {
           for (const auto& itf : manifest.Interfaces()) {
-            if ((itf.below == s && itf.above == attribute) ||
-                (itf.above == s && itf.below == attribute)) {
+            if ((itf.BelowAttribute() == s &&
+                 itf.AboveAttribute() == attribute) ||
+                (itf.AboveAttribute() == s &&
+                 itf.BelowAttribute() == attribute)) {
               f.attributes.Append(s);
               break;
             }
@@ -640,12 +645,12 @@ class Case {
         Array<int> region_interfaces;
         for (const int b : manifest.FluidSolidInterfaces(attribute)) {
           const auto& itf = manifest.Interfaces()[b - first];
-          if (solid_attributes.Find(itf.below) >= 0 ||
-              solid_attributes.Find(itf.above) >= 0) {
+          if (solid_attributes.Find(itf.BelowAttribute()) >= 0 ||
+              solid_attributes.Find(itf.AboveAttribute()) >= 0) {
             region_interfaces.Append(b);
           }
         }
-        f.interface_marker = MeshManifest::Marker(region_interfaces, n_bdr);
+        f.interface_marker = Marker(region_interfaces, n_bdr);
         if (options.no_fluid_gradient && cmb == "full") {
           f.density_gradient = &zero_;
         }
@@ -736,8 +741,11 @@ class Case {
         for (const int attribute : solid_attributes) {
           bool enclosed = true;
           for (const auto& f : manifest.Interfaces()) {
-            if (f.below == attribute || f.above == attribute) {
-              const int other = f.below == attribute ? f.above : f.below;
+            if (f.BelowAttribute() == attribute ||
+                f.AboveAttribute() == attribute) {
+              const int other = f.BelowAttribute() == attribute
+                                    ? f.AboveAttribute()
+                                    : f.BelowAttribute();
               enclosed = enclosed && fluid_attributes.Find(other) >= 0;
             }
           }
@@ -765,12 +773,11 @@ class Case {
     // Harmonic analysis on every interface bounding a solid layer, the
     // surface among them.
     for (const auto& f : manifest.Interfaces()) {
-      if (solid_attributes.Find(f.below) < 0 &&
-          solid_attributes.Find(f.above) < 0) {
+      if (solid_attributes.Find(f.BelowAttribute()) < 0 &&
+          solid_attributes.Find(f.AboveAttribute()) < 0) {
         continue;
       }
-      const Array<int> marker =
-          MeshManifest::Marker(Array<int>({f.attribute}), n_bdr);
+      const Array<int> marker = Marker(Array<int>({f.attribute}), n_bdr);
       InterfaceAnalysis an;
       an.interface = f;
       an.radial = std::make_unique<BHC>(*fes_u, marker, options.lmax,
@@ -804,7 +811,8 @@ class Case {
                     MPITypeMap<real_t>::mpi_type, MPI_SUM, MPI_COMM_WORLD);
       for (auto& an : analyses) {
         real_t within = 0.0;
-        for (int attribute = 1; attribute <= an.interface.below; attribute++) {
+        for (int attribute = 1; attribute <= an.interface.BelowAttribute();
+             attribute++) {
           within += layer_mass[attribute - 1];
         }
         const real_t r = an.interface.radius;
@@ -1285,19 +1293,15 @@ class Case {
                   "unmapped.");
       MFEM_VERIFY(!(shifted && options.map_amplitude != 0.0),
                   "-map and -map-shift are separate benchmarks.");
-      const std::string& mpath = manifest.Path();
-      const auto slash = mpath.find_last_of('/');
-      const std::string dir =
-          slash == std::string::npos ? std::string()
-                                     : mpath.substr(0, slash + 1);
+      const auto dir = manifest.Path().parent_path();
       profiles_ = std::make_unique<RadialProfiles>(
           std::string(options.profiles).empty()
-              ? dir + "radial_profiles.txt"
+              ? (dir / "radial_profiles.txt").string()
               : std::string(options.profiles));
       // The map's REFERENCE boundaries are the mesh's own: the base
       // case's, not the (possibly perturbed) profiles'.
-      base_profiles_ =
-          std::make_unique<RadialProfiles>(dir + "radial_profiles.txt");
+      base_profiles_ = std::make_unique<RadialProfiles>(
+          (dir / "radial_profiles.txt").string());
       xi_analytic_ = std::make_unique<CallableDiffeomorphism>(
           shifted ? InterfaceShift(dim, base_profiles_->Boundaries(),
                                    options.map_shift_interface,
@@ -1413,7 +1417,7 @@ class Case {
     if (slip) {
       MFEM_VERIFY(
           fluid_attributes.Size() == 1 &&
-              manifest.FluidSolidInterfaces(fluid_attributes[0]).Size() == 1,
+              manifest.FluidSolidInterfaces(fluid_attributes[0]).size() == 1,
           "The slipping methods support one fluid core inside a solid "
           "shell (nested shells are not supported).");
       fluid_sub_ = std::make_unique<ParSubMesh>(
@@ -1561,8 +1565,7 @@ class Case {
         // the manifest value when the map fixes the interface.
         pi_use = comp_p0_.get();
       }
-      interface_marker_ =
-          MeshManifest::Marker(Array<int>({b_itf}), n_bdr);
+      interface_marker_ = Marker(Array<int>({b_itf}), n_bdr);
       if (root) {
         std::cout << "Slipping interface " << itf.name << " at r = "
                   << itf.radius << ", pi = " << pi_values[b_itf - 1]
@@ -1693,7 +1696,7 @@ class Case {
   CaseOptions options_;
 
  public:
-  MeshManifest manifest;
+  planetmodel::MeshManifest manifest;
   real_t G = 0.0, mass = 0.0, radius = 0.0, gravity = 0.0;
   int dim = 3;
   long long elements = 0;

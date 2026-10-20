@@ -205,13 +205,15 @@ starts, is declared a knot of the displacement. These meshes are
   leaves between interfaces.
 - **`meshes/`** owns the recipes: which skeleton, which sizes, which
   shells, which file name.
-- **The C++ side** reads the mesh files. `MeshManifest`
-  (`mesh_manifest.hpp`) reads the manifest and answers questions such as
-  "which attributes are solid" or "which boundary is the surface" as the
-  attribute lists and markers the problem classes take; the benchmarks and
-  `tests/TestMeshManifest.cpp` use it. The examples identify layers by
-  position instead (for instance `attributes.Max()` tells the two- and
-  three-layer Earth apart).
+- **The C++ side** reads the mesh files. `planetmodel::MeshManifest`
+  (planetmodel's C++ library, fetched by the build) reads the manifest and
+  answers questions such as "which attributes are solid" or "which
+  boundary is the surface"; the glue in `include/AdGIA/manifest.hpp` opens
+  the mesh and the fields and turns the attribute lists into the markers
+  the problem classes take. The benchmarks and `tests/TestManifest.cpp`
+  use them. The examples identify layers by position instead (for
+  instance `attributes.Max()` tells the two- and three-layer Earth
+  apart).
 
 A realistic Earth skeleton comes from planetmodel's `PREM()`, coarsened as
 needed, through a script like `layered_earth.py`.
@@ -228,7 +230,7 @@ elements come out consistently oriented, so MFEM has nothing to fix on
 load.
 
 Beside each mesh file is a JSON **manifest** of the same name (schema
-`planetmodel.mesh.manifest/5`; `MeshManifest` also reads /4) listing the
+`planetmodel.mesh.manifest/5`) listing the
 layers and interfaces with their attributes, names and radii, and, for an
 exported model, which layers are fluid, the fields written beside the mesh
 and the model's units and constants. It is what a reader consults instead
