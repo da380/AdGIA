@@ -403,13 +403,15 @@ operators").
 
 ### Model files: the remaining readers and writers
 
-**Status:** the scalar route is done. `model_coefficient.hpp` turns a
-netCDF model file's scalar variables into coefficients (per-layer by
-attribute, planetmodel's interpolants at the integration points);
-`make_case.py --model-file` writes the file beside a case and the Love
-drivers' `-model-fields` consumes it; the sphere family's
-`model_file.py` + `-model` deliver a (lateral) viscosity as
-`tau = eta / mu`.
+**Status:** the scalar routes are done, both ways.
+`model_coefficient.hpp` turns a netCDF model file's scalar variables
+into coefficients (per-layer by attribute, planetmodel's interpolants
+at the integration points); `make_case.py --model-file` writes the file
+beside a case and the Love drivers' `-model-fields` consumes it; the
+sphere family's `model_file.py` + `-model` deliver a (lateral)
+viscosity as `tau = eta / mu`; and `model_export.hpp` writes fields on
+a mesh — the viscosity kernels of `gia_kernels` and `ice_age_loading` —
+back out as model files the Python reads and draws.
 
 Remaining, in rough order of need:
 
@@ -425,9 +427,10 @@ Remaining, in rough order of need:
 - A deformed mesh: fields live on the reference skeleton, so a mesh
   with physical nodes asks the file's `Mapping()` before evaluating
   (identity mappings are the only case exercised so far).
-- Kernels out through `planetmodel::ModelFile` (the writer), so the
-  Python reads them back with its own plotting; volumetric kernels as
-  layer fields, boundary and shape kernels on the `surfaces` group.
+- Boundary and shape kernels on the `surfaces` group
+  (`SetSurfaceGrid`/`AddSurfaceField`): the volumetric route exists
+  (`model_export.hpp`, written by the kernel examples beside their
+  CSVs), the interface one does not.
 - Retire `relabelling.hpp`'s hand-rolled Chebyshev profile reader in
   favour of the model file or planetmodel's `radial.hpp` when a
   benchmark next touches it; `examples/layered_model.hpp`'s hard-coded

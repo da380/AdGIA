@@ -233,7 +233,7 @@ class IceAgeWeight : public Coefficient {
 
 }  // namespace
 
-int main(int argc, char* argv[]) {
+int main(int argc, char* argv[]) try {
 #ifdef MFEM_USE_MPI
   Mpi::Init(argc, argv);
   Hypre::Init();
@@ -757,6 +757,30 @@ int main(int argc, char* argv[]) {
         e1[2] = sl_;
         const double r_in = fluid_core ? kRCmb + 1e-3 : 0.05;
         WriteGreatCircleSlice(km, kg, e1, r_in, 0.995, 181, 36);
+        // The interchange form: the kernel as a planetmodel model file
+        // (the solid layers only — the kernel mesh holds no fluid
+        // elements, and the glue samples the layers it has).
+        std::string mpath(mesh_file);
+        const auto dot = mpath.rfind('.');
+        if (dot != std::string::npos) {
+          mpath = mpath.substr(0, dot) + ".json";
+        }
+        if (std::ifstream(mpath).good()) {
+          const planetmodel::MeshManifest manifest(mpath);
+          WriteKernelModelFile(
+              "visc_kernel.nc", manifest,
+              {{.name = "K_eta",
+                .field = &kg,
+                .dimensions = {.mass = -1, .length = -2, .time = 1},
+                .meaning = "derivative of the observation with respect "
+                           "to the viscosity, per unit volume, in the "
+                           "run's units"}},
+              {.name = "ice_age_loading viscosity kernel"});
+          std::cout << "Wrote visc_kernel.nc (" << mpath << "'s layers)\n";
+        } else {
+          std::cout << "No manifest beside " << mesh_file
+                    << ": visc_kernel.nc not written.\n";
+        }
       }
     }
     const int nt = K_ice.NumTimes();
@@ -974,4 +998,7 @@ int main(int argc, char* argv[]) {
     wl.Send(sea.SurfaceMesh(), load);
   }
   return 0;
+} catch (const planetmodel::Error& e) {
+  std::cerr << e.what() << "\n";
+  return 1;
 }

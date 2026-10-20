@@ -11,6 +11,7 @@ target_sources(${PROJECT_NAME} PRIVATE null_space.cpp
                                        mesh.cpp
                                        manifest.cpp
                                        model_coefficient.cpp
+                                       model_export.cpp
                                        poisson.cpp
                                        spherical_harmonics.cpp
                                        rheology.cpp

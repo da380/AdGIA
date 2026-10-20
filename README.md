@@ -140,7 +140,8 @@ includes them all), are
   markers the problems take (`manifest.hpp`); a netCDF model file
   exported beside the mesh as MFEM coefficients, evaluated through
   planetmodel's interpolants at the integration points
-  (`model_coefficient.hpp`).
+  (`model_coefficient.hpp`), and fields on a mesh — sensitivity
+  kernels — written back out as model files (`model_export.hpp`).
 
 Serial and parallel (MPI) paths are provided throughout.
 `examples/love_numbers.cpp` shows the self-gravitating machinery end to end:

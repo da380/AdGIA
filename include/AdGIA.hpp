@@ -15,6 +15,7 @@
 #include "AdGIA/mappings.hpp"
 #include "AdGIA/mesh.hpp"
 #include "AdGIA/model_coefficient.hpp"
+#include "AdGIA/model_export.hpp"
 #include "AdGIA/poisson.hpp"
 #include "AdGIA/quasi_static_problem.hpp"
 #include "AdGIA/relaxation_law.hpp"

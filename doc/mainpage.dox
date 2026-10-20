@@ -189,7 +189,10 @@
  * its attribute lists into the markers the problems take. A netCDF
  * model file exported beside the mesh becomes MFEM coefficients through
  * `model_coefficient.hpp`: planetmodel's interpolants evaluated at the
- * integration points, the layer the element's attribute.
+ * integration points, the layer the element's attribute. The way back is
+ * `model_export.hpp`: fields on a mesh — sensitivity kernels — sampled
+ * at a model file's own points and written through planetmodel's
+ * writer, the interchange form the Python reads back and draws.
  *
  * @section docs Documentation index
  * Paths are relative to the source tree.
