@@ -85,16 +85,24 @@ struct Files {
   }
   ~Files() { std::filesystem::remove_all(dir); }
 
-  // The source manifest with a model record naming `model` inserted.
+  // The source manifest with a model record naming `model`: the writer's
+  // empty "model": null is replaced (manifests from older writers lack the
+  // key, so it is then inserted before "schema").
   std::string Patched(const char* name, const char* model) const {
     std::ifstream in(kSourceManifest);
     std::stringstream buffer;
     buffer << in.rdbuf();
     std::string text = std::move(buffer).str();
-    const auto pos = text.rfind("\"schema\"");
-    EXPECT_NE(pos, std::string::npos);
-    text.insert(pos, std::string("\"model\": {\"file\": \"") + model +
-                         "\", \"schema\": \"planetmodel.model/1\"},\n  ");
+    const std::string record = std::string("\"model\": {\"file\": \"") + model +
+                               "\", \"schema\": \"planetmodel.model/1\"}";
+    const std::string empty = "\"model\": null";
+    if (const auto pos = text.find(empty); pos != std::string::npos) {
+      text.replace(pos, empty.size(), record);
+    } else {
+      const auto schema_pos = text.rfind("\"schema\"");
+      EXPECT_NE(schema_pos, std::string::npos);
+      text.insert(schema_pos, record + ",\n  ");
+    }
     const std::string path = (dir / name).string();
     std::ofstream(path) << text;
     return path;
