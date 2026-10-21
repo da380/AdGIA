@@ -83,6 +83,10 @@ namespace AdGIA {
  * - @p uniform_density: the constant interface density of UniformCore and
  *   Winkler; the literature's choice is the fluid-side density at the
  *   region's outermost interface (the core-top density for a core).
+ * - @p bulk_modulus: @f$\kappa@f$ on the parent's fluid elements, needed
+ *   only by the level border (SetLevelBorder()), which is the one place
+ *   the closure consults the fluid's compressibility. Evaluated like
+ *   @p density, on the parent mesh.
  */
 struct FluidRegion {
   /** @brief The CMB-approximation ladder: each rung degrades the full
@@ -107,6 +111,7 @@ struct FluidRegion {
   bool interface_potential_coupling = true;
   Treatment treatment = Treatment::Full;
   mfem::real_t uniform_density = 0.0;
+  mfem::Coefficient* bulk_modulus = nullptr;
 };
 
 /**
@@ -225,6 +230,18 @@ struct FluidRegion {
  * SetRelaxationWeights() reassembles the displacement block only (the
  * interface term is reassembled with it, harmlessly); the potential block,
  * the coupling and the DtN are built once.
+ *
+ * **The level border** (SetLevelBorder(); doc/dahlen_closure.tex). The
+ * reduction above leaves one free function of @f$\Phi_0@f$ per fluid
+ * region --- the degree-0 hole on a sphere, every degree off it --- and
+ * the border closes it: per region, nodal unknowns on a grid in
+ * @f$\Phi_0@f$ (the flux through the level surfaces, the lift and its
+ * multiplier) and one multiplier per level wall, coupled to the
+ * potential through volume integrals over the fluid elements and to the
+ * solid through each wall's level-mean normal flux, eliminated by the
+ * shared bordered engine. Requires each region's @p bulk_modulus. Gated
+ * on @c fluid_core against pyslfp at degree 0 and inert at every degree
+ * @f$\ell \ge 1@f$ on a sphere.
  *
  * **Gauged fluid regions** (the alternative to Dahlen's treatment above;
  * see doc/gauged_fluid.md). Instead of FluidRegions, the fluid attributes
@@ -492,6 +509,8 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
                 "relocation makes the bordered system asymmetric).");
     MFEM_VERIFY(!on || !picard_border_,
                 "SetMonolithicBorder: incompatible with SetPicardBorder.");
+    MFEM_VERIFY(!on || !level_enabled_,
+                "SetMonolithicBorder: incompatible with SetLevelBorder.");
     monolithic_border_ = on;
   }
 
@@ -521,6 +540,8 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
                        int max_passes = 50) {
     MFEM_VERIFY(!on || !monolithic_border_,
                 "SetPicardBorder: incompatible with SetMonolithicBorder.");
+    MFEM_VERIFY(!on || !level_enabled_,
+                "SetPicardBorder: incompatible with SetLevelBorder.");
     MFEM_VERIFY(tol > 0.0 && max_passes > 1,
                 "SetPicardBorder: invalid tolerance or pass cap.");
     picard_border_ = on;
@@ -532,6 +553,60 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
    * the other routes; -1 when the last solve fell back to the
    * elimination). */
   int LastPicardPasses() const { return picard_passes_; }
+
+  /**
+   * @brief The level border: Dahlen's closure completed on the level
+   * foliation of @f$\Phi_0@f$ (doc/dahlen_closure.tex, "The closure in
+   * the cumulative-volume variable" and "Implementation"). The
+   * reduction alone leaves one free function of @f$\Phi_0@f$ per fluid
+   * region and so returns an arbitrary member of a family at degree 0
+   * (and, off the sphere, at every degree); the border adds, per
+   * region, the one-dimensional unknowns on a grid of @p levels nodes
+   * in @f$\Phi_0@f$ --- the flux @f$U@f$ through the level surfaces,
+   * the lift @f$s@f$, its multiplier @f$\nu = -f'@f$ (the extra Poisson
+   * source), and one wall multiplier per level wall (the level-mean
+   * wall pressure) --- and couples them to the potential through
+   * volume integrals of the hat functions composed with @f$\Phi_0@f$,
+   * and to the solid through the level-mean normal flux of each wall.
+   * The bordered system is symmetric and is solved by the shared
+   * elimination engine (one base solve per potential-coupled border
+   * unknown, cached across solves at a frozen operator). On a sphere
+   * the border is inert at every degree @f$\ell \ge 1@f$ and turns
+   * degree 0 into the compressible fluid problem.
+   *
+   * Requirements: every region under Treatment::Full with a
+   * @p bulk_modulus; level walls (every interface attribute of a
+   * region classified by the sign of @f$\mathbf m\cdot\nabla\Phi_0@f$
+   * as the region's outer or inner wall); the level foliation regular
+   * (asserted: @f$|\nabla\Phi_0|@f$ away from zero on the fluid except
+   * near a centre). Incompatible with SetPicardBorder(),
+   * SetMonolithicBorder() and, for now, SetRotation() (the border's
+   * centrifugal columns are not wired). Call once, after construction
+   * and before the first Solve().
+   */
+  void SetLevelBorder(int levels = 16);
+
+  /** @brief Whether SetLevelBorder() is on. */
+  bool HasLevelBorder() const { return level_enabled_; }
+
+  /** @brief The border unknowns of region @p region after the last
+   * Solve(): the node levels @p c, the flux @p U (per node; zero at a
+   * centre), the lift @p s, the multiplier @p nu, and the wall
+   * multipliers @p lambda (outer wall first). */
+  void LevelBorderSolution(int region, mfem::Vector& c, mfem::Vector& U,
+                           mfem::Vector& s, mfem::Vector& nu,
+                           mfem::Vector& lambda) const;
+
+  /** @brief Diagnostics of the level border of @p region after the last
+   * Solve(), global in parallel: the border's flux @f$U@f$ at each wall
+   * node against the solid's level-mean normal flux
+   * @f$\oint u_s\cdot\hat\nu\,dS@f$ there (outer wall first; the
+   * constraint makes them equal), and the region's bulk mass
+   * perturbation @f$\int(\rho_\Phi\phi + \nu)\,dV@f$ against
+   * @f$-\rho_F@f$ times the outer flux plus @f$\rho_F@f$ times the
+   * inner one (mass conservation makes them equal). Layout: per wall
+   * (U, flux), then (bulk, wall mass). */
+  mfem::Vector LevelBorderDiagnostics(int region) const;
 
   /** @brief @f$\psi(\omega)@f$ of the last Solve() as a coefficient
    * (requires SetRotation()); amplitudes follow each solve. */
@@ -928,6 +1003,27 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   std::unique_ptr<mfem::BlockDiagonalPreconditioner> block_prec_;
   std::unique_ptr<ProjectedSolver> projected_prec_;  ///< P M P, both solvers
   std::unique_ptr<mfem::IterativeSolver> minres_;  ///< MINRES or block CG
+
+  // ---- the level border (SetLevelBorder) ----
+  struct LevelBorder {
+    int n = 0;                 ///< elements of the 1-D grid (n+1 nodes)
+    bool centre = false;       ///< the region contains a centre: U_0 = 0
+    mfem::Vector c;            ///< node levels, c[0] < ... < c[n]
+    mfem::Vector vol, mass, kap;   ///< per-element volume, mass, kappa-volume
+    mfem::DenseMatrix Db;      ///< the 1-D block, local ordering below
+    std::vector<mfem::Vector> nu_phi;   ///< the nu columns on phi true dofs
+    std::vector<mfem::Vector> wall_u;   ///< the wall columns on u true dofs
+    std::vector<int> wall_node;         ///< node of each wall (n: outer)
+    int nU = 0, oU = 0, os = 0, onu = 0, ol = 0, size = 0;
+    mfem::Vector y;            ///< the last solve's border unknowns
+    int UIndex(int node) const { return centre ? node - 1 : node; }
+  };
+  bool level_enabled_ = false;
+  int level_n_ = 0;
+  std::vector<LevelBorder> level_;
+  std::vector<mfem::Coefficient*> fluid_rho_prime_;  ///< per region
+  std::vector<std::unique_ptr<mfem::Coefficient>> level_coefs_;
+  void BuildLevelBorders();
 
   // ---- KKT gauge (EnableGaugeKKT): the doubled saddle solver ----
   bool gauge_kkt_ = false;

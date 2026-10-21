@@ -108,7 +108,8 @@
  * (at N² ≠ 0 its semi-convergence is Rayleigh–Taylor growth); Dahlen's mixed
  * formulation is the workhorse for hydrostatic models, and the slipping
  * and welded formulations are idealisations that serve as instruments
- * (`doc/static_fluid_core.tex`).
+ * (`doc/static_fluid_core.tex`); the generalisation of Dahlen's closure to
+ * fluid regions of any shape is `doc/dahlen_closure.tex`.
  *
  * @subsection sec_background Background states
  * `background.hpp` generates the reference state the referential classes

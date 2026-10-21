@@ -104,8 +104,17 @@ The short version:
   derivation, with its derived, argued and conjectured steps marked,
   is \S\ref{sec:general}; the measured degree-1 offsets of the Maxwell
   route on stably stratified cores that prompted it are recorded there.
-  Items 4--6 and the hierarchy below stand until its open steps are
-  settled.
+  Its Step G7 recasts the closure in the cumulative volume below each
+  level as a symmetric bordered extension of the mixed class, derived,
+  and verified against the welded compressible fluid at degree 0 in one
+  dimension; the three-dimensional gates are listed there. Steps G8
+  and G9 extend the closure to an arbitrary pre-stressed solid in the
+  referential organisation and to rotation, where the border is what
+  the generalised rotational theory needs on fluid-core figures, and
+  where the present mixed class's length-of-day response is found to
+  be contaminated by the degree-0 family member.
+  Items 4--6 and the hierarchy below stand until those gates are
+  passed.
 \end{enumerate}
 
 \begin{center}
@@ -650,7 +659,12 @@ forbids it and loses existence.
 in a three-dimensional model}
 \label{sec:general}
 
-\emph{Status: a sketch under review. Each step is marked
+\emph{Status: a sketch under review, with Step G7 (added later on
+21 October 2026) recasting G5--G6 in a derived, symmetric form and
+verifying it at degree 0 in one dimension, and Steps G8--G9 (same day)
+extending it to a general pre-stressed solid and to rotation. A
+self-contained account of the method, without the surrounding
+discussion, is \code{doc/dahlen\_closure.tex}. Each step is marked
 \emph{derived}, \emph{argued} or \emph{conjectured}; where the sketch
 as first proposed did not survive the derivation, the text says so.}
 The question is whether the secular closure of \S\ref{sec:dahlen} ---
@@ -1033,7 +1047,8 @@ reference states'') that an aspherical model with a non-neutral core has
 no practical well-posed static method. The Maxwell route would remain
 the dynamic check.
 
-\emph{What an implementation needs (argued).} Four ingredients, none
+\emph{What an implementation needs (argued; superseded in detail by
+Step G7, which is the form to build).} Four ingredients, none
 of them new machinery. (i) The level foliation of $\Phi_0$ in each
 fluid region, from the reference-state solve, with the level-set
 integrals $A(c)$ and $\bar\Phi(c)$ evaluated on the mesh (on a
@@ -1079,6 +1094,380 @@ core--mantle boundary is level to about a part in a thousand, so the
 level-wall limit with surface mass is the practically relevant case; the
 transverse-wall theory, singular as $\theta \to 0$ by \eqref{eq:G-match},
 is needed for general models and would be ill-conditioned near level.
+
+\paragraph{Step G7 (the closure in the cumulative-volume variable;
+the bordered weak form). \emph{Derived; measured in one and three
+dimensions.}}
+Working out an implementation of Step G6 forces one change of
+variables, and the change settles most of what G4--G5 leave open. The
+pair $(f, s)$ is replaced by the \emph{cumulative volume change below
+each level},
+\begin{equation}
+  V(c) = \int_{R_c}\Div\bu\dV ,
+  \qquad
+  V = U + S_c[\bu_s],
+  \qquad
+  U(c) = \oint_{L_c}u_\nu\dS = -(\bar\Phi + sA),
+  \qquad
+  S_c[\bu_s] = \int_{\Sigma_c}\bu_s\cdot\bn\dS ,
+  \label{eq:G-V-def}
+\end{equation}
+by the divergence theorem with the no-penetration flux $\bu\cdot\bn =
+\bu_s\cdot\bn$ on the wall patch (Step G4; $U$ is the flux through the
+level surface and $S_c$ the volume swept by the wall below it). By the
+coarea formula $V' = \oint_{L_c}\Div\bu\,\mathrm dS/g = A\,\Div\bu$
+when $\Div\bu$ is constant on the level surfaces, which it is when
+$\kappa$ is (see below). Then, from \eqref{eq:G-s} and
+\eqref{eq:G-div-mech},
+\begin{equation}
+  s = -\frac{\bar\Phi + V - S_c[\bu_s]}{A},
+  \qquad
+  f = -\frac{\kappa V'}{A} - \rho\,s,
+  \qquad
+  \rho^1 = \rho_\Phi(\phi + s) - \frac{\rho V'}{A},
+  \label{eq:G-V-dict}
+\end{equation}
+and the boxed relation of \eqref{eq:G-slaving} is an identity. The one
+equation left is the normal balance $\rho^1 = \rho_\Phi\phi - f'$,
+which with \eqref{eq:G-V-dict} reads $f' = \rho V'/A - \rho_\Phi s$,
+that is, on a level wall ($S_c = 0$ below the wall),
+\begin{equation}
+  \boxed{\;-\Bigl(\frac{\kappa V'}{A}\Bigr)' + \rho\Bigl(\frac1A\Bigr)'V
+  + \rho\Bigl(\frac{\bar\Phi}{A}\Bigr)' = 0\;}
+  \qquad (c_{\min} < c < c_w),
+  \qquad V(c_{\min}) = 0 .
+  \label{eq:G-V}
+\end{equation}
+This is \eqref{eq:G-system} with $s$ eliminated through its
+definition instead of through $D$: the second equation of
+\eqref{eq:G-system} is the identity $s = -(\bar\Phi + V)/A$, and no
+division by $D$ occurs anywhere, so the singularity of
+\eqref{eq:G-ode} where $N^2$ changes sign was an artefact of the
+variables. Sphere checks (derived): with $V = 4\pi r^2u_r$,
+$A = 4\pi r^2/g$ and $\mathrm d/\mathrm dc = g^{-1}\mathrm d/\mathrm dr$,
+the dead-gravity limit ($\phi = 0$) of \eqref{eq:G-V} is
+$(\kappa\Div\bu)_r + \rho\,u_r(2g/r - g') = 0$, the degree-0 radial
+equation of the $\mu = 0$ fluid, and \eqref{eq:G-V-dict} gives
+$f = p^1 + \rho\phi$.
+
+\emph{The bordered weak form (level wall).} Write $S[\mathbf v] =
+\oint_\Sigma\mathbf v\cdot\bn\dS$ for the whole wall, $A_w = A(c_w)$,
+$\bar X(c) = \oint_{L_c}\chi\,\mathrm dS/g$ for the level mean of a
+potential test function, and $L_D(\bu_s, \phi)$ for the quadratic
+functional of the mixed formulation with its terms F1--F3
+(\code{mixed\_problem.hpp}). The closure is the stationarity of
+\begin{equation}
+\begin{aligned}
+  L = L_D(\bu_s,\phi)
+  &+ \frac12\int\frac{\kappa V'^2}{A}\,\mathrm dc
+   + \frac12\int\rho\Bigl(\frac1A\Bigr)'V^2\,\mathrm dc
+   - \int\Bigl(\frac{\rho_\Phi\bar\Phi V}{A}
+            + \frac{\rho\,\bar\Phi V'}{A}\Bigr)\mathrm dc
+   - \frac12\int\frac{\rho_\Phi\bar\Phi^2}{A}\,\mathrm dc \\
+  &- \frac{\rho_F}{2A_w}\,S[\bu_s]^2
+   + \lambda\bigl(V(c_w) - S[\bu_s]\bigr) - \text{loads},
+\end{aligned}
+\label{eq:G-L}
+\end{equation}
+with $V(c_{\min}) = 0$ essential and $\lambda$ a scalar multiplier.
+The four rows, with test functions $\mathbf v$, $\chi$, $W$
+($W(c_{\min}) = 0$):
+\begin{equation}
+\begin{aligned}
+  \text{(S)}&\quad
+  \text{mixed solid row} - \lambda\,S[\mathbf v]
+  - \frac{\rho_F}{A_w}S[\bu_s]\,S[\mathbf v] = \ell_u(\mathbf v),\\
+  \text{(P)}&\quad
+  \text{mixed potential row}
+  - \int\frac{\rho_\Phi\bar\Phi\bar X}{A}\,\mathrm dc
+  - \int\Bigl(\frac{\rho_\Phi V}{A} + \frac{\rho V'}{A}\Bigr)\bar X\,\mathrm dc
+  = \ell_\phi(\chi),\\
+  \text{(V)}&\quad
+  \int\frac{\kappa V'W'}{A}\,\mathrm dc + \int\rho\Bigl(\frac1A\Bigr)'VW\,\mathrm dc
+  - \int\Bigl(\frac{\rho_\Phi\bar\Phi W}{A} + \frac{\rho\,\bar\Phi W'}{A}\Bigr)\mathrm dc
+  + \lambda\,W(c_w) = 0,\\
+  \text{(C)}&\quad V(c_w) - S[\bu_s] = 0 .
+\end{aligned}
+\label{eq:G-rows}
+\end{equation}
+The system is symmetric by construction, the (V)--(P) coupling being
+one bilinear form read both ways. The multiplier is the natural flux
+of (V) with the level-mean potential absorbed,
+$\lambda = -\kappa V'(c_w)/A_w + \rho_F\bar\Phi(c_w)/A_w = f(c_w) -
+\rho_F S[\bu_s]/A_w$, so that (S) carries exactly the wall pressure
+$f(c_w)\oint(\mathbf m\cdot\mathbf v)$ of Step G6 once the rank-one
+term is accounted for. Three bookkeeping facts follow. On the sphere
+at $\ell = 0$ the term $-\tfrac12\int\rho_\Phi\bar\Phi^2/A$ cancels the
+degree-0 part of F1 exactly, and $-(\rho_F/2A_w)S^2$ cancels the
+degree-0 part of F2 (both are consequences of the slaving
+$u_r = -\phi/g$, which does not hold at degree 0); F3 stays, being the
+boundary term that the welded coupling $\int_F\rho\nabla\phi\cdot\bu$
+produces under integration by parts. So at $\ell = 0$ the bordered
+system is the welded compressible fluid in a different assembly, and at
+$\ell \ge 1$ the border rows are homogeneous, $V = \lambda = 0$, and the
+method is Dahlen's unchanged.
+
+\emph{Measured (one dimension).} The radial tool of the disc family,
+\code{disc\_radial.py} with method \code{dahlen} at $l = 0$, assembles \eqref{eq:G-rows} from the level-foliation
+equations --- the border as $V = r\,u_f$ on the core nodes, the
+multiplier as a separate unknown, F1--F3 kept --- and compares with the
+welded compressible solve, which at $l = 0$ is exact physics. On
+\code{fluid\_core\_2d} ($N^2 < 0$), \code{aw\_core\_2d} ($N^2 = 0$)
+and the stable twin ($N^2 > 0$): surface and CMB displacement agree to
+$5\times10^{-12}$ and $10^{-11}$, the fluid's degree-0 profile to
+$1.4\times10^{-11}$, the surface potentials by the variable change
+$\zeta = g\,u_r + \phi$ to $5\times10^{-12}$, the multiplier obeys
+$\lambda = -\kappa\Div\bu + \rho_F\phi$ at the wall to $10^{-12}$, and
+the border path is resolution-independent to $2\times10^{-12}$ under
+$p = 8 \to 11$. The naked reduction (F1--F3, no border; the
+three-dimensional mixed class's present $\ell = 0$) returns
+$u_r(a) = +3.29$ against $-0.0991$ on \code{fluid\_core\_2d}, the
+arbitrary family member of Step G1, and the same number on the neutral
+core and its stable twin --- $\kappa$-blind, as Step G1 says it must be.
+These are the validation entries ``border l=0'' of the tool.
+
+\emph{What this settles.} (i) The wall condition \eqref{eq:G-wall} is
+$V(c_w) = S[\bu_s]$, the level mean of the normal matching
+$\oint\sigma\dS = 0$; it is the essential constraint whose multiplier is
+the level-mean wall pressure, and without it the solid's
+$f(c_w)$-column has no transpose and the system is not square. Its
+physical content is the top band's mass balance with the true
+no-penetration flux (Step G4 at $R_c = F$). It is derived, not argued.
+(ii) F3 needs no level limit: it books $(\rho_F - \rho_S)\,\bu_s\cdot\bn$,
+the fluid filling to the wall, on level and transverse walls alike;
+the spread wall-level sheet of a level wall has that Eulerian effect
+and no other once \eqref{eq:G-wall} holds. (iii) The $1/\sin\theta$
+growth of the along-level displacement is immaterial: $\bu_\parallel$
+carries no energy and enters no Eulerian field beyond its divergence,
+which \eqref{eq:G-V-def} fixes, and it is never constructed; the level
+limit is regular in $V$. The finite-energy question of G4 is moot for
+the reduced problem. (iv) Uniqueness is the coercivity of \eqref{eq:G-L}
+on the complement of the rigid modes, the gravitational stability of
+the level-mean sector; the sign of $N^2$ does not enter (there is no
+overturning in that sector, and $D$ appears nowhere), and at $N^2 = 0$
+the sector carries no class-K freedom, since a level-mean relabelling
+has $w_r \propto 1/(\rho r^2)$, singular at a centre and annihilated by
+the walls of a shell. On the sphere it is the coercivity of the degree-0
+problem. (v) $\kappa$ constant on the level surfaces is not an
+assumption: for any fluid with $\rho = \rho(p, S)$ and $\partial_S\rho
+\neq 0$, level-constant $\rho$ and $p^0$ force level-constant $S$, hence
+$\kappa$. The corresponding open case is dropped.
+
+\emph{Transverse walls (argued in outline).} Nothing changes in form:
+$U = V - S_c[\bu_s]$ enters $s$ through \eqref{eq:G-V-dict}, the wall
+pressure $f(\Phi_0(\mathbf x))$ acts along the wall, the strips enter
+the (V) row as $\int_\Sigma W(\Phi_0)\,\rho_F\,\bu_s\cdot\bn\dS$, and
+$V(c_{\mathrm{top}}) = S[\bu_s]$ remains the end condition, the level
+case being the strips concentrated at $c_w$. But a density jump across
+a transverse wall is incompatible with a hydrostatic solid: traction
+continuity along the wall requires $p^0_S(c) = p^0_F(c)$ over the cut
+range of $\Phi_0$, whose $c$-derivative gives $\rho_S = \rho_F$ there.
+A transverse wall with a density contrast needs deviatoric pre-stress
+in the solid, so it lies outside the mixed class altogether (the
+referential class carries the pre-stress but has no eliminated-fluid
+machinery). Conversely every density interface of a hydrostatic
+equilibrium figure is a level surface, so the equilibrium-figure
+programme delivers the level-wall case directly, and the Earth's
+core--mantle boundary is level to a part in a thousand. One prediction
+for the instruments follows: on a genuinely transverse wall the
+elastic-static slipping problem has a regular solution except near the
+level points every closed wall has, so its resolution band should
+shrink with the wall's transversality.
+
+\emph{Implementation (three dimensions).} The border lives on a
+one-dimensional grid in the volume-fraction coordinate
+$v = |\{\Phi_0 < c\}\cap F|/|F|$, $\mathrm dv = A\,\mathrm dc/|F|$, in
+which $\int\kappa V'^2/A\,\mathrm dc = |F|^{-1}\int\kappa(\mathrm dV/\mathrm dv)^2\mathrm dv$
+has no singularity at the centre, $V(0) = 0$ is a plain essential
+condition, and $v(\mathbf x)$ is the cumulative histogram of
+$\Phi_0$ over the fluid quadrature points ($v = (r/c)^3$ on the sphere).
+Every coupling in \eqref{eq:G-rows} is an ordinary integral: by the
+coarea formula $\int\bar X(c)\,F(c)\,\mathrm dc = \int_F F(\Phi_0(\mathbf x))\,\chi(\mathbf x)\dV$
+for any one-dimensional $F$, so the columns are volume integrals over
+the parent's fluid elements with the border's basis functions, or their
+derivatives, composed with $\Phi_0$ as coefficients --- assembled where
+F1 is assembled now --- and wall integrals with the same coefficients.
+No level surface is ever extracted. The border is one to three hundred
+unknowns ($V_k$, with $s_k$ and its constraint kept as unknowns to keep
+the $\phi$--$\phi$ term local), too wide for the column elimination of
+\code{bordered.hpp}, so the monolithic MINRES route
+(\code{SetMonolithicBorder}) is the solver, with the sparse
+one-dimensional block solved directly in the preconditioner. Each
+connected fluid region carries its own border; a shell has two wall
+constraints, and an inner core's degree-0 breathing couples through
+them while its Slichter translation does not. For a rotating figure the
+geopotential is passed as the background potential. The gates, in
+order: the one-dimensional prototype above (done); the mixed class on a
+spherical mesh at $\ell = 0$, where $h'_0$ and $k'_0$ must move from
+$-1.457$ and $-5.35$ to \code{pyslfp}'s $-0.1321$ and $0$, the slaved
+fluid trace must equal the solid's at the CMB, and every $\ell \ge 1$
+number must stay fixed to $10^{-10}$; a neutral aspherical figure, on
+which the closure must equal the welded and gauged answers; then a
+non-neutral figure, with $h$- and $p$-convergence and a
+first-order-in-flattening check against the spherical response. The
+closure does not touch $\ell \ge 1$ on the sphere: the stable-core
+degree-1 offsets of the Maxwell route that prompted this section are a
+separate matter, decided by the Dahlen-versus-Maxwell adjudication of
+\S\ref{sec:maxwell}.
+
+\paragraph{Step G8 (a general solid: the referential--Eulerian
+organisation). \emph{Argued.}} Nothing in Steps G1--G7 consults the
+solid. The fluid relations are Eulerian and local to $F$, and the solid
+enters them through two quantities only: the total background potential
+$\Phi_0$, sourced by every mass including a pre-stressed solid, and the
+wall's normal displacement $\bu_s\cdot\bn$. The solid's constitutive
+state, its pre-stress and its reference mapping are never used. The
+closure therefore couples unchanged to the general referential
+equations in $(\hat C, \mathbf S_e, \varphi_e)$
+(\code{referential\_problem.hpp}; \code{doc/gravitating\_elasticity.md}
+\S3.1), and the mixed class of Step G7 is the special value
+$\mathbf S_e = -p^0 I$, $\varphi_e = \mathrm{id}$. The organisation is
+the hybrid one: the referential potential $\zeta^1$ on the solid and
+the vacuum, the Eulerian potential on the fluid. It is also the natural
+organisation for secular motions on an aspherical reference: the
+referential solid carries no bare displacement in its gravity coupling,
+and the equipotential-riding fluid carries no displacement at all, so
+neither side samples a drifting reference potential.
+
+\emph{The potential across the wall.} On the solid $\zeta^1 =
+\phi^1\circ\varphi_e + (\bu\cdot\nabla\Phi_0)\circ\varphi_e$; in the
+fluid, with no $\bu$, the same formula gives $\phi^1\circ\varphi_e$. Two
+realisations exist in the library. Either the displacement is extended
+into the fluid by the prescribed radial extension $E$ (the single-valued
+$\zeta$ organisation of the slipping classes) and every fluid term is
+written in $\phi^1 = \zeta^1 - (E\bu)\cdot\nabla\Phi_0$, an exact change
+of variables with no gauge content, since $E\bu$ is never treated as a
+fluid displacement; or $\zeta^1$ is broken at $\Sigma$ with the jump
+prescribed as $\bu_s\cdot\nabla\Phi_0$ (the broken-$\zeta$ machinery with
+a prescribed rather than solved jump). The first keeps one potential
+space, and the referential Poisson operator on the fluid region is
+already the mapped Laplacian $(1/4\pi G)\langle a_e\nabla\zeta^1,\nabla\chi\rangle$
+that the class assembles.
+
+\emph{The fluid terms, pulled back.} The volume source $\rho_\Phi\phi^1
+- f'$ and the border integrals are assembled on the reference fluid
+mesh with the basis functions composed with $\Phi_0\circ\varphi_e$ and
+the Jacobian $J_e$; the wall integrals carry the surface Jacobian; the
+constraint $V(c_{\mathrm{top}}) = S[\bu_s]$ reads the referential flux
+through the cofactor normal. No level surface is extracted.
+
+\emph{The follower load.} This is the one term the mixed class never
+shows, because a hydrostatic solid absorbs it into the symmetrised
+advective form. The fluid's traction on the deformed wall, $-p\,\bn\dS$
+linearised, splits into the pressure perturbation at the displaced
+wall, $\delta p = f - \rho_F(\phi^1 + \bu_s\cdot\nabla\Phi_0)$ on the
+reference normal (Step G6), and $-p^0$ times the perturbation of the
+normal-area element. The second is the one-sided solid kernel of the
+slipping classes' interface pressure form at $\pi = p^0$
+(\code{SlipInterfacePressureIntegrator}, assembled on the solid side
+alone). On a level wall $p^0$ is constant along $\Sigma$ and that kernel
+is symmetric by itself. On a transverse wall it is not, and the total is
+symmetric only when $\mathbf S_e\bn = -p^0\bn$ on $\Sigma$, the
+consistency condition of Step G7 in operator form: the solid's
+pre-stress must carry the fluid's normal traction and no shear traction
+on the wall. The equilibrium-stress generators (\code{background.hpp},
+the minimum-norm and minimum-deviatoric fields) take boundary tractions
+as data, so admissible $\mathbf S_e$ for a non-level wall are
+constructible with existing machinery, the wall pressure being the
+traction datum.
+
+\emph{The fluid half of F3.} The solid's $-\rho_S\,\bu_s\cdot\bn$ is
+inside the referential $\zeta$-row automatically ($\rho$ is a fixed
+referential field and the class has no gravity interface terms); the
+fluid's $+\rho_F\,\bu_s\cdot\bn$ must be added explicitly, as in the
+mixed class.
+
+\emph{Consistency conditions, collected.} (i) $\Phi_0$ is the total
+potential of the equilibrium configuration, the pre-stressed solid
+included. (ii) The fluid is hydrostatic in it, $\nabla p^0 =
+-\rho\nabla\Phi_0$ in $F$. (iii) $\mathbf S_e\bn = -p^0\bn$ on $\Sigma$.
+(iv) The solid is otherwise arbitrary. Under (i)--(iii) the referential
+solid with the Eulerian fluid closure and its border is a symmetric
+bordered system, by the same argument as \eqref{eq:G-L}, and its
+variational structure is that of the conservative system solid, fluid
+and gravity. The statement is argued, not derived: the follower term's
+symmetry on a transverse wall and the pull-back of the border have not
+been written out term by term.
+
+\paragraph{Step G9 (rotation). \emph{Derived for the fluid; argued for
+the meeting with the generalised rotational theory.}} For the fluid,
+rotation is little more than $\phi \to \phi + \psi$, provided the
+foliation is that of the geopotential. No fluid relation of G1--G7 used
+Poisson's equation for $\Phi_0$, only $\nabla p^0 = -\rho\nabla\Phi_0$
+and Poisson's equation for the perturbation $\phi$; so with $\Phi_0$ the
+geopotential (gravitational plus centrifugal, $-\tfrac12|\boldsymbol\Omega\times\mathbf x|^2$),
+$g = |\nabla\Phi_0|$ the effective gravity and $N^2$ formed with it,
+every step holds verbatim. On a rotating hydrostatic figure the body is
+axisymmetric about $\boldsymbol\Omega$ and the core--mantle boundary is
+a geopotential surface: the level-wall case. The perturbation of the
+centrifugal potential under a change $\boldsymbol\omega$ of the rotation
+vector, $\psi = -(\boldsymbol\Omega\times\mathbf x)\cdot(\boldsymbol\omega\times\mathbf x)
+= \sum_k\omega_k\psi_k$, is given once $\boldsymbol\omega$ is, and joins
+$\phi$ everywhere: $f = p^1 + \rho(\phi+\psi)$, $\rho^1 = \rho_\Phi(\phi+\psi)
+- f'$, $s = -(\phi + \psi + \bu\cdot\nabla\Phi_0)$, the level means
+$\bar\Phi \to \bar\Phi + \sum_k\omega_k\bar\Psi_k$ with $\bar\Psi_k =
+\oint_{L_c}\psi_k\,\mathrm dS/g$, and the wall pressure
+$f - \rho_F(\phi + \psi + \bu_s\cdot\nabla\Phi_0)$. Making that
+substitution in \eqref{eq:G-L} gives the border its $\boldsymbol\omega$
+columns, $-\int(\rho_\Phi\bar\Psi_kV/A + \rho\bar\Psi_kV'/A)\,\mathrm dc$
+in the (V) row and $-\int\rho_\Phi\bar\Phi\bar\Psi_k/A\,\mathrm dc$ in the
+(P) row, and an $\boldsymbol\omega$-block
+$-\tfrac12\int\rho_\Phi\bar\Psi_j\bar\Psi_k/A\,\mathrm dc$; by the
+symmetry of the functional the $\boldsymbol\omega$ rows acquire the
+transposes. This is the route by which the tidal machinery gave the
+mixed class its $\omega$-row data (\code{TidalCoupling},
+\code{TidalTidalCoupling}): the row functional is the fluid's inertia
+perturbation $\int_F\rho^1(|\mathbf x|^2\mathbf 1 - \mathbf x\otimes\mathbf x)\dV$
+plus the surface-mass term, paired with $\boldsymbol\Omega$, and the
+border supplies the $-f'$ part of $\rho^1$ that the naked reduction
+lacks. The mixed class's present pairings are the naked-reduction
+values of the same functional.
+
+\emph{A consequence for the present code (derived).} A change of
+rotation rate, $\boldsymbol\omega \parallel \boldsymbol\Omega$, has
+$\psi = -\Omega\omega_3(x^2 + y^2)$, whose degree-0 part on the sphere is
+$-\tfrac23\Omega\omega_3 r^2$. The $\omega_3$ row of the secular
+balance, $-C_3\omega_3 = \Omega I^{(1)}_{33}$, reads the degree-0 part of
+$\rho^1$ through $I^{(1)}_{33} = \int\rho^1(x^2 + y^2)$, and the
+feedback $\psi(\omega_3)$ loads degree 0 in turn. On a fluid-core model
+the mixed class's degree-0 fluid response is the arbitrary family member
+of Step G1, so its length-of-day response under a load with a degree-0
+part is contaminated at the level of that member; polar wander
+($\boldsymbol\omega \perp \boldsymbol\Omega$) is degree 2 only and is
+clean. This is checkable against \code{pyslfp} with no new theory, and
+is the first measurement of the rotational programme.
+
+\emph{Meeting the generalised theory
+(\code{doc/generalised\_rotation.md}).} The three deltas of the secular
+reduction survive unchanged. $D$ is built from the model's whole-body
+$I^{(0)}$, the fluid's hydrostatic density included. The Tisserand
+gauge restricted to the solid is forced rather than chosen: the
+eliminated fluid has no displacement, and the slaved one's relative
+angular momentum is relabelling gauge (the fluid-core frame choice,
+G8c). $\boldsymbol\Omega$ along a principal axis is automatic on an
+axisymmetric figure. The inertia perturbation is Eulerian in the fluid
+(the appendix formula of Yu et al.\ 2025) with the border and
+surface-mass terms added. Two things want verification rather than
+argument. First, the gauge-shift certificate G8b must be re-derived:
+under a rigid re-gauge $\bu_s \to \bu_s + \mathbf b\times\mathbf x$ on an
+aspherical level wall the fluid is not inert, since its $\rho^1$ follows
+the rotated potential and the wall's normal trace changes. Without
+rotation the Eulerian fluid follows a rigid motion of the total mass
+exactly --- $\rho^1 = -(\mathbf b\times\mathbf x)\cdot\nabla\rho$ from
+$\rho_\Phi\phi$ with $\phi = -(\mathbf b\times\mathbf x)\cdot\nabla\Phi_0$,
+and $u_\nu = -\phi/g = (\mathbf b\times\mathbf x)\cdot\bn$ on a level
+wall, so no surface mass --- which is why the rigid rotation is a null
+pair of the closure; with the centrifugal background it is a frame
+unknown, as in M\&A, and the expectation is that the whole-body
+commutator formula $\delta\boldsymbol\omega = D^{-1}[\mathrm{ad}_{\mathbf b}, I]\boldsymbol\Omega$
+survives with $I$ the whole-body inertia. That is a claim to test.
+Second, the closure and the self-consistent door are made for each
+other: a rotating hydrostatic figure with a fluid core is where the
+model's own inertia is realistic and where, at $N^2 \neq 0$, no static
+fluid method existed; the first joint test is the figure programme's
+rotating body with the border, against the input-inertia door on the
+sphere as control. The rapid-wobble regime, in which the core does not
+follow the mantle, remains outside the secular door as before.
 
 %=====================================================================
 \section{What dissipation selects, and routes to regularisation}
@@ -1570,17 +1959,29 @@ route's degree-1 offset from \code{pyslfp} and its behaviour under
 refinement (the $h$- and order-refinement runs are in progress).
 % STABLE-CORE: results to come
 \textbf{[Results to come.]}
-(vi) The unverified steps of \S\ref{sec:general}: the sufficiency of the
-per-component condition \eqref{eq:G-band} on a transverse wall; the
-finite-energy question at the level points that every closed wall has;
-the welded count on a transverse wall; the level limit and its
-identification with F3; the zero-net-surface-mass wall condition
-\eqref{eq:G-wall}; uniqueness of \eqref{eq:G-system}--\eqref{eq:G-wall},
-its character for $N^2 < 0$, and the case of $\kappa$ varying on the
-level surfaces.
-(vii) A one-dimensional numerical prototype of \S\ref{sec:general}: the
-disc family's radial tool is the natural place, first on the circular
-disc (where \eqref{eq:G-system} must reproduce the degree-0 reference),
-then an aspherical disc with a non-level wall.
+(vi) The steps of \S\ref{sec:general} still open after Step G7: the
+coercivity of \eqref{eq:G-L} off the sphere (uniqueness; on the sphere
+it is the degree-0 problem's); the sufficiency of the per-component
+condition \eqref{eq:G-band} on a transverse wall, now a question about
+the referential class only, since a transverse wall with a density
+contrast needs deviatoric pre-stress; and the welded count there. The
+wall condition, the identification of F3, the level limit, the
+$N^2 < 0$ character and the level-constancy of $\kappa$ are settled by
+G7. From G8: the term-by-term symmetry of the follower load with a
+deviatoric $\mathbf S_e$ on a transverse wall, and the pull-back of the
+border under $\varphi_e \neq \mathrm{id}$. From G9: the gauge-shift
+certificate with the Eulerian fluid on an aspherical level wall.
+(vii) The numerical programme of Step G7: the one-dimensional
+prototype on the circular disc is done (\code{disc\_radial.py},
+``border l=0''), and so is the three-dimensional gate: the mixed
+class's level border (\code{SetLevelBorder}) gives $h'_0 = -0.1315$
+against \code{pyslfp}'s $-0.1321$ on \code{fluid\_core} at $h = 0.2$,
+$k'_0$ at $10^{-6}$, degrees $\ge 1$ untouched
+(\code{doc/dahlen\_closure.tex}, ``Verification''); next the neutral
+and non-neutral equilibrium figures and the referential variant. An aspherical disc with a non-level wall is not a
+prototype target: it lies outside the mixed class. Before any of that,
+the measurement of Step G9: the mixed class's $\omega_3$ response under
+a load with a degree-0 part on a fluid-core model, with and without the
+degree-0 fix, against \code{pyslfp}.
 
 \end{document}

@@ -187,7 +187,8 @@ int main(int argc, char* argv[]) try {
   }
   profiles = profiles && c.SupportsProfiles();
   tide = tide && c.SupportsTide();
-  if (combined && c.method == "dahlen" && c.HasFluid() && lmin == 0) {
+  if (combined && c.method == "dahlen" && c.HasFluid() && lmin == 0 &&
+      options.level_border == 0) {
     // Dahlen's fluid differs from the reference at degree zero by design
     // (README.md), and its degree-zero response would be carried into the
     // others' by the discrete coupling of the degrees: leave it out of the

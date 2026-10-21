@@ -163,6 +163,7 @@ tree are of two kinds.
 | `doc/self_gravitation.md` | the mixed problem with Dahlen fluid regions: weak form, fluid–solid interface conditions and CMB approximations, solvers, null space, 2-D caveats, verification |
 | `doc/gauged_fluid.md` | the gauge-penalty treatment of fluid regions: why tangential slip is not gauge, the Adams–Williamson equivalence, the penalty window |
 | `doc/static_fluid_core.tex` (PDF) | the static fluid-core problem and the status of the formulations: Maxwell relaxation, gauge penalty, Dahlen, slipping and welded |
+| `doc/dahlen_closure.tex` (PDF) | Dahlen's fluid closure and its generalisation: hydrostatic fluid regions of any shape as a one-dimensional border on the level foliation, general pre-stressed solids, rotation, implementation and gates |
 | `doc/slip_interface.tex` (PDF) | the slipping fluid–solid interface: derivation, discretisation, constraint enforcement, implementation, verification |
 | `doc/gauge_penalty_iteration.tex` (PDF) | gauge penalties and their iterated (Tikhonov) refinement |
 | `doc/equilibrium_figures.tex` (PDF) | equilibrium states and hydrostatic figures by constrained optimisation: the feasibility functionals, their derivatives, Sobolev gradients, the advection route |

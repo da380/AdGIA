@@ -246,6 +246,7 @@ struct CaseOptions {
   real_t mx_prec_eps = 0.0;       // maxwell: frozen-preconditioner epsilon
   const char* cmb = "full";
   bool cmb_keep_inner = false;    // keep fluid-enclosed solids meshed
+  int level_border = 0;           // dahlen: level-border nodes (0: off)
   const char* method = "dahlen";
   real_t slip_theta = 1e2;
   real_t gs_scale = 1.0;
@@ -353,6 +354,12 @@ struct CaseOptions {
                    "standard unmeshed-core condition of the GIA codes), "
                    "'winkler' (uniform without the interface potential "
                    "coupling F3: buoyancy alone).");
+    args.AddOption(&level_border, "-level-border", "--level-border",
+                   "Dahlen method: close the reduction's free function with "
+                   "the level border of doc/dahlen_closure.tex on a grid of "
+                   "this many nodes in Phi_0 per fluid region (0: off). "
+                   "Turns degree 0 into the compressible fluid problem and "
+                   "leaves the sphere's l >= 1 untouched.");
     args.AddOption(&cmb_keep_inner, "-cmb-keep-inner",
                    "--cmb-keep-inner-core", "-cmb-drop-inner",
                    "--cmb-drop-inner-core",
@@ -595,6 +602,7 @@ class Case {
     kappa_c_ = std::make_unique<GridFunctionCoefficient>(kappa_solid_.get());
     mu_c_ = std::make_unique<GridFunctionCoefficient>(mu_solid_.get());
     rho_parent_c_ = std::make_unique<GridFunctionCoefficient>(rho.get());
+    kappa_parent_c_ = std::make_unique<GridFunctionCoefficient>(kappa.get());
     if (options.model_fields) {
       MFEM_VERIFY(eulerian,
                   "-model-fields: the Eulerian methods (the referential "
@@ -612,6 +620,10 @@ class Case {
           Marker(ToArray(manifest.BodyAttributes()), parent->attributes.Max());
       rho_parent_c_ =
           std::make_unique<RestrictedCoefficient>(*model_rho_, body_marker);
+      model_kappa_ =
+          std::make_unique<ModelScalarCoefficient>(*model_file_, "kappa");
+      kappa_parent_c_ = std::make_unique<RestrictedCoefficient>(*model_kappa_,
+                                                                body_marker);
       if (root) {
         std::cout << "Constitutive coefficients from the model file "
                   << manifest.ModelFile().filename().string() << "\n";
@@ -670,6 +682,7 @@ class Case {
           }
         }
         f.density = rho_parent_c_.get();
+        f.bulk_modulus = kappa_parent_c_.get();
         f.interface_density = rho_interface_c_.get();
         // Only interfaces with a meshed solid side assemble: a folded
         // inner core's ICB is interior to the unmeshed region.
@@ -726,6 +739,13 @@ class Case {
                                           fluids);
       if (options.amg_rbm) {
         problem->SetElasticityNearNull();
+      }
+      if (options.level_border > 0 && method == "dahlen" && !fluids.empty()) {
+        problem->SetLevelBorder(options.level_border);
+        if (root) {
+          std::cout << "Dahlen fluid closed by the level border ("
+                    << options.level_border << " nodes per region).\n";
+        }
       }
       if (method == "gauged" && fluid_attributes.Size() > 0) {
         // The gauge shear scale is the model's own bulk modulus (the
@@ -1753,7 +1773,8 @@ class Case {
  private:
   std::vector<std::unique_ptr<ParFiniteElementSpace>> spaces_;
   std::unique_ptr<ParGridFunction> rho_solid_, kappa_solid_, mu_solid_;
-  std::unique_ptr<Coefficient> rho_c_, kappa_c_, mu_c_, rho_parent_c_;
+  std::unique_ptr<Coefficient> rho_c_, kappa_c_, mu_c_, rho_parent_c_,
+      kappa_parent_c_, model_kappa_;
   std::optional<planetmodel::ModelFile> model_file_;
   std::unique_ptr<ModelScalarCoefficient> model_rho_;
   Vector fluid_side_;
