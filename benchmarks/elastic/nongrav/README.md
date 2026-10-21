@@ -30,11 +30,21 @@ Each code reduces its answer to one exchange file per model
   .../benchmarks/elastic/nongrav/pyslfp_reference.py --out <build
   runs dir>` (`--gravitating` writes the full-gravity twin under the
   same forcing, the E2 diagnostic).
-- **sl3dpp** — its own driver, in the sl3dpp repository (its E1 gate
+- **sl3dpp** — its own driver, built in the sl3dpp repository with
+  `-DSL3DPP_BUILD_BENCHMARKS=ON`: `traction_numbers <deck> <lmax>
+  <out.txt>`, fed the decks `common/decks.py` writes (its E1 gate
   `TestTractionNumbers` already holds it to pyslfp at 1e-10 on the
   committed fixtures).
-- **AdGIA** — the FEM driver of this family (to come): the traction
-  problem per ladder mesh, surface fields analysed into coefficients.
+- **AdGIA** — `traction_benchmark` (built into `<build>/benchmarks/bin`
+  with the other drivers): the non-gravitating traction problem on a
+  case of `make_case.py`, the surface displacement analysed into
+  harmonic coefficients, rigid modes projected in the solver. Degree-l
+  tractions are applied one at a time, order 0; `spurious` reports the
+  discrete leakage into the unforced harmonics.
+
+      ./love_numbers/make_case two_solid --h 0.15 --out cases/two_solid
+      mpiexec -np 8 ../../bin/traction_benchmark \
+          -c cases/two_solid/case.json -lmax 8 -o 3 -out e1_two_solid_adgia.txt
 
 ## Comparing
 
@@ -43,4 +53,7 @@ reports the worst relative difference per channel, measured against the
 largest reference value of each degree. Expected tiers: the spectral
 codes against the analytic reference at ~1e-10 (mesh-rule dependent);
 the FEM against the analytic reference at its discretisation level,
-converging under refinement.
+converging under refinement — measured on `two_solid`, lmax 8: worst
+6.6e-2 at h 0.3 order 2, 1.4e-2 at h 0.15 order 3, with l = 2 at
+5.6e-4 and 2.1e-6 respectively, and the reciprocity residual falling
+from 1.2e-2 to 8.5e-8.

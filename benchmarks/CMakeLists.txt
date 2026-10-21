@@ -84,6 +84,17 @@ benchmark_launcher(common love_numbers make_case)
 
 # --- Elastic, non-gravitating (E1 of the cross-code hierarchy) --------------
 
+# The exchange files this driver writes record which commit computed them.
+execute_process(COMMAND git rev-parse --short HEAD
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE ADGIA_GIT_COMMIT OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET)
+if(NOT ADGIA_GIT_COMMIT)
+    set(ADGIA_GIT_COMMIT "unknown")
+endif()
+benchmark_driver(elastic/nongrav traction_benchmark)
+target_compile_definitions(traction_benchmark PRIVATE
+    ADGIA_GIT_COMMIT="${ADGIA_GIT_COMMIT}")
 benchmark_launcher(elastic/nongrav elastic/nongrav reference)
 benchmark_launcher(elastic/nongrav elastic/nongrav compare)
 # pyslfp_reference.py runs from the pyslfp checkout's own environment
