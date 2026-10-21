@@ -73,7 +73,11 @@ with their conclusions summarised; their detailed measurements stay in
 time of writing the first tier, E1 (non-gravitating elastic, solid
 spherical models), has its exact reference and both spectral legs in place
 and gated, and its finite-element leg, \code{AdGIA}'s own, has its first
-measurements; its refinement study across the models is next.
+measurements; the second, E2 (gravitating elastic, solid and fluid--solid
+models), has its machinery in place and first measurements on three models.
+Within E2 the note sets out why Dahlen's reduction of a static fluid leaves
+degree zero undetermined, what fixes it, and why the general
+three-dimensional answer is the Maxwell relaxation of the fluid.
 \end{abstract}
 
 \tableofcontents
@@ -206,13 +210,11 @@ all three & exact (piecewise-homogeneous propagator) &
 reference done; \code{pyslfp} and \code{sl3dpp} legs done and gated;
 \code{AdGIA}'s finite-element leg implemented, first measurements;
 refinement study pending \\ \addlinespace
-E2 (\S\ref{sec:e2}) & elastic, gravitating, solid models & all three &
-\code{pyslfp} & begun: the spectral pair gated on the gravitating traction
-numbers; \code{AdGIA}'s Love-number family in place, exchange bridges being
-written; degree-one frame work pending \\ \addlinespace
-E3 (\S\ref{sec:e3}) & elastic, gravitating, fluid--solid models & all
-three & \code{pyslfp} & \code{AdGIA}'s Love-number family in place
-(Dahlen at $l\ge1$, Maxwell core at every degree); cross-code pending \\ \addlinespace
+E2 (\S\ref{sec:e2}) & elastic, gravitating: solid, then fluid--solid
+models & all three & \code{pyslfp} & machinery in place; first measurements
+on three models (\code{homogeneous}, \code{two\_solid}, \code{fluid\_core});
+degree-1 frame confirmed on two; convergence sweeps and the remaining
+fluid-core models pending \\ \addlinespace
 V (\S\ref{sec:v}) & viscoelastic loading without the sea-level equation:
 model ladder, gravity off/on, rotation off/on & all three & the spectral
 codes; semi-analytical secondary & pending; \code{AdGIA}'s viscoelastic
@@ -282,10 +284,10 @@ body, a welded interface with no contrast), V \\
 E1 (exact), E2, V \\
 \code{linear\_solid} & one solid layer, linear in radius & E2, V \\
 \code{fluid\_core}, \code{aw\_core} & homogeneous fluid core (non-neutral),
-and its neutrally stratified twin & E3, V \\
+and its neutrally stratified twin & E2, V \\
 \code{inner\_core}, \code{stratified\_core}, \code{earth\_like},
 \code{prem\_4}, \code{prem\_6} & inner cores, stratified cores, PREM-grade
-structure & E3, V, S \\
+structure & E2, V, S \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -436,16 +438,21 @@ tier defines its observables (\S\ref{sec:open}).
 \paragraph{Degree zero.} \code{pyslfp} solves degree 0 with the full
 compressible (Lagrangian) equations, fluid regions included as elastic
 media with zero shear modulus. \code{sl3dpp}'s rewrite was believed to do
-the same; for solid models this is now verified, since it reproduces
-\code{pyslfp}'s degree-0 traction numbers on the identical discrete problem,
-gravitating and not (\S\ref{sec:e1-results}); the fluid--solid case falls
-to E3. In \code{AdGIA}, Dahlen's mixed formulation with a fluid region
-discards the fluid's bulk modulus and leaves an arbitrary function at
-degree 0, so it differs from the others by design there: it is not
-benchmarked at $l=0$ except to show the difference. The Maxwell-core
-treatment (\code{SetFluid}'s Maxwell relaxation) keeps the compressible
-fluid and is the route benchmarked at $l=0$. On solid models, as in E1 and
-E2, none of this arises.
+the same, and this is now verified: it reproduces \code{pyslfp}'s degree-0
+traction numbers on solid models on the identical discrete problem
+(\S\ref{sec:e1-results}), and its degree-0 load numbers on
+\code{fluid\_core} on independent meshes (\S\ref{sec:e2-results}). In
+\code{AdGIA}, Dahlen's reduction of a fluid region eliminates the fluid's
+displacement and with it its bulk modulus, which leaves an arbitrary
+function at degree 0 (\S\ref{sec:e2-degree0}): the Dahlen path differs
+from the others there by design, and is not benchmarked at $l=0$ except to
+show the difference. The Maxwell-core treatment (\code{SetFluid}'s Maxwell
+relaxation) keeps the compressible fluid and is the route benchmarked at
+$l=0$. On solid models none of this arises. The programme's position,
+argued in \S\ref{sec:e2-degree0}: the Maxwell relaxation is the method for
+fluid regions in three dimensions, Dahlen the cheap workhorse away from
+degree 0, and the spectral codes' Lagrangian treatment the reference at
+degree 0.
 
 \paragraph{Degree one.} Without gravity, a spheroidal surface traction of
 degree 1 has a net force, which a free body cannot balance; the
@@ -454,9 +461,11 @@ non-gravitating tiers exclude the degree and write \code{nan}
 compared in the frame of the centre of mass of the body and its load, in
 which the external potential has no degree-one part; \code{AdGIA}'s
 Love-number driver shifts its solution into that frame
-(\code{doc/benchmarks.tex}, ``Degree one: the centre-of-mass frame''), but
-its agreement with \code{pyslfp}'s frame is still unconfirmed, and E2
-settles it. The rotational (toroidal, rigid-rotation) part of degree 1 is
+(\code{doc/benchmarks.tex}, ``Degree one: the centre-of-mass frame''), and
+E2 gives the first cross-code check of the conventions: on
+\code{two\_solid} and \code{fluid\_core} the degree-1 numbers agree with
+\code{pyslfp}'s at the discretisation level, with $k'_1=-1$ to rounding in
+both codes (\S\ref{sec:e2-results}). The rotational (toroidal, rigid-rotation) part of degree 1 is
 more a convention than a frame and is documented by each code separately;
 where it matters, the comparison uses quantities invariant under rigid
 motions, such as changes of length between points. Comparisons at
@@ -468,8 +477,8 @@ $l\ne1$ are not affected.
 Everything cross-code --- models, decks, exchange, comparison scripts,
 results and this note --- lives in \code{AdGIA}; \code{sl3dpp} and
 \code{pyslfp} keep their own internal tests. The tiers get directories of
-\path{benchmarks/} as they land: \path{elastic/nongrav/} (E1) exists and
-\path{elastic/grav/} (E2, E3) is begun; the planned layout adds
+\path{benchmarks/} as they land: \path{elastic/nongrav/} (E1) and
+\path{elastic/grav/} (E2) exist; the planned layout adds
 \path{elastic/internal3d/}, \path{viscoelastic/spherical/},
 \path{viscoelastic/lateral/}, \path{sea_level/elastic/} and
 \path{sea_level/viscoelastic/}, beside the existing family directories,
@@ -928,6 +937,10 @@ $1.8\times10^{-11}$ (\code{homogeneous\_lithosphere}), $1.7\times10^{-11}$
 \code{sl3dpp} fixtures: uniform $l_{\max}=8$ rule; measured for this note &
 $1.2\times10^{-10}$ (\code{homogeneous}), $6.5\times10^{-11}$
 (\code{two\_solid}) \\ \addlinespace
+\code{sl3dpp} against the exact reference & its exchange files: uniform
+$l_{\max}=16$ rule on the decks of \path{common/decks.py}; measured for
+this note & $1.7\times10^{-10}$ (\code{homogeneous}), $1.7\times10^{-10}$
+(\code{homogeneous\_lithosphere}), $9.6\times10^{-11}$ (\code{two\_solid}) \\ \addlinespace
 \code{AdGIA} against the exact reference & \code{two\_solid}, degrees
 0--8; $h=0.3$, order 2, and $h=0.15$, order 3 (\S\ref{sec:e1-fe}) & $h_u$:
 $6.6\times10^{-2}$, $1.6\times10^{-3}$; all channels:
@@ -951,15 +964,15 @@ $2.6\times10^{-15}$ \\
 \end{tabular}
 \end{center}
 
-The first row is tolerance tier (i), the next two tier (ii) and the
-\code{AdGIA} rows tier (iii) of \S\ref{sec:tolerances}. Together they place \code{sl3dpp} within about
-$2\times10^{-10}$ of the exact numbers on \code{homogeneous} and
-\code{two\_solid} (by the triangle inequality, through the fixtures; an
-\code{sl3dpp} exchange file has not yet been compared with the exact
-reference directly). \code{pyslfp}'s differences from the exact reference
-depend on the mesh rule, as tier (ii) expects: on \code{homogeneous} the
-graded mesh at $l_{\max}=16$ and the uniform rule at $l_{\max}=8$ give
-$9.4\times10^{-11}$ and $1.2\times10^{-10}$. The degree-0 agreement of the
+The first row is tolerance tier (i), the next three tier (ii) and the
+\code{AdGIA} rows tier (iii) of \S\ref{sec:tolerances}. Both spectral codes
+sit within $2\times10^{-10}$ of the exact numbers on every E1 model, and
+their differences depend on the mesh rule, as tier (ii) expects: on
+\code{homogeneous}, \code{pyslfp}'s graded mesh at $l_{\max}=16$ and uniform
+rule at $l_{\max}=8$ give $9.4\times10^{-11}$ and $1.2\times10^{-10}$, and
+\code{sl3dpp}'s uniform rule at $l_{\max}=16$ gives $1.7\times10^{-10}$. The
+largest entries are in $h_v$, for the reason given in
+\S\ref{sec:e1-fe}. The degree-0 agreement of the
 gravitating fixtures also verifies, for solid models, that \code{sl3dpp}
 treats degree 0 as \code{pyslfp} does (\S\ref{sec:degrees01}). The
 finite-element numbers are discussed in \S\ref{sec:e1-fe}.
@@ -1095,84 +1108,271 @@ with rates. On \code{homogeneous\_lithosphere} the numbers must also match
 \code{homogeneous}'s to the discretisation level although the mesh differs,
 since the two are the same body.
 
-Open points of E1 beyond the finite-element leg: an \code{sl3dpp} exchange
-file compared with the exact reference directly; the cross-check of the two
-exact references made a script of the family; and E1 as a campaign stage.
+Open points of E1 beyond the finite-element leg: the cross-check of the
+two exact references made a script of the family, and E1 as a campaign
+stage.
 
 %-----------------------------------------------------------------------------
-\section{Tier E2: gravitating elastic, solid models}
+\section{Tier E2: gravitating elastic, solid and fluid--solid models}
 \label{sec:e2}
 %-----------------------------------------------------------------------------
 
-\status{21 October 2026}{Begun. The spectral pair's gravitating traction
-numbers are gated against each other (the E1 gate). \code{AdGIA}'s
-Love-number family against \code{pyslfp} is in place, and the first bridges
-that bring it under the programme's conventions --- exchange files of the
-conventional Love numbers from \code{love\_benchmark}'s results and from
-\code{pyslfp} (\path{benchmarks/elastic/grav/}) --- are being written. The
-degree-1 frame work is pending.}
+\status{21 October 2026}{Machinery in place, first measurements on three
+models. The family \path{benchmarks/elastic/grav/} brings all three codes to
+one exchange format. The spectral pair agrees to $5\times10^{-11}$ on
+\code{homogeneous}, \code{two\_solid} and \code{fluid\_core};
+\code{AdGIA}'s Dahlen path agrees with \code{pyslfp} at the discretisation
+level on \code{two\_solid}, and on \code{fluid\_core} at $l\ge1$, with the
+first cross-code confirmation of the centre-of-mass frame at degree 1; its
+Maxwell-core route agrees at every degree, degree 0 included. Convergence
+sweeps and the remaining fluid-core models are pending.}
 
-\paragraph{The problem.} The full linearised, quasi-static, self-gravitating
-elastic response of solid spherical models to surface loads and tidal
-potentials, with the perturbation of the potential solved inside and
-outside the body. The model ladder: \code{homogeneous}, \code{two\_solid},
-\code{linear\_solid}. The gravity split is two-way, no gravity (E1) or full
+The planning split this rung into solid models (E2) and fluid--solid models
+(E3). One family carries both, so they are written here as one tier, solid
+models first; the fluid--solid models bring the one theoretical question of
+the elastic tiers, the degree-0 response of a static fluid
+(\S\ref{sec:e2-degree0}).
+
+\subsection{The problem and the compared quantities}
+\label{sec:e2-problem}
+
+The full linearised, quasi-static, self-gravitating elastic response of
+spherical models to surface loads and tidal potentials, the perturbation of
+the potential solved inside and outside the body. The models: solid
+(\code{homogeneous}, \code{two\_solid}, \code{linear\_solid}), then
+fluid--solid (\code{fluid\_core}, \code{aw\_core}, \code{inner\_core},
+\code{stratified\_core}, \code{earth\_like}, \code{prem\_4}). There is no
+non-gravitating fluid--solid rung: a static fluid without gravity has no
+restoring force. The gravity split is two-way, no gravity (E1) or full
 gravity (E2); an intermediate variant (background gravity with the
 potential perturbation dropped) is added only if an issue arises that it
 would help isolate.
 
-\paragraph{The compared quantities.} The conventional load Love numbers
-$h'_l,l'_l,k'_l$ and tidal numbers $h_l,l_l,k_l$ (dimensionless; the tidal
-ones from degree 2), which every code computes; the gravitating traction
-numbers (the same forcing as E1, so that the pair isolates gravity); and
-the generalised Love numbers channel by channel where a code exposes them.
-Degree 1 is compared in the centre-of-mass frame (\S\ref{sec:degrees01});
-degree 0 is included on solid models.
+The compared quantities are the conventional Love numbers, which every code
+computes: the load numbers $h'_l,l'_l,k'_l$ (Farrell's, referred to the
+load's direct potential, geodetic sign) and the geodetic tidal numbers
+$h_l,l_l,k_l$ (\code{nan} below degree 2), dimensionless, in the columns
+\code{l hp lp kp hT lT kT}. Being dimensionless, they need no conversion to
+SI. Degree 1 is in the centre-of-mass frame in every code, so $k'_1=-1$
+identically; degree 0 is compared except on \code{AdGIA}'s Dahlen path with
+a fluid region, where it is wrong by design and is shown, not benchmarked.
+The gravitating traction numbers (the forcing of E1 with gravity on) are
+compared between the spectral codes, where they isolate the effect of
+gravity (\S\ref{sec:e1-results}).
 
-\paragraph{References and legs.} \code{pyslfp} is the reference; no closed
-form exists for a compressible, gravitating, layered body. The spectral
-pair already meets tolerance tier (i) on the gravitating traction numbers
-(\code{homogeneous} and \code{two\_solid}, $l_{\max}=8$, degrees 0--8
-including 1). \code{AdGIA}'s leg is the Love-number family
-(\S\ref{sec:internal-elastic}), which solves exactly these problems against
-\code{pyslfp} on its own case meshes; it is to be revisited, brought into the
-exchange format and SI, and its degree-1 frame settled against
-\code{pyslfp}'s. The two \code{AdGIA} solver routes benchmarked are the
-Dahlen (mixed Eulerian) path and the Maxwell-core route; the other
-formulations are kept for what they show but do not enter the benchmark
-matrix.
+\subsection{References and legs}
+\label{sec:e2-legs}
 
-\paragraph{Open points.} The degree-1 frame; the choice between the graded
-and uniform spectral mesh rules for the reference files; a gravitating
-analogue of the E1 FE driver or an extension of it.
+\code{pyslfp} is the reference: the most thoroughly tested of the three,
+checked in its own suite against closed forms and an independent
+Love-number code. There is no closed form for the compressible, gravitating
+ladder, so the tier is code against code with \code{pyslfp} as the anchor;
+the incompressible homogeneous closed forms live in \code{pyslfp}'s own
+tests.
+\begin{center}
+\small
+\begin{tabular}{@{}lP{8.6cm}P{5.0cm}@{}}
+\toprule
+leg & what computes the Love numbers & mesh and model \\
+\midrule
+\code{pyslfp} & \code{love\_numbers(model, lmax)}; exchange files by
+\path{benchmarks/elastic/grav/pyslfp_reference.py}, run from the
+\code{pyslfp} checkout & graded mesh, from the model object \\ \addlinespace
+\code{sl3dpp} & its \code{love\_numbers <deck> <lmax> <out.txt>} driver
+(\code{-DSL3DPP\_BUILD\_BENCHMARKS=ON}) & uniform $l_{\max}$ rule, from the
+deck of \path{common/decks.py} \\ \addlinespace
+\code{AdGIA} & \code{love\_benchmark} (the Love-number family, any method),
+its \path{results.json} converted by
+\path{benchmarks/elastic/grav/from_results.py}, which copies the
+conventional numbers and never recomputes them & the case mesh of
+\code{make\_case.py} \\
+\bottomrule
+\end{tabular}
+\end{center}
+\noindent The two \code{AdGIA} solver routes benchmarked are the Dahlen
+(mixed Eulerian) path and the Maxwell-core route; the other formulations
+are kept for what they show but do not enter the benchmark matrix.
 
-%-----------------------------------------------------------------------------
-\section{Tier E3: gravitating elastic, fluid--solid models}
-\label{sec:e3}
-%-----------------------------------------------------------------------------
+\subsection{Results}
+\label{sec:e2-results}
 
-\status{21 October 2026}{Pending as a tier. \code{AdGIA}'s Love-number
-family covers these models against \code{pyslfp}.}
+Conditions: \code{pyslfp} on its graded mesh and \code{sl3dpp} on the
+uniform rule, both at $l_{\max}=8$; \code{AdGIA} at $h=0.3$, order 2,
+degrees 0--6. The differences are measured with the degree-scale measure
+\eqref{eq:degreescale} (they are summarised in
+\path{benchmarks/elastic/grav/README.md}; the per-entry values below were
+recomputed for this note from the exchange files).
+\begin{center}
+\small
+\begin{tabular}{@{}P{3.9cm}P{4.4cm}P{6.9cm}@{}}
+\toprule
+comparison & conditions & differences \\
+\midrule
+\code{sl3dpp} against \code{pyslfp} & \code{homogeneous},
+\code{two\_solid}, \code{fluid\_core}; degrees 0--8 & worst
+$4.5\times10^{-11}$, $1.8\times10^{-11}$, $3.7\times10^{-11}$ \\ \addlinespace
+\code{AdGIA}, Dahlen, against \code{pyslfp} & \code{two\_solid} &
+$l'$, $k'$ and the tidal numbers $10^{-4}$--$2\times10^{-3}$ at degrees 2--3;
+$h'$ $10^{-3}$--$10^{-2}$ at degrees 0--3; worst $2.2\times10^{-2}$
+($h'_6$); degree 1: $1.4\times10^{-3}$ ($h'_1$), $1.6\times10^{-3}$
+($l'_1$), $k'_1=-1$ to rounding in both \\ \addlinespace
+\code{AdGIA}, Dahlen, against \code{pyslfp} & \code{fluid\_core}, $l\ge1$ &
+worst $3.6\times10^{-2}$ ($h'_6$); tidal $1.1\times10^{-2}$ ($h_2$);
+degree 1: $1.8\times10^{-3}$ \\ \addlinespace
+\code{AdGIA}, Dahlen, degree 0 & \code{fluid\_core} & $h'_0=-1.457$ against
+$-0.13210$; $k'_0=-5.35$ against 0 \\ \addlinespace
+\code{AdGIA}, Maxwell core, against \code{pyslfp} & \code{fluid\_core}, every
+degree & $h'_0=-0.13152$ ($4.5\times10^{-3}$), $k'_0=-7\times10^{-6}$;
+worst $3.2\times10^{-2}$ ($h'_6$); degree 1: $1.6\times10^{-2}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
 
-\paragraph{The problem.} E2 with fluid regions: a fluid core, then an inner
-core, stratified cores and PREM-grade structure (\code{fluid\_core},
-\code{aw\_core}, \code{inner\_core}, \code{stratified\_core},
-\code{earth\_like}, \code{prem\_4}). There is no non-gravitating fluid--solid
-tier: a static fluid without gravity has no restoring force.
+\paragraph{The spectral pair.} Unlike the E1 gate, this is not the identical
+discrete problem: the meshes are independent (graded against uniform rule)
+and so are the model definitions (the planetmodel object against the deck).
+Agreement at $5\times10^{-11}$ says that both codes are converged to that
+level, which is tolerance tier (ii) between two codes. It includes degree 0
+on \code{fluid\_core} ($h'_0$ to $2\times10^{-12}$), which verifies that
+\code{sl3dpp} treats degree 0 with a fluid layer as \code{pyslfp} does.
 
-\paragraph{Degree zero.} The place where the codes' treatments of degree 0
-differ (\S\ref{sec:degrees01}): \code{pyslfp} solves the compressible fluid;
-\code{sl3dpp} is to be verified to do the same with a fluid layer;
-\code{AdGIA}'s Dahlen path differs by design at $l=0$ and is shown, not
-benchmarked, there (a relative $h'_0$ error of about 10 on
-\code{fluid\_core}, \code{doc/benchmarks.tex}, ``Degree zero with a fluid
-layer''), while the Maxwell-core route is benchmarked at every degree.
+\paragraph{\code{AdGIA} on a solid model.} On \code{two\_solid} the Dahlen
+path agrees with \code{pyslfp} to about $10^{-3}$ in the well-resolved
+channels ($l'$, $k'$ and the tidal numbers at low degree) and to
+$10^{-3}$--$10^{-2}$ in $h'$, the error growing with degree to
+$2.2\times10^{-2}$ at degree 6, the resolution edge of $h=0.3$: the grade of
+the Love-number family at this resolution (\S\ref{sec:internal-elastic}). At degree 1 the numbers agree to
+$1.4\times10^{-3}$ with $k'_1=-1$ to rounding in both codes. This is the
+first cross-code check of the centre-of-mass frame conventions, an open
+issue of \code{doc/planning/open\_issues.md} until now.
 
-\paragraph{What is known.} The Love-number family's conclusions on these
-models (\S\ref{sec:internal-elastic}), including the caveat that a
-non-neutrally stratified core separates the static formulations from the
-secular response at $O(N^2)$, so that \code{aw\_core}, neutral by
-construction, is the clean comparison model.
+\paragraph{\code{AdGIA} on a fluid core.} On \code{fluid\_core} the Dahlen
+path agrees with \code{pyslfp} at the same finite-element level for
+$l\ge1$, while its degree 0 is wrong by design: $h'_0$ is about eleven times
+the spectral value, and $k'_0=-5.35$ where mass conservation requires 0
+(forty times the degree's scale). This is the arbitrary function of
+\S\ref{sec:e2-degree0}, exhibited rather than benchmarked. The Maxwell-core
+method agrees at every degree including 0 --- $h'_0$ to $4.5\times10^{-3}$,
+and $k'_0=-7\times10^{-6}$, mass conserved to the discretisation level ---
+at several times Dahlen's cost per solve. Its degree-1 $h'$ sits
+$1.6\times10^{-2}$ from \code{pyslfp}'s. That is not a frame or
+discretisation error: on this non-neutral core the Maxwell relaxation's
+degree-1 stop lies at an increment floor of about $10^{-2}$, the soft
+core--shell translation (\code{doc/benchmarks.tex}, ``The degree-1
+adjudication''), and the neutral \code{aw\_core} is the model on which the
+methods are expected to coincide.
+
+\subsection{Degree zero with a fluid region}
+\label{sec:e2-degree0}
+
+\paragraph{Dahlen's static reduction.} Let the background be hydrostatic,
+$\nabla p_0 = -\rho_0\nabla\Phi_0$, so that $p_0$ and $\rho_0$ are constant
+on the level surfaces of $\Phi_0$ ($\nabla\Phi_0 = g\,\vn$, $\vn$ the normal
+to the level surfaces, $\rhat$ in spherical geometry). In a static inviscid
+fluid the linearised momentum balance for the Eulerian perturbations
+$p_1,\rho_1,\Phi_1$ is
+\begin{equation}
+  -\nabla p_1 - \rho_1\nabla\Phi_0 - \rho_0\nabla\Phi_1 = \mathbf 0 .
+  \label{eq:fluid-balance}
+\end{equation}
+Its tangential part on a level surface, where $\nabla\Phi_0$ has no
+component and $\rho_0$ is constant, says that $p_1+\rho_0\Phi_1$ has no
+tangential gradient:
+\begin{equation}
+  p_1 = -\rho_0\Phi_1 + f, \qquad f \text{ constant on each level surface},
+  \label{eq:dahlen-p}
+\end{equation}
+so $f$ is a function of the level coordinate alone (of radius, in
+spherical geometry). The normal part, with primes for derivatives along
+$\vn$, then gives
+\begin{equation}
+  \rho_1 = \frac{\rho_0'}{g}\,\Phi_1 - \frac{f'}{g},
+  \label{eq:dahlen-rho}
+\end{equation}
+and Poisson's equation in the fluid becomes
+\begin{equation}
+  \nabla^2\Phi_1 - 4\pi G\,\frac{\rho_0'}{g}\,\Phi_1 = -4\pi G\,\frac{f'}{g}.
+  \label{eq:dahlen-poisson}
+\end{equation}
+The term in $\Phi_1$ is the stratification term of the Dahlen weak form
+(the term (F1) of \code{doc/benchmarks.tex}, ``The CMB treatments''); the
+terms in $f$ are an arbitrary one-function family. The fluid's displacement
+appears nowhere: the reduction has eliminated it, and with it the fluid's
+bulk constitutive law --- $\kappa$ appears nowhere either.
+
+\paragraph{Why degrees above zero are clean.} $f$ is constant on level
+surfaces, so it has no projection onto the aspherical harmonics. In every
+sector $l\ge1$ the $f$-terms vanish, and the tangential balance with
+Poisson's equation closes the problem; the fluid's displacement is not
+needed there and is not determined (\code{pyslfp} leaves it undefined at
+$l\ge1$).
+
+\paragraph{Why degree zero is underdetermined.} At $l=0$,
+\eqref{eq:dahlen-poisson} is one second-order ordinary differential
+equation in radius, sourced by both $\Phi_1$ and $f'$: one equation for two
+unknown functions. The interface and regularity conditions are finitely
+many; they fix constants, not a function. A discretisation of the reduced
+problem computes one member of the family, the one its weak form implies,
+and nothing in the reduced problem marks it as the physical one. The
+observables depend on the choice: $h'_0$, and $k'_0$, which mass
+conservation fixes at zero in the physical problem, both move with $f$ ---
+hence $h'_0=-1.457$ and $k'_0=-5.35$ on \code{fluid\_core}
+(\S\ref{sec:e2-results}).
+
+\paragraph{What selects the physical answer.} Restoring the constitutive
+law. At $l=0$ the displacement is radial, $\vu=u_r(r)\,\rhat$; mass
+conservation, $\rho_1 = -\nabla\cdot(\rho_0\vu) = -r^{-2}(r^2\rho_0u_r)'$,
+integrates $\rho_1$ to $u_r$; and the Lagrangian pressure perturbation
+$p_1 + u_r\,p_0' = -\kappa\nabla\cdot\vu$ closes the system and determines
+$f$. This is the fully Lagrangian compressible treatment that
+\code{pyslfp} and \code{sl3dpp} apply at degree 0, the fluid an elastic
+medium with zero shear modulus. A Maxwell fluid arrives at the same place:
+at long times its deviatoric stress relaxes away and leaves exactly the
+$\mu=0$ compressible solid, so the Maxwell limit and the Lagrangian $l=0$
+treatment coincide. The E2 measurements confirm it: the Maxwell-core route
+gives $h'_0=-0.13152$ against the spectral $-0.13210$, and $k'_0=-7\times
+10^{-6}$ (\S\ref{sec:e2-results}).
+
+\paragraph{Why three dimensions have no clean static fix.} The spectral
+codes escape because their degree problems decouple, so the one sector in
+which the reduction fails can change formulation. A three-dimensional
+discretisation has no such sector. The arbitrary family lives on functions
+of the level coordinate, which no finite-element assembly isolates, and
+lateral heterogeneity couples the mean sector to everything else. The
+general three-dimensional answer is the Maxwell relaxation: a dissipative
+completion of the fluid rather than a static formulation of it.
+
+Two constructions short of that were considered and are deliberately not
+pursued:
+\begin{enumerate}[leftmargin=*,label=(\alph*)]
+\item \emph{A one-dimensional bordered closure.} Add $f$ as a
+  one-dimensional unknown on the level foliation, which exists wherever
+  Dahlen's method is valid since the background is hydrostatic, with the
+  level-surface average of the Lagrangian constitutive relation as its
+  determining equation. In spherical geometry it reduces to the spectral
+  $l=0$ treatment. It dies with the hydrostatic assumption.
+\item \emph{Degree-split superposition.} For a spherical static background
+  (laterally varying viscosity only), peel the load's spherical mean off
+  and solve it by the one-dimensional problem. This exploits linearity and
+  symmetry; it is a workaround, not a formulation.
+\end{enumerate}
+Neither is worth it in practice: the Maxwell approach is general and can
+be refined further. They are recorded here to close the question, not as
+future work. The programme's position is therefore: the Maxwell relaxation
+is the method for fluid regions in three dimensions; Dahlen's path is the
+cheap workhorse away from degree 0; and the spectral codes' Lagrangian
+treatment is the reference at degree 0.
+
+\subsection{Open points}
+\label{sec:e2-open}
+
+Convergence sweeps ($h$- and order-ladders) on \code{two\_solid} and
+\code{fluid\_core}; \code{AdGIA} runs on \code{homogeneous} and
+\code{linear\_solid}; the remaining fluid--solid models --- \code{aw\_core}
+first, the neutral core on which the fluid formulations are expected to
+coincide at every degree, then \code{inner\_core} (whose weakly restored
+inner-core translation the fields are sensitive to), \code{stratified\_core},
+\code{earth\_like} and \code{prem\_4}; and E2 as a campaign stage.
 
 %-----------------------------------------------------------------------------
 \section{Beside the elastic tiers: \code{AdGIA}'s internal families}
@@ -1206,8 +1406,8 @@ surface numbers do not: on models with a solid inner core the order-2
 displacement error is large ($0.49$ on \code{prem\_4} at $h=0.2$) where the
 Love numbers are good to a per cent, through the weakly restored
 translation of the inner core, and order 3 removes it. Open: the gauged
-method's degree-1 interior potential, and the degree-1 frame against
-\code{pyslfp}.
+method's degree-1 interior potential. (The degree-1 frame against
+\code{pyslfp}, long open, has its first cross-code confirmation in E2.)
 
 \paragraph{Relabelling (\code{relabelling/}).} The mapped (aspherical)
 machinery, tested with the spherical physics unchanged by describing the

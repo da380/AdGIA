@@ -143,6 +143,10 @@ benchmark_driver(viscoelastic/love viscoelastic_love)
 benchmark_launcher(viscoelastic/love viscoelastic/love laplace_reference)
 benchmark_launcher(viscoelastic/love viscoelastic/love compare)
 benchmark_launcher(common viscoelastic/love make_case)
+# The V1 cross-code flow: the JSON-to-exchange converter; exchange files
+# are compared with elastic/nongrav's `compare` launcher, and
+# pyslfp_histories.py runs from the pyslfp checkout.
+benchmark_launcher(viscoelastic/love viscoelastic/love from_results)
 
 benchmark_driver(viscoelastic/box viscoelastic_box)
 benchmark_launcher(viscoelastic/box viscoelastic/box cases)

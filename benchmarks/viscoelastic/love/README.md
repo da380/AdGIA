@@ -124,3 +124,40 @@ order 2, degrees 2..4, SDIRK23) and plots it:
 ```
 ./campaign --profile local --stages viscoelastic plot
 ```
+
+## The cross-code tier (V1)
+
+This family is also the home of the V1 tier of the cross-code hierarchy
+(`../../README.md`): the same Heaviside-load histories computed in the
+time domain by all three codes and set against each other and the
+Laplace reference through the exchange format. The compared file is one
+table per model: `t` (in units of the shortest Maxwell time, the 13
+geometric times above, rounded to six decimals as the reference writes
+them) and the conventional load numbers `hp<l> lp<l> kp<l>` per degree.
+The stepping rule is shared — exponential trapezoid, equal steps between
+output times, at least 4 and none longer than 0.25 tau_min — and the two
+spectral codes also share the uniform lmax mesh rule, so their mutual
+difference isolates nothing but arithmetic, while differences from this
+library's `viscoelastic_love` isolate the spatial discretisation.
+
+- **pyslfp** — `pyslfp_histories.py`, run from the pyslfp checkout (see
+  its docstring).
+- **sl3dpp** — its `love_histories` driver
+  (`-DSL3DPP_BUILD_BENCHMARKS=ON`): `love_histories <deck> <lmax>
+  <taus> <out.txt> [steps] [dtmax]`, taus in seconds per layer, `inf`
+  elastic.
+- **AdGIA and the Laplace reference** — `./from_results <json> --out
+  <file>` converts either a `viscoelastic_love` results file or a
+  `laplace_reference` output (invalid times become NaN); `--channel
+  tide` writes the tidal triple.
+- Comparison by the shared exchange comparer,
+  `<build>/benchmarks/elastic/nongrav/compare` (this directory's own
+  `compare` is the JSON comparer of the Laplace leg); it keys on any
+  first column, `t` here.
+
+Measured on `homogeneous`, tau 1e11 s, lmax 4: pyslfp and sl3dpp agree
+to 7e-12 at every time and degree (identical discrete problem in space
+and time); against the Laplace reference both sit at 1.2e-4 worst
+(hp2) under the default stepping, falling to 2.8e-5 with 40 steps per
+interval and dt <= 0.025 tau_min — the remainder being the reference's
+own Gaver-Stehfest accuracy, not the steppers'.

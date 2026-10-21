@@ -26,19 +26,20 @@ import exchange  # noqa: E402
 
 def compare(reference: exchange.Table, other: exchange.Table,
             *, verbose: bool) -> dict[str, float]:
-    if reference.columns[0] != "l" or other.columns[0] != "l":
-        raise SystemExit("the first column of an exchange file must be l")
+    key = reference.columns[0]
+    if other.columns[0] != key:
+        raise SystemExit(f"the key columns disagree: {key} vs "
+                         f"{other.columns[0]}")
     shared = [c for c in reference.columns[1:] if c in other.columns]
     if not shared:
         raise SystemExit("no shared columns to compare")
-    degrees = reference["l"].astype(int)
-    if not np.array_equal(degrees, other["l"].astype(int)):
-        n = min(len(degrees), len(other["l"]))
-        degrees = degrees[:n]
-        if not np.array_equal(degrees, other["l"].astype(int)[:n]):
-            raise SystemExit("the degree columns disagree")
+    keys = reference[key]
+    n = min(len(keys), len(other[key]))
+    keys = keys[:n]
+    if not np.allclose(keys, other[key][:n], rtol=1e-12, atol=0.0):
+        raise SystemExit(f"the {key} columns disagree")
     worst = {c: 0.0 for c in shared}
-    for i, l in enumerate(degrees):
+    for i, k in enumerate(keys):
         ref = np.array([reference[c][i] for c in shared])
         new = np.array([other[c][i] for c in shared])
         live = ~(np.isnan(ref) | np.isnan(new))
@@ -51,7 +52,7 @@ def compare(reference: exchange.Table, other: exchange.Table,
         if verbose:
             parts = " ".join(f"{c} {rel[j]:.2e}" if live[j] else f"{c} --"
                              for j, c in enumerate(shared))
-            print(f"  l {l:3d}  {parts}")
+            print(f"  {key} {k:<8.4g}  {parts}")
         for j, c in enumerate(shared):
             if live[j]:
                 worst[c] = max(worst[c], float(rel[j]))
