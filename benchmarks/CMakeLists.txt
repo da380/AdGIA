@@ -82,6 +82,13 @@ benchmark_launcher(love_numbers love_numbers plot)
 benchmark_launcher(love_numbers love_numbers cmb_report)
 benchmark_launcher(common love_numbers make_case)
 
+# --- Elastic, non-gravitating (E1 of the cross-code hierarchy) --------------
+
+benchmark_launcher(elastic/nongrav elastic/nongrav reference)
+benchmark_launcher(elastic/nongrav elastic/nongrav compare)
+# pyslfp_reference.py runs from the pyslfp checkout's own environment
+# (see its docstring), so it gets no launcher here.
+
 # --- Disc (the 2-D family; rung 0 is gravity-free) --------------------------
 
 benchmark_driver(sea_level sea_level_benchmark)

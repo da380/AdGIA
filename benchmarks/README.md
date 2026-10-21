@@ -22,6 +22,7 @@ READMEs here say how to run them.
 | `disc/` | the 2-D testing ground of the slipping interface: the gravity-free disc (welded against slip, interface shift, uniform pre-pressure) and the gravitating per-degree radial reference with its `explore` tool | closed-form disc solutions; the 1-D hp-FEM radial reference |
 | `viscoelastic/` | the viscoelastic time stepping, in four sub-families: non-gravitating box and sphere problems, the stepper survey, Maxwell Love-number histories | exact modal/Talbot references; RK4 at a small step; pyslfp through the correspondence principle |
 | `sea_level/` | the monolithic sea-level solve (`SetWaterLoad`): elastic fingerprints, with rotation, shoreline-migration and timing legs, and `--earth` — the same comparison on the real ICE-7G geography and the coastline-refined mesh, melting Greenland or West Antarctica; not a campaign stage, run through its launchers | pyslfp's pseudo-spectral solution of the same problem |
+| `elastic/nongrav/` | E1 of the cross-code hierarchy: traction numbers of solid spherical models with gravity off, compared across pyslfp, sl3dpp and (to come) this library's traction problem | the exact piecewise-homogeneous propagator (`common/analytic.py`) |
 
 ## The cross-code hierarchy
 
@@ -266,6 +267,7 @@ In brief (the measurements are in `doc/benchmarks.tex`):
 | file | what it does |
 |---|---|
 | `models.py` | the models, as planetmodel models in SI, and the units they are solved in |
+| `analytic.py` | exact non-gravitating solutions of piecewise-homogeneous spheres: the E1 reference |
 | `decks.py` | the ladder models as full-precision elastic decks: the bridge to sl3dpp |
 | `exchange.py` | the cross-code exchange format: named scalars and one table, SI, with provenance |
 | `make_case.py` | one case: mesh, fields and manifest through planetmodel, reference through pyslfp |
