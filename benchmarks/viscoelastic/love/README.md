@@ -187,7 +187,13 @@ write-up is tier V1 of `doc/benchmark_programme.tex`.
   own Gaver–Stehfest floor, about 3e-5 (measured then on a different
   scale): the stepping error the three legs share is about 1e-4 at the
   default rule, and it largely cancels between AdGIA and pyslfp, which
-  take the same steps with the same weights.
+  take the same steps with the same weights. That floor and the
+  instability horizon are the limits of the Gaver–Stehfest inversion,
+  not information about the codes: the programme's position (21 October
+  2026) is that the Laplace route confirms the shared stepping at the
+  1e-4 level and no better, and that the spectral pair (1e-11 on the
+  identical discrete problem) is the reference for the time-domain
+  problem, semi-analytical references staying secondary.
 - **AdGIA against pyslfp** (seconds on 8 ranks; each run is 79 stepping
   solves and one observation solve):
 

@@ -74,7 +74,7 @@ time of writing the first tier, E1 (non-gravitating elastic, solid
 spherical models), has its exact reference and both spectral legs in place
 and gated, and its finite-element leg, \code{AdGIA}'s own, has its first
 measurements; the second, E2 (gravitating elastic, solid and fluid--solid
-models), has its machinery in place and first measurements on three models;
+models), has its machinery in place and measurements on six models;
 and the first viscoelastic rung, V1 (Maxwell load Love-number histories of
 gravitating models), has all three legs in place and first measurements on
 three models. Within E2 the note sets out why Dahlen's reduction of a static fluid leaves
@@ -213,10 +213,11 @@ reference done; \code{pyslfp} and \code{sl3dpp} legs done and gated;
 \code{AdGIA}'s finite-element leg implemented, first measurements;
 refinement study pending \\ \addlinespace
 E2 (\S\ref{sec:e2}) & elastic, gravitating: solid, then fluid--solid
-models & all three & \code{pyslfp} & machinery in place; first measurements
-on three models (\code{homogeneous}, \code{two\_solid}, \code{fluid\_core});
-degree-1 frame confirmed on two; convergence sweeps and the remaining
-fluid-core models pending \\ \addlinespace
+models & all three & \code{pyslfp} & machinery in place; spectral pair on
+six models (\code{homogeneous}, \code{two\_solid} and four fluid-core
+models), \code{AdGIA} on five of them, both fluid routes on the fluid-core
+models; degree-1 frame confirmed on five; convergence sweeps,
+\code{earth\_like} and \code{prem\_4} pending \\ \addlinespace
 V (\S\ref{sec:v}) & viscoelastic loading without the sea-level equation:
 model ladder, gravity off/on, rotation off/on & all three & the spectral
 codes; semi-analytical secondary & V1 (\S\ref{sec:v1}; Maxwell load
@@ -1134,15 +1135,22 @@ stage.
 \label{sec:e2}
 %-----------------------------------------------------------------------------
 
-\status{21 October 2026}{Machinery in place, first measurements on three
-models. The family \path{benchmarks/elastic/grav/} brings all three codes to
-one exchange format. The spectral pair agrees to $5\times10^{-11}$ on
-\code{homogeneous}, \code{two\_solid} and \code{fluid\_core};
+\status{21 October 2026}{Machinery in place; the spectral pair measured on
+six models, \code{AdGIA} on five of them. The family
+\path{benchmarks/elastic/grav/} brings all three codes to one exchange
+format. The spectral pair agrees to $5\times10^{-11}$ on
+\code{homogeneous}, \code{two\_solid} and \code{fluid\_core}, to
+$10^{-11}$ on \code{inner\_core} and \code{stratified\_core}, and on
+\code{aw\_core} to the accuracy of its deck (\S\ref{sec:e2-results});
 \code{AdGIA}'s Dahlen path agrees with \code{pyslfp} at the discretisation
-level on \code{two\_solid}, and on \code{fluid\_core} at $l\ge1$, with the
-first cross-code confirmation of the centre-of-mass frame at degree 1; its
-Maxwell-core route agrees at every degree, degree 0 included. Convergence
-sweeps and the remaining fluid-core models are pending.}
+level on \code{two\_solid}, and at $l\ge1$ on all four fluid-core models
+(\code{fluid\_core}, \code{aw\_core}, \code{inner\_core},
+\code{stratified\_core}), with the centre-of-mass frame at degree 1
+confirmed on all five; its Maxwell-core route agrees at every degree,
+degree 0 included, on the four fluid-core models. Pending: convergence
+sweeps in $h$ and order, \code{AdGIA} on \code{homogeneous} and
+\code{linear\_solid}, the remaining models (\code{earth\_like},
+\code{prem\_4}), and the campaign stage.}
 
 The planning split this rung into solid models (E2) and fluid--solid models
 (E3). One family carries both, so they are written here as one tier, solid
@@ -1201,8 +1209,9 @@ deck of \path{common/decks.py} \\ \addlinespace
 \code{AdGIA} & \code{love\_benchmark} (the Love-number family, any method),
 its \path{results.json} converted by
 \path{benchmarks/elastic/grav/from_results.py}, which copies the
-conventional numbers and never recomputes them & the case mesh of
-\code{make\_case.py} \\
+conventional numbers and never recomputes them, and leaves degree 0 out
+(\code{nan}) for a Dahlen run on a model with a fluid layer & the case mesh
+of \code{make\_case.py} \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -1214,8 +1223,9 @@ are kept for what they show but do not enter the benchmark matrix.
 \label{sec:e2-results}
 
 Conditions: \code{pyslfp} on its graded mesh and \code{sl3dpp} on the
-uniform rule, both at $l_{\max}=8$; \code{AdGIA} at $h=0.3$, order 2,
-degrees 0--6. The differences are measured with the degree-scale measure
+uniform rule, both at $l_{\max}=8$, \code{sl3dpp} reading the eight-knot
+decks of \path{common/decks.py} unless stated; \code{AdGIA} at $h=0.3$,
+order 2, degrees 0--6. The differences are measured with the degree-scale measure
 \eqref{eq:degreescale} (they are summarised in
 \path{benchmarks/elastic/grav/README.md}; the per-entry values below were
 recomputed for this note from the exchange files).
@@ -1228,6 +1238,19 @@ comparison & conditions & differences \\
 \code{sl3dpp} against \code{pyslfp} & \code{homogeneous},
 \code{two\_solid}, \code{fluid\_core}; degrees 0--8 & worst
 $4.5\times10^{-11}$, $1.8\times10^{-11}$, $3.7\times10^{-11}$ \\ \addlinespace
+\code{sl3dpp} against \code{pyslfp} & \code{inner\_core},
+\code{stratified\_core}; degrees 0--8 & worst $8.6\times10^{-12}$ ($k'_0$;
+$h'$ $3.8\times10^{-12}$) and $8.2\times10^{-12}$ ($h'_1$; $l'$, $k'$
+$6\times10^{-12}$); tidal at most $2.1\times10^{-12}$ \\ \addlinespace
+\code{sl3dpp} against \code{pyslfp} & \code{aw\_core}, eight-knot deck
+(round trip $9.5\times10^{-7}$) & $h'_0$ $8.2\times10^{-8}$; every other
+entry at most $3\times10^{-11}$ ($k'_0$), every degree $l\ge1$ below
+$10^{-11}$ \\ \addlinespace
+the same, sixteen-knot deck & round trip $5.4\times10^{-8}$ & $h'_0$
+$2.0\times10^{-9}$; $l\ge1$ unchanged \\ \addlinespace
+reciprocity, \code{sl3dpp} & the three variants; the relations $gh_\phi=k_u$,
+$h_v=l(l+1)l_u$, $k_v=g\,l(l+1)l_\phi$ & $4$--$8\times10^{-16}$ \\
+\addlinespace
 \code{AdGIA}, Dahlen, against \code{pyslfp} & \code{two\_solid} &
 $l'$, $k'$ and the tidal numbers $10^{-4}$--$2\times10^{-3}$ at degrees 2--3;
 $h'$ $10^{-3}$--$10^{-2}$ at degrees 0--3; worst $2.2\times10^{-2}$
@@ -1241,6 +1264,46 @@ $-0.13210$; $k'_0=-5.35$ against 0 \\ \addlinespace
 \code{AdGIA}, Maxwell core, against \code{pyslfp} & \code{fluid\_core}, every
 degree & $h'_0=-0.13152$ ($4.5\times10^{-3}$), $k'_0=-7\times10^{-6}$;
 worst $3.2\times10^{-2}$ ($h'_6$); degree 1: $1.6\times10^{-2}$ \\
+\addlinespace
+\code{AdGIA}, Dahlen and Maxwell core, against \code{pyslfp} &
+\code{aw\_core}, \code{inner\_core}, \code{stratified\_core} & table below
+\\ \addlinespace
+\code{AdGIA}, Dahlen, degree 0 & the same & $h'_0=-0.5223$, $-1.3657$,
+$-0.7800$ against $-0.12972$, $-0.13236$, $-0.15229$; $k'_0=-2.20$,
+$-5.02$, $-3.03$ against 0 \\
+\bottomrule
+\end{tabular}
+\end{center}
+\noindent \code{AdGIA} on the fluid-core variants against \code{pyslfp}, by
+model and route: the Dahlen path judged at $l\ge1$ (its exchange files
+leave degree 0 out; the Dahlen degree-0 values above are from the results
+JSON), the Maxwell-core route at every degree. The worst entry is $h'_6$ in every run; the last column is
+the wall-clock seconds on 8 ranks. The cases were made by the Love-number
+family's \code{run} script (\code{make\_case <model> --h 0.3 --buffer 0.2
+--angular 0.3 --thin 4 --lmax 10}): 3733 body elements for \code{aw\_core}
+and \code{stratified\_core} (9498 displacement and 5524 potential unknowns
+on the Dahlen path, 10\,926 displacement unknowns on the Maxwell path), 5329
+for \code{inner\_core} (12\,195 and 7688; 17\,418).
+\begin{center}
+\small
+\begin{tabular}{@{}lllllll@{}}
+\toprule
+model & route & worst & $h'_2$ & $h'_1$, $l'_1$ & $h'_0$ & s \\
+\midrule
+\code{aw\_core} & Dahlen & $3.6\times10^{-2}$ & $7.3\times10^{-3}$ &
+$1.8\times10^{-3}$, $1.7\times10^{-3}$ & --- & 6.8 \\
+& Maxwell & $3.3\times10^{-2}$ & $1.4\times10^{-2}$ &
+$6.1\times10^{-4}$, $4.0\times10^{-5}$ & $4.4\times10^{-3}$ & 118.6 \\
+\addlinespace
+\code{inner\_core} & Dahlen & $3.6\times10^{-2}$ & $6.9\times10^{-3}$ &
+$2.8\times10^{-3}$, $5.6\times10^{-3}$ & --- & 20.0 \\
+& Maxwell & $3.2\times10^{-2}$ & $2.0\times10^{-2}$ &
+$1.5\times10^{-2}$, $4.1\times10^{-3}$ & $4.5\times10^{-3}$ & 274.2 \\
+\addlinespace
+\code{stratified\_core} & Dahlen & $2.9\times10^{-2}$ & $7.4\times10^{-4}$ &
+$7.4\times10^{-4}$, $5.9\times10^{-4}$ & --- & 7.0 \\
+& Maxwell & $3.3\times10^{-2}$ & $4.8\times10^{-3}$ &
+$8.7\times10^{-3}$, $1.1\times10^{-3}$ & $5.0\times10^{-3}$ & 172.5 \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -1251,7 +1314,37 @@ and so are the model definitions (the planetmodel object against the deck).
 Agreement at $5\times10^{-11}$ says that both codes are converged to that
 level, which is tolerance tier (ii) between two codes. It includes degree 0
 on \code{fluid\_core} ($h'_0$ to $2\times10^{-12}$), which verifies that
-\code{sl3dpp} treats degree 0 with a fluid layer as \code{pyslfp} does.
+\code{sl3dpp} treats degree 0 with a fluid layer as \code{pyslfp} does. On
+\code{inner\_core} and \code{stratified\_core}, whose layers are
+polynomials so that the deck is the model to rounding (round trips 0 and
+$2\times10^{-16}$), the pair agrees to $10^{-11}$, and \code{sl3dpp}'s
+reciprocity residual is $4$--$8\times10^{-16}$ on the three variants.
+
+\paragraph{\code{aw\_core}: the deck's own accuracy.} On \code{aw\_core}
+the pair agrees to $10^{-11}$ at every degree $l\ge1$ and in every channel
+but one: $h'_0$ differs by $8.2\times10^{-8}$. This is the deck, not the
+codes. The core of \code{aw\_core} has the closed-form Adams--Williamson
+$v_P$, the only field of the ladder that is not a polynomial
+(\S\ref{sec:models}), so the eight-knot cubic deck reproduces the model
+only to spline accuracy, a round trip of $9.5\times10^{-7}$ as
+\path{decks.py} reports it. Written with sixteen knots per layer (round
+trip $5.4\times10^{-8}$), the deck brings $h'_0$ to $2.0\times10^{-9}$ and
+leaves $l\ge1$ unchanged. Degree 0 is the channel sensitive to the core's
+compressibility profile, which is exactly what the deck samples. Above
+degree 0 every code makes the static-fluid reduction --- the spectral
+codes' fluid regions enter through the potential alone, as \code{AdGIA}'s
+do through Dahlen's elimination (\S\ref{sec:e2-degree0}) --- with a
+stratification term built from $\rho$ and $\mathrm{d}\rho/\mathrm{d}r$
+only, so the bulk modulus, the one field the deck approximates, enters
+only at degree 0, where the full compressible equations apply; the core's
+density, a quadratic in radius, the deck reproduces exactly. (\code{AdGIA}
+builds its mesh from the model directly and never sees the deck.) The
+programme's position (21 October 2026):
+\code{pyslfp}, from the model object, and \code{sl3dpp}, from the deck,
+agree to the deck's own accuracy; for \code{aw\_core} the deck is written
+with more knots (\code{decks.py --knots}) when degree 0 is at stake, and the
+round-trip error that \path{decks.py} reports is the number to quote with
+the comparison.
 
 \paragraph{\code{AdGIA} on a solid model.} On \code{two\_solid} the Dahlen
 path agrees with \code{pyslfp} to about $10^{-3}$ in the well-resolved
@@ -1278,6 +1371,45 @@ degree-1 stop lies at an increment floor of about $10^{-2}$, the soft
 core--shell translation (\code{doc/benchmarks.tex}, ``The degree-1
 adjudication''), and the neutral \code{aw\_core} is the model on which the
 methods are expected to coincide.
+
+\paragraph{\code{AdGIA} on the fluid-core variants.} The pattern of
+\code{fluid\_core} repeats on every variant. The Dahlen path agrees with
+\code{pyslfp} at the finite-element level for $l\ge1$, the error growing
+with degree to the resolution edge: on \code{aw\_core}, $h'_2$, $h'_3$ and
+$h'_4$ at $7.3\times10^{-3}$, $1.4\times10^{-2}$ and $2.1\times10^{-2}$,
+$l'$ and $k'$ at most $8.6\times10^{-3}$, tidal $h_2$ at
+$1.0\times10^{-2}$; on \code{stratified\_core}, $h'_3$ and $h'_4$ at
+$8.4\times10^{-3}$ and $1.6\times10^{-2}$, $l'$ at most $9.7\times10^{-3}$,
+tidal $h_2$ at $5.1\times10^{-3}$; and $k'_1=-1$ to rounding throughout.
+Its degree 0 is wrong by design: $h'_0$ is 4.0, 10.3 and 5.1 times the
+spectral value on \code{aw\_core}, \code{inner\_core} and
+\code{stratified\_core}, and $k'_0$ is $-2.20$, $-5.02$ and $-3.03$ where
+mass conservation requires 0 --- the arbitrary function of
+\S\ref{sec:e2-degree0} again. The Maxwell-core route is right at every
+degree: $h'_0$ to $4.4$--$5.0\times10^{-3}$ and $k'_0\approx-7\times10^{-6}$
+on all three, the other degrees at the Dahlen path's level (worst
+$3.2$--$3.3\times10^{-2}$; $k'_2$ $5.5\times10^{-3}$, $1.4\times10^{-2}$
+and $3.8\times10^{-3}$; tidal $h_2$ $1.0\times10^{-2}$, $1.5\times10^{-2}$
+and $8.2\times10^{-3}$), at 14 to 25 times Dahlen's wall time here.
+
+On \code{aw\_core} and \code{inner\_core} the Dahlen errors at degrees 3--6
+coincide to $3\times10^{-4}$ or better (to $5\times10^{-5}$ at degrees 5 and
+6), and $h'_6$ is $3.6\times10^{-2}$ on both; they differ only at degrees 1
+and 2, by up to $4\times10^{-3}$ and $10^{-3}$. The two models share
+\code{fluid\_core}'s mantle, and at $h=0.3$ the large errors at high degree
+are the mantle's discretisation at the resolution edge, not the core's
+($h'_6$ is $2.9\times10^{-2}$ on \code{stratified\_core}, whose mantle
+differs). On \code{stratified\_core} the Dahlen path is unusually close at
+degree 2: $h'_2$ to $7.4\times10^{-4}$ and $k'_2$ to $7.3\times10^{-6}$.
+
+Degree 1 on the Maxwell path measures what the \code{fluid\_core} paragraph
+above anticipates. $h'_1$ sits $6.1\times10^{-4}$ from \code{pyslfp}'s on
+the neutral \code{aw\_core}, against $1.5\times10^{-2}$ on
+\code{inner\_core}, $8.7\times10^{-3}$ on \code{stratified\_core} and
+$1.6\times10^{-2}$ on \code{fluid\_core}: the increment floor appears on the
+non-neutral cores, and on \code{aw\_core} the methods coincide, its Maxwell
+and Dahlen degree-1 numbers both within $2\times10^{-3}$ of
+\code{pyslfp}'s.
 
 \subsection{Degree zero with a fluid region}
 \label{sec:e2-degree0}
@@ -1383,13 +1515,10 @@ treatment is the reference at degree 0.
 \subsection{Open points}
 \label{sec:e2-open}
 
-Convergence sweeps ($h$- and order-ladders) on \code{two\_solid} and
-\code{fluid\_core}; \code{AdGIA} runs on \code{homogeneous} and
-\code{linear\_solid}; the remaining fluid--solid models --- \code{aw\_core}
-first, the neutral core on which the fluid formulations are expected to
-coincide at every degree, then \code{inner\_core} (whose weakly restored
-inner-core translation the fields are sensitive to), \code{stratified\_core},
-\code{earth\_like} and \code{prem\_4}; and E2 as a campaign stage.
+Convergence sweeps ($h$- and order-ladders) on \code{two\_solid} and the
+four fluid-core models; \code{AdGIA} runs on \code{homogeneous} and
+\code{linear\_solid}; the remaining fluid--solid models, \code{earth\_like}
+and \code{prem\_4}; and E2 as a campaign stage.
 
 %-----------------------------------------------------------------------------
 \section{Beside the elastic tiers: \code{AdGIA}'s internal families}
@@ -1666,7 +1795,17 @@ $3\times10^{-5}$ (measured then on a different scale); the stepping error
 common to the three legs is therefore of order $10^{-4}$ at the default
 rule. It is below \code{AdGIA}'s differences at
 both orders, and it largely cancels from them, since \code{AdGIA} takes
-the same steps with the same weights.
+the same steps with the same weights. The misfit is thus mostly the
+spectral codes' own stepping error, and the floor of about
+$3\times10^{-5}$ that remains under refinement, like the instability
+horizon beyond which the reference marks its times invalid, is where the
+Gaver--Stehfest inversion stops: these residuals are the limitation of the
+method, not information about the codes. The programme's position (21
+October 2026): the Laplace route is good enough to confirm that the shared
+stepping is sound at the $10^{-4}$ level, and no better; the reference for
+the time-domain problem is the spectral pair, which agrees to $10^{-11}$ on
+the identical discrete problem; and the semi-analytical references stay
+secondary, as set out for the tier (\S\ref{sec:v}, ``References'').
 
 \paragraph{\code{AdGIA}.} The Dahlen path agrees with \code{pyslfp} at the
 discretisation level of $h=0.3$ on all three models: worst
