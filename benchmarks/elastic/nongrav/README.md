@@ -42,9 +42,12 @@ Each code reduces its answer to one exchange file per model
   tractions are applied one at a time, order 0; `spurious` reports the
   discrete leakage into the unforced harmonics.
 
-      ./love_numbers/make_case two_solid --h 0.15 --out cases/two_solid
-      mpiexec -np 8 ../../bin/traction_benchmark \
-          -c cases/two_solid/case.json -lmax 8 -o 3 -out e1_two_solid_adgia.txt
+      # both from <build>/benchmarks
+      ./love_numbers/make_case two_solid --h 0.15 \
+          --out elastic/nongrav/cases/two_solid
+      mpiexec -np 8 ./bin/traction_benchmark \
+          -c elastic/nongrav/cases/two_solid/case.json -lmax 8 -o 3 \
+          -out elastic/nongrav/e1_two_solid_adgia.txt
 
 ## Comparing
 
@@ -53,7 +56,8 @@ reports the worst relative difference per channel, measured against the
 largest reference value of each degree. Expected tiers: the spectral
 codes against the analytic reference at ~1e-10 (mesh-rule dependent);
 the FEM against the analytic reference at its discretisation level,
-converging under refinement — measured on `two_solid`, lmax 8: worst
-6.6e-2 at h 0.3 order 2, 1.4e-2 at h 0.15 order 3, with l = 2 at
-5.6e-4 and 2.1e-6 respectively, and the reciprocity residual falling
-from 1.2e-2 to 8.5e-8.
+converging under refinement — measured on `two_solid`, lmax 8: the
+worst channel (h_v, at l = 8, whose relative error is l(l+1) times
+l_u's) falls from 6.3e-1 at h 0.3 order 2 to 1.4e-2 at h 0.15 order 3;
+h_u's worst from 6.6e-2 to 1.6e-3, its l = 2 value from 5.6e-4 to
+2.1e-6; and the reciprocity residual from 1.2e-2 to 8.5e-8.

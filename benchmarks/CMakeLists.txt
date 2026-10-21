@@ -100,6 +100,12 @@ benchmark_launcher(elastic/nongrav elastic/nongrav compare)
 # pyslfp_reference.py runs from the pyslfp checkout's own environment
 # (see its docstring), so it gets no launcher here.
 
+# --- Elastic, gravitating (E2): conventional Love numbers across the codes --
+
+benchmark_launcher(elastic/grav elastic/grav from_results)
+benchmark_launcher(elastic/nongrav elastic/grav compare)
+# pyslfp_reference.py again runs from the pyslfp checkout.
+
 # --- Disc (the 2-D family; rung 0 is gravity-free) --------------------------
 
 benchmark_driver(sea_level sea_level_benchmark)

@@ -1,0 +1,1374 @@
+\documentclass[11pt]{article}
+
+\usepackage{amsmath,amssymb}
+\usepackage[margin=1.0in]{geometry}
+\usepackage{bm}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{enumitem}
+\newcolumntype{P}[1]{>{\raggedright\arraybackslash}p{#1}}
+\usepackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
+\urlstyle{tt}
+\makeatletter\g@addto@macro\UrlBreaks{\do\_\do\-}\makeatother
+
+\input{macros.inc}
+
+\numberwithin{equation}{section}
+\sloppy
+\setlength{\emergencystretch}{3em}
+\graphicspath{{figures/benchmarks/}}
+
+% --- notation (follows quasi_static_models.tex and benchmarks.tex) ----------
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\eps}{\varepsilon}
+\newcommand{\dS}{\,\mathrm{d}S}
+\newcommand{\dV}{\,\mathrm{d}V}
+\newcommand{\vu}{\mathbf{u}}
+\newcommand{\vw}{\mathbf{w}}
+\newcommand{\vx}{\mathbf{x}}
+\newcommand{\vt}{\mathbf{t}}
+\newcommand{\vn}{\hat{\mathbf{n}}}
+\newcommand{\rhat}{\hat{\mathbf{r}}}
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\Ylm}{Y_{lm}}
+\newcommand{\gradone}{\nabla_{1}}
+\newcommand{\bsig}{\bm{\sigma}}
+
+% A tier's status line: \status{date}{text}. Update the date with the text.
+\newcommand{\status}[2]{%
+  \par\smallskip\noindent
+  \fbox{\parbox{\dimexpr\linewidth-2\fboxsep-2\fboxrule\relax}{\small
+  \textbf{Status, #1.} #2}}\par\medskip}
+
+\title{The benchmark programme of \texttt{AdGIA}:\\
+       a hierarchy of forward tests with \texttt{sl3dpp} and \texttt{pyslfp}}
+\author{}
+\date{Begun 21 October 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent
+This note is the write-up of the benchmarks of \code{AdGIA}, organised
+around the cross-code programme begun in October 2026 with the two
+spectral codes \code{sl3dpp} and \code{pyslfp}. The programme climbs a
+hierarchy: elastic spherical models first (non-gravitating, then
+gravitating; solid, then fluid--solid), then viscoelastic loading without
+the sea-level equation, and only then sea level, so that a disagreement is
+found on the lowest rung able to show it. Part~\ref{part:programme} sets out
+the programme, its tiers and their status, and the conventions every tier
+shares: one model definition, one exchange format, tiered tolerances, and
+the rules at degrees zero and one. Parts~\ref{part:elastic}--\ref{part:sea}
+follow the hierarchy. Each tier has a section with a dated status line and
+a fixed shape (the problem, the compared quantities, the references and the
+legs, the results, the open points), so that tiers are added as they land
+without reworking what is already written. The internal benchmark families
+of \path{benchmarks/} --- benchmarks of a different kind, against exact or
+independent references --- are placed where they belong in the hierarchy,
+with their conclusions summarised; their detailed measurements stay in
+\code{doc/benchmarks.tex}, which this note cites and does not repeat. At the
+time of writing the first tier, E1 (non-gravitating elastic, solid
+spherical models), has its exact reference and both spectral legs in place
+and gated, and its finite-element leg, \code{AdGIA}'s own, has its first
+measurements; its refinement study across the models is next.
+\end{abstract}
+
+\tableofcontents
+
+%=============================================================================
+\part{The programme}
+\label{part:programme}
+%=============================================================================
+
+\section{Why a hierarchy}
+\label{sec:why}
+
+A forward calculation of glacial isostatic adjustment stacks several
+layers: the elastic response of a layered body; gravity and its
+perturbation; fluid regions; the rheology and its time stepping; lateral
+structure; and the sea-level equation, with its shorelines and its
+rotational feedback. Two codes that disagree on the complete problem may
+disagree in any of these, and a comparison made only at the top says how
+large the spread is, not where it comes from. The published GIA benchmarks
+show both the value and the limit of comparisons made high in the stack.
+Spada et al.\ \cite{Spada2011} compared eight codes on one incompressible
+Maxwell model, largely in the Laplace domain, and deliberately left out
+compressibility and the sea-level equation. Martinec et al.\
+\cite{Martinec2018} compared ten codes on the sea-level equation, on one
+incompressible, non-rotating radial model; the codes agreed to about
+1.5\,\%, and spatial discretisation and Gibbs behaviour at the load margins
+were named as the main sources of the differences.
+
+This programme goes the other way. It breaks the problem down as far as it
+goes and compares the codes at every rung, so that each new ingredient is
+tested on top of rungs already known to agree. Its principles:
+\begin{itemize}[leftmargin=*]
+\item \emph{Hierarchy, not headline.} Elastic before viscoelastic before
+  sea level; non-gravitating before gravitating; simple spherical models
+  before complex ones; loading without the sea-level equation before
+  loading with it.
+\item \emph{A practical target.} A GIA code must give stable, reliable
+  results relative to \emph{observational} errors. Agreement to machine
+  precision is not the goal, although understanding why two codes differ
+  is valuable, and where two codes solve the identical discrete problem
+  their agreement is expected at that level and is used as a gate.
+\item \emph{Exact references where they exist.} The non-gravitating
+  piecewise-homogeneous models have closed-form solutions, which is why the
+  hierarchy starts there. Semi-analytical references (modal sums, inverse
+  Laplace routes such as AAA with Talbot, or Gaver--Stehfest) are useful but
+  secondary; some are fragile, particularly those that need an inverse
+  Laplace transform.
+\item \emph{Two modes for \code{AdGIA}.} Low-resolution runs that fit on a
+  laptop are the default gate; server campaigns push the resolution later.
+  The benchmarks are not part of continuous integration, which holds each
+  code's own tests.
+\end{itemize}
+
+\section{The three codes}
+\label{sec:codes}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lP{6.2cm}P{6.3cm}@{}}
+\toprule
+code & method & role in the programme \\
+\midrule
+\code{AdGIA} & 3-D finite elements on MFEM: quasi-static, self-gravitating
+(visco)elastic loading; fluid regions by several formulations; sea level
+solved monolithically; aspherical bodies by relabelling &
+the code under test at every tier; the only one for general 3-D elastic
+structure \\
+\code{sl3dpp} & C++; spectral elements (GLL) in radius, spherical
+harmonics in angle; time-domain viscoelasticity by implicit Prony
+stepping; laterally varying viscosity $\eta=\bar\eta(r)\,e^{\delta}$ &
+a second implementation of \code{pyslfp}'s radial method, and the second
+code with 3-D viscosity \\
+\code{pyslfp} & Python, released; generalised Love numbers on a radial
+GLL mesh; the sea-level equation pseudo-spectrally; a time-domain
+viscoelastic module (new in v2.2.1) &
+the elastic oracle, the most thoroughly tested code at the radial level;
+the 1-D viscoelastic reference \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent Three things are shared and shape the comparisons.
+\code{sl3dpp}'s degree operator mirrors \code{pyslfp}'s discretisation, so
+on the same model and the same radial mesh rule the two solve the identical
+discrete problem, while \code{AdGIA} is an independent discretisation. All
+three take their models, decks, radial meshes and units from
+\code{planetmodel}. And all three implement the same exponential-trapezoid
+step weights, so that a viscoelastic comparison isolates the spatial
+discretisation; \code{pyslfp}'s generalised sea-level equation is the
+template of the other two codes' treatments.
+
+\section{Two kinds of benchmark}
+\label{sec:kinds}
+
+The cross-code tiers set the codes against one another and, where one
+exists, against an exact solution, always on spherical models and always
+through a small set of numbers. Beside them, \path{benchmarks/} holds
+\code{AdGIA}'s \emph{internal families}: Love numbers against
+\code{pyslfp}, the relabelling identities, the interface-shift derivatives,
+the two-dimensional disc, the viscoelastic box, sphere, stepping and
+Love-history sub-families, and the sea-level fingerprints. These test
+against exact closed forms, against identities that hold by construction
+(the discrete change of variables under a relabelling), against refinement,
+or against \code{pyslfp} as an independent radial reference. They reach
+what no cross-code tier can --- the aspherical machinery, the
+formulation-against-formulation questions, the time integrators in
+isolation --- and they stay. Parts~\ref{part:elastic}--\ref{part:sea} place
+each family at the rung where it belongs and state what it has
+established; \code{doc/benchmarks.tex} remains the archive of their
+measurements, problems and figures up to October 2026.
+
+\section{The tiers and their status}
+\label{sec:tiers}
+
+Table~\ref{tab:tiers} lists the tiers as they stand on 21 October 2026.
+``Done'' means implemented,
+measured and recorded in this note; ``in place'' means the ingredient
+exists but has not yet been brought under the programme's conventions;
+``pending'' means not started. The labels of the viscoelastic and
+sea-level sub-tiers are provisional until those tiers are designed.
+\begin{table}[tp]
+\centering
+\small
+\begin{tabular}{@{}lP{3.6cm}P{2.2cm}P{2.8cm}P{4.2cm}@{}}
+\toprule
+tier & problem & codes & reference & status \\
+\midrule
+E1 (\S\ref{sec:e1}) & elastic, non-gravitating, solid spherical models &
+all three & exact (piecewise-homogeneous propagator) &
+reference done; \code{pyslfp} and \code{sl3dpp} legs done and gated;
+\code{AdGIA}'s finite-element leg implemented, first measurements;
+refinement study pending \\ \addlinespace
+E2 (\S\ref{sec:e2}) & elastic, gravitating, solid models & all three &
+\code{pyslfp} & begun: the spectral pair gated on the gravitating traction
+numbers; \code{AdGIA}'s Love-number family in place, exchange bridges being
+written; degree-one frame work pending \\ \addlinespace
+E3 (\S\ref{sec:e3}) & elastic, gravitating, fluid--solid models & all
+three & \code{pyslfp} & \code{AdGIA}'s Love-number family in place
+(Dahlen at $l\ge1$, Maxwell core at every degree); cross-code pending \\ \addlinespace
+V (\S\ref{sec:v}) & viscoelastic loading without the sea-level equation:
+model ladder, gravity off/on, rotation off/on & all three & the spectral
+codes; semi-analytical secondary & pending; \code{AdGIA}'s viscoelastic
+family and the spectral codes' own gates in place \\ \addlinespace
+V-lat (\S\ref{sec:v}) & laterally varying viscosity, radial elastic
+structure, no sea level & \code{AdGIA}, \code{sl3dpp} & each other &
+pending; needs public \code{sl3dpp} drivers \\ \addlinespace
+S (\S\ref{sec:s}) & sea level: elastic fingerprints (rotation off/on,
+shoreline migration), then viscoelastic GIA runs; the lateral pair & all
+three; lateral pair \code{AdGIA}, \code{sl3dpp} & \code{pyslfp}; each other
+& pending; \code{AdGIA}--\code{pyslfp} and \code{sl3dpp}--\code{pyslfp}
+comparisons in place separately \\
+\midrule
+internal & 3-D elastic (relabelling, perturbation, disc); viscoelastic
+(box, sphere, stepping, Love histories); sea level & \code{AdGIA} & exact,
+identities, \code{pyslfp} & in place (\S\ref{sec:internal-elastic},
+\S\ref{sec:internal-visco}, \S\ref{sec:internal-sea}) \\
+\bottomrule
+\end{tabular}
+\caption{The tiers of the programme and their status on 21 October 2026.}
+\label{tab:tiers}
+\end{table}
+Three-dimensional elastic structure has no cross-code tier, since only
+\code{AdGIA} computes it; it is covered by the internal families
+(convergence, formulation against formulation, the mapped identities). A
+comparison with another group's 3-D finite-element code may come later.
+
+\section{How this note grows}
+\label{sec:grows}
+
+Each tier is one section with a dated status line and the same shape:
+\emph{the problem}, \emph{the compared quantities}, \emph{the references
+and the legs} (what each code computes, where, and how it is gated),
+\emph{results}, and \emph{open points}. A tier not yet started records what
+has been decided for it and what already exists. Measurements are quoted
+with their conditions --- model, degrees, mesh rule or resolution, and the
+commits where they are recorded --- and a result superseded by a later run
+is replaced, not appended to. Durable content from the planning notes
+(\path{~/dev/planning/}, which are working documents and not permanent)
+moves here as each tier lands; how to run each benchmark stays in the
+READMEs of \path{benchmarks/}.
+
+%-----------------------------------------------------------------------------
+\section{Conventions}
+\label{sec:conventions}
+%-----------------------------------------------------------------------------
+
+\subsection{Models: one definition}
+\label{sec:models}
+
+The models are the spherical ladder of \path{benchmarks/common/models.py}:
+planetmodel \code{LayeredIsotropicElastic} models in SI, each layer
+constant or polynomial in radius for $\rho$, $v_P$ and $v_S$, fluid layers
+with $v_S=0$. The values are listed in \code{doc/benchmarks.tex} (``The
+models''). The rungs used or planned by the tiers:
+\begin{center}
+\small
+\begin{tabular}{@{}P{4.2cm}P{5.4cm}P{5.4cm}@{}}
+\toprule
+model & structure & tiers \\
+\midrule
+\code{homogeneous} & one solid layer & E1 (exact), E2, V \\
+\code{homogeneous\_lithosphere} & the same body cut at 5700\,km, so that
+the outer shell can stay elastic & E1 (exact: elastically the homogeneous
+body, a welded interface with no contrast), V \\
+\code{two\_solid} & two homogeneous solid layers, interface at 5000\,km &
+E1 (exact), E2, V \\
+\code{linear\_solid} & one solid layer, linear in radius & E2, V \\
+\code{fluid\_core}, \code{aw\_core} & homogeneous fluid core (non-neutral),
+and its neutrally stratified twin & E3, V \\
+\code{inner\_core}, \code{stratified\_core}, \code{earth\_like},
+\code{prem\_4}, \code{prem\_6} & inner cores, stratified cores, PREM-grade
+structure & E3, V, S \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+One model object feeds every code. \code{pyslfp} takes the planetmodel
+objects directly. \code{sl3dpp} reads tabulated decks, written from the same
+objects by \path{benchmarks/common/decks.py}: the elastic deck format
+$r,\rho,v_{PV},v_{SV},v_{PH},v_{SH},\eta$ in SI (radius first; repeated
+radii mark internal boundaries; $\eta$ the anisotropy parameter, one for
+the isotropic ladder), eight knots per layer, every value written to full
+precision (\code{\%.17g}). The deck is read back with a not-a-knot cubic
+spline, which reproduces a polynomial of degree at most three exactly; every
+ladder layer is such a polynomial except \code{aw\_core}'s closed-form
+$v_P$, so for every other model the deck \emph{is} the model to rounding;
+\code{decks.roundtrip\_error} measures the agreement, so that a generation
+script can state it. \code{AdGIA} meshes the objects themselves
+(\path{benchmarks/common/make_case.py}, through planetmodel and gmsh), as
+its internal families do.
+
+The radial mesh is part of the discrete problem on the spectral side.
+\code{pyslfp}'s default is its graded mesh (\code{graded\_mesh}: five GLL
+nodes per element, fine at the surface and widening with depth, so that
+every degree to $l_{\max}$ is resolved at least as the uniform rule would
+resolve it, with a few hundred elements). The uniform rule for a given
+$l_{\max}$, elements no wider than $0.1a/(l_{\max}+1)$, is shared by the two
+spectral codes
+(\code{planetmodel}'s \code{RadialMesh} and \code{sl3dpp}'s
+\code{RadialMesh::Create}); the same deck read on the same rule is the
+identical discrete problem in both.
+
+\subsection{Harmonics and the numbers of one degree}
+\label{sec:harmonics}
+
+On a spherically symmetric model the response to a forcing of one
+spherical harmonic $\Ylm$ separates as
+\begin{equation}
+  \vu = U(r)\,\Ylm\,\rhat + V(r)\,\gradone\Ylm,
+  \qquad \phi = \phi(r)\,\Ylm,
+  \label{eq:separation}
+\end{equation}
+with $\gradone$ the surface gradient on the unit sphere. The surface values
+of $U$, $V$ and $\phi$ per unit forcing depend on the degree $l$ alone: not
+on the order $m$, and not on how the harmonics are normalised, since forcing
+and response carry the same harmonic. The codes use real orthonormal
+harmonics ($\int_{S^2}\Ylm^2\,\mathrm{d}\Omega=1$, Condon--Shortley phase).
+The normalisation matters only where a code builds or analyses fields:
+\code{AdGIA}'s finite-element legs load with a harmonic and analyse the
+solution on the surface with the same harmonics
+(\code{BoundaryHarmonicCoefficients}).
+
+\subsection{Units}
+\label{sec:units}
+
+Everything exchanged is in SI. The codes solve in different internal units
+--- \code{AdGIA} in the units of \code{models.scales} (length the outer
+radius, density 5000\,kg\,m$^{-3}$, time chosen so that $G=1$),
+\code{pyslfp} and \code{sl3dpp} in \code{planetmodel} \code{Scales} with
+different time scales --- so each code converts its own output and the
+comparison is anchored in SI. A shared non-dimensionalisation is an open
+cross-code question (\S\ref{sec:open}).
+
+\subsection{The exchange format}
+\label{sec:exchange}
+
+Each code reduces its answer to a small text file: provenance lines, named
+scalars, and one table. \path{benchmarks/common/exchange.py} writes and
+reads it, and the C++ drivers reproduce its layout by hand.
+\begin{itemize}[leftmargin=*]
+\item Leading \code{\#} lines are provenance, free text. By convention the
+  first says what the file holds and one reads \code{code <name> commit
+  <sha> date <iso-date>}.
+\item Bare \code{name value...} lines are named scalars.
+\item A \code{columns} line names the columns of the table that follows,
+  one row per line, every value SI and written to round-trip precision
+  (\code{\%.17g}, or shortest round-trip in C++).
+\item \code{nan} marks an excluded entry (a degree the problem does not
+  define).
+\end{itemize}
+The first lines of the analytic E1 reference for \code{homogeneous}, as
+\path{reference.py} writes it (two long lines shortened here):
+\begin{verbatim}
+# E1 non-gravitating traction numbers: the exact piecewise-homogeneous ...
+# code analytic commit 5f2a5a3 date 2026-10-21
+# model homogeneous SI (m per Pa); NaN = excluded degree
+radius 6371000
+gravitating 0
+columns l h_u l_u h_v l_v
+0 -6.4713052310817677e-06 0 0 0
+1 nan nan nan nan
+2 -1.3348735500072317e-05 -1.9325902953678312e-06 -1.1595541772206983e-05 ...
+\end{verbatim}
+Files are named by tier, model and code (\path{e1_<model>_<code>.txt}). The
+format is deliberately plain: the aim is to reduce each comparison to a few
+numbers or a simple plot. A genuine 3-D field (the lateral-viscosity tier)
+will be exchanged as netCDF instead.
+
+\subsection{Comparison and the error measure}
+\label{sec:measure}
+
+A comparison reads two exchange files and never needs the codes that wrote
+them. \path{benchmarks/elastic/nongrav/compare.py}, the first such script,
+takes the first file as the reference, matches the degree column and the
+shared columns by name, and reports for each channel the worst relative
+difference over the degrees, measured against the \emph{largest reference
+value of the degree} over the shared channels:
+\begin{equation}
+  e_c = \max_l
+  \frac{\bigl|x_c^{\text{other}}(l)-x_c^{\text{ref}}(l)\bigr|}
+       {\max_{c'}\bigl|x_{c'}^{\text{ref}}(l)\bigr|} .
+  \label{eq:degreescale}
+\end{equation}
+A \code{nan} in either file excludes the entry, and \code{--tol} turns the
+report into a pass/fail exit status. The degree scale keeps a channel that
+passes through zero from dominating: on \code{homogeneous}, $l_u$ changes
+sign between degrees 3 and 4 (\S\ref{sec:e1-closed}), and at degree 4 it is
+$8\times10^{-4}$ of $h_u$, so a relative error on its own value would
+measure nothing physical.
+
+The comparison rules, recorded first in \code{sl3dpp}'s decision log, hold
+throughout: compare in coefficient space or through grid-independent
+functionals, never point-wise on matched grids; compare gauge-invariant
+quantities only; anchor in SI.
+
+\subsection{Tolerances in tiers}
+\label{sec:tolerances}
+
+What counts as agreement depends on what is being compared:
+\begin{enumerate}[leftmargin=*,label=(\roman*)]
+\item \emph{The identical discrete problem} --- \code{pyslfp} and
+  \code{sl3dpp} on the same deck and mesh rule. Agreement is expected near
+  machine precision and is a gate: $10^{-10}$ of the degree scale.
+\item \emph{An exact reference against a spectral code} --- the code's own
+  discretisation error, spectrally small and dependent on the mesh rule;
+  about $10^{-11}$--$10^{-10}$ in E1 (\S\ref{sec:e1-results}).
+\item \emph{A finite-element code against a reference} --- the
+  discretisation level, established by refinement in $h$ and in order:
+  judged by the levels and by convergence under refinement, not by a fixed
+  threshold.
+\end{enumerate}
+The physical verdict is set by observational error: the codes must be
+reliable against what can be observed, not against machine epsilon. The
+yardsticks for particular observables are to be fixed when the sea-level
+tier defines its observables (\S\ref{sec:open}).
+
+\subsection{Degrees zero and one}
+\label{sec:degrees01}
+
+\paragraph{Degree zero.} \code{pyslfp} solves degree 0 with the full
+compressible (Lagrangian) equations, fluid regions included as elastic
+media with zero shear modulus. \code{sl3dpp}'s rewrite was believed to do
+the same; for solid models this is now verified, since it reproduces
+\code{pyslfp}'s degree-0 traction numbers on the identical discrete problem,
+gravitating and not (\S\ref{sec:e1-results}); the fluid--solid case falls
+to E3. In \code{AdGIA}, Dahlen's mixed formulation with a fluid region
+discards the fluid's bulk modulus and leaves an arbitrary function at
+degree 0, so it differs from the others by design there: it is not
+benchmarked at $l=0$ except to show the difference. The Maxwell-core
+treatment (\code{SetFluid}'s Maxwell relaxation) keeps the compressible
+fluid and is the route benchmarked at $l=0$. On solid models, as in E1 and
+E2, none of this arises.
+
+\paragraph{Degree one.} Without gravity, a spheroidal surface traction of
+degree 1 has a net force, which a free body cannot balance; the
+non-gravitating tiers exclude the degree and write \code{nan}
+(\S\ref{sec:e1-solvability}). With gravity, degree-1 quantities are
+compared in the frame of the centre of mass of the body and its load, in
+which the external potential has no degree-one part; \code{AdGIA}'s
+Love-number driver shifts its solution into that frame
+(\code{doc/benchmarks.tex}, ``Degree one: the centre-of-mass frame''), but
+its agreement with \code{pyslfp}'s frame is still unconfirmed, and E2
+settles it. The rotational (toroidal, rigid-rotation) part of degree 1 is
+more a convention than a frame and is documented by each code separately;
+where it matters, the comparison uses quantities invariant under rigid
+motions, such as changes of length between points. Comparisons at
+$l\ne1$ are not affected.
+
+\subsection{Where things live}
+\label{sec:where}
+
+Everything cross-code --- models, decks, exchange, comparison scripts,
+results and this note --- lives in \code{AdGIA}; \code{sl3dpp} and
+\code{pyslfp} keep their own internal tests. The tiers get directories of
+\path{benchmarks/} as they land: \path{elastic/nongrav/} (E1) exists and
+\path{elastic/grav/} (E2, E3) is begun; the planned layout adds
+\path{elastic/internal3d/}, \path{viscoelastic/spherical/},
+\path{viscoelastic/lateral/}, \path{sea_level/elastic/} and
+\path{sea_level/viscoelastic/}, beside the existing family directories,
+which stay. The shared pieces are in \path{benchmarks/common/}
+(\code{models.py}, \code{decks.py}, \code{exchange.py}, \code{analytic.py},
+\code{outputs.py}). \code{sl3dpp}'s drivers live in the \code{sl3dpp}
+repository, built with \code{-DSL3DPP\_BUILD\_BENCHMARKS=ON}, and are used
+from here; scripts that call \code{pyslfp} run from the \code{pyslfp}
+checkout, which owns its environment. Every script refuses to write into
+the source tree (\path{common/outputs.py}).
+
+\section{Open points across the programme}
+\label{sec:open}
+
+\begin{itemize}[leftmargin=*]
+\item \emph{Observational yardsticks.} Which observables, and what error on
+  each, sets the physical verdict at each tier.
+\item \emph{The degree-one rotational convention.} To be stated in each
+  code's own documentation and compared through invariants where needed.
+\item \emph{A shared non-dimensionalisation}, if kernels are to be
+  exchanged between codes; until then, SI.
+\item \emph{Public \code{sl3dpp} drivers} for the load-driven
+  (no sea-level) viscoelastic tiers and for the lateral-viscosity pair.
+\item \emph{Automation.} The tiers are not yet stages of
+  \path{benchmarks/campaign.py}; the laptop and server profiles will run
+  them as they are added.
+\end{itemize}
+
+%=============================================================================
+\part{Elastic spherical models}
+\label{part:elastic}
+%=============================================================================
+
+\section{Tier E1: non-gravitating elastic, solid models}
+\label{sec:e1}
+
+\status{21 October 2026}{The exact reference (\path{common/analytic.py})
+is done. The \code{pyslfp} and \code{sl3dpp} legs are done and gated: on the
+identical discrete problem against each other, and against the exact
+reference (\S\ref{sec:e1-results}). \code{AdGIA}'s finite-element leg,
+\code{traction\_benchmark}, is implemented and has first measurements on
+\code{two\_solid} at two resolutions; the refinement study across the
+three models is pending (\S\ref{sec:e1-fe}).}
+
+\subsection{The problem}
+\label{sec:e1-problem}
+
+A solid ball $B$ of radius $a$, spherically layered, with Lam\'e moduli
+$\lambda(r),\mu(r)$, no gravity, no pre-stress and no body force, is held
+in static equilibrium by a prescribed traction $\vt$ on its surface:
+\begin{equation}
+  \nabla\cdot\bsig = \mathbf{0}\ \text{in } B,\qquad
+  \bsig\cdot\rhat = \vt\ \text{on } r=a,\qquad
+  \bsig = \lambda(\nabla\cdot\vu)\,\mathbf{I}
+        + \mu\bigl(\nabla\vu+\nabla\vu^{T}\bigr),
+  \label{eq:e1-problem}
+\end{equation}
+with displacement and traction continuous across every interface (welded).
+In the separation \eqref{eq:separation}, the traction on a sphere is
+$\bsig\cdot\rhat = T_U\,Y\,\rhat + T_V\,\gradone Y$, with
+\begin{equation}
+  T_U = \lambda\Bigl(U' + \frac{2U - l(l+1)V}{r}\Bigr) + 2\mu U',
+  \qquad
+  T_V = \mu\Bigl(V' + \frac{U-V}{r}\Bigr),
+  \label{eq:tractions}
+\end{equation}
+so that at every degree the problem is a two-point boundary-value problem
+for $(U,V)$, regular at the centre, with $(U,V,T_U,T_V)$ continuous at the
+interfaces and $(T_U,T_V)$ given at the surface. At degree 0, $\gradone Y$
+vanishes and only $U$ and $T_U$ remain. This is the bottom rung of the
+hierarchy: it tests the elastic operator, the layering and the surface
+analysis with nothing else switched on, and on the piecewise-homogeneous
+ladder models it has an exact solution.
+
+\subsection{The traction numbers}
+\label{sec:e1-numbers}
+
+The forcings are unit tractions, per unit coefficient of the harmonic:
+\begin{align}
+  \text{normal (pressing):}&\quad \vt = -Y\,\rhat, &
+    T_U(a)&=-1,\ T_V(a)=0; \notag\\
+  \text{tangential:}&\quad \vt = -\gradone Y, &
+    T_U(a)&=0,\ T_V(a)=-1.
+\end{align}
+The \emph{traction numbers} are the surface values of the response:
+\begin{align}
+  h_u &= U(a),\quad l_u = V(a) && \text{under the normal traction}; \notag\\
+  h_v &= U(a),\quad l_v = V(a) && \text{under the tangential traction}.
+\end{align}
+They are displacements per unit traction, metres per pascal, and by
+\S\ref{sec:harmonics} independent of $m$ and of the harmonics'
+normalisation. At degree 0 the tangential channel does not exist and
+$l_u=h_v=l_v=0$.
+
+The names are those of the generalised Love numbers, whose ``force''
+(subscript $u$) and tangential ($v$) channels are the responses to a unit
+surface \emph{density}. A surface density $\sigma$ on the gravitating problem
+presses on the surface with the traction $g\sigma$, and \code{pyslfp}'s load
+force is built as exactly $g$ times its unit traction (likewise the
+tangential forcing), so on the gravitating problem the traction numbers are
+the corresponding generalised Love numbers divided by the surface gravity
+$g$. Both spectral codes test this tie to $10^{-13}$. The traction numbers
+are therefore the channels of the generalised Love numbers that survive
+when gravity is switched off, which is what lets one forcing serve E1 and
+E2: \code{pyslfp}'s \code{traction\_numbers(model, lmax,
+gravitating=True)} solves the full problem under the same unit tractions.
+
+\subsection{Solvability, degree one and degree zero}
+\label{sec:e1-solvability}
+
+In weak form, \eqref{eq:e1-problem} asks for $\vu$ with
+\begin{equation}
+  \int_B \bsig(\vu):\nabla\vw\dV = \int_{\partial B}\vt\cdot\vw\dS
+  \quad\text{for every } \vw .
+\end{equation}
+The left side vanishes for every rigid motion $\vw$ (a translation or an
+infinitesimal rotation), so a solution exists only if the traction does no
+work on the rigid motions, and it is then unique up to one. A translation
+$\mathbf{c}$ is spheroidal of degree 1:
+$\mathbf{c} = (\mathbf{c}\cdot\rhat)\,\rhat + \gradone(\mathbf{c}\cdot\rhat)$
+with $\mathbf{c}\cdot\rhat$ a degree-1 harmonic. A rotation is toroidal.
+Hence, by orthogonality of the harmonics:
+\begin{itemize}[leftmargin=*]
+\item at $l\ne1$, every spheroidal traction is orthogonal to every rigid
+  motion; the problem is solvable, and since rigid motions have no
+  spheroidal component of degree $l\ne1$, $U$ and $V$ are unique;
+\item at $l=1$, the normal traction $-Y_{1m}\rhat$ does the work
+  $-a^2\int Y_{1m}(\mathbf{c}\cdot\rhat)\,\mathrm{d}\Omega\ne0$ on the
+  translation along its axis, and the tangential one $-\gradone Y_{1m}$
+  twice that: both carry a net force, and there is no static solution.
+\end{itemize}
+Degree 1 is therefore excluded from E1 and written \code{nan} by every code;
+it returns, with gravity, in E2. The exclusion is visible in the closed
+form of \S\ref{sec:e1-closed}, which has a pole at $l=1$.
+
+At degree 0 the displacement is radial, and on a homogeneous body the
+solution is uniform compression, $\vu = A\vx$, $\bsig = 3\kappa A\,\mathbf
+I$ with $\kappa=\lambda+\tfrac23\mu$. A unit pressing traction gives
+$3\kappa A=-1$, so
+\begin{equation}
+  h_u(0) = -\frac{a}{3\kappa},
+  \label{eq:degree0}
+\end{equation}
+which is $-6.4713\times10^{-6}$\,m\,Pa$^{-1}$ on \code{homogeneous}
+($\kappa = 3.2817\times10^{11}$\,Pa). Both spectral codes test this closed
+form to $10^{-12}$.
+
+\subsection{Reciprocity}
+\label{sec:e1-reciprocity}
+
+The elastic operator is self-adjoint, so for two tractions $\vt_1,\vt_2$
+with responses $\vu_1,\vu_2$ Betti's reciprocal theorem gives
+$\int_{\partial B}\vt_1\cdot\vu_2\dS = \int_{\partial B}\vt_2\cdot\vu_1\dS$.
+With $\vt_1=-Y\rhat$ and $\vt_2=-\gradone Y$ at one degree,
+\begin{equation}
+  -a^2 h_v\!\int Y^2\,\mathrm{d}\Omega
+  = -a^2 l_u\!\int |\gradone Y|^2\,\mathrm{d}\Omega
+  = -a^2\, l(l+1)\, l_u\!\int Y^2\,\mathrm{d}\Omega ,
+  \qquad\text{so}\qquad
+  h_v = l(l+1)\,l_u ,
+  \label{eq:reciprocity}
+\end{equation}
+exactly, whatever the layering. A symmetric Galerkin discretisation whose
+loads and surface read-outs are the same functionals keeps it exactly, so in
+the spectral codes it holds to solver precision, and the residual
+$|h_v - l(l+1)l_u|/\max(|h_v|,|l(l+1)l_u|)$ is reported by every leg as a
+free internal check. It also halves what has to be compared: $h_v$ carries
+no information that $l_u$ does not.
+
+\subsection{The exact reference}
+\label{sec:e1-exact}
+
+\path{benchmarks/common/analytic.py} solves E1 exactly on models whose
+layers are solid and homogeneous (it samples $\rho$, $v_P$, $v_S$ in each
+layer and refuses a layer that is not constant to rounding). The
+construction follows.
+
+\paragraph{Harmonic potentials.}
+In a homogeneous layer, Navier's equation
+$(\lambda+\mu)\nabla(\nabla\cdot\vu)+\mu\nabla^2\vu=\mathbf 0$ has, at
+each degree, solutions built from the two harmonic functions
+$\chi = r^{n}Y$ with $n=l$ (regular at the centre) or $n=-(l+1)$
+(singular); both have $n(n+1)=l(l+1)$, and $\chi$ is homogeneous of degree
+$n$, so $(\vx\cdot\nabla)\chi = n\chi$.
+
+\paragraph{Family A: the gradient solution.} $\vu=\nabla\chi$ is
+divergence-free and harmonic, so it satisfies Navier's equation. In the
+separation,
+\begin{equation}
+  U = n\,r^{n-1},\qquad V = r^{n-1}.
+\end{equation}
+Its stress is $2\mu\nabla\nabla\chi$, and since $\nabla\chi$ is homogeneous
+of degree $n-1$, $\bsig\cdot\rhat = (2\mu/r)(\vx\cdot\nabla)\nabla\chi =
+(2\mu(n-1)/r)\nabla\chi$:
+\begin{equation}
+  T_U = 2\mu\,n(n-1)\,r^{n-2},\qquad T_V = 2\mu\,(n-1)\,r^{n-2}.
+  \label{eq:familyA}
+\end{equation}
+The same follows from \eqref{eq:tractions}: $T_U = 2\mu U'$ since the
+divergence vanishes, and $T_V = \mu\bigl((n-1) - 1 + n\bigr)r^{n-2}$. A
+check: at $n=1$ the solution is a uniform translation, and both tractions
+vanish.
+
+\paragraph{Family B: the Kelvin combination.} Take
+$\vu = c_1\,r^2\nabla\chi + c_2\,\vx\,\chi$. The identities
+\begin{equation}
+  \nabla\cdot(r^2\nabla\chi) = 2n\chi,\quad
+  \nabla\cdot(\vx\chi) = (n+3)\chi,\quad
+  \nabla^2(r^2\nabla\chi) = (4n+2)\nabla\chi,\quad
+  \nabla^2(\vx\chi) = 2\nabla\chi
+\end{equation}
+(the third from $\nabla^2(r^2\mathbf f) = 6\mathbf f + 4(\vx\cdot\nabla)
+\mathbf f$ for harmonic $\mathbf f$, with $\mathbf f=\nabla\chi$ homogeneous
+of degree $n-1$) reduce Navier's operator to
+\begin{equation}
+  \Bigl\{c_1\bigl[2n(\lambda+\mu)+(4n+2)\mu\bigr]
+       + c_2\bigl[(n+3)(\lambda+\mu)+2\mu\bigr]\Bigr\}\nabla\chi ,
+\end{equation}
+which vanishes identically for
+\begin{equation}
+  c_1 = (n+3)(\lambda+\mu)+2\mu = (n+3)\lambda+(n+5)\mu,
+  \qquad
+  c_2 = -\bigl[2n(\lambda+\mu)+(4n+2)\mu\bigr] = -2\bigl[n\lambda+(3n+1)\mu\bigr],
+  \label{eq:kelvin}
+\end{equation}
+the second solution of the classical theory \cite{Love1927}, written
+without the division by $c_1$ that the usual normalisation makes. The
+division-free form matters: $c_1$ can vanish on the singular side, at
+$n = -3-2\mu/(\lambda+\mu)$, for instance at $l=3$ ($n=-4$) in a Poisson
+solid ($\lambda=\mu$). The solution is then $c_2\,\vx\chi$, still a solution
+and still independent of family A. The two coefficients never vanish
+together: that requires $(\lambda+\mu)/\mu\in\{-1,-\tfrac43\}$, excluded
+for a stable solid, where $\lambda+\mu=\kappa+\mu/3>0$. In the separation,
+\begin{equation}
+  U = (c_1 n + c_2)\,r^{n+1},\qquad V = c_1\,r^{n+1},\qquad
+  \nabla\cdot\vu = \bigl(2nc_1+(n+3)c_2\bigr)\,r^{n}\,Y,
+\end{equation}
+\begin{equation}
+  T_U = \Bigl[\lambda\bigl(2nc_1+(n+3)c_2\bigr)
+              + 2\mu(n+1)(c_1n+c_2)\Bigr]r^{n},
+  \qquad
+  T_V = \mu\,(2nc_1+c_2)\,r^{n}.
+  \label{eq:familyB}
+\end{equation}
+For the regular solution ($n=l$) these simplify to
+$c_1l+c_2=(l+1)[l\lambda+(l-2)\mu]$,
+$\nabla\cdot\vu = -2(l+1)(2l+3)\mu\,r^lY$,
+$T_U=2\mu(l+1)[(l^2-l-3)\lambda+(l^2-l-2)\mu]\,r^l$ and
+$T_V=2\mu[l(l+2)\lambda+(l^2+2l-1)\mu]\,r^l$: family A carries no
+dilatation, family B all of it.
+
+The four solutions of degree $l\ge2$ have $U\propto r^{l-1}$, $r^{l+1}$
+(regular) and $r^{-l-2}$, $r^{-l}$ (singular), four distinct powers, so they
+are independent for every admissible pair of moduli. These powers are the
+eigenvalues, $l-1$, $l+1$, $-l-2$, $-l$, of the Euler-type radial system
+that the viscoelastic sphere sub-family derives independently
+(\code{doc/benchmarks.tex}, ``Sphere benchmarks: problems and exact
+references''), which is the basis of the cross-check below. The Navier
+equation, the four tractions \eqref{eq:familyA}, \eqref{eq:familyB} and the
+degree-0 pair below were checked symbolically in Cartesian coordinates
+(sympy) for concrete regular and singular harmonics of degrees 2 and 3
+while this note was written.
+
+\paragraph{Degree zero.} With $\gradone Y_{00}=0$ only $U$ survives, and
+two of the four solutions collapse. Family A at $n=0$ is the gradient of a
+constant, zero; family B at $n=-1$ has $c_1n+c_2=0$, so $U=0$. What remains
+is family B at $n=0$, $U\propto r$, and family A at $n=-1$, $U\propto
+r^{-2}$:
+\begin{equation}
+  U = r:\ \ T_U = 3\lambda+2\mu = 3\kappa;
+  \qquad
+  U = r^{-2}:\ \ T_U = -4\mu\,r^{-3}.
+\end{equation}
+The first is uniform compression, and with $T_U(a)=-1$ it gives
+\eqref{eq:degree0}; the second is the divergence-free field of a
+centre of dilatation.
+
+\paragraph{The welded layer system.} Let the layers be $[r_{j-1},r_j]$,
+$j=1,\dots,N$, with $r_0=0$ and $r_N=a$, and write the state
+$\mathbf s=(U,V,T_U,T_V)^T$ in layer $j$ as $\mathbf s=\mathsf B_j(r)\,
+\mathbf c_j$, the columns of $\mathsf B_j$ being the four solutions with
+the layer's moduli. Regularity keeps only the two regular columns in the
+innermost layer. The interface and surface conditions are
+\begin{equation}
+  \mathsf B_j(r_j)\,\mathbf c_j = \mathsf B_{j+1}(r_j)\,\mathbf c_{j+1}
+  \quad (j=1,\dots,N-1),
+  \qquad
+  \bigl[\mathsf B_N(a)\,\mathbf c_N\bigr]_{T_U,T_V} = (-1,0)\ \text{or}\ (0,-1),
+\end{equation}
+$4(N-1)+2$ equations for $2+4(N-1)$ unknowns (at degree 0, with the state
+$(U,T_U)$, $2(N-1)+1$ for $1+2(N-1)$). The traction numbers are the
+$(U,V)$ rows of $\mathsf B_N(a)\,\mathbf c_N$. The state is propagated
+across layer $j$ by the matrix $\mathsf B_j(r_j)\,\mathsf B_j(r_{j-1})^{-1}$,
+which in the Euler form is $(r_j/r_{j-1})^{M}$; \code{analytic.py} does not
+form these products but assembles and solves the block-bidiagonal system in
+all the coefficients at once, so growing and decaying powers are never
+multiplied together.
+
+\paragraph{Layer-scaled radii.} In layer $j$ the basis is evaluated at
+$x=r/r_j$, the radius scaled by the layer's top. Each column changes by a
+constant factor $r_j^{p}$, absorbed into $\mathbf c_j$, and the traction
+rows, which carry one radial derivative, are divided by $r_j$ to stay
+physical. This is necessary, not cosmetic: in metres, $r^{l}$ overflows
+double precision near $l\approx45$ at $r\approx6.4\times10^6$\,m. Scaled,
+the regular columns are of order one at the top of their layer and smaller
+below it, and the singular columns grow towards the layer's bottom like
+$(r_j/r_{j-1})^{l+2}$, a factor of about $4\times10^3$ at $l=32$ across the
+upper layer of \code{two\_solid}. The reference is used to $l=32$ here; its
+reciprocity residual stays at $\sim10^{-14}$ there
+(\S\ref{sec:e1-results}).
+
+\paragraph{The homogeneous sphere in closed form.}
+\label{sec:e1-closed}
+On one homogeneous layer the system is $2\times2$, and solving it
+(symbolically) gives, for $l\ge2$, with
+$\Delta_l = (2l^2+4l+3)\lambda + 2(l^2+l+1)\mu$,
+\begin{align}
+  h_u &= -\frac{a\,\bigl[\,l(2l+1)\lambda + 2(2l^2-1)\mu\,\bigr]}{2\mu(l-1)\,\Delta_l},
+  &
+  l_u &= -\frac{a\,\bigl[\,3\lambda - 2(l-2)\mu\,\bigr]}{2\mu(l-1)\,\Delta_l},
+  \notag\\
+  h_v &= l(l+1)\,l_u,
+  &
+  l_v &= -\frac{a\,\bigl[\,(2l^2+l+3)\lambda + 2(2l^2-l+1)\mu\,\bigr]}{2\mu(l-1)\,\Delta_l}.
+  \label{eq:closed}
+\end{align}
+These agree with \code{analytic.py} on \code{homogeneous} to
+$1.6\times10^{-14}$ of the degree scale for $l=2,\dots,32$. They carry the
+structure described above and three independent checks:
+\begin{itemize}[leftmargin=*]
+\item \emph{Reciprocity} \eqref{eq:reciprocity} holds identically, and
+  the factor $l-1$ in the denominator is the degree-1 pole of
+  \S\ref{sec:e1-solvability}.
+\item \emph{The half-space limit.} At high degree, $h_u$ and $l_v$ both
+  tend to $-a(\lambda+2\mu)/\bigl(2\mu(\lambda+\mu)\,l\bigr) =
+  -(1-\nu)a/(\mu l)$, the compliance $(1-\nu)/(\mu k)$ of an elastic
+  half-space at wavenumber $k=l/a$ ($\nu$ Poisson's ratio); on
+  \code{homogeneous} at $l=32$ the limit differs from $h_u$ by about
+  1\,\%, as an $O(1/l)$ correction should.
+\item \emph{Kelvin's rigid sphere.} In the incompressible limit
+  $\lambda\to\infty$, $h_u(2)\to -5a/(19\mu)$. In an incompressible
+  homogeneous body a harmonic tidal potential $W=(r/a)^2W_aY$ acts only
+  through the pressure: absorbing $\rho W$ into it turns the body force into
+  a surface traction $\rho W_a Y\rhat$ that pulls. The surface uplift is then
+  $5\rho W_a a/(19\mu)$, and $h_2 = gU(a)/W_a = 5\rho g a/(19\mu)$, the
+  large-rigidity limit of Kelvin's $h_2 = \tfrac52/(1+19\mu/(2\rho g a))$
+  \cite{Love1927}.
+\end{itemize}
+The formula also shows why the degree-scale measure of
+\S\ref{sec:measure} is needed: $l_u$ changes sign at
+$l = 2+3\lambda/(2\mu)$, which is $3.96$ on \code{homogeneous}
+($\lambda/\mu=1.306$).
+
+\paragraph{A second exact reference.} The viscoelastic sphere sub-family
+computes the same per-degree elastic response by a different route: the
+Euler system $r\,\mathrm d\mathbf Y/\mathrm dr = M\mathbf Y$ for
+$\mathbf Y=(U,V,rT_U,rT_V)$, its regular eigenvectors in the central layer,
+and the matrix-exponential propagator $(r_j/r_{j-1})^M$ across the others
+(\path{benchmarks/viscoelastic/sphere/reference.py}, derived with sympy by
+\path{derive_euler.py}). Its Euler matrix, with real moduli and propagated
+as its transfer function does, gives on the E1 ladder models a $U(a),V(a)$
+per unit pressure that agrees with \code{analytic.py}'s
+$h_u,l_u$ to $3.8\times10^{-15}$ (\code{homogeneous}), $1.8\times10^{-12}$
+(\code{homogeneous\_lithosphere}) and $2.5\times10^{-12}$
+(\code{two\_solid}), relative to $\max(|h_u|,|l_u|)$ per degree, over
+$l=2,\dots,32$. The two references share no code and are derived
+differently (explicit potentials and a global solve; the Euler matrix and
+propagator products), so E1's reference is itself checked. The check was
+made by an ad hoc script while this note was written and is not yet one of
+the family's scripts.
+
+\subsection{The legs: what is implemented where}
+\label{sec:e1-legs}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lP{6.3cm}P{3.8cm}l@{}}
+\toprule
+leg & what computes the traction numbers & gated by & status \\
+\midrule
+exact & \path{AdGIA/benchmarks/common/analytic.py}; written as exchange
+files by \path{elastic/nongrav/reference.py} (\code{e1\_<model>\_analytic.txt}) &
+the checks of \S\ref{sec:e1-exact} & done \\
+\code{pyslfp} & \code{DegreeSystem(..., gravitating=False)} and
+\code{traction\_numbers(model, lmax, gravitating=False)}
+(\path{pyslfp/love_numbers/assembly.py}, \path{solver.py}); exchange files by
+\path{AdGIA/benchmarks/elastic/nongrav/pyslfp_reference.py} &
+nine new tests, the 262-test suite green & done \\
+\code{sl3dpp} & \code{DegreeOperator} with
+\code{Options::gravitating = false}, and
+\code{ComputeTractionNumbers(material, lmax, gravitating)}; exchange files
+by the \code{traction\_numbers} driver (\path{sl3dpp/benchmarks/}) &
+\code{TestTractionNumbers} against \code{pyslfp} fixtures; the 118-test
+suite green & done \\
+\code{AdGIA} & \code{traction\_benchmark}
+(\path{benchmarks/elastic/nongrav/traction_benchmark.cpp}): the traction
+problem on a ladder case, the surface field analysed into coefficients
+(\S\ref{sec:e1-fe}) & refinement against the exact reference; reciprocity
+and leakage diagnostics & first results \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{\code{pyslfp}.} The non-gravitating problem uses the released
+degree discretisation with the gravity and potential terms dropped: the
+unknowns are $U$ and $V$ ($U$ alone at $l=0$), the elastic block of the
+bilinear form is unchanged, and the natural forcings are the unit tractions,
+$-a^2$ on the surface $U$ test function (normal) and $-a^2l(l+1)$ on the
+surface $V$ test function (tangential). The class refuses a fluid layer
+(a static non-gravitating fluid has no restoring force) and degree 1. On
+the gravitating problem the same forcings give the gravitating traction
+numbers, and the existing load forcings are exactly $g$ times them. Among
+the new tests: the degree-0 closed form to $10^{-12}$; the exclusion of
+degree 1; reciprocity below $10^{-10}$; the tie to the gravitating solver to
+$10^{-13}$; and a mesh-independence check that is exact in its own right. On
+a homogeneous body the regular solutions are polynomials of degree $l+1$,
+which lie in the five-node element space for $l\le3$, so two unrelated
+meshes agree to rounding there.
+
+\paragraph{\code{sl3dpp}.} The C++ mirror is exact by design:
+\code{DegreeOperator} drops the same terms and degrees of freedom,
+\code{Traction()} and \code{TractionTangential()} are the unit tractions
+(the full problem's \code{Load(Force)} is $g$ times \code{Traction()}),
+and \code{ComputeTractionNumbers} returns the SI surface response with the
+same \code{nan} at degree 1. \code{TestTractionNumbers} holds it to
+\code{pyslfp}: the fixtures (\path{scripts/make_e1_fixtures.py}, run from the
+\code{pyslfp} checkout) are the \code{homogeneous} and \code{two\_solid}
+decks of \code{AdGIA}'s ladder at full precision, read back with
+planetmodel, and \code{pyslfp}'s traction numbers on the uniform
+$l_{\max}=8$ rule, non-gravitating and gravitating; \code{sl3dpp} reads the
+same decks on the same rule. The test also checks the degree-0 closed form,
+reciprocity, the $g$-tie to \code{ComputeLoveNumbers}, and the refusals.
+The \code{traction\_numbers} driver (\code{traction\_numbers <deck> <lmax>
+<out.txt> [nongrav|grav]}) writes the exchange file.
+
+\subsection{Results}
+\label{sec:e1-results}
+
+All differences are relative to the degree scale \eqref{eq:degreescale}
+unless stated, SI throughout.
+\begin{center}
+\small
+\begin{tabular}{@{}P{4.2cm}P{6.1cm}P{4.9cm}@{}}
+\toprule
+comparison & conditions & worst difference \\
+\midrule
+\code{sl3dpp} against \code{pyslfp} (identical discrete problem) &
+\code{homogeneous}, \code{two\_solid} decks; uniform $l_{\max}=8$ rule,
+five GLL nodes; non-gravitating and gravitating; degrees 0--8 (1 excluded
+without gravity) & within the gate, $10^{-10}$ \\ \addlinespace
+\code{pyslfp} against the exact reference & graded mesh, $l_{\max}=16$,
+five GLL nodes & $9.4\times10^{-11}$ (\code{homogeneous}),
+$1.8\times10^{-11}$ (\code{homogeneous\_lithosphere}), $1.7\times10^{-11}$
+(\code{two\_solid}) \\ \addlinespace
+\code{pyslfp} fixtures against the exact reference & the committed
+\code{sl3dpp} fixtures: uniform $l_{\max}=8$ rule; measured for this note &
+$1.2\times10^{-10}$ (\code{homogeneous}), $6.5\times10^{-11}$
+(\code{two\_solid}) \\ \addlinespace
+\code{AdGIA} against the exact reference & \code{two\_solid}, degrees
+0--8; $h=0.3$, order 2, and $h=0.15$, order 3 (\S\ref{sec:e1-fe}) & $h_u$:
+$6.6\times10^{-2}$, $1.6\times10^{-3}$; all channels:
+$6.3\times10^{-1}$, $1.4\times10^{-2}$ (in $h_v$, at $l=8$) \\ \addlinespace
+reciprocity, \code{AdGIA} & the same two runs & $1.2\times10^{-2}$,
+$8.5\times10^{-8}$ \\ \addlinespace
+reciprocity, exact reference & $l=2,\dots,32$, the three models &
+$\le4\times10^{-14}$ (relative to $\max(|h_v|,|l(l+1)l_u|)$) \\ \addlinespace
+reciprocity, spectral codes & as tested & $<10^{-10}$ \\ \addlinespace
+degree 0, \eqref{eq:degree0} & homogeneous body; both spectral codes &
+$10^{-12}$ (tested); exact reference to rounding \\ \addlinespace
+the two exact references & Euler propagator against \code{analytic.py},
+$l=2,\dots,32$, normal channel & $3.8\times10^{-15}$, $1.8\times10^{-12}$,
+$2.5\times10^{-12}$ \\ \addlinespace
+closed form \eqref{eq:closed} & against \code{analytic.py},
+\code{homogeneous}, $l=2,\dots,32$ & $1.6\times10^{-14}$ \\ \addlinespace
+\code{homogeneous\_lithosphere} against \code{homogeneous} & exact
+reference, $l\le32$: one body, cut by a welded interface with no contrast &
+$2.6\times10^{-15}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The first row is tolerance tier (i), the next two tier (ii) and the
+\code{AdGIA} rows tier (iii) of \S\ref{sec:tolerances}. Together they place \code{sl3dpp} within about
+$2\times10^{-10}$ of the exact numbers on \code{homogeneous} and
+\code{two\_solid} (by the triangle inequality, through the fixtures; an
+\code{sl3dpp} exchange file has not yet been compared with the exact
+reference directly). \code{pyslfp}'s differences from the exact reference
+depend on the mesh rule, as tier (ii) expects: on \code{homogeneous} the
+graded mesh at $l_{\max}=16$ and the uniform rule at $l_{\max}=8$ give
+$9.4\times10^{-11}$ and $1.2\times10^{-10}$. The degree-0 agreement of the
+gravitating fixtures also verifies, for solid models, that \code{sl3dpp}
+treats degree 0 as \code{pyslfp} does (\S\ref{sec:degrees01}). The
+finite-element numbers are discussed in \S\ref{sec:e1-fe}.
+
+\paragraph{Reference values.} For orientation, the exact traction numbers,
+in $10^{-6}$\,m\,Pa$^{-1}$ (\code{homogeneous\_lithosphere} is identical to
+\code{homogeneous}):
+\begin{center}
+\small
+\begin{tabular}{@{}r rrrr c rrrr@{}}
+\toprule
+& \multicolumn{4}{c}{\code{homogeneous}} && \multicolumn{4}{c}{\code{two\_solid}} \\
+\cmidrule{2-5}\cmidrule{7-10}
+$l$ & $h_u$ & $l_u$ & $h_v$ & $l_v$ && $h_u$ & $l_u$ & $h_v$ & $l_v$ \\
+\midrule
+0 & $-6.4713$ & 0 & 0 & 0 && $-7.9708$ & 0 & 0 & 0 \\
+2 & $-13.349$ & $-1.9326$ & $-11.596$ & $-15.281$ && $-12.965$ & $-1.9089$ & $-11.453$ & $-27.502$ \\
+3 & $-8.5106$ & $-0.26567$ & $-3.1880$ & $-8.7762$ && $-9.8339$ & $-0.56925$ & $-6.8310$ & $-18.614$ \\
+4 & $-6.4065$ & $0.0048571$ & $0.097141$ & $-6.4016$ && $-8.5523$ & $-0.23353$ & $-4.6705$ & $-14.055$ \\
+8 & $-3.2897$ & $0.061608$ & $4.4358$ & $-3.2281$ && $-6.2731$ & $0.052111$ & $3.7520$ & $-7.0881$ \\
+16 & $-1.6778$ & $0.023609$ & $6.4216$ & $-1.6542$ && $-3.7719$ & $0.046307$ & $12.595$ & $-3.7451$ \\
+32 & $-0.84812$ & $0.0069845$ & $7.3756$ & $-0.84113$ && $-1.9282$ & $0.014496$ & $15.307$ & $-1.9137$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{What gravity changes.} The gravitating fixtures show the size of
+the step to E2 under the same forcing (\code{pyslfp}, uniform
+$l_{\max}=8$ rule). The ratio of the gravitating to the non-gravitating
+$h_u$ is $1.43$ at degree 0 and $0.935$--$0.976$ over degrees 2--8 on
+\code{homogeneous} (for $l_v$, $0.997$--$1.049$), and $1.20$ at degree 0
+and $0.974$--$0.984$ over degrees 2--8 on \code{two\_solid}: gravity
+softens the degree-0 response and stiffens the radial response of the
+others by a few per cent. Each code's non-gravitating leg must be right
+to far better than this before E2 can say anything about gravity.
+
+\subsection{Reproducing}
+\label{sec:e1-reproduce}
+
+From the build tree, \path{<build>/benchmarks/elastic/nongrav/}
+(\path{benchmarks/elastic/nongrav/README.md} has the details):
+\begin{verbatim}
+./reference --lmax 32 --out runs                    # the exact reference
+(cd ~/dev/pyslfp && poetry run python \
+    <repo>/benchmarks/elastic/nongrav/pyslfp_reference.py --lmax 16 \
+    --out <build>/benchmarks/elastic/nongrav/runs)  # pyslfp, graded mesh
+./compare runs/e1_two_solid_analytic.txt runs/e1_two_solid_pyslfp.txt \
+    --tol 1e-8 --verbose
+\end{verbatim}
+\code{pyslfp\_reference.py --gravitating} writes the gravitating twin under
+the same forcing (\path{e1_<model>_pyslfp_grav.txt}). For \code{sl3dpp}, the
+decks come from \code{python <repo>/benchmarks/common/decks.py homogeneous
+two\_solid --out <dir>} and the exchange file from \code{traction\_numbers
+<dir>/<model>.elastic.deck <lmax> <out.txt>}; its gate is
+\code{ctest -R TractionNumbers} in the \code{sl3dpp} build. For \code{AdGIA},
+from the same directory, a case and a run (the finer of the two of
+\S\ref{sec:e1-fe}):
+\begin{verbatim}
+../../love_numbers/make_case two_solid --h 0.15 --out cases/two_solid_h015
+mpiexec -np 8 ../../bin/traction_benchmark \
+    -c cases/two_solid_h015/case.json -lmax 8 -o 3 \
+    -out e1_two_solid_adgia_h015_o3.txt
+./compare runs/e1_two_solid_analytic.txt e1_two_solid_adgia_h015_o3.txt
+\end{verbatim}
+
+\subsection{The finite-element leg}
+\label{sec:e1-fe}
+
+\code{AdGIA}'s leg is the one E1 exists for. \code{traction\_benchmark}
+(\path{benchmarks/elastic/nongrav/traction_benchmark.cpp}, built with the
+other drivers) takes a case written by \code{make\_case.py} for a ladder
+model: its mesh, $\kappa$ and $\mu$, nothing about the model set in the
+driver, and a refusal if the case has a fluid region. It solves
+\eqref{eq:e1-problem} with \code{LinearQuasiStaticTractionProblem} on the
+body alone (the buffer shell of the gravitating cases is left out), with no
+gravity and no potential and the rigid modes projected out in the solver.
+For each degree, order 0, the surface traction is $-Y_{l0}\rhat$ and, for
+$l\ge2$, $-\gradone Y_{l0}$, applied one at a time; the displacement is
+analysed into radial and tangential harmonic coefficients on the surface
+(\code{BoundaryHarmonicCoefficients}); and the $(l,0)$ coefficients,
+converted to SI through the case's scales, are written as an exchange file,
+degree 1 as \code{nan}. The driver also reports the reciprocity residual
+and \code{spurious}, the largest unforced coefficient relative to the
+forced ones. The machinery is not new: the viscoelastic sphere sub-family
+solves the same free-body pressure problem on curved layered balls with the
+same classes (\S\ref{sec:internal-visco}). What E1 adds is the shared models
+in SI, the tangential channel, and a reference that the spectral codes are
+held to as well.
+
+\paragraph{First measurements.} Two runs on \code{two\_solid}, degrees
+0--8, solver tolerance $10^{-12}$: $h=0.3$ at order 2 (4481 elements,
+buffer shell included in the count) and $h=0.15$ at order 3 (14\,697
+elements). The driver's commit records them in
+\path{benchmarks/elastic/nongrav/README.md} (\code{faddd52}); the
+differences below were recomputed for this note with \code{compare.py}
+from the two runs' exchange files against the exact reference, with the
+degree-scale measure \eqref{eq:degreescale}:
+\begin{center}
+\small
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+& \multicolumn{2}{c}{$h=0.3$, order 2} & \multicolumn{2}{c}{$h=0.15$, order 3} \\
+\cmidrule(lr){2-3}\cmidrule(l){4-5}
+channel & $l=2$ & worst ($l=8$) & $l=2$ & worst ($l=8$) \\
+\midrule
+$h_u$ & $5.6\times10^{-4}$ & $6.6\times10^{-2}$ & $2.1\times10^{-6}$ & $1.6\times10^{-3}$ \\
+$l_u$ & $7.0\times10^{-5}$ & $8.7\times10^{-3}$ & $2.0\times10^{-6}$ & $1.9\times10^{-4}$ \\
+$h_v$ & $4.2\times10^{-4}$ & $6.3\times10^{-1}$ & $1.2\times10^{-5}$ & $1.4\times10^{-2}$ \\
+$l_v$ & $1.2\times10^{-3}$ & $1.2\times10^{-1}$ & $7.0\times10^{-6}$ & $2.1\times10^{-3}$ \\
+\midrule
+$h_u$, degree 0 & \multicolumn{2}{c}{$7.3\times10^{-5}$} & \multicolumn{2}{c}{$4.3\times10^{-6}$} \\
+reciprocity & $2.2\times10^{-6}$ & $1.2\times10^{-2}$ & $1.4\times10^{-11}$ & $8.5\times10^{-8}$ ($l=6$) \\
+\bottomrule
+\end{tabular}
+\end{center}
+Every channel's error grows with degree, steeply on the coarse mesh, where
+degree 8 is at the resolution limit (as in the Love-number family at the
+same $h$), and the finer, higher-order run lowers it by factors of 35 to
+270 across the entries of the table. The largest entries are in
+$h_v$, and they are not new information: by reciprocity $h_v\approx
+l(l+1)\,l_u$, so its error is the absolute error of the small channel $l_u$
+multiplied by $l(l+1)$, 72 at degree 8 ($8.7\times10^{-3}\times72\approx
+6.3\times10^{-1}$; $1.9\times10^{-4}\times72\approx1.4\times10^{-2}$).
+Reciprocity, exact in the continuum and to solver precision in the spectral
+codes, holds in the finite-element leg at the discretisation level, to
+$1.4\times10^{-11}$ at degree 2 on the finer run. The two runs change $h$
+and the order together: they show tolerance tier (iii) behaving as
+expected, but they are not a convergence study.
+
+\paragraph{Next.} The refinement study: $h$- and order-ladders on
+\code{homogeneous}, \code{homogeneous\_lithosphere} and \code{two\_solid},
+with rates. On \code{homogeneous\_lithosphere} the numbers must also match
+\code{homogeneous}'s to the discretisation level although the mesh differs,
+since the two are the same body.
+
+Open points of E1 beyond the finite-element leg: an \code{sl3dpp} exchange
+file compared with the exact reference directly; the cross-check of the two
+exact references made a script of the family; and E1 as a campaign stage.
+
+%-----------------------------------------------------------------------------
+\section{Tier E2: gravitating elastic, solid models}
+\label{sec:e2}
+%-----------------------------------------------------------------------------
+
+\status{21 October 2026}{Begun. The spectral pair's gravitating traction
+numbers are gated against each other (the E1 gate). \code{AdGIA}'s
+Love-number family against \code{pyslfp} is in place, and the first bridges
+that bring it under the programme's conventions --- exchange files of the
+conventional Love numbers from \code{love\_benchmark}'s results and from
+\code{pyslfp} (\path{benchmarks/elastic/grav/}) --- are being written. The
+degree-1 frame work is pending.}
+
+\paragraph{The problem.} The full linearised, quasi-static, self-gravitating
+elastic response of solid spherical models to surface loads and tidal
+potentials, with the perturbation of the potential solved inside and
+outside the body. The model ladder: \code{homogeneous}, \code{two\_solid},
+\code{linear\_solid}. The gravity split is two-way, no gravity (E1) or full
+gravity (E2); an intermediate variant (background gravity with the
+potential perturbation dropped) is added only if an issue arises that it
+would help isolate.
+
+\paragraph{The compared quantities.} The conventional load Love numbers
+$h'_l,l'_l,k'_l$ and tidal numbers $h_l,l_l,k_l$ (dimensionless; the tidal
+ones from degree 2), which every code computes; the gravitating traction
+numbers (the same forcing as E1, so that the pair isolates gravity); and
+the generalised Love numbers channel by channel where a code exposes them.
+Degree 1 is compared in the centre-of-mass frame (\S\ref{sec:degrees01});
+degree 0 is included on solid models.
+
+\paragraph{References and legs.} \code{pyslfp} is the reference; no closed
+form exists for a compressible, gravitating, layered body. The spectral
+pair already meets tolerance tier (i) on the gravitating traction numbers
+(\code{homogeneous} and \code{two\_solid}, $l_{\max}=8$, degrees 0--8
+including 1). \code{AdGIA}'s leg is the Love-number family
+(\S\ref{sec:internal-elastic}), which solves exactly these problems against
+\code{pyslfp} on its own case meshes; it is to be revisited, brought into the
+exchange format and SI, and its degree-1 frame settled against
+\code{pyslfp}'s. The two \code{AdGIA} solver routes benchmarked are the
+Dahlen (mixed Eulerian) path and the Maxwell-core route; the other
+formulations are kept for what they show but do not enter the benchmark
+matrix.
+
+\paragraph{Open points.} The degree-1 frame; the choice between the graded
+and uniform spectral mesh rules for the reference files; a gravitating
+analogue of the E1 FE driver or an extension of it.
+
+%-----------------------------------------------------------------------------
+\section{Tier E3: gravitating elastic, fluid--solid models}
+\label{sec:e3}
+%-----------------------------------------------------------------------------
+
+\status{21 October 2026}{Pending as a tier. \code{AdGIA}'s Love-number
+family covers these models against \code{pyslfp}.}
+
+\paragraph{The problem.} E2 with fluid regions: a fluid core, then an inner
+core, stratified cores and PREM-grade structure (\code{fluid\_core},
+\code{aw\_core}, \code{inner\_core}, \code{stratified\_core},
+\code{earth\_like}, \code{prem\_4}). There is no non-gravitating fluid--solid
+tier: a static fluid without gravity has no restoring force.
+
+\paragraph{Degree zero.} The place where the codes' treatments of degree 0
+differ (\S\ref{sec:degrees01}): \code{pyslfp} solves the compressible fluid;
+\code{sl3dpp} is to be verified to do the same with a fluid layer;
+\code{AdGIA}'s Dahlen path differs by design at $l=0$ and is shown, not
+benchmarked, there (a relative $h'_0$ error of about 10 on
+\code{fluid\_core}, \code{doc/benchmarks.tex}, ``Degree zero with a fluid
+layer''), while the Maxwell-core route is benchmarked at every degree.
+
+\paragraph{What is known.} The Love-number family's conclusions on these
+models (\S\ref{sec:internal-elastic}), including the caveat that a
+non-neutrally stratified core separates the static formulations from the
+secular response at $O(N^2)$, so that \code{aw\_core}, neutral by
+construction, is the clean comparison model.
+
+%-----------------------------------------------------------------------------
+\section{Beside the elastic tiers: \code{AdGIA}'s internal families}
+\label{sec:internal-elastic}
+%-----------------------------------------------------------------------------
+
+These families test \code{AdGIA} alone, against \code{pyslfp} as an
+independent radial reference or against exact identities. Their problems,
+settings and full measurements are in \code{doc/benchmarks.tex}; what they
+have established, in brief:
+
+\paragraph{Love numbers (\code{love\_numbers/}).} Load and tidal Love
+numbers of layered, self-gravitating elastic bodies, every formulation
+against \code{pyslfp}, with the response also compared as fields under a cap
+load (\code{doc/benchmarks.tex}, ``The Love-number family''). Every
+formulation agrees with \code{pyslfp} at the discretisation level on its
+domain of validity: at $h=0.2$ the median relative error over degrees 1--5
+is $5\times10^{-3}$--$1.4\times10^{-2}$ at order 2 and
+$6\times10^{-5}$--$8\times10^{-4}$ at order 3, for every model from
+\code{homogeneous} to \code{prem\_4}; the spread between formulations at
+coarse resolution is mesh error, not physics. For loading at $l\ge1$ on
+spherical models the Dahlen path is the cheapest and as accurate as any.
+The dearer formulations buy what it cannot represent --- the compressible
+fluid at degree 0, the slipping interface, the mapped machinery --- but not
+non-neutral core stratification, where the general method is the Maxwell
+relaxation of the fluid. The standard unmeshed-core CMB condition
+(\code{uniform}) is safe for loading at $l\ge2$ ($h'$ within $0.1\,\%$,
+$l'_2$ and $k'_2$ about $0.3\,\%$) and about ten times worse on tides;
+buoyancy alone (\code{winkler}) is safe for neither. The fields show what the
+surface numbers do not: on models with a solid inner core the order-2
+displacement error is large ($0.49$ on \code{prem\_4} at $h=0.2$) where the
+Love numbers are good to a per cent, through the weakly restored
+translation of the inner core, and order 3 removes it. Open: the gauged
+method's degree-1 interior potential, and the degree-1 frame against
+\code{pyslfp}.
+
+\paragraph{Relabelling (\code{relabelling/}).} The mapped (aspherical)
+machinery, tested with the spherical physics unchanged by describing the
+same problem in relabelled coordinates \cite{AlAttarCrawford2016}
+(\code{doc/benchmarks.tex}, ``The relabelling family''). The discrete
+change-of-variables identity holds for the welded classes to
+$\sim10^{-7}$ ($A=0.02$, $h=0.3$, order 2), and on the sea-level legs to
+$5\times10^{-7}$ and below; the mapped Love numbers agree with the unmapped
+ones at the level of the errors themselves; an aspherical reference body
+gives field errors independent of the shape amplitude. Through the
+slipping interface the identity does not hold: the mapped slipping forms are
+not certified.
+
+\paragraph{Perturbation (\code{perturbation/}).} Derivatives of the response
+with respect to an interface radius, the mapped assembly under a
+discontinuous deformation gradient against central differences of
+\code{pyslfp} solves (\code{doc/benchmarks.tex}, ``The perturbation
+family''). On \code{fluid\_core} the degree-0 derivative agrees to
+$0.8\,\%$ at order 2 and $3\times10^{-3}\,\%$ at order 3; at degrees 2 and 3
+the discrepancies of 1--16\,\% are of the order of the errors of the
+numbers themselves at $h=0.3$, and on \code{two\_solid} 3--17\,\%: a
+consistency check at this resolution rather than a sharp verification.
+
+\paragraph{The disc (\code{disc/}).} The two-dimensional laboratory of the
+fluid treatments (\path{benchmarks/disc/README.md} and
+\code{doc/planning/no\_gravity\_analytics.md}; it has no section in
+\code{doc/benchmarks.tex}). Without gravity a fluid disc in a solid annulus
+has closed-form solutions and every tangential slip is removable, so
+welded and slipping solves must coincide exactly, which tests the constraint
+machinery alone. With gravity, a per-degree radial reference with welded,
+free-slip and Dahlen switches measures what can be separated: on the
+Adams--Williamson disc core the three agree to about $10^{-10}$; on a
+uniform, non-neutral disc core the welded and free-slip solves drift within
+an envelope of about $0.3\,\%$ under refinement
+(\code{doc/benchmarks.tex}, ``The formulations compared'').
+
+%=============================================================================
+\part{Viscoelastic loading}
+\label{part:visco}
+%=============================================================================
+
+\section{Tier V: viscoelastic loading without the sea-level equation}
+\label{sec:v}
+
+\status{21 October 2026}{Pending. The ingredients exist in each code
+separately: \code{AdGIA}'s viscoelastic family
+(\S\ref{sec:internal-visco}); \code{pyslfp}'s time-domain viscoelastic
+module; \code{sl3dpp}'s viscoelastic stepping gated against \code{pyslfp}
+fixtures.}
+
+\paragraph{The problem.} The response of spherical models to prescribed
+surface-load histories, with no sea-level equation, in all three codes,
+with the same splits as the elastic tiers: the model ladder; gravity off and
+on; rotational feedback off and on. The three codes share the
+exponential-trapezoid step weights, so with matched steps a comparison
+measures the spatial discretisation.
+
+\paragraph{References.} The spectral codes, against each other at tier
+(i) where they solve the identical discrete problem. On the non-gravitating
+rung the E1 reference extends exactly: by the correspondence principle the
+transfer functions $U(a;s)$, $V(a;s)$ are rational in the Laplace variable,
+which is how the viscoelastic sphere sub-family's exact histories are built.
+Semi-analytical references (modal sums, AAA with Talbot, Gaver--Stehfest)
+are kept as secondary.
+
+\paragraph{The lateral pair (V-lat).} \code{AdGIA} and \code{sl3dpp} are the
+two codes with laterally varying viscosity. With a radial elastic structure
+and viscosity $\bar\eta(r)\,e^{\delta(r,\theta,\varphi)}$, the two can be
+compared for loading without sea level, the viscosity field exchanged as
+netCDF. This needs \code{sl3dpp}'s functionality exposed through public
+drivers.
+
+\section{Beside tier V: the viscoelastic family}
+\label{sec:internal-visco}
+
+\code{AdGIA}'s viscoelastic family (\path{viscoelastic/},
+\code{doc/benchmarks.tex}, ``The viscoelastic family'') has four
+sub-families. The box and sphere sub-families are non-gravitating and
+solid-only, with references exact to about $10^{-10}$, so any mismatch is
+the code's: on them every integrator reaches its design order on every body
+it is stable on, with one finding beyond the design orders --- the
+exponential trapezoid loses half an order (1.5 against 2) under stress
+control on a stiff multi-branch body; and order-2 elements converge at
+about fourth order in the surface coefficients on curved spherical meshes.
+The sphere sub-family's free layered balls under a degree-$l$ pressure are
+the viscoelastic version of E1, and its laterally varying viscosity runs
+test the integrators against a much smaller step. The stepping survey
+compares the schemes on one beam. The Maxwell Love-number histories of
+gravitating models (\path{viscoelastic/love/}) are compared with
+\code{pyslfp} through the correspondence principle and Gaver--Stehfest
+inversion: history errors of $0.5$--$1.1\times10^{-2}$ in $h'$ at order 2 on
+\code{fluid\_core} ($h=0.3$) and $1.7$--$3.2\times10^{-4}$ at order 3, the
+errors spatial, not temporal. The choice of integrator these support is
+described in \code{doc/viscoelasticity.md}.
+
+%=============================================================================
+\part{Sea level}
+\label{part:sea}
+%=============================================================================
+
+\section{Tier S: sea level}
+\label{sec:s}
+
+\status{21 October 2026}{Pending, and to start only when E and V agree. An
+\code{AdGIA}--\code{pyslfp} comparison (\S\ref{sec:internal-sea}) and
+\code{sl3dpp}'s stage-2 sea-level gates against \code{pyslfp} exist
+separately.}
+
+\paragraph{The problem.} The sea-level equation on the same model
+hierarchy: elastic fingerprints first, three-way, with and without
+rotational feedback and shoreline migration; then full viscoelastic GIA
+runs; and 3-D viscosity with the two codes that have it. All three codes
+solve the generalised sea-level equation of \code{pyslfp}, of which
+\code{sl3dpp}'s is a port and \code{AdGIA}'s monolithic treatment a
+reformulation.
+
+\paragraph{Open points.} The observables and their observational
+yardsticks (\S\ref{sec:open}); the degree-1 frame of the sea-level
+comparison, flagged as unreconciled in the existing one.
+
+\section{Beside tier S: the sea-level family}
+\label{sec:internal-sea}
+
+\code{AdGIA}'s monolithic sea-level solve (\code{SetWaterLoad}) against
+\code{pyslfp}'s pseudo-spectral solution of the same problem, with
+rotation, shoreline-migration and timing legs and a real-geography variant
+on coastline-refined meshes (\path{benchmarks/sea_level/README.md}; the
+family has no section in \code{doc/benchmarks.tex}). At toy resolution
+(\code{homogeneous}, $h=0.4$, order 2, $l_{\max}=16$) the ocean-RMS
+relative difference is $1.1\,\%$ on the Dahlen path and $1.2\,\%$ on the
+welded referential class, the floor of two discretisations at this
+resolution rather than a disagreement; the resolved comparison belongs to
+the server campaign. Love-number agreement is assumed there and tested by
+the Love-number family, which is why the elastic tiers come first.
+
+%=============================================================================
+\begin{thebibliography}{99}
+%=============================================================================
+
+\bibitem{AlAttarCrawford2016}
+D.~Al-Attar \& O.~Crawford, 2016.
+Particle relabelling transformations in elastodynamics,
+\emph{Geophys.\ J.\ Int.}, 205, 575--593.
+
+\bibitem{Love1927}
+A.~E.~H.~Love, 1927.
+\emph{A Treatise on the Mathematical Theory of Elasticity}, 4th edn,
+Cambridge University Press.
+
+\bibitem{Martinec2018}
+Z.~Martinec, V.~Klemann, W.~van der Wal, R.~E.~M.~Riva, G.~Spada, Y.~Sun,
+D.~Melini, S.~B.~Kachuck, V.~Barletta, K.~Simon, G.~A \& T.~S.~James, 2018.
+A benchmark study of numerical implementations of the sea level equation in
+GIA modelling, \emph{Geophys.\ J.\ Int.}, 215, 389--414.
+
+\bibitem{Spada2011}
+G.~Spada, V.~R.~Barletta, V.~Klemann, R.~E.~M.~Riva, Z.~Martinec,
+P.~Gasperini, B.~Lund, D.~Wolf, L.~L.~A.~Vermeersen \& M.~A.~King, 2011.
+A benchmark study for glacial isostatic adjustment codes,
+\emph{Geophys.\ J.\ Int.}, 185, 106--132.
+
+\end{thebibliography}
+
+\end{document}

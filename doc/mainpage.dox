@@ -223,6 +223,10 @@
  *   projected solvers, MFEM facts and pitfalls.
  * - `doc/equilibrium_figures.tex`: equilibrium states and hydrostatic
  *   figures by constrained optimisation.
+ * - `doc/benchmark_programme.tex`: the benchmark programme — the cross-code
+ *   hierarchy with sl3dpp and pyslfp (elastic, viscoelastic loading, sea
+ *   level), its conventions, status and results, with the internal families
+ *   placed in it.
  * - `doc/benchmarks.tex`: the benchmark families and their results.
  * - `doc/BenchmarkPapers/code_survey.md`: a survey of the published 3-D
  *   GIA codes and benchmarks, set against the library's treatments.
