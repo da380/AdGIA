@@ -1365,12 +1365,16 @@ the spectral value, and $k'_0=-5.35$ where mass conservation requires 0
 method agrees at every degree including 0 --- $h'_0$ to $4.5\times10^{-3}$,
 and $k'_0=-7\times10^{-6}$, mass conserved to the discretisation level ---
 at several times Dahlen's cost per solve. Its degree-1 $h'$ sits
-$1.6\times10^{-2}$ from \code{pyslfp}'s. That is not a frame or
-discretisation error: on this non-neutral core the Maxwell relaxation's
-degree-1 stop lies at an increment floor of about $10^{-2}$, the soft
-core--shell translation (\code{doc/benchmarks.tex}, ``The degree-1
-adjudication''), and the neutral \code{aw\_core} is the model on which the
-methods are expected to coincide.
+$1.6\times10^{-2}$ from \code{pyslfp}'s, that is from the Dahlen (secular)
+closure. That is not a frame or discretisation error: the Maxwell route's
+discrete limit is the welded static solve, which on a core with
+$N^2\neq0$ returns the welded point of the elastic-static band rather than
+the secular closure (\code{doc/static\_fluid\_core.tex}, ``The band, the
+secular state, and the Maxwell route''). Its degree-1 relaxation also stops
+at an increment of about $10^{-2}$, the soft core--shell translation
+(\code{doc/benchmarks.tex}, ``The degree-1 adjudication''), but that is a
+diagnostic of the stop, not the offset. The neutral \code{aw\_core} is the
+model on which the methods are expected to coincide.
 
 \paragraph{\code{AdGIA} on the fluid-core variants.} The pattern of
 \code{fluid\_core} repeats on every variant. The Dahlen path agrees with
@@ -1402,14 +1406,25 @@ are the mantle's discretisation at the resolution edge, not the core's
 differs). On \code{stratified\_core} the Dahlen path is unusually close at
 degree 2: $h'_2$ to $7.4\times10^{-4}$ and $k'_2$ to $7.3\times10^{-6}$.
 
-Degree 1 on the Maxwell path measures what the \code{fluid\_core} paragraph
-above anticipates. $h'_1$ sits $6.1\times10^{-4}$ from \code{pyslfp}'s on
-the neutral \code{aw\_core}, against $1.5\times10^{-2}$ on
-\code{inner\_core}, $8.7\times10^{-3}$ on \code{stratified\_core} and
-$1.6\times10^{-2}$ on \code{fluid\_core}: the increment floor appears on the
-non-neutral cores, and on \code{aw\_core} the methods coincide, its Maxwell
+Degree 1 on the Maxwell path. The measured quantity is the Maxwell
+route's degree-1 offset from \code{pyslfp}, that is from the Dahlen
+(secular) closure: $h'_1$ sits $6.1\times10^{-4}$ from it on the neutral
+\code{aw\_core}, against $1.5\times10^{-2}$ on \code{inner\_core},
+$8.7\times10^{-3}$ on \code{stratified\_core} and $1.6\times10^{-2}$ on
+\code{fluid\_core}. On \code{aw\_core} the two routes coincide, its Maxwell
 and Dahlen degree-1 numbers both within $2\times10^{-3}$ of
-\code{pyslfp}'s.
+\code{pyslfp}'s. The relaxation's stop increments at degree 1 are
+diagnostics, quoted separately --- load and tide, $2.7\times10^{-3}$ and
+$8.8\times10^{-4}$ on \code{aw\_core}, $1.1\times10^{-2}$ and
+$1.1\times10^{-2}$ on \code{inner\_core}, $3.0\times10^{-4}$ and
+$2.7\times10^{-3}$ on \code{stratified\_core} --- and they are not a
+measure of the offset: \code{stratified\_core} stops at a small increment
+and still sits $8.7\times10^{-3}$ off. The interpretation, the welded
+discrete limit of the route against the secular closure, and the table of
+$N^2$ across the ladder's cores (none stably stratified throughout until
+the three stable cores added on 21 October 2026) are in
+\code{doc/static\_fluid\_core.tex} (``The band, the secular state, and the
+Maxwell route''; ``Stably stratified cores on the ladder'').
 
 \subsection{Degree zero with a fluid region}
 \label{sec:e2-degree0}
@@ -1518,7 +1533,15 @@ treatment is the reference at degree 0.
 Convergence sweeps ($h$- and order-ladders) on \code{two\_solid} and the
 four fluid-core models; \code{AdGIA} runs on \code{homogeneous} and
 \code{linear\_solid}; the remaining fluid--solid models, \code{earth\_like}
-and \code{prem\_4}; and E2 as a campaign stage.
+and \code{prem\_4}; the stably stratified cores \code{stable\_core\_mild},
+\code{stable\_core} and \code{stable\_core\_strong} ($N^2>0$ throughout,
+$+8\times10^{-8}$, $+9\times10^{-7}$ and $+4\times10^{-6}$ at the CMB
+against $-9.5\times10^{-7}$ to $-1.4\times10^{-6}$ for the unstable cores;
+spectral pair at $6.7\times10^{-12}$, $2.8\times10^{-11}$ and
+$7.4\times10^{-11}$), on which the static limit exists cleanly and the Maxwell route's degree-1 offset from \code{pyslfp}
+decides whether the route reaches the secular state
+% STABLE-CORE: results to come
+\textbf{[results to come]}; and E2 as a campaign stage.
 
 %-----------------------------------------------------------------------------
 \section{Beside the elastic tiers: \code{AdGIA}'s internal families}

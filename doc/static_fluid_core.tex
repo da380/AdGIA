@@ -21,6 +21,7 @@
 \newcommand{\Div}{\operatorname{div}}
 \newcommand{\code}[1]{\texttt{#1}}
 \newcommand{\jump}[1]{[\![#1]\!]}
+\newcommand{\nuh}{\hat{\boldsymbol{\nu}}}
 
 \title{The static response of a body with a stratified fluid core:\\
        well-posedness, the Dahlen closure, and what dissipation\\
@@ -92,6 +93,19 @@ The short version:
   relaxation is the formulation-faithful computation; Dahlen is its
   converged spherical closure; welded and slip are its
   approximants, retained as instruments (\S\ref{sec:persp}).
+\item \emph{Under review (added 21 October 2026).} Dahlen's closure
+  appears to generalise beyond the spherical background: for a
+  hydrostatic fluid region under arbitrary solids the free function
+  of the tangential balance is a one-dimensional unknown on the level
+  foliation, pinned by mass conservation below each level surface, and
+  the same equation decides degree 0. A non-level wall changes the
+  gauge class, and the sphere is the singular limit in which the
+  transverse matching collapses to Dahlen's surface mass. The
+  derivation, with its derived, argued and conjectured steps marked,
+  is \S\ref{sec:general}; the measured degree-1 offsets of the Maxwell
+  route on stably stratified cores that prompted it are recorded there.
+  Items 4--6 and the hierarchy below stand until its open steps are
+  settled.
 \end{enumerate}
 
 \begin{center}
@@ -219,25 +233,108 @@ this is and is not legitimate.
 \section{The interior slaving}
 \label{sec:slaving}
 
-\emph{Status: derived.} Work at one harmonic degree $\ell \ge 1$ on
-the radial background, in either dimension. Write the static
-(time-independent) equations of the elastic fluid.
+\emph{Status: derived.} Work on the radial background, in either
+dimension, at one harmonic degree $\ell$: every perturbation is a
+radial function times one harmonic $Y$ (a spherical harmonic
+$Y_{\ell m}$ in three dimensions, $\cos\ell\theta$ or $\sin\ell\theta$
+in two), and the equations below are statements about those radial
+functions. Every line of the derivation is written out.
 
-\textbf{Step 1 (tangential balance).} The tangential component of the
-linearised momentum balance,
-$-\nabla p^1 = \rho\,\nabla\phi + \rho^1\nabla\Phi_0$, has no
-$\rho^1$-term (gravity is radial), and integrates along the level
-surface to
+\paragraph{Conventions.} Those of \S\ref{sec:setting}, used without
+change throughout. Primes are radial derivatives,
+$\rho' = \mathrm{d}\rho/\mathrm{d}r$, and $\hat{\mathbf r}$ is the
+outward radial unit vector, $u_r = \bu\cdot\hat{\mathbf r}$. The
+background has $g = \Phi_0' \ge 0$, so
 \begin{equation}
-  p^1 = -\rho\,\phi
-  \qquad (\ell \ge 1).
+  \nabla\Phi_0 = g\,\hat{\mathbf r},
+  \qquad
+  \frac{\mathrm{d}p^0}{\mathrm{d}r} = -\rho g,
+  \qquad
+  \bu\cdot\nabla p^0 = -\rho g\,u_r .
+  \label{eq:conv-background}
+\end{equation}
+The perturbation $\phi$ is the Eulerian perturbation of the
+gravitational potential, with the background's sign: the gravitational
+body force on the fluid is $-\rho\nabla(\Phi_0 + \phi)$ to first order,
+and $\nabla^2\phi = 4\pi G\rho^1$. The linearised static momentum
+balance of the inviscid fluid is then
+\begin{equation}
+  -\nabla p^1 - \rho\,\nabla\phi - \rho^1\,\nabla\Phi_0 = \mathbf 0 ,
+  \label{eq:momentum}
+\end{equation}
+and its Lagrangian pressure, constitutive law and mass conservation
+(\S\ref{sec:setting}) are
+\begin{equation}
+  \Delta p = p^1 + \bu\cdot\nabla p^0 = p^1 - \rho g\,u_r ,
+  \qquad
+  \Delta p = -\kappa\,\Div\bu ,
+  \qquad
+  \rho^1 = -\Div(\rho\,\bu) = -\rho\,\Div\bu - \rho'\,u_r .
+  \label{eq:constitutive}
+\end{equation}
+Write $\nabla_{\!\perp}$ for the part of the gradient tangent to the
+spheres $r = \text{const}$ (circles in two dimensions), which are the
+level surfaces of $\Phi_0$: $\nabla = \hat{\mathbf r}\,\partial_r +
+\nabla_{\!\perp}$, with $\nabla_{\!\perp}\Phi_0 = \mathbf 0$ and
+$\nabla_{\!\perp}\rho = \mathbf 0$. Steps 1 and 2 use only
+\eqref{eq:momentum}; Step 3 adds \eqref{eq:constitutive}; Step 4 adds
+the interface.
+
+\textbf{Step 1 (tangential balance).} The tangential part of
+\eqref{eq:momentum} is
+\begin{equation}
+  -\nabla_{\!\perp} p^1 - \rho\,\nabla_{\!\perp}\phi
+  - \rho^1\,\nabla_{\!\perp}\Phi_0 = \mathbf 0 .
+\end{equation}
+The last term vanishes because $\nabla\Phi_0$ is radial: the
+tangential balance has no $\rho^1$-term. Since $\rho$ is constant on
+each sphere, $\rho\,\nabla_{\!\perp}\phi =
+\nabla_{\!\perp}(\rho\,\phi)$, and so
+\begin{equation}
+  \nabla_{\!\perp}\bigl(p^1 + \rho\,\phi\bigr) = \mathbf 0 ,
+  \qquad\text{that is}\qquad
+  p^1 + \rho\,\phi = f(r) ,
+  \label{eq:tangential}
+\end{equation}
+with $f$ constant on each level surface. At degree $\ell$ the left side
+of \eqref{eq:tangential} is a radial function times $Y$; a function
+constant on each sphere has no component along a harmonic of degree
+$\ell \ge 1$ (its projection is $f(r)\int Y\,\mathrm{d}\Omega = 0$).
+Projecting \eqref{eq:tangential} onto $Y$ therefore gives
+\begin{equation}
+  p^1 = -\rho\,\phi \qquad (\ell \ge 1).
   \label{eq:p-slaved}
 \end{equation}
+At $\ell = 0$ the argument fails at its first line. Every degree-0
+field is a function of $r$ alone, $\nabla_{\!\perp}$ annihilates all of
+them, and the tangential balance is empty: $p^1 + \rho\,\phi = f(r)$
+is left free, a constant on each level surface and so a free function
+of radius in each fluid region, which the radial balance and Poisson's
+equation relate to $\rho^1$ and $\phi$ without fixing. This is the
+degree-0 matter of \S\ref{sec:dahlen}, and the reason everything below
+is restricted to $\ell \ge 1$.
 
-\textbf{Step 2 (radial balance).} Substituting \eqref{eq:p-slaved}
-into the radial component gives
+\textbf{Step 2 (radial balance).} The radial part of
+\eqref{eq:momentum}, with $\hat{\mathbf r}\cdot\nabla\Phi_0 = g$, is
 \begin{equation}
-  \rho^1 = \frac{1}{g}\frac{\mathrm{d}\rho}{\mathrm{d}r}\,\phi .
+  -\partial_r p^1 - \rho\,\partial_r\phi - \rho^1 g = 0 .
+  \label{eq:radial}
+\end{equation}
+Substitute \eqref{eq:p-slaved}. Because $\rho$ depends on $r$,
+\begin{equation}
+  -\partial_r p^1 = \partial_r(\rho\,\phi)
+  = \rho'\,\phi + \rho\,\partial_r\phi ,
+\end{equation}
+and \eqref{eq:radial} becomes
+\begin{equation}
+  \rho'\,\phi + \rho\,\partial_r\phi - \rho\,\partial_r\phi
+  - \rho^1 g = 0 .
+\end{equation}
+The two $\rho\,\partial_r\phi$ terms cancel, leaving
+$\rho^1 g = \rho'\,\phi$; dividing by $g > 0$ (at $r > 0$),
+\begin{equation}
+  \rho^1 = \frac{1}{g}\frac{\mathrm{d}\rho}{\mathrm{d}r}\,\phi
+  \qquad (\ell \ge 1).
   \label{eq:rho-slaved}
 \end{equation}
 Equations \eqref{eq:p-slaved}--\eqref{eq:rho-slaved} are exactly
@@ -245,14 +342,56 @@ Dahlen's interior relations: they follow from momentum balance alone
 and hold for \emph{any} static description of the fluid, elastic or
 reduced.
 
-\textbf{Step 3 (the elastic description adds kinematics).} The
-elastic fluid also carries $\rho^1 = -\Div(\rho\bu)$ and
-$\Delta p = -\kappa \Div\bu$ with
-$\Delta p = p^1 - \rho g\,u_r$ (using
-$\bu\cdot\nabla p^0 = -\rho g\,u_r$). Eliminating $\Div\bu$ between
-the two and inserting \eqref{eq:p-slaved}--\eqref{eq:rho-slaved}
-yields, after a line of algebra in which the combination
-\eqref{eq:N2} appears,
+\textbf{Step 3 (the displacement description adds kinematics).} The
+elastic fluid also carries a displacement, and \eqref{eq:constitutive}
+gives its dilatation in two independent ways.
+
+\emph{Mechanically}, from the Lagrangian pressure. By
+\eqref{eq:constitutive} and \eqref{eq:p-slaved},
+\begin{equation}
+  \Delta p = p^1 - \rho g\,u_r = -\rho\,\phi - \rho g\,u_r
+  = -\rho\,(\phi + g\,u_r) ,
+  \label{eq:dp-slaved}
+\end{equation}
+and $\Div\bu = -\Delta p/\kappa$, so
+\begin{equation}
+  \Div\bu = \frac{\rho}{\kappa}\,(\phi + g\,u_r)
+  = \frac{\rho g}{\kappa}\Bigl(u_r + \frac{\phi}{g}\Bigr) .
+  \label{eq:div-mech}
+\end{equation}
+
+\emph{Kinematically}, from mass conservation. By
+\eqref{eq:constitutive}, $\rho^1 = -\rho\,\Div\bu - \rho'\,u_r$, so
+$\Div\bu = -(\rho^1 + \rho'\,u_r)/\rho$, and with
+\eqref{eq:rho-slaved},
+\begin{equation}
+  \Div\bu = -\frac{1}{\rho}\Bigl(\frac{\rho'}{g}\,\phi + \rho'\,u_r\Bigr)
+  = -\frac{\rho'}{\rho}\Bigl(u_r + \frac{\phi}{g}\Bigr) .
+  \label{eq:div-kin}
+\end{equation}
+
+Both hold in the elastic fluid, so their right-hand sides are equal:
+\begin{equation}
+  \frac{\rho g}{\kappa}\Bigl(u_r + \frac{\phi}{g}\Bigr)
+  = -\frac{\rho'}{\rho}\Bigl(u_r + \frac{\phi}{g}\Bigr) .
+\end{equation}
+Bring both terms to the left and collect the $u_r$ and $\phi$ terms:
+\begin{equation}
+  u_r\,\Bigl(\frac{\rho g}{\kappa} + \frac{1}{\rho}\frac{\mathrm{d}\rho}{\mathrm{d}r}\Bigr)
+  = -\frac{\phi}{g}\,
+    \Bigl(\frac{\rho g}{\kappa} + \frac{1}{\rho}\frac{\mathrm{d}\rho}{\mathrm{d}r}\Bigr) .
+\end{equation}
+By the definition \eqref{eq:N2} of the buoyancy frequency the bracket
+is
+\begin{equation}
+  \frac{\rho g}{\kappa} + \frac{1}{\rho}\frac{\mathrm{d}\rho}{\mathrm{d}r}
+  = -\frac{N^2}{g} ,
+\end{equation}
+so that
+\begin{equation}
+  -\frac{N^2}{g}\,u_r = \frac{N^2}{g^2}\,\phi ,
+\end{equation}
+and multiplying by $-\rho$,
 \begin{equation}
   \boxed{\;u_r\,\frac{\rho N^2}{g}
    \;=\; -\,\frac{\rho N^2}{g^2}\,\phi\;}
@@ -262,26 +401,73 @@ yields, after a line of algebra in which the combination
   \label{eq:slaving}
 \end{equation}
 The radial displacement is \emph{slaved}, pointwise, to the potential
-perturbation: fluid particles ride the perturbed equipotentials
-(equivalently, the Lagrangian perturbation of the potential-plus-%
-position label vanishes). At $N^2 = 0$ the relation degenerates to
-$0 = 0$ and $u_r$ is free --- the first appearance of the dichotomy
-that organises everything below.
+perturbation. In words: the Lagrangian perturbation of the
+gravitational potential, the change of $\Phi_0 + \phi$ following a
+fluid parcel,
+\begin{equation}
+  \Delta\Phi = \phi + \bu\cdot\nabla\Phi_0 = \phi + g\,u_r ,
+  \label{eq:dPhi}
+\end{equation}
+vanishes: \eqref{eq:slaving} is $\Delta\Phi = 0$, and fluid parcels ride
+the perturbed equipotentials. In this notation \eqref{eq:dp-slaved} and
+\eqref{eq:div-mech} read $\Delta p = -\rho\,\Delta\Phi$ and
+$\Div\bu = (\rho/\kappa)\,\Delta\Phi$, so on the slaved field the
+Lagrangian pressure perturbation and the dilatation vanish too, and
+$\rho^1 = -\rho'\,u_r$ is the density change of parcels moved radially
+without compression --- consistent with \eqref{eq:rho-slaved}.
+
+At $N^2 = 0$ the relation degenerates to $0 = 0$, and the two
+determinations of the dilatation show why. The neutral profile has
+$\rho'/\rho = -\rho g/\kappa$, so the right-hand sides of
+\eqref{eq:div-mech} and \eqref{eq:div-kin} coincide identically, for
+every $u_r$: the kinematic and the mechanical determinations of
+$\Div\bu$ are one equation, not two, and $u_r$ is free --- the first
+appearance of the dichotomy that organises everything below.
+
+\textbf{Step 4 (the interface).} Steps 1--3 hold at every point of the
+fluid, up to $\Sigma$. The potential perturbation and the gravity are
+continuous across $\Sigma$ ($\phi$ because the potential is, $g$
+because the enclosed mass is), so where $N^2 \neq 0$ on the fluid side
+of the interface, \eqref{eq:slaving} fixes the fluid's trace of the
+radial displacement:
+\begin{equation}
+  u_r(\text{fluid side of }\Sigma) = -\frac{\phi(c)}{g(c)} .
+  \label{eq:fluid-trace}
+\end{equation}
+Every formulation that carries a fluid displacement also imposes a
+matching condition at $\Sigma$. Welded: the whole displacement is
+continuous, $\jump{\bu} = \mathbf 0$. Slipping: only its normal
+component is, $\bn\cdot\jump{\bu} = 0$. Both contain
+\begin{equation}
+  u_r(\text{fluid side of }\Sigma) = u_r(\text{solid side of }\Sigma).
+  \label{eq:matching}
+\end{equation}
+Together, \eqref{eq:fluid-trace} and \eqref{eq:matching} require
+$u_r(\text{solid side of }\Sigma) = -\phi(c)/g(c)$, that is
+$\Delta\Phi = 0$ on the solid side: the solid's boundary would have to
+ride the perturbed equipotential. Nothing else in the problem asks for
+this. Steps 1 and 2 together with the solid already make a closed and
+well-posed problem --- Dahlen's (\S\ref{sec:dahlen}) --- which
+determines the solid's response, and with it $u_r$ on the solid side
+of $\Sigma$ and $\phi(c)$; for a generic load that $u_r$ is not
+$-\phi(c)/g(c)$, and the interior leaves no freedom to absorb the
+difference, since \eqref{eq:slaving} fixes $u_r$ pointwise. One trace
+is asked to take two values.
+
+Dahlen's closure keeps only Steps 1 and 2, never introduces a
+displacement in the fluid, and so never meets Steps 3 and 4: the mass
+that the slaved field would sweep across $\Sigma$ it books as the
+surface term F3 (\S\ref{sec:dahlen}).
 
 %=====================================================================
 \section{Non-existence of the elastic-static solution}
 \label{sec:nonexist}
 
-\emph{Status: argued, and displayed numerically.} At the CMB the
-kinematics of every formulation that carries a fluid displacement
-demands
-\begin{equation}
-  u_r(\text{fluid side of }\Sigma) = u_r(\text{solid side of }\Sigma),
-  \label{eq:matching}
-\end{equation}
-while \eqref{eq:slaving} assigns the fluid side the value
-$-\phi(c)/g(c)$. For a generic load the two assignments differ; the
-same trace cannot take two values; hence:
+\emph{Status: argued, and displayed numerically.} Step 4 of
+\S\ref{sec:slaving} is the whole obstruction: the interior slaving
+\eqref{eq:slaving} fixes the fluid's trace \eqref{eq:fluid-trace}, the
+matching \eqref{eq:matching} demands that the same trace equal the
+solid's, and for a generic load the two values differ. Hence:
 
 \begin{claim}[no classical static solution]
 \label{claim:nonexist}
@@ -415,10 +601,13 @@ core (measured: unchanged to $10^{-11}$ under a thirty-fold scaling);
 (ii) at $N^2 = 0$ the reduction coincides with the full elastic
 static fluid, so Dahlen, welded and slip must agree exactly there
 (measured: $\sim 10^{-10}$ at every degree on \code{aw\_core}). The
-well-known failure at $\ell = 0$ --- the elimination discards the
-compressional physics, and one constant pressure per fluid region
-remains free --- is a separate, understood matter; the practical
-remedy (solve $\ell = 0$ with the displacement description) is what
+well-known failure at $\ell = 0$ is a separate, understood matter:
+there the tangential balance is empty (Step 1 of
+\S\ref{sec:slaving}), so $p^1 + \rho\,\phi$ is a free function of
+radius in each fluid region, and the compressional equations --- which
+the elimination discards --- are what would determine it
+(\code{doc/benchmark\_programme.tex}, ``Degree zero with a fluid
+region''). The practical remedy (solve $\ell = 0$ with the displacement description) is what
 this library and \code{pyslfp} both do.
 
 \paragraph{Aspherical reference states.} The elimination above is a
@@ -455,6 +644,441 @@ static solution without one exists. The only question a formulation
 answers is whether it admits the jump openly and is well posed, or
 forbids it and loses existence.
 \end{remark}
+
+%=====================================================================
+\section[Generalisation: hydrostatic fluid regions in a three-dimensional model]{Generalisation: hydrostatic fluid regions\newline
+in a three-dimensional model}
+\label{sec:general}
+
+\emph{Status: a sketch under review. Each step is marked
+\emph{derived}, \emph{argued} or \emph{conjectured}; where the sketch
+as first proposed did not survive the derivation, the text says so.}
+The question is whether the secular closure of \S\ref{sec:dahlen} ---
+Steps 1 and 2 of \S\ref{sec:slaving}, the fluid displacement never
+introduced --- extends beyond the spherical background, and whether the
+same analysis decides degree 0 (the free function of Step 1).
+
+\paragraph{Setting.} A fluid region $F$ (inviscid, barotropic-elastic
+with $V(\mathbf x, J)$ as in \S\ref{sec:setting}) is in hydrostatic
+equilibrium in the total background potential $\Phi_0$ of a body whose
+solid parts are arbitrary: aspherical, pre-stressed, non-hydrostatic.
+Hydrostatic means $\nabla p^0 = -\rho\nabla\Phi_0$ in $F$. Then
+$\nabla p^0 \times \nabla\Phi_0 = \mathbf 0$, and, taking the curl,
+$\nabla\rho \times \nabla\Phi_0 = \mathbf 0$: $p^0$ and $\rho$ are
+constant on each connected component of each level set of $\Phi_0$ in
+$F$, and $F$ carries the level foliation of $\Phi_0$. (They are single
+functions of $\Phi_0$ across the whole of $F$ only if the material is
+layered on the level surfaces; we write $\rho(\Phi_0)$ and
+$\rho_\Phi = \mathrm{d}\rho/\mathrm{d}\Phi_0$ per component.) Write
+$g = |\nabla\Phi_0| > 0$ in $F$ (away from a centre) and
+$\nuh = \nabla\Phi_0/g$ for the unit normal to the level surfaces,
+pointing towards increasing $\Phi_0$; $\nabla_{\!\parallel}$ is the
+part of the gradient along the level surfaces. The fluid--solid
+interface $\Sigma$, with unit normal $\bn$ pointing out of $F$, is
+\emph{not} assumed to be a level surface: an enclosed fluid is in
+equilibrium against a wall of any shape, the solid supplying the
+traction (only a free surface must be level). Let $\theta$ be the angle
+between $\Sigma$ and the level surface through a point of $\Sigma$, so
+that $\bn = \cos\theta\,\nuh + \sin\theta\,\hat{\mathbf t}$ with
+$\hat{\mathbf t}$ a unit vector along the level surface, normal to the
+curve $\Sigma \cap \{\Phi_0 = \mathrm{const}\}$; $\theta = 0$ on a
+level wall, the spherical case. The buoyancy frequency generalises to
+\begin{equation}
+  N^2 = -g^2\Bigl(\frac{\rho_\Phi}{\rho} + \frac{\rho}{\kappa}\Bigr),
+  \label{eq:N2-general}
+\end{equation}
+which is \eqref{eq:N2} on the sphere, where $\rho' = g\rho_\Phi$. The
+conventions of \S\ref{sec:slaving} are kept: the static momentum
+balance \eqref{eq:momentum}, the relations \eqref{eq:constitutive},
+and $\nabla^2\phi = 4\pi G\rho^1$.
+
+\paragraph{Step G1 (interior relations). \emph{Derived.}} The
+along-level part of \eqref{eq:momentum} has no $\rho^1$-term, since
+$\nabla_{\!\parallel}\Phi_0 = \mathbf 0$, and $\rho$ is constant on the
+level component, so as in Step 1 of \S\ref{sec:slaving}
+\begin{equation}
+  \nabla_{\!\parallel}\bigl(p^1 + \rho\,\phi\bigr) = \mathbf 0,
+  \qquad
+  p^1 + \rho\,\phi = f(\Phi_0),
+  \label{eq:G-f}
+\end{equation}
+with $f$ a free function, one value for each connected component of
+each level set in $F$. With a non-level wall the level sets within $F$
+are cut by $\Sigma$ and may be disconnected; each component then
+carries its own value of $f$, and $f$ must join continuously where
+components merge, since $p^1$ is continuous in $F$. The normal part of
+\eqref{eq:momentum}, with $\nuh\cdot\nabla\Phi_0 = g$, is
+$-\partial_\nu p^1 - \rho\,\partial_\nu\phi - \rho^1 g = 0$. From
+\eqref{eq:G-f}, $\partial_\nu p^1 = -\rho_\Phi g\,\phi - \rho\,\partial_\nu\phi
++ f' g$ (since $\partial_\nu\rho = \rho_\Phi g$ and
+$\partial_\nu f = f' g$, primes now $\mathrm{d}/\mathrm{d}\Phi_0$), so
+\begin{equation}
+  \rho_\Phi g\,\phi + \rho\,\partial_\nu\phi - f' g - \rho\,\partial_\nu\phi
+  - \rho^1 g = 0,
+  \qquad\text{i.e.}\qquad
+  \rho^1 = \rho_\Phi\,\phi - f'(\Phi_0) .
+  \label{eq:G-rho}
+\end{equation}
+These generalise Steps 1--2 of \S\ref{sec:slaving}: on the sphere at
+$\ell \ge 1$, $f = 0$ and \eqref{eq:G-rho} is \eqref{eq:rho-slaved}.
+Dahlen's reduction is \eqref{eq:G-f}--\eqref{eq:G-rho} with nothing
+more; it leaves $f$ free.
+
+\paragraph{Step G2 (kinematics with $f \neq 0$). \emph{Derived.}}
+Define $s$ by
+\begin{equation}
+  \bu\cdot\nabla\Phi_0 = -\phi - s,
+  \qquad\text{so that}\qquad
+  s = -(\phi + \bu\cdot\nabla\Phi_0) = -\Delta\Phi ,
+  \label{eq:G-s}
+\end{equation}
+minus the Lagrangian perturbation \eqref{eq:dPhi} of the potential. With
+$\bu\cdot\nabla p^0 = -\rho\,\bu\cdot\nabla\Phi_0 = \rho(\phi + s)$ and
+\eqref{eq:G-f},
+\begin{equation}
+  \Delta p = p^1 + \bu\cdot\nabla p^0 = -\rho\phi + f + \rho\phi + \rho s
+  = f + \rho s ,
+  \qquad
+  \Div\bu = -\frac{\Delta p}{\kappa} = -\frac{f + \rho s}{\kappa} .
+  \label{eq:G-div-mech}
+\end{equation}
+Mass conservation, with $\nabla\rho = \rho_\Phi\nabla\Phi_0$, gives
+$\rho^1 = -\rho\,\Div\bu - \rho_\Phi\,\bu\cdot\nabla\Phi_0
+= -\rho\,\Div\bu + \rho_\Phi(\phi + s)$. Equating with
+\eqref{eq:G-rho}, the $\rho_\Phi\phi$ terms cancel:
+\begin{equation}
+  -f' = -\rho\,\Div\bu + \rho_\Phi\, s,
+  \qquad\text{so}\qquad
+  \rho\,\Div\bu = f' + \rho_\Phi\, s .
+  \label{eq:G-div-kin}
+\end{equation}
+Insert \eqref{eq:G-div-mech}:
+$-\rho(f + \rho s)/\kappa = f' + \rho_\Phi s$, that is
+\begin{equation}
+  -s\Bigl(\rho_\Phi + \frac{\rho^2}{\kappa}\Bigr) = f' + \frac{\rho f}{\kappa} .
+\end{equation}
+By \eqref{eq:N2-general}, $\rho_\Phi + \rho^2/\kappa = -\rho N^2/g^2$, so
+\begin{equation}
+  \boxed{\;s\,\frac{\rho N^2}{g^2} = f' + \frac{\rho f}{\kappa}\;}
+  \qquad\Longrightarrow\qquad
+  s = \frac{g^2}{\rho N^2}\Bigl(f' + \frac{\rho f}{\kappa}\Bigr)
+  \quad (N^2 \neq 0),
+  \qquad
+  \Div\bu = -\frac{f + \rho s}{\kappa} .
+  \label{eq:G-slaving}
+\end{equation}
+The component of $\bu$ along $\nabla\Phi_0$ and the dilatation are
+slaved, pointwise, to $f$ and $f'$; the interior does not determine
+$f$ itself. With $f = 0$, $s = 0$, which is \eqref{eq:slaving}. Two
+remarks. First, if $\kappa$ is constant on the level surfaces (true on
+the spherical ladder, and on any body whose material is layered on its
+level surfaces), then $N^2/g^2$ and $s$ are functions of $\Phi_0$ alone:
+every material surface that was a level surface $\Phi_0 = c$ ends on
+the level surface of the perturbed potential $\Phi_0 + \phi$ with value
+$c - s(c)$. Parcel surfaces remain level surfaces, which in the sketch
+was an assumption about stable ordering; here it is a consequence of
+\eqref{eq:G-slaving}. Second, at $N^2 = 0$ the boxed relation reads
+$0 = f' + \rho f/\kappa$: the interior then fixes $f$ up to one
+constant per region ($f \propto \exp(-\int\rho/\kappa\,\mathrm d\Phi_0)$)
+and leaves $s$ free, the class-K gauge freedom of \S\ref{sec:gauge}.
+
+\emph{On the documented degree-0 statements.} The sketch proposed that
+at $\ell = 0$ on the sphere $f = f_0$ is a constant, pinned by the
+degree-0 matching. That is not right for $N^2 \neq 0$. Take a uniform
+core ($\rho_\Phi = 0$, so $N^2 = -g^2\rho/\kappa$) and $f = f_0$. Then
+\eqref{eq:G-slaving} gives $s = -f_0/\rho$ and $\Div\bu = 0$;
+\eqref{eq:G-rho} gives $\rho^1 = 0$, so $\phi$ is harmonic, and at
+$\ell = 0$ regular, $\phi = \phi_0$; hence
+$u_r = -(\phi_0 + s)/g \propto 1/r$ (as $g \propto r$), whose
+divergence $r^{-2}(r^2u_r)'$ is nonzero unless $u_r \equiv 0$. A
+constant $f$ therefore forces $u_r = 0$ throughout the core, which a
+generic degree-0 load cannot match. What is true is the count. Dahlen's
+reduction leaves $f$ a free function. The displacement description adds,
+at $\ell = 0$, the identity $\Div\bu = r^{-2}(r^2 u_r)'$; with
+\eqref{eq:G-slaving} this is a second-order equation for $f$ (Step G5),
+whose regular solutions form a one-parameter family, the parameter
+pinned by one wall condition. ``One constant per fluid region'' is thus
+the right count after the interior kinematics; ``a free function'' is
+the right count for Dahlen's reduction alone; and at $N^2 = 0$ the
+constant appears directly, as above. The two statements in the
+documentation (\S\ref{sec:dahlen} and \code{doc/benchmark\_programme.tex},
+``Degree zero with a fluid region'') are reconciled in this sense, not
+by $f$ being constant.
+
+\paragraph{Step G3 (the relabelling class on a non-level wall).
+\emph{Derived.}} A relabelling of the strict class ($N^2 \neq 0$) is
+divergence-free and tangent to the level surfaces, $\bw\cdot\nabla\Phi_0
+= 0$, and must not move the boundary, $\bw\cdot\bn = 0$ on $\Sigma$. On
+a level wall $\bn = \nuh$, the two conditions coincide, and every
+along-level motion at the wall is admissible: the strict class of
+\S\ref{sec:setting}. On a transverse wall ($\sin\theta \neq 0$) a field
+tangent to both the level surface and $\Sigma$ lies along the curve
+$\Sigma\cap\{\Phi_0 = c\}$; the admissible class at the wall reduces to
+motions along those curves (in two dimensions, where the curves are
+points, to no motion at all). An along-level displacement $a\,\hat{\mathbf t}$
+at the wall has $\bn$-component $a\sin\theta$ and carries mass across
+$\Sigma$. Consequence: the statement ``tangential slip is pure gauge''
+holds only on level walls. On a transverse wall a slip tangent to
+$\Sigma$ has a component along $\nabla\Phi_0$ (of size $\sin\theta$)
+except along the intersection curves, and so is not a relabelling.
+
+\paragraph{Step G4 (matching on a transverse wall). \emph{Necessity
+derived; sufficiency argued; the level limit and F3 conjectured.}}
+Decompose the fluid displacement as $\bu = u_\nu\nuh + \bu_\parallel$,
+with $u_\nu = -(\phi + s)/g$ slaved by \eqref{eq:G-s}. The normal
+matching imposed by every displacement formulation,
+$\bu\cdot\bn = \bu_s\cdot\bn$ on $\Sigma$ ($\bu_s$ the solid's
+displacement), reads
+\begin{equation}
+  u_\nu\cos\theta + (\bu_\parallel\cdot\hat{\mathbf t})\sin\theta
+  = \bu_s\cdot\bn ,
+  \qquad
+  \bu_\parallel\cdot\hat{\mathbf t}
+  = \frac{\bu_s\cdot\bn - u_\nu\cos\theta}{\sin\theta} .
+  \label{eq:G-match}
+\end{equation}
+It involves the along-level component, which the interior does not fix
+pointwise: \eqref{eq:G-slaving} fixes $\Div\bu$, hence only the
+divergence of $\bu_\parallel$ on each level surface. (For a field
+$\mathbf v$ tangent to the level surfaces,
+$\Div\mathbf v = g\,\Div_{\parallel}(\mathbf v/g)$, because
+$\nuh\cdot\partial_\nu\mathbf v = -\mathbf v\cdot\partial_\nu\nuh$ and
+$\partial_\nu\nuh = \nabla_{\!\parallel}\ln g$.) On each component
+$L_c$ of a level set, $\bu_\parallel/g$ therefore has prescribed surface
+divergence and, by \eqref{eq:G-match}, prescribed conormal flux on the
+curve $\partial L_c \subset \Sigma$. That Neumann-type problem on $L_c$
+is solvable if and only if the two are compatible, \emph{one scalar
+condition per component}; the remaining freedom is the strict
+relabelling class. The compatibility is the integral of mass
+conservation over $R_c = \{\Phi_0 < c\}\cap F$ (the component below
+$L_c$), whose boundary is $L_c$ (outward normal $\nuh$) and the wall
+patch $\Sigma_c = \Sigma\cap\{\Phi_0 < c\}$ (outward normal $\bn$):
+\begin{equation}
+  \delta M_\Sigma(c) \;=\; \int_{R_c}\rho^1\dV
+  \;-\; \int_{L_c}\frac{\rho\,(\phi + s)}{g}\dS
+  \;+\; \int_{\Sigma_c}\rho\,\bu_s\cdot\bn\dS \;=\; 0 ,
+  \label{eq:G-band}
+\end{equation}
+using $\int_{R_c}\rho^1 = -\oint_{\partial R_c}\rho\,\bu\cdot\bn_{\text{out}}$,
+$\bu\cdot\nuh = u_\nu = -(\phi+s)/g$ on $L_c$, and the matching on
+$\Sigma_c$. Its derivative in $c$ is the per-band balance of the sketch:
+the compressional change of the band (through $f$, via $\rho^1$ and
+$s$) against the flux through its wall patch. So on a transverse wall
+the matching can be met pointwise, provided \eqref{eq:G-band} holds for
+every $c$, and \eqref{eq:G-band} is one condition per level component,
+the same count as $f$. The over-determination of
+Claim~\ref{claim:nonexist} does not arise there; it is a property of
+level walls. Two qualifications, both open. First, by
+\eqref{eq:G-match} the along-level displacement scales as
+$1/\sin\theta$ and diverges as the wall becomes level, and every closed
+wall is level somewhere: at the extrema of $\Phi_0$ restricted to
+$\Sigma$, $\nabla\Phi_0$ is normal to $\Sigma$ and $\theta = 0$. Whether
+the displacement field near those points has finite energy is not
+settled. Second, only the normal matching (slip) is analysed; the
+welded case imposes the tangential components as well, and its count is
+not done.
+
+\emph{The level limit (conjectured).} As $\theta \to 0$ on an open set
+(a wall becoming level), the range of levels cut by the wall collapses
+to the wall's level, the along-level displacement of size $1/\theta$
+lives in a layer of thickness of order $\theta$, and the along-level
+volume transport it carries stays finite: in the limit, a transport
+along the wall concentrated on $\Sigma$, whose divergence is a surface
+density of zero total (it only redistributes mass along the wall). The
+sphere is thus the singular limit of the general problem, and Dahlen's
+surface-mass bookkeeping is what survives of the transverse matching.
+That this limiting surface density is exactly what the F3 term of
+\S\ref{sec:dahlen} books is \emph{conjectured}, not derived: F3 as
+written books $\rho_F$ times the solid's normal displacement against
+$\phi$, the Eulerian effect of the wall sweeping fluid, and identifying
+it with the collapsed layer needs the limit of the weak forms, which is
+not done here.
+
+\paragraph{Step G5 (the level-wall condition and its equation for $f$).
+\emph{Derived, under the stated assumptions; uniqueness conjectured.}}
+On a level wall the level sets in $F$ are closed surfaces $L_c$,
+$c_{\min} < c < c_w$, with $\Sigma = L_{c_w}$, and \eqref{eq:G-band}
+has no wall term below the wall:
+\begin{equation}
+  \delta M(c) = \int_{\Phi_0 < c}\rho^1\dV
+  - \oint_{L_c}\frac{\rho\,(\phi + s)}{g}\dS = 0,
+  \qquad c_{\min} < c < c_w .
+  \label{eq:G-dM}
+\end{equation}
+This is exact kinematics --- mass conservation of the region below each
+level surface, given the slaved normal displacement --- and needs no
+argument about the ordering of parcels. Assume $\kappa$ constant on the
+level surfaces, so that $\rho$, $\rho_\Phi$, $\kappa$, $N^2/g^2$, $f$
+and $s$ are functions of $c$, and define
+\begin{equation}
+  A(c) = \oint_{L_c}\frac{\mathrm{d}S}{g},
+  \qquad
+  \bar\Phi(c) = \oint_{L_c}\frac{\phi}{g}\dS,
+  \qquad
+  D(c) = \rho_\Phi + \frac{\rho^2}{\kappa} = -\frac{\rho N^2}{g^2} ,
+\end{equation}
+so that $A$ is the volume per unit potential and, by the coarea
+formula, $\frac{\mathrm d}{\mathrm dc}\int_{\Phi_0<c}F\dV =
+\oint_{L_c}F\,\mathrm dS/g$. With \eqref{eq:G-rho},
+\begin{equation}
+  \delta M'(c) = \rho_\Phi\bar\Phi - f'A
+  - \frac{\mathrm d}{\mathrm dc}\bigl[\rho\bar\Phi + \rho\,s\,A\bigr]
+  = -f'A - \rho\,\bar\Phi' - (\rho A s)' ,
+\end{equation}
+so $\delta M' = 0$ is $(\rho A s)' + A f' = -\rho\bar\Phi'$. Together
+with the boxed relation of \eqref{eq:G-slaving}, written
+$f' + \rho f/\kappa = -D s$, this is the first-order system
+\begin{equation}
+  f' = -D\,s - \frac{\rho}{\kappa}\,f ,
+  \qquad
+  (\rho A s)' = A\Bigl(D\,s + \frac{\rho}{\kappa}\,f\Bigr) - \rho\,\bar\Phi' ,
+  \label{eq:G-system}
+\end{equation}
+driven by $\bar\Phi'$, the $c$-derivative of the level-surface integral
+of $\phi$. Where $N^2 \neq 0$, $s$ can be eliminated to give the
+second-order equation of the sketch,
+\begin{equation}
+  \Bigl[\frac{\rho A}{D}\Bigl(f' + \frac{\rho f}{\kappa}\Bigr)\Bigr]'
+  - A\,f' = \rho\,\bar\Phi' .
+  \label{eq:G-ode}
+\end{equation}
+The form \eqref{eq:G-system} is preferable: \eqref{eq:G-ode} is singular
+wherever $N^2$ passes through zero inside $F$ (\code{stratified\_core}
+does, near 1670\,km), while \eqref{eq:G-system} is regular there (at
+$D = 0$ the two equations merely decouple). The conditions are two.
+(i) Regularity at $c_{\min}$ (the centre, where $A \to 0$), which also
+gives $\delta M(c_{\min}) = 0$ and so, with $\delta M' = 0$,
+\eqref{eq:G-dM} at every level. (ii) At the wall, \emph{zero net
+surface mass}. The sketch proposed conservation of the region's total
+mass including surface mass; that is vacuous. With the surface density
+$\sigma = \rho_F(u_\nu - \bu_s\cdot\bn)$ (the slaved fluid's normal
+displacement against the wall's), the container's total mass, volume
+plus surface, is $\int_F\rho^1 + \oint\rho_F\,u_\nu$, which vanishes by
+\eqref{eq:G-dM} at $c_w$ for every member of the regular family, so it
+fixes nothing. The physical condition is
+that the surface layer only redistributes mass along the wall, as the
+level limit of Step G4 gives (the closed bands below the wall conserve
+their own mass, so none enters the layer): $\oint_\Sigma\sigma\dS = 0$,
+that is,
+\begin{equation}
+  s(c_w)\,A(c_w) = -\bar\Phi(c_w) - \oint_\Sigma \bu_s\cdot\bn\dS ,
+  \label{eq:G-wall}
+\end{equation}
+equivalently $\int_F\rho^1\dV + \oint_\Sigma\rho_F\,\bu_s\cdot\bn\dS = 0$:
+the fluid mass inside the displaced container, surface mass excluded,
+is conserved. This wall condition is \emph{argued}; the rest of the
+step is derived.
+
+\emph{On the sphere (derived).} $A = 4\pi r^2/g$,
+$\mathrm d/\mathrm dc = g^{-1}\mathrm d/\mathrm dr$, and $\bar\Phi$
+sees only the degree-0 part of $\phi$. For a load of degree
+$\ell \ge 1$, $\bar\Phi = 0$ and $\oint_\Sigma\bu_s\cdot\bn = 0$, so
+\eqref{eq:G-system}--\eqref{eq:G-wall} are homogeneous and $f = s = 0$
+solves them (that it is the only solution is the uniqueness question
+below), recovering \eqref{eq:p-slaved}--\eqref{eq:slaving}. At
+$\ell = 0$: with $s = -(\phi + g u_r)$, $A s = -\bar\Phi - 4\pi r^2 u_r$.
+Substitute into the second equation of \eqref{eq:G-system}, write
+$D s + \rho f/\kappa = \rho_\Phi s + (\rho/\kappa)(f + \rho s)
+= \rho_\Phi s - \rho\,\Div\bu$ by \eqref{eq:G-div-mech}, and expand
+$(\rho A s)' = -\rho_\Phi\bar\Phi - \rho\bar\Phi' - 4\pi\rho_\Phi r^2 u_r
+- \rho\,(4\pi r^2 u_r)'$. The terms in $\bar\Phi'$ and in $\rho_\Phi$
+cancel between the two sides, leaving
+$\rho\,(4\pi r^2 u_r)' = \rho A\,\Div\bu$ (primes $\mathrm d/\mathrm d\Phi_0
+= g^{-1}\mathrm d/\mathrm dr$), that is $\Div\bu = r^{-2}(r^2 u_r)'$ with
+the radial derivative: the degree-0 kinematic identity. The system is the spectral degree-0
+problem (full compressible equations, fluid as a $\mu = 0$ solid)
+rewritten in $(f, s)$, and the wall condition \eqref{eq:G-wall} is, for
+a uniform $\sigma$, $\sigma = 0$: continuity of $u_r$, the degree-0
+matching.
+
+\emph{Transverse to level (argued).} On a transverse wall,
+\eqref{eq:G-band} below the wall's lowest level is \eqref{eq:G-dM};
+within the cut range it carries the wall flux; at the wall's highest
+level ($R_c = F$, $L_c$ empty) it is the container's mass balance
+$\int_F\rho^1 + \oint\rho_F\,\bu_s\cdot\bn = 0$. As $\theta \to 0$ the
+cut range collapses to $c_w$, and the condition just below with the
+condition at the top gives \eqref{eq:G-dM} at every level and
+\eqref{eq:G-wall}. The per-band wall condition thus reduces to the
+level-wall problem in the limit, but the limit is not made rigorous.
+
+\emph{Not derived.} Uniqueness of \eqref{eq:G-system}--\eqref{eq:G-wall}
+(the coupling to $\phi$ through Poisson's equation, $\rho^1 = \rho_\Phi\phi
+- f'$, and to the solid through the wall pressure is part of it); its
+character for $N^2 < 0$, where $D$ changes sign; the case of $\kappa$
+varying on the level surfaces, where $s$ is not constant on them and
+\eqref{eq:G-system} becomes a system with level-surface averages; and
+whether the per-band conditions \eqref{eq:G-band} determine $f$ on a
+transverse wall (one condition per component, the right count, but no
+proof).
+
+\paragraph{Step G6 (the generalised closure as a method).
+\emph{Argued; resting on the conjectured parts of G4--G5.}} Eliminate
+the fluid displacement. The solid then sees the fluid through: the
+volume source $\rho^1 = \rho_\Phi\phi - f'$ in Poisson's equation; the
+pressure at the wall's displaced position, $p^1 + \bu_s\cdot\nabla p^0 =
+f - \rho_F(\phi + \bu_s\cdot\nabla\Phi_0)$, the interface pressure with
+its hydrostatic shift; and, where the wall is level, the surface-mass
+term with the slaved normal displacement (Step G4). The function $f$,
+with $s$, enters as a one-dimensional unknown per connected component
+of level set in each fluid region --- a function of $\Phi_0$, discretised
+in one dimension and coupled to the three-dimensional system through
+level-surface integrals, bordered in the way the sea-level border carries
+its uniform term --- determined by \eqref{eq:G-system}--\eqref{eq:G-wall}
+on level walls and by \eqref{eq:G-band} on transverse ones. If the
+conjectured parts hold, the result is well posed, needs no relaxation,
+gives the secular state on any geometry with hydrostatic fluid regions,
+fixes degree 0 on spherical models within the Dahlen framework, and
+would supersede the statement of \S\ref{sec:dahlen} (``Aspherical
+reference states'') that an aspherical model with a non-neutral core has
+no practical well-posed static method. The Maxwell route would remain
+the dynamic check.
+
+\emph{What an implementation needs (argued).} Four ingredients, none
+of them new machinery. (i) The level foliation of $\Phi_0$ in each
+fluid region, from the reference-state solve, with the level-set
+integrals $A(c)$ and $\bar\Phi(c)$ evaluated on the mesh (on a
+transverse wall also the wall-patch integrals of \eqref{eq:G-band});
+on the spherical ladder these are the radial quadratures. (ii) A
+one-dimensional discretisation of $(f, s)$ in $c$ on each connected
+level component, with the regularity condition at the centre; a few
+hundred unknowns at most. (iii) The coupling terms: the volume source
+$\rho_\Phi\phi - f'$ in the potential equation, which couples the
+three-dimensional $\phi$ to the one-dimensional $f$ and conversely
+through $\bar\Phi'$; the wall pressure
+$f - \rho_F(\phi + \bu_s\cdot\nabla\Phi_0)$ in the solid's traction;
+and the surface-mass term on level walls. These are the F1--F3 terms of
+the mixed formulation with $f$ added, so the natural home is a bordered
+extension of the Dahlen (mixed) class, the border carrying $(f, s)$ as
+the sea-level border carries its uniform term. (iv) The wall condition
+\eqref{eq:G-wall} as the border's closing row. On the sphere at
+$\ell \ge 1$ the border decouples ($\bar\Phi' = 0$, the right-hand
+sides vanish) and the method is Dahlen's; at $\ell = 0$ it is the
+spectral degree-0 problem; the test of the construction is therefore
+that it reproduces \code{pyslfp} at every degree on the spherical ladder
+before any aspherical case is attempted, and the one-dimensional
+prototype of open item (vii) is where to start.
+
+\emph{Why it was set aside, and why it is revisited.} This closure was
+set aside because it ``dies with the hydrostatic assumption'', and the
+Maxwell relaxation was named the general method instead
+(\code{doc/benchmark\_programme.tex}, ``Degree zero with a fluid
+region'', construction (a)). Two things change the balance. First, only the
+\emph{fluid's} hydrostatic state is needed, and an inviscid fluid at
+rest has it in any case: the solid parts may be anything. Second, the
+implemented Maxwell route reaches the welded limit, not the secular
+state, on every non-neutral ladder core, the stable ones included:
+degree-1 offsets from \code{pyslfp} of $1.7\times10^{-2}$ on
+\code{stable\_core} and $3.4\times10^{-3}$ on \code{stable\_core\_mild}
+at $h = 0.3$, order 2, robust to $\beta_0$ and to the preconditioner
+settings, every three-dimensional Maxwell solve stopping on the solver
+floor (\emph{measured}; reported for this note and not recomputed here).
+Two practical requirements. An aspherical $\Sigma$ must come from a
+consistent equilibrium figure: on a transverse wall $p^0$ varies along
+$\Sigma$, and the solid's pre-stress must balance it. And the Earth's
+core--mantle boundary is level to about a part in a thousand, so the
+level-wall limit with surface mass is the practically relevant case; the
+transverse-wall theory, singular as $\theta \to 0$ by \eqref{eq:G-match},
+is needed for general models and would be ill-conditioned near level.
 
 %=====================================================================
 \section{What dissipation selects, and routes to regularisation}
@@ -791,7 +1415,89 @@ the slip machinery measures the relabelling decomposition (the
 welded-suppression question of \S\ref{sec:maxwell}), and the
 welded gauged classes are the relaxation's own per-step engine.
 At $N^2 = 0$ all of this collapses to a single answer, which is the
-standing null test.
+standing null test. Section~\ref{sec:general} develops a candidate
+general static method --- Dahlen's closure extended to hydrostatic fluid
+regions on any geometry, with one one-dimensional unknown per fluid
+region --- whose standing against the relaxation waits on that
+section's open steps and on the stable-core results.
+
+\paragraph{The band, the secular state, and the Maxwell route.} The
+elastic-static band is a property of the displacement formulations, not
+of the physics. The secular state is unique, and every dissipative
+completion reaches it (\S\ref{sec:regular}); the band is the spread of
+the answers that formulations tying the fluid's normal trace to the
+solid's return about it. The implemented Maxwell relaxation is, in its
+limit, such a formulation: its discrete fixed point is the welded
+static solve (\S\ref{sec:maxwell}, fact (i)), which relaxes the
+fluid's deviatoric stress but keeps $u_r$ continuous at $\Sigma$. At
+$N^2 \neq 0$ on spherical models it therefore returns the welded point
+of the band rather than the secular closure --- about 1--2\,\% at
+degree 1 on the non-neutral cores of the benchmark ladder
+(\code{doc/benchmark\_programme.tex}, tier E2). This is a limitation of
+the route, and is stated as such: in its implemented, welded form the
+relaxation does not deliver the secular state when $N^2 \neq 0$. Its
+value lies where Dahlen's route does not exist: at degree 0, where the
+reduction leaves a free function (Step 1 of \S\ref{sec:slaving}), and
+in aspherical geometry (\S\ref{sec:dahlen}).
+
+\paragraph{Stably stratified cores on the ladder.} Until 21 October
+2026 the benchmark ladder had no fluid core stably stratified
+throughout; the three stable cores at the foot of the table below were
+added on that date. $N^2$ from \eqref{eq:N2} across each fluid
+core of \code{benchmarks/common/models.py} (gravity from the enclosed
+mass, $\kappa = \rho v_P^2$):
+\begin{center}
+\small
+\begin{tabular}{@{}llp{7.2cm}@{}}
+\toprule
+model & fluid region & $N^2$ ($\mathrm{s}^{-2}$) \\
+\midrule
+\code{fluid\_core} & core, 0--3500\,km & negative throughout, to
+$-1.4\times10^{-6}$ at the CMB \\
+\code{inner\_core} & outer core, 1200--3500\,km & negative throughout,
+$-2.3\times10^{-7}$ to $-1.4\times10^{-6}$ \\
+\code{stratified\_core} & core, 0--3500\,km & positive inside about
+1670\,km (at most $+8.6\times10^{-8}$), negative outside, to
+$-9.5\times10^{-7}$ at the CMB \\
+\code{aw\_core} & core, 0--3500\,km & zero by construction (to
+rounding) \\
+\code{stable\_core} & core, 0--3500\,km & positive throughout, rising
+monotonically from zero at the centre (with $g$) to
+$+9.3\times10^{-7}$ at the CMB \\
+\code{stable\_core\_mild} & core, 0--3500\,km & positive throughout,
+at most $+1.6\times10^{-7}$ (near 1830\,km), $+7.9\times10^{-8}$ at the
+CMB \\
+\code{stable\_core\_strong} & core, 0--3500\,km & positive throughout,
+rising monotonically from zero at the centre to $+3.9\times10^{-6}$ at
+the CMB \\
+\bottomrule
+\end{tabular}
+\end{center}
+Every degree-1 offset measured so far on a non-neutral ladder core
+therefore comes from a core with $N^2 < 0$ somewhere: a core with
+Rayleigh--Taylor growth, where no strict static limit exists. The
+decisive test is a core with $N^2 > 0$ throughout. There the static
+limit exists cleanly, \code{pyslfp} computes it, and the Maxwell
+route's degree-1 offset and its behaviour under refinement decide
+whether the route reaches the secular state when one exists. The three
+stable cores are that test: \code{fluid\_core}'s mantle over a fluid
+core of linear density and constant $v_P$ ($R$ the outer radius) ---
+$\rho = 13\,000 - 4500\,r/R$ with $v_P = 13\,500$\,m\,s$^{-1}$ for
+\code{stable\_core\_mild}, $\rho = 13\,000 - 8000\,r/R$ with
+$v_P = 14\,000$\,m\,s$^{-1}$ for \code{stable\_core}, and
+$\rho = 15\,000 - 18\,000\,r/R$ with $v_P = 18\,000$\,m\,s$^{-1}$ for
+\code{stable\_core\_strong}, whose core density falls to 5111\,kg\,m$^{-3}$
+at the CMB, just above the mantle's 4500 (surface gravity
+8.93\,m\,s$^{-2}$). At the CMB the trio spans $N^2 = +8\times10^{-8}$,
+$+9\times10^{-7}$ and $+4\times10^{-6}$, against $-9.5\times10^{-7}$ to
+$-1.4\times10^{-6}$ for the unstable cores: \code{stable\_core} is
+comparable in size to them with the opposite sign,
+\code{stable\_core\_mild} about six times smaller at its peak, and
+\code{stable\_core\_strong} about three times \code{fluid\_core}'s
+magnitude. All three are polynomial, so their decks are exact, and the
+spectral pair agrees on them to $6.7\times10^{-12}$,
+$2.8\times10^{-11}$ and $7.4\times10^{-11}$ ($l_{\max} = 8$). The
+\code{AdGIA} results are open item (v).
 
 \paragraph{Timescales.} The secular regime is entered when the
 loading timescale exceeds the buoyancy timescale. Even a core
@@ -857,5 +1563,24 @@ welded--slip null test, the Dahlen-path $h$-ladder (deciding whether
 the non-neutral floor explains the outstanding
 \code{fluid\_core} ladder residuals), and the decomposition of the
 \code{pyslfp} offsets.
+(v) The stably stratified cores, \code{stable\_core\_mild},
+\code{stable\_core} and \code{stable\_core\_strong} ($N^2 > 0$
+throughout): on them the Maxwell
+route's degree-1 offset from \code{pyslfp} and its behaviour under
+refinement (the $h$- and order-refinement runs are in progress).
+% STABLE-CORE: results to come
+\textbf{[Results to come.]}
+(vi) The unverified steps of \S\ref{sec:general}: the sufficiency of the
+per-component condition \eqref{eq:G-band} on a transverse wall; the
+finite-energy question at the level points that every closed wall has;
+the welded count on a transverse wall; the level limit and its
+identification with F3; the zero-net-surface-mass wall condition
+\eqref{eq:G-wall}; uniqueness of \eqref{eq:G-system}--\eqref{eq:G-wall},
+its character for $N^2 < 0$, and the case of $\kappa$ varying on the
+level surfaces.
+(vii) A one-dimensional numerical prototype of \S\ref{sec:general}: the
+disc family's radial tool is the natural place, first on the circular
+disc (where \eqref{eq:G-system} must reproduce the degree-0 reference),
+then an aspherical disc with a non-level wall.
 
 \end{document}

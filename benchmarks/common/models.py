@@ -17,6 +17,12 @@ a planetmodel `Model` in SI:
   linear_solid     one solid layer, density and velocities linear in radius
   stratified_core  a fluid core whose density falls with radius, under a
                    mantle, every parameter linear in radius
+  stable_core      a stably stratified fluid core (N^2 > 0 throughout:
+                   density falling faster than adiabatic, large kappa)
+                   under fluid_core's mantle; the core with a clean
+                   static limit
+  stable_core_mild the same with N^2 an order of magnitude smaller
+  stable_core_strong the same with N^2 several times fluid_core's magnitude
   earth_like       inner core, fluid outer core and mantle, every parameter
                    linear in radius within each
   prem_4           PREM without its ocean, isotropic, on four layers: inner
@@ -218,6 +224,39 @@ def stratified_core() -> Model:
         name="stratified_core")
 
 
+def stable_core(drho: float = 8000.0, vp_core: float = 14000.0,
+                rho0: float = 13000.0, name: str = "stable_core") -> Model:
+    """A stably stratified fluid core under fluid_core's mantle: density
+    linear in radius, rho0 - drho * r / RADIUS, with a constant vp large
+    enough that the adiabatic term g rho / kappa stays below the density
+    gradient everywhere, so N^2 = -g (rho'/rho + g rho/kappa) > 0
+    throughout the core (N^2 -> 0 only at the centre with g).  The
+    static problem of this core has a well-defined secular limit with no
+    Rayleigh-Taylor growth: the model on which the Maxwell-core route's
+    degree-1 offset from the secular closure is a clean measurement
+    (doc/static_fluid_core.tex)."""
+    return LayeredIsotropicElastic(
+        [0.0, CMB, RADIUS], rho=[(rho0, -drho), 4500.0],
+        vp=[vp_core, 11000.0], vs=[0.0, 6000.0], scale=RADIUS,
+        layer_names=["core", "mantle"], interface_names=["cmb", "surface"],
+        name=name)
+
+
+def stable_core_strong() -> Model:
+    """stable_core with a much stronger stratification (N^2 several times
+    fluid_core's magnitude): density falling from 15000 to just above the
+    mantle's 4500 at the CMB, vp 18000 m/s."""
+    return stable_core(drho=18000.0, vp_core=18000.0, rho0=15000.0,
+                       name="stable_core_strong")
+
+
+def stable_core_mild() -> Model:
+    """stable_core with a weaker stratification (N^2 six times smaller at
+    its peak, twelve times at the CMB), to see how the Maxwell-core
+    offset scales with N^2."""
+    return stable_core(drho=4500.0, vp_core=13500.0, name="stable_core_mild")
+
+
 def earth_like() -> Model:
     return LayeredIsotropicElastic(
         [0.0, ICB, CMB, RADIUS],
@@ -273,6 +312,9 @@ MODELS: dict[str, Callable[[], Model]] = {
     "inner_core": inner_core,
     "linear_solid": linear_solid,
     "stratified_core": stratified_core,
+    "stable_core": stable_core,
+    "stable_core_mild": stable_core_mild,
+    "stable_core_strong": stable_core_strong,
     "earth_like": earth_like,
     "prem_4": prem_4,
     "prem_6": prem_6,
