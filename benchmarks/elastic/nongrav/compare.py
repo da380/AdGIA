@@ -3,12 +3,16 @@
     compare reference.txt other.txt [more.txt ...] [--tol 1e-8] [--verbose]
 
 Files are the cross-code exchange format (`common/exchange.py`): the
-first column must be the degree l, the remaining shared columns are
-compared.  Differences are relative to the largest reference value of
-the degree, so tiny channels are judged against the degree's scale, not
-their own; a NaN in either file excludes that entry (the codes mark
-excluded degrees with NaN).  With --tol the exit status reports whether
-every comparison stayed below it.
+first column is the key (the degree l, or the time t of the history
+tiers), the remaining shared columns are compared.  Differences are
+relative to the largest reference value of the degree, so tiny channels
+are judged against the degree's scale, not their own: keyed on l that is
+the largest value in the degree's row; keyed on t, where the columns
+carry the degree as a suffix (hp2 lp2 kp2 ...), it is the largest value
+of the degree's columns over every time, so the whole history of a
+degree is judged on one scale.  A NaN in either file excludes that
+entry (the codes mark excluded degrees with NaN).  With --tol the exit
+status reports whether every comparison stayed below it.
 """
 from __future__ import annotations
 
@@ -22,6 +26,27 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent.parent / "common"))
 
 import exchange  # noqa: E402
+
+
+def _degree_scales(reference: exchange.Table,
+                   shared: list[str]) -> dict[str, float] | None:
+    """For columns named <channel><degree> (hp2, lp2, kp2 ...): per column
+    the largest reference value of its degree over every row and every
+    channel of that degree.  None when the columns carry no degree."""
+    degree_of = {}
+    for c in shared:
+        digits = c.rstrip("0123456789")
+        if digits == c or not digits:
+            return None
+        degree_of[c] = int(c[len(digits):])
+    largest: dict[int, float] = {}
+    for c in shared:
+        values = np.asarray(reference[c], dtype=float)
+        finite = values[np.isfinite(values)]
+        top = float(np.max(np.abs(finite))) if finite.size else 0.0
+        l = degree_of[c]
+        largest[l] = max(largest.get(l, 0.0), top)
+    return {c: largest[degree_of[c]] for c in shared}
 
 
 def compare(reference: exchange.Table, other: exchange.Table,
@@ -39,16 +64,22 @@ def compare(reference: exchange.Table, other: exchange.Table,
     if not np.allclose(keys, other[key][:n], rtol=1e-12, atol=0.0):
         raise SystemExit(f"the {key} columns disagree")
     worst = {c: 0.0 for c in shared}
+    degree_scale = _degree_scales(reference, shared) if key != "l" else None
     for i, k in enumerate(keys):
         ref = np.array([reference[c][i] for c in shared])
         new = np.array([other[c][i] for c in shared])
         live = ~(np.isnan(ref) | np.isnan(new))
         if not live.any():
             continue
-        scale = np.max(np.abs(ref[live]))
-        if scale == 0.0:
+        if degree_scale is None:
+            scale = np.max(np.abs(ref[live]))
+        else:
+            scale = np.array([degree_scale[c] for c in shared])
+        if np.all(scale == 0.0):
             continue
-        rel = np.abs(new - ref) / scale
+        with np.errstate(divide="ignore", invalid="ignore"):
+            rel = np.abs(new - ref) / scale
+        live &= np.isfinite(rel)
         if verbose:
             parts = " ".join(f"{c} {rel[j]:.2e}" if live[j] else f"{c} --"
                              for j, c in enumerate(shared))

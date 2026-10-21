@@ -598,14 +598,21 @@ correct for the model's timescales; it has not been checked.
 
 ### Degree-1 reference frame against pyslfp
 
-**Status:** open (flagged in every rung-1/2 report).
+**Status:** resolved (21 Oct 2026) — the conventions coincide: both
+sides report degree 1 in the centre-of-mass frame of body plus load.
 
-The AdGIA and pyslfp degree-1 fingerprint rows agree at the same ~1 %
-grade as the other degrees (homogeneous model, h 0.4, order 2,
-lmax 16), which suggests the two sides' reference-frame conventions
-already coincide (both centre-of-mass?), but this has not been
-deliberately confirmed. Pin the conventions on both sides and either
-gate the row or document the transformation.
+Confirmed directly by the cross-code tiers (`benchmarks/elastic/grav/`,
+`benchmarks/viscoelastic/love/`; `doc/benchmark_programme.tex`, tiers
+E2 and V1): the AdGIA Dahlen degree-1 Love numbers agree with pyslfp's
+at 1.4e-3 on two_solid and 1.8e-3 on fluid_core (h 0.3, order 2), and
+the Maxwell Love-number histories at degree 1 agree to 1e-3–6e-3 at
+order 2 and 1e-5–2e-4 at order 3 on homogeneous,
+homogeneous_lithosphere and fluid_core, with k'_1 = -1 to rounding at
+every time in all three codes. The ~1 % agreement of the fingerprint
+rows was this frame agreement at the fingerprint resolution. The
+sea-level report's flag on the degree-1 row can go. Each code keeps its
+own statement of the convention (AdGIA: the centre-of-mass shift in
+`benchmarks/common/benchmark_case.hpp`).
 
 **See:** `benchmarks/sea_level/run.py` (the report prints the row with
 a flag); pyslfp `physics.py`.

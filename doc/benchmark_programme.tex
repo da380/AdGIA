@@ -74,8 +74,10 @@ time of writing the first tier, E1 (non-gravitating elastic, solid
 spherical models), has its exact reference and both spectral legs in place
 and gated, and its finite-element leg, \code{AdGIA}'s own, has its first
 measurements; the second, E2 (gravitating elastic, solid and fluid--solid
-models), has its machinery in place and first measurements on three models.
-Within E2 the note sets out why Dahlen's reduction of a static fluid leaves
+models), has its machinery in place and first measurements on three models;
+and the first viscoelastic rung, V1 (Maxwell load Love-number histories of
+gravitating models), has all three legs in place and first measurements on
+three models. Within E2 the note sets out why Dahlen's reduction of a static fluid leaves
 degree zero undetermined, what fixes it, and why the general
 three-dimensional answer is the Maxwell relaxation of the fluid.
 \end{abstract}
@@ -217,8 +219,11 @@ degree-1 frame confirmed on two; convergence sweeps and the remaining
 fluid-core models pending \\ \addlinespace
 V (\S\ref{sec:v}) & viscoelastic loading without the sea-level equation:
 model ladder, gravity off/on, rotation off/on & all three & the spectral
-codes; semi-analytical secondary & pending; \code{AdGIA}'s viscoelastic
-family and the spectral codes' own gates in place \\ \addlinespace
+codes; semi-analytical secondary & V1 (\S\ref{sec:v1}; Maxwell load
+Love-number histories, gravitating, no rotation) done: all three legs,
+first measurements on three models, \code{AdGIA} at orders 2 and 3; the
+non-gravitating rung, rotation, the wider ladder and refinement sweeps
+pending \\ \addlinespace
 V-lat (\S\ref{sec:v}) & laterally varying viscosity, radial elastic
 structure, no sea level & \code{AdGIA}, \code{sl3dpp} & each other &
 pending; needs public \code{sl3dpp} drivers \\ \addlinespace
@@ -404,7 +409,12 @@ report into a pass/fail exit status. The degree scale keeps a channel that
 passes through zero from dominating: on \code{homogeneous}, $l_u$ changes
 sign between degrees 3 and 4 (\S\ref{sec:e1-closed}), and at degree 4 it is
 $8\times10^{-4}$ of $h_u$, so a relative error on its own value would
-measure nothing physical.
+measure nothing physical. The history tiers key their tables on the time
+$t$ instead, with the degree carried in the column names (\code{hp2 lp2
+kp2}, \dots; \S\ref{sec:v1}); there the maximum in front of
+\eqref{eq:degreescale} runs over the times, and the maximum in the
+denominator over the degree's channels \emph{and} over all times, so that a
+degree's whole history is judged on one scale.
 
 The comparison rules, recorded first in \code{sl3dpp}'s decision log, hold
 throughout: compare in coefficient space or through grid-independent
@@ -465,7 +475,11 @@ Love-number driver shifts its solution into that frame
 E2 gives the first cross-code check of the conventions: on
 \code{two\_solid} and \code{fluid\_core} the degree-1 numbers agree with
 \code{pyslfp}'s at the discretisation level, with $k'_1=-1$ to rounding in
-both codes (\S\ref{sec:e2-results}). The rotational (toroidal, rigid-rotation) part of degree 1 is
+both codes (\S\ref{sec:e2-results}). V1 confirms them for the viscoelastic
+histories: $k'_1=-1$ to rounding at every time in all three codes, and the
+degree-1 histories agree with \code{pyslfp}'s to
+$4\times10^{-4}$--$1.5\times10^{-2}$ at order 2 and
+$2\times10^{-5}$--$6\times10^{-4}$ at order 3 (\S\ref{sec:v1}). The rotational (toroidal, rigid-rotation) part of degree 1 is
 more a convention than a frame and is documented by each code separately;
 where it matters, the comparison uses quantities invariant under rigid
 motions, such as changes of length between points. Comparisons at
@@ -478,8 +492,9 @@ Everything cross-code --- models, decks, exchange, comparison scripts,
 results and this note --- lives in \code{AdGIA}; \code{sl3dpp} and
 \code{pyslfp} keep their own internal tests. The tiers get directories of
 \path{benchmarks/} as they land: \path{elastic/nongrav/} (E1) and
-\path{elastic/grav/} (E2) exist; the planned layout adds
-\path{elastic/internal3d/}, \path{viscoelastic/spherical/},
+\path{elastic/grav/} (E2) exist, and the spherical viscoelastic tier (V1)
+lives in \path{viscoelastic/love/}, the home of the existing Love-history
+family; the planned layout adds \path{elastic/internal3d/},
 \path{viscoelastic/lateral/}, \path{sea_level/elastic/} and
 \path{sea_level/viscoelastic/}, beside the existing family directories,
 which stay. The shared pieces are in \path{benchmarks/common/}
@@ -500,8 +515,10 @@ the source tree (\path{common/outputs.py}).
   code's own documentation and compared through invariants where needed.
 \item \emph{A shared non-dimensionalisation}, if kernels are to be
   exchanged between codes; until then, SI.
-\item \emph{Public \code{sl3dpp} drivers} for the load-driven
-  (no sea-level) viscoelastic tiers and for the lateral-viscosity pair.
+\item \emph{A public \code{sl3dpp} driver} for the lateral-viscosity pair
+  (V-lat): three-dimensional and load-driven. The spherical tiers' drivers
+  exist (\code{traction\_numbers}, \code{love\_numbers},
+  \code{love\_histories}).
 \item \emph{Automation.} The tiers are not yet stages of
   \path{benchmarks/campaign.py}; the laptop and server profiles will run
   them as they are added.
@@ -1452,11 +1469,17 @@ an envelope of about $0.3\,\%$ under refinement
 \section{Tier V: viscoelastic loading without the sea-level equation}
 \label{sec:v}
 
-\status{21 October 2026}{Pending. The ingredients exist in each code
-separately: \code{AdGIA}'s viscoelastic family
-(\S\ref{sec:internal-visco}); \code{pyslfp}'s time-domain viscoelastic
-module; \code{sl3dpp}'s viscoelastic stepping gated against \code{pyslfp}
-fixtures.}
+\status{21 October 2026}{V1, the Maxwell load Love-number histories of
+gravitating models without rotation, is done in all three codes, with first
+measurements on \code{homogeneous}, \code{homogeneous\_lithosphere} and
+\code{fluid\_core} (\S\ref{sec:v1}). The spectral pair agrees to
+$1.3\times10^{-11}$, and both spectral codes sit within $1.6\times10^{-4}$
+of the Laplace-domain reference, the stepping error that the three legs
+share; \code{AdGIA}'s Dahlen path at $h=0.3$ agrees with \code{pyslfp} to
+$1.0$--$2.3\times10^{-2}$ at order 2 and $5.2$--$8.2\times10^{-4}$ at
+order 3, degree 1 in the centre-of-mass frame included. Pending: the
+non-gravitating rung, rotation, the wider model ladder, the tidal channel,
+refinement sweeps, the campaign stage, and V-lat.}
 
 \paragraph{The problem.} The response of spherical models to prescribed
 surface-load histories, with no sea-level equation, in all three codes,
@@ -1480,6 +1503,285 @@ compared for loading without sea level, the viscosity field exchanged as
 netCDF. This needs \code{sl3dpp}'s functionality exposed through public
 drivers.
 
+\subsection{Tier V1: Maxwell Love-number histories}
+\label{sec:v1}
+
+\paragraph{The problem and the compared quantities.} V1, the first rung of
+the tier to be measured, is gravitating, without rotation and without the
+sea-level equation:
+the conventional load numbers of E2 (\S\ref{sec:e2-problem}) as histories,
+$h'_l(t)$, $l'_l(t)$, $k'_l(t)$ for degrees 0--4, under a unit Heaviside
+surface load of each degree switched on at $t=0$. Every solid layer is a
+Maxwell body with one Maxwell time ($\tau=\infty$ keeps a layer elastic); a
+fluid core relaxes nothing. The histories are compared at the 13 geometric
+output times of the Love-history sub-family (\S\ref{sec:internal-visco}),
+\begin{equation}
+  t_k = 0.011\cdot2^{5k/6}\,\tau_{\min},\qquad k=0,\dots,12,
+  \label{eq:v1-times}
+\end{equation}
+from $0.011$ to $11.264\,\tau_{\min}$, rounded to six decimals in units of
+$\tau_{\min}$, the shortest Maxwell time. The exchange file has one table
+per model and code: the time \code{t}, in the same unit, followed by
+\code{hp<l> lp<l> kp<l>} for each degree. Only $t/\tau$ enters the
+quasi-static problem, so the spectral codes run $\tau=10^{11}$\,s and
+\code{AdGIA} $\tau=1$ in its own time unit, and the numbers are the same.
+The models are \code{homogeneous} (one Maxwell layer, $\tau=10^{11}$\,s),
+\code{homogeneous\_lithosphere} (the interior Maxwell with
+$\tau=10^{11}$\,s, the outer shell elastic) and \code{fluid\_core} (the
+mantle Maxwell with $\tau=10^{11}$\,s), all at $l_{\max}=4$. Degree 1 is in
+the centre-of-mass frame, as in E2; degree 0 is compared except on
+\code{AdGIA}'s Dahlen path on \code{fluid\_core}, where it is left out by
+design (\S\ref{sec:e2-degree0}).
+
+\paragraph{The stepping rule.} All three legs step with the exponential
+trapezoid, in equal steps between consecutive output times, at least 4 in
+each interval and none longer than $0.25\,\tau_{\min}$: 79 steps to
+$11.264\,\tau_{\min}$ (4 in each interval to $t_9\approx1.99\,\tau_{\min}$,
+then 7, 12 and 20). The three codes share the step-weight algebra
+(\S\ref{sec:codes}), so on the same steps their differences are spatial.
+The two spectral codes also share the uniform $l_{\max}$ mesh rule
+(\S\ref{sec:models}) and so solve the identical discrete problem in space
+and time, tolerance tier (i); \code{AdGIA}'s difference from either is its
+finite-element discretisation, tier (iii). The sub-family's Laplace-domain
+reference (\path{laplace_reference.py}: the correspondence principle on
+\code{pyslfp}'s elastic solves, Gaver--Stehfest inversion;
+\code{doc/benchmarks.tex}, ``The Laplace-domain reference'') takes no
+steps, and is the secondary check of the stepping the three legs share.
+
+\paragraph{The legs.}
+\begin{center}
+\small
+\begin{tabular}{@{}lP{8.6cm}P{5.0cm}@{}}
+\toprule
+leg & what computes the histories & mesh and model \\
+\midrule
+\code{pyslfp} & its time-domain viscoelastic operator, stepped by
+\path{benchmarks/viscoelastic/love/pyslfp_histories.py}, run from the
+\code{pyslfp} checkout & uniform $l_{\max}$ rule, from the model object \\
+\addlinespace
+\code{sl3dpp} & its \code{love\_histories <deck> <lmax> <taus> <out.txt>}
+driver (\code{-DSL3DPP\_BUILD\_BENCHMARKS=ON}) & uniform $l_{\max}$ rule,
+from the deck of \path{common/decks.py} \\ \addlinespace
+\code{AdGIA} & \code{viscoelastic\_love}, the sub-family's driver, with
+\code{-scheme exptrap} and the Dahlen method; its results file converted by
+\path{benchmarks/viscoelastic/love/from_results.py}, which copies the
+numbers and never recomputes them & the case mesh of \code{make\_case.py};
+$h=0.3$, orders 2 and 3 \\ \addlinespace
+Laplace & \path{laplace_reference.py}; its committed references
+(\path{benchmarks/viscoelastic/love/references/}) converted by the same
+\path{from_results.py} & \code{pyslfp}'s elastic solves, from the model
+object \\
+\bottomrule
+\end{tabular}
+\end{center}
+\noindent The comparison is the shared exchange comparer,
+\path{benchmarks/elastic/nongrav/compare.py}, keyed on \code{t}, with the
+degree-scale measure \eqref{eq:degreescale} as it applies to histories
+(\S\ref{sec:measure}): each entry is relative to the largest reference
+value of its degree over every time and every channel of the degree, and
+the worst over the 13 times is reported. A degree's whole history is judged
+on one scale, and a small degree on its own: degree 0, whose scale is
+$|h'_0|\approx0.14$--$0.17$, is not judged against the other degrees',
+which run from about 1.3 at degree 1 to 2.7--3.6 at degree 4.
+
+\paragraph{Results.} \code{pyslfp} and \code{sl3dpp} on the uniform
+$l_{\max}=4$ rule; \code{AdGIA} at $h=0.3$ (1903, 3110 and 3733 elements in
+the body of the three models), on 8 MPI ranks of a laptop. Differences in
+the measure just described, worst over the 13 times; they are also
+summarised in \path{benchmarks/viscoelastic/love/README.md}.
+\begin{center}
+\small
+\begin{tabular}{@{}P{3.9cm}P{4.4cm}P{6.9cm}@{}}
+\toprule
+comparison & conditions & differences \\
+\midrule
+\code{sl3dpp} against \code{pyslfp} & \code{homogeneous},
+\code{homogeneous\_lithosphere}, \code{fluid\_core}; degrees 0--4 & worst
+$1.2\times10^{-11}$, $1.3\times10^{-11}$, $1.1\times10^{-11}$, each in
+$k'_0$; $h'$ at most $1.1\times10^{-11}$; $l'$, $k'$ at degrees 2--4 below
+$5\times10^{-12}$ \\ \addlinespace
+both spectral codes against the Laplace reference & the three models; the
+default stepping rule & worst $1.5\times10^{-4}$ ($h'_3$),
+$1.6\times10^{-4}$ ($h'_4$), $1.5\times10^{-4}$ ($h'_4$); $h'_2$
+$1.0$--$1.5\times10^{-4}$; $l'$ and $k'$ at most $9\times10^{-5}$; degrees
+0--1 at most $8\times10^{-5}$ ($l'_1$ on \code{fluid\_core}); $k'_1$
+$2.5\times10^{-11}$ \\ \addlinespace
+the same, refined stepping & \code{homogeneous}; 40 steps per interval,
+$\Delta t\le0.025\,\tau_{\min}$; the sub-family's earlier study, not on
+this measure & down to the reference's own Gaver--Stehfest floor, about
+$3\times10^{-5}$ \\ \addlinespace
+\code{AdGIA}, Dahlen, against \code{pyslfp} & the three models, orders 2
+and 3 & worst $1.0$--$2.3\times10^{-2}$ at order 2,
+$5.2$--$8.2\times10^{-4}$ at order 3 (table below) \\ \addlinespace
+$k'_1$ & every time, all three codes & $-1$ to rounding ($10^{-15}$) \\
+\bottomrule
+\end{tabular}
+\end{center}
+\noindent \code{AdGIA}'s Dahlen path against \code{pyslfp}, by model and
+order: the worst entry and its channel, degree 0 ($h'_0$), degree 1
+($h'_1$, $l'_1$), and the wall-clock seconds on 8 ranks.
+\begin{center}
+\small
+\begin{tabular}{@{}llllll@{}}
+\toprule
+model & order & worst & $h'_0$ & $h'_1$, $l'_1$ & s \\
+\midrule
+\code{homogeneous} & 2 & $2.3\times10^{-2}$ ($h'_2$) & $5.8\times10^{-4}$ &
+$3.9\times10^{-4}$, $1.1\times10^{-3}$ & 11 \\
+& 3 & $5.2\times10^{-4}$ ($h'_4$) & $2.4\times10^{-4}$ &
+$2.8\times10^{-5}$, $2.9\times10^{-4}$ & 38 \\ \addlinespace
+\code{homogeneous\_lithosphere} & 2 & $1.0\times10^{-2}$ ($h'_4$) &
+$3.8\times10^{-3}$ & $1.3\times10^{-3}$, $4.4\times10^{-3}$ & 19 \\
+& 3 & $7.9\times10^{-4}$ ($h'_2$) & $6.8\times10^{-5}$ &
+$1.8\times10^{-5}$, $1.5\times10^{-4}$ & 133 \\ \addlinespace
+\code{fluid\_core} & 2 & $1.5\times10^{-2}$ ($l'_1$) & --- &
+$1.6\times10^{-3}$, $1.5\times10^{-2}$ & 29 \\
+& 3 & $8.2\times10^{-4}$ ($l'_2$) & --- &
+$1.7\times10^{-4}$, $5.8\times10^{-4}$ & 178 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{The spectral pair.} On all three models \code{sl3dpp} and
+\code{pyslfp} agree to about $10^{-11}$ at every time and degree, the worst
+entry in $k'_0$, within the $10^{-10}$ gate of tolerance tier (i). Unlike E2's spectral comparison,
+which set the graded mesh against the uniform rule, this is the identical
+discrete problem in space and time --- the same model (the deck is the
+model to rounding, \S\ref{sec:models}) on the same rule, stepped with the
+same weights on the same steps --- so the agreement checks the two
+viscoelastic implementations against each other with nothing else left to
+differ. It includes degree 0 on \code{fluid\_core} under relaxation, which
+both codes treat with the compressible Lagrangian equations
+(\S\ref{sec:degrees01}).
+
+\paragraph{The Laplace check.} Against the Laplace reference both spectral
+codes sit at $1.5$--$1.6\times10^{-4}$ on every model, in $h'_3$ or $h'_4$,
+with $h'_2$ at $1.0$--$1.5\times10^{-4}$, and $l'$, $k'$ and degrees 0 and 1
+at most $9\times10^{-5}$. The two codes being $10^{-11}$ apart, this is one
+measurement made twice: the time-discretisation error of the shared rule.
+The sub-family's earlier stepping refinement, 40 steps per interval and
+$\Delta t\le0.025\,\tau_{\min}$ on \code{homogeneous}, brought it down to
+the accuracy of the Gaver--Stehfest inversion itself, about
+$3\times10^{-5}$ (measured then on a different scale); the stepping error
+common to the three legs is therefore of order $10^{-4}$ at the default
+rule. It is below \code{AdGIA}'s differences at
+both orders, and it largely cancels from them, since \code{AdGIA} takes
+the same steps with the same weights.
+
+\paragraph{\code{AdGIA}.} The Dahlen path agrees with \code{pyslfp} at the
+discretisation level of $h=0.3$ on all three models: worst
+$1.0$--$2.3\times10^{-2}$ at order 2 and $5.2$--$8.2\times10^{-4}$ at
+order 3, a factor of 44, 13 and 19 better on \code{homogeneous},
+\code{homogeneous\_lithosphere} and \code{fluid\_core}. Which channel is
+worst depends on the model and the order. On \code{homogeneous} at order 2
+it is $h'_2$ ($2.3\times10^{-2}$), followed by $k'_2$ ($1.4\times10^{-2}$),
+$l'_2$ and $l'_4$ ($1.3\times10^{-2}$), $l'_3$ ($9.3\times10^{-3}$) and
+$h'_4$ ($8.7\times10^{-3}$); at order 3 it is $h'_4$ ($5.2\times10^{-4}$),
+followed by $l'_4$ ($4.0\times10^{-4}$) and $l'_2$ ($3.0\times10^{-4}$),
+with $h'_2$ down to $5.1\times10^{-5}$. On \code{homogeneous\_lithosphere}
+it is $h'_4$ ($1.0\times10^{-2}$; then $h'_3$ $4.5\times10^{-3}$, $k'_4$
+$4.4\times10^{-3}$) at order 2 and $h'_2$ ($7.9\times10^{-4}$; then $k'_2$
+$4.7\times10^{-4}$, $h'_3$ $4.6\times10^{-4}$) at order 3. On
+\code{fluid\_core} at order 2 it is the degree-1 tangential number $l'_1$
+($1.5\times10^{-2}$), followed by $h'_2$ ($1.1\times10^{-2}$), $h'_4$
+($8.9\times10^{-3}$) and $l'_4$ ($6.3\times10^{-3}$); at order 3, $l'_2$
+($8.2\times10^{-4}$), then $l'_1$ ($5.8\times10^{-4}$) and $h'_3$
+($4.2\times10^{-4}$). The grade is comparable to that of E2's elastic numbers at $h=0.3$
+(\S\ref{sec:e2-results}) and to the sub-family's SDIRK23 histories against
+the Laplace reference (\S\ref{sec:internal-visco}).
+
+\paragraph{Along the history.} Where in time the error sits is read from
+the sub-family's own comparer (\path{viscoelastic/love/compare.py}, against
+the Laplace reference), which judges each channel on its own scale and
+separates the elastic error at $t=0^+$ from the error of the relaxation
+increment $f(t)-f(0)$, the latter relative to the reference's drift. On
+\code{homogeneous} at order 2, $h'_2$ is $3.9\times10^{-3}$ from the
+reference at $t=0^+$ but $2.3\times10^{-2}$ worst over the history, and its
+relaxation increment is off by $3.5\times10^{-2}$ of the drift; at order 3
+the three coincide ($1.4\times10^{-4}$, $1.6\times10^{-4}$,
+$1.6\times10^{-4}$). At order 2 the error therefore grows along the
+history: $h'_2$ goes from $-0.65$ to $-2.00$ by $11.3\,\tau_{\min}$
+($-2.04$ at order 2), and it is the late, largely viscous response, by then
+three times the elastic one, that $h=0.3$ at order 2 under-resolves. At
+order 3 the relative error is the elastic one throughout. The exchange
+comparison shows the same on the degree's scale, which for $h'_2$ is the
+JSON comparer's: at order 2 the $h'_2$ entry rises from about $10^{-3}$ at
+the first time to $2.3\times10^{-2}$ at the last, the worst entry on
+\code{homogeneous}, while $h'_4$ stays between $5\times10^{-3}$ and
+$9\times10^{-3}$. The worst order-2 entry on \code{fluid\_core}, $l'_1$,
+grows the same way, from $1.7\times10^{-3}$ at the first time to
+$1.5\times10^{-2}$ at the last as $l'_1$ goes from $-0.89$ to $-1.34$, and
+order 3 brings it to $5.8\times10^{-4}$.
+
+\paragraph{Degrees 0 and 1.} $k'_1=-1$ to rounding ($10^{-15}$) at every
+time in all three codes: the centre-of-mass frame conventions that E2
+confirmed elastically hold for the viscoelastic histories too. $h'_1$ and
+$l'_1$ agree with \code{pyslfp} to $4\times10^{-4}$--$1.5\times10^{-2}$ at
+order 2 and $2\times10^{-5}$--$6\times10^{-4}$ at order 3; the largest,
+$l'_1$ on \code{fluid\_core} at order 2, is the late-history growth just
+described. Degree 0 on the solid models, where the Dahlen path has no fluid
+to reduce, agrees on its own scale to $5.8\times10^{-4}$
+(\code{homogeneous}) and $3.8\times10^{-3}$
+(\code{homogeneous\_lithosphere}) in $h'_0$ at order 2, and
+$2.4\times10^{-4}$ and $6.8\times10^{-5}$ at order 3. On \code{fluid\_core} it is left out, the
+known Dahlen defect of \S\ref{sec:e2-degree0}.
+
+\paragraph{Cost.} Each run is 79 stepping solves and one observation solve.
+On 8 ranks: 11, 19 and 29\,s at order 2 on \code{homogeneous},
+\code{homogeneous\_lithosphere} and \code{fluid\_core}, and 38, 133 and
+178\,s at order 3, so that order 3 costs 3.5 to 7 times order 2 for a
+factor of 13 to 44 in accuracy.
+
+\paragraph{Reproducing.} The launchers are in
+\path{<build>/benchmarks/viscoelastic/love/} (\code{mpiexec} is the build's
+MPICH; \path{benchmarks/viscoelastic/love/README.md} has the details). From
+there, for \code{homogeneous} at order 2:
+\begin{verbatim}
+<adgia python> <repo>/benchmarks/common/decks.py homogeneous --out runs
+(cd ~/dev/pyslfp && poetry run python \
+    <repo>/benchmarks/viscoelastic/love/pyslfp_histories.py homogeneous \
+    --tau 1e11 --out <build>/benchmarks/viscoelastic/love/runs)
+<sl3dpp build>/benchmarks/love_histories runs/homogeneous.elastic.deck 4 \
+    1e11 runs/v1_homogeneous_sl3dpp.txt
+./from_results --out runs/v1_homogeneous_laplace.txt \
+  <repo>/benchmarks/viscoelastic/love/references/laplace_homogeneous_tau1.json
+./make_case homogeneous --h 0.3 --out cases/homogeneous_h03
+mpiexec -np 8 ../../bin/viscoelastic_love -c cases/homogeneous_h03/case.json \
+    -o 2 -lmin 0 -lmax 4 -tau 1 -scheme exptrap \
+    -out runs/v1_homogeneous_adgia_h03_o2.json
+./from_results runs/v1_homogeneous_adgia_h03_o2.json \
+    --out runs/v1_homogeneous_adgia_h03_o2.txt
+../../elastic/nongrav/compare runs/v1_homogeneous_pyslfp.txt \
+    runs/v1_homogeneous_sl3dpp.txt runs/v1_homogeneous_laplace.txt \
+    runs/v1_homogeneous_adgia_h03_o2.txt
+\end{verbatim}
+The Maxwell times follow two conventions. \code{viscoelastic\_love}, like
+\code{laplace\_reference}, takes one per \emph{solid} layer: \code{-tau
+1,inf} for \code{homogeneous\_lithosphere}, \code{-tau 1} for
+\code{fluid\_core} (there with \code{-lmin 1}). The spectral drivers take
+one per layer, the fluid included: \code{1e11,inf} for
+\code{homogeneous\_lithosphere} and \code{inf,1e11} for \code{fluid\_core}.
+
+\paragraph{Two defects fixed on the way.} \code{viscoelastic\_love} wrote
+the per-layer fluid flag of its results file by testing the planetmodel
+mesh manifest's \code{std::optional<bool>} for presence rather than value,
+a leftover of the planetmodel integration of 20 October, so that every
+solid layer was marked fluid and \path{from_results.py} refused the file.
+And its default output times were unrounded, so that its \code{t} column
+did not match the reference's six-decimal rounding and the exchange
+comparer refused to key on it; they are now rounded as the reference
+writes them. Separately, the sub-family's own comparer now skips a channel
+that the reference leaves identically zero ($l'_0$), which crashed it when
+degree 0 was included.
+
+\paragraph{Open points.} The non-gravitating rung of the tier, of which
+the viscoelastic sphere sub-family is \code{AdGIA}'s version
+(\S\ref{sec:internal-visco}) and for which E1's reduced spectral solvers
+would need Maxwell rheology; rotation on; the wider ladder
+(\code{two\_solid}, \code{inner\_core}, \code{aw\_core},
+\code{stratified\_core}); the tidal channel; $h$- and order-refinement
+sweeps; and V1 as a campaign stage on the server. Then V-lat.
+
 \section{Beside tier V: the viscoelastic family}
 \label{sec:internal-visco}
 
@@ -1500,7 +1802,10 @@ gravitating models (\path{viscoelastic/love/}) are compared with
 \code{pyslfp} through the correspondence principle and Gaver--Stehfest
 inversion: history errors of $0.5$--$1.1\times10^{-2}$ in $h'$ at order 2 on
 \code{fluid\_core} ($h=0.3$) and $1.7$--$3.2\times10^{-4}$ at order 3, the
-errors spatial, not temporal. The choice of integrator these support is
+errors spatial, not temporal. The same sub-family is the home of V1
+(\S\ref{sec:v1}), its cross-code form: the histories stepped in the time
+domain by all three codes under one stepping rule, with the Laplace
+reference as the secondary check. The choice of integrator these support is
 described in \code{doc/viscoelasticity.md}.
 
 %=============================================================================

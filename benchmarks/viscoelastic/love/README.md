@@ -78,7 +78,9 @@ relaxed limit is unavailable (the body relaxes to a fluid ball).
 `viscoelastic_love` loads a case exactly as `love_benchmark` does
 (`-c case.json`, `-o`, `-deg`, `-lmax`, `-method dahlen|gauged`), gives
 every solid layer the Maxwell time of `-tau` (comma separated, centre
-outward, `inf` elastic), switches on the unit loads of degrees
+outward, one value per *solid* layer or one for all, `inf` elastic; a
+fluid layer takes none, unlike the spectral V1 drivers below), switches
+on the unit loads of degrees
 `-lmin..-lmax` (default `-lmin 2`: with a Dahlen fluid degree 0 differs
 from the reference by design) together at t = 0, and evolves with
 `ViscoelasticOperator`:
@@ -93,7 +95,9 @@ from the reference by design) together at t = 0, and evolves with
 Fixed-step schemes take, within each interval between output times, the
 same number of equal steps: at least `-steps` (4), more to keep
 `dt <= -dt-max` (0.25 tau_min). Output times (`-times`, comma separated;
-default the reference's 13) are hit exactly. `-tide` evolves the tidal
+default the reference's 13, rounded to six decimals in units of tau_min
+exactly as the reference writes them, so that every leg's exchange file
+has the same time column) are hit exactly. `-tide` evolves the tidal
 forcing as well.
 
 The `-method gauged` histories are clean only for a neutrally stratified
@@ -144,8 +148,8 @@ library's `viscoelastic_love` isolate the spatial discretisation.
   its docstring).
 - **sl3dpp** — its `love_histories` driver
   (`-DSL3DPP_BUILD_BENCHMARKS=ON`): `love_histories <deck> <lmax>
-  <taus> <out.txt> [steps] [dtmax]`, taus in seconds per layer, `inf`
-  elastic.
+  <taus> <out.txt> [steps] [dtmax]`, taus in seconds per layer (the
+  fluid included), `inf` elastic.
 - **AdGIA and the Laplace reference** — `./from_results <json> --out
   <file>` converts either a `viscoelastic_love` results file or a
   `laplace_reference` output (invalid times become NaN); `--channel
@@ -153,11 +157,106 @@ library's `viscoelastic_love` isolate the spatial discretisation.
 - Comparison by the shared exchange comparer,
   `<build>/benchmarks/elastic/nongrav/compare` (this directory's own
   `compare` is the JSON comparer of the Laplace leg); it keys on any
-  first column, `t` here.
+  first column, `t` here. On a `t`-keyed file its degree scale is the
+  degree's largest reference value over the whole history (every time and
+  every channel of the degree), so each degree's history is judged on one
+  scale.
 
-Measured on `homogeneous`, tau 1e11 s, lmax 4: pyslfp and sl3dpp agree
-to 7e-12 at every time and degree (identical discrete problem in space
-and time); against the Laplace reference both sit at 1.2e-4 worst
-(hp2) under the default stepping, falling to 2.8e-5 with 40 steps per
-interval and dt <= 0.025 tau_min — the remainder being the reference's
-own Gaver-Stehfest accuracy, not the steppers'.
+### Measured (21 October 2026)
+
+`homogeneous` (tau 1e11 s), `homogeneous_lithosphere` (interior 1e11 s,
+lithosphere elastic) and `fluid_core` (mantle 1e11 s), lmax 4, degrees
+0–4. AdGIA: Dahlen method, degree 1 in the centre-of-mass frame, h = 0.3
+(1903 / 3110 / 3733 elements in the body), orders 2 and 3, 8 MPI ranks
+on a laptop; degree 0 left out on `fluid_core` (a Dahlen fluid differs
+there by design). Every figure is the worst over the 13 times on the
+exchange comparer's degree scale (above): degree 0 (|hp0| ≈ 0.14–0.17)
+on its own scale, degrees 1–4 on theirs (about 1.3 to 3.6). The
+write-up is tier V1 of `doc/benchmark_programme.tex`.
+
+- **sl3dpp against pyslfp**: 1.2e-11 (`homogeneous`), 1.3e-11
+  (`homogeneous_lithosphere`), 1.1e-11 (`fluid_core`), each in kp0; h'
+  at most 1.1e-11, l' and k' at degrees 2–4 below 5e-12 — the identical
+  discrete problem in space and time.
+- **Both spectral codes against the Laplace reference**: worst 1.5e-4
+  (hp3) on `homogeneous`, 1.6e-4 (hp4) on `homogeneous_lithosphere`,
+  1.5e-4 (hp4) on `fluid_core`; hp2 1.0–1.5e-4, l' and k' at most 9e-5,
+  degrees 0–1 at most 8e-5 (lp1 on `fluid_core`), kp1 2.5e-11. The
+  family's earlier stepping refinement (40 steps per interval, dt <=
+  0.025 tau_min, on `homogeneous`) brought it down to the reference's
+  own Gaver–Stehfest floor, about 3e-5 (measured then on a different
+  scale): the stepping error the three legs share is about 1e-4 at the
+  default rule, and it largely cancels between AdGIA and pyslfp, which
+  take the same steps with the same weights.
+- **AdGIA against pyslfp** (seconds on 8 ranks; each run is 79 stepping
+  solves and one observation solve):
+
+  | model | order | worst | degree 0: hp0 | degree 1: hp1, lp1 | s |
+  |---|---|---|---|---|---|
+  | `homogeneous` | 2 | 2.3e-2 (hp2) | 5.8e-4 | 3.9e-4, 1.1e-3 | 11 |
+  | | 3 | 5.2e-4 (hp4) | 2.4e-4 | 2.8e-5, 2.9e-4 | 38 |
+  | `homogeneous_lithosphere` | 2 | 1.0e-2 (hp4) | 3.8e-3 | 1.3e-3, 4.4e-3 | 19 |
+  | | 3 | 7.9e-4 (hp2) | 6.8e-5 | 1.8e-5, 1.5e-4 | 133 |
+  | `fluid_core` | 2 | 1.5e-2 (lp1) | – | 1.6e-3, 1.5e-2 | 29 |
+  | | 3 | 8.2e-4 (lp2) | – | 1.7e-4, 5.8e-4 | 178 |
+
+  After the worst: on `homogeneous`, kp2 1.4e-2, lp2 1.3e-2, lp4
+  1.3e-2, lp3 9.3e-3, hp4 8.7e-3 at order 2 (kp0 2.8e-5), and lp4
+  4.0e-4, lp2 3.0e-4, hp2 5.1e-5 at order 3; on
+  `homogeneous_lithosphere`, hp3 4.5e-3, kp4 4.4e-3 at order 2 and kp2
+  4.7e-4, hp3 4.6e-4 at order 3; on `fluid_core`, hp2 1.1e-2, hp4
+  8.9e-3, lp4 6.3e-3 at order 2 and lp1 5.8e-4, hp3 4.2e-4 at order 3.
+  Order 3 improves on order 2 by a factor 13–44 (`homogeneous` 44,
+  `homogeneous_lithosphere` 13, `fluid_core` 19), at 3.5–7 times the
+  cost. kp1 = −1 to rounding (1e-15) at
+  every time in all three codes: the centre-of-mass frame conventions
+  agree in the viscoelastic setting too (E2 had confirmed them
+  elastically).
+
+Along the history (this directory's `compare`, which judges each channel
+on its own scale, against the Laplace reference): on `homogeneous` at
+order 2, h'_2 is 3.9e-3 from the reference at t = 0+ but 2.3e-2 worst
+over the history, and its relaxation f(t) − f(0) is off by 3.5e-2 of
+the drift; at order 3 the three coincide (1.4e-4, 1.6e-4, 1.6e-4). So
+at order 2 the error grows along the history: h'_2 goes from −0.65 to
+−2.00 by 11.3 tau_min (−2.04 at order 2), and the late, largely viscous
+response is what h = 0.3 at order 2 under-resolves; at order 3 the
+relative error is the elastic one throughout. The exchange comparer
+shows it on the degree scale (for hp2 the same scale as `compare`'s):
+on `homogeneous` at order 2 the hp2 entry rises from about 1e-3 at the
+first time to 2.3e-2 at the last, the worst entry there, and on
+`fluid_core` the worst order-2 entry, lp1, rises from 1.7e-3 to 1.5e-2
+as l'_1 goes from −0.89 to −1.34, falling to 5.8e-4 at order 3.
+
+### Reproducing
+
+From `<build>/benchmarks/viscoelastic/love/` (`mpiexec` is the build's
+MPICH), for `homogeneous` at order 2:
+
+```
+<adgia python> <repo>/benchmarks/common/decks.py homogeneous --out runs   # sl3dpp's deck
+(cd ~/dev/pyslfp && poetry run python \
+    <repo>/benchmarks/viscoelastic/love/pyslfp_histories.py homogeneous \
+    --tau 1e11 --out <build>/benchmarks/viscoelastic/love/runs)
+<sl3dpp build>/benchmarks/love_histories runs/homogeneous.elastic.deck 4 \
+    1e11 runs/v1_homogeneous_sl3dpp.txt
+./from_results --out runs/v1_homogeneous_laplace.txt \
+    <repo>/benchmarks/viscoelastic/love/references/laplace_homogeneous_tau1.json
+./make_case homogeneous --h 0.3 --out cases/homogeneous_h03
+mpiexec -np 8 ../../bin/viscoelastic_love -c cases/homogeneous_h03/case.json \
+    -o 2 -lmin 0 -lmax 4 -tau 1 -scheme exptrap \
+    -out runs/v1_homogeneous_adgia_h03_o2.json
+./from_results runs/v1_homogeneous_adgia_h03_o2.json \
+    --out runs/v1_homogeneous_adgia_h03_o2.txt
+../../elastic/nongrav/compare runs/v1_homogeneous_pyslfp.txt \
+    runs/v1_homogeneous_sl3dpp.txt runs/v1_homogeneous_laplace.txt \
+    runs/v1_homogeneous_adgia_h03_o2.txt
+```
+
+The Maxwell times follow two conventions. `viscoelastic_love`, like
+`laplace_reference`, takes one per *solid* layer: `-tau 1,inf` for
+`homogeneous_lithosphere`, `-tau 1` for `fluid_core` (there with
+`-lmin 1`). The spectral drivers take one per layer, the fluid
+included: `1e11,inf` for `homogeneous_lithosphere` and `inf,1e11` for
+`fluid_core` (`--tau` of `pyslfp_histories.py`, the third argument of
+`love_histories`).
