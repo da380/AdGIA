@@ -1636,8 +1636,11 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetTidalLoad(
 void LinearQuasiStaticReferentialSelfGravitatingProblem::SetWaterLoad(
     Coefficient& ocean_weight, Coefficient& sigma_data,
     const Array<int>& surface_marker, Coefficient* surface_jacobian) {
-  MFEM_VERIFY(fluids_.empty(),
-              "SetWaterLoad: not with eliminated fluid regions yet.");
+  MFEM_VERIFY(fluids_.empty() || glue_set_,
+              "SetWaterLoad: with eliminated fluid regions, call "
+              "SetFluidPotentialGlue (and SetLevelBorder, if wanted) "
+              "first; the water terms then compose on the same bordered "
+              "elimination.");
   MFEM_VERIFY(!sea_enabled_, "SetWaterLoad: already set.");
   MFEM_VERIFY(dim_ == 3,
               "SetWaterLoad: the sea-level equation is 3-D only (a 2-D "
@@ -1690,7 +1693,11 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::BuildWaterZetaMass() {
   // Rebuild-order contract: this replaces A_zeta_sea_, so callers must not
   // hold block_op_ across RefreshWaterLoad(); SetupSolver rebuilds it
   // because operator_dirty_ is set.
-  A_zeta_sea_ = std::make_unique<SumOperator>(const_cast<Operator*>(A_zeta_),
+  // With the eliminated-fluid glue the base already carries the fluid
+  // mass term: the water boundary mass stacks on A_zeta + M_F.
+  const Operator* sea_base =
+      glue_set_ ? static_cast<const Operator*>(A_zeta_glue_.get()) : A_zeta_;
+  A_zeta_sea_ = std::make_unique<SumOperator>(const_cast<Operator*>(sea_base),
                                               1.0, S_sea_.Ptr(), 1.0, false,
                                               false);
 }
@@ -2075,9 +2082,12 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetFluidPotentialGlue(
               "SetFluidPotentialGlue: identity equilibrium mapping only "
               "(the mapped variant pulls the Eulerian forms back with "
               "Jacobians; not built).");
-  MFEM_VERIFY(!sea_enabled_ && !rot_enabled_,
-              "SetFluidPotentialGlue: not composed with the water or "
-              "rotation borders yet.");
+  MFEM_VERIFY(!sea_enabled_,
+              "SetFluidPotentialGlue: call this before SetWaterLoad (the "
+              "water's zeta-zeta sum stacks on the glue's).");
+  MFEM_VERIFY(!rot_enabled_,
+              "SetFluidPotentialGlue: not composed with the rotation "
+              "border yet (the omega field columns are not conjugated).");
   MFEM_VERIFY(E.Height() == fes_fluid.GetVSize() &&
                   E.Width() == fes_->GetVSize(),
               "SetFluidPotentialGlue: E must map solid vdofs to fluid "
@@ -2244,9 +2254,12 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetFluidPotentialGlue(
               "SetFluidPotentialGlue: identity equilibrium mapping only "
               "(the mapped variant pulls the Eulerian forms back with "
               "Jacobians; not built).");
-  MFEM_VERIFY(!sea_enabled_ && !rot_enabled_,
-              "SetFluidPotentialGlue: not composed with the water or "
-              "rotation borders yet.");
+  MFEM_VERIFY(!sea_enabled_,
+              "SetFluidPotentialGlue: call this before SetWaterLoad (the "
+              "water's zeta-zeta sum stacks on the glue's).");
+  MFEM_VERIFY(!rot_enabled_,
+              "SetFluidPotentialGlue: not composed with the rotation "
+              "border yet (the omega field columns are not conjugated).");
   MFEM_VERIFY(E.Height() == fes_fluid.TrueVSize() &&
                   E.Width() == pfes_->TrueVSize(),
               "SetFluidPotentialGlue: E must map solid true dofs to fluid "

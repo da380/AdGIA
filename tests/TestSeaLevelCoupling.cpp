@@ -432,4 +432,87 @@ TEST(SeaLevelCouplingFluid, MonolithicMatchesFixedPoint) {
 INSTANTIATE_TEST_SUITE_P(SeaLevelCoupling, SeaLevelCouplingTest,
                          testing::Values(Param{3, 1}, Param{3, 2}));
 
+
+// The water border COMPOSED with the level border (and the rotation
+// border: all three on one bordered system), on the three-layer model —
+// a fluid SHELL, so the closure carries two walls. No new coupling is
+// derived: the engine's joint elimination carries the water-core
+// interaction through the operator, and the checks are (a) Phi_g — a
+// degree-0 observable — shifts finitely when the border closes the
+// fluid's degree-0 freedom, mirroring the omega_3 story, and (b) the
+// monolithic route agrees with the elimination on the full three-border
+// system, fields and scalars alike.
+TEST(SeaLevelCouplingFluid, LevelBorderComposesWithWaterAndRotation) {
+  const int dim = 3, order = 1;
+  Mesh parent(ThreeLayerMeshFile(dim).c_str(), 1, 1);
+  Array<int> attrs({1, 3});
+  SubMesh solid(SubMesh::CreateFromDomain(parent, attrs));
+  H1_FECollection fec(order, dim);
+  FiniteElementSpace fes_u(&solid, &fec, dim), fes_phi(&parent, &fec);
+  ConstantCoefficient kappa(kKappa), mu(kMu), kappa_f(kKappa);
+  FunctionCoefficient rho_s(SolidDensity), rho_f(FluidDensity);
+  IsotropicElasticRheology rheology(dim, kappa, mu);
+  std::vector<FluidRegion> fluids;
+  fluids.push_back(OuterCore(solid, rho_f));
+  fluids.back().bulk_modulus = &kappa_f;
+  const Array<int> surface = SurfaceMarker(solid);
+  FunctionCoefficient sigma_data(Degree2);
+  ConstantCoefficient w(0.05);
+  Array<int> inner_core({1});
+  Vector moments(3);
+  moments[0] = 1.5262;
+  moments[1] = 1.5262;
+  moments[2] = 1.5312;
+
+  auto run = [&](int levels, bool rotate, bool monolithic) {
+    auto p = std::make_unique<LinearQuasiStaticMixedSelfGravitatingProblem>(
+        &fes_u, &fes_phi, rheology, rho_s, kG, kDtNDegree, nullptr, fluids);
+    p->AddRegionRotations(inner_core);
+    p->SetSolverType(
+        LinearQuasiStaticMixedSelfGravitatingProblem::SolverType::
+            BlockMINRES);
+    p->SetRelTol(1e-12);
+    if (levels > 0) {
+      p->SetLevelBorder(levels);
+    }
+    if (rotate) {
+      p->SetRotation(0.1, moments);
+    }
+    if (monolithic) {
+      p->SetMonolithicBorder();
+    }
+    p->SetWaterLoad(w, sigma_data, surface);
+    p->AssembleForce(0.0);
+    EXPECT_TRUE(p->Solve());
+    return p;
+  };
+
+  // (a) Phi_g reads degree 0: the border closes that freedom, so the
+  // water constant shifts finitely from the naked reduction's.
+  auto p0 = run(0, false, false);
+  auto p1 = run(12, false, false);
+  const double g0 = p0->UniformPotentialTerm();
+  const double g1 = p1->UniformPotentialTerm();
+  ASSERT_GT(std::abs(g0), 1e-14);
+  const double shift = std::abs(g1 - g0) / std::abs(g0);
+  std::cout << "Phi_g: naked " << g0 << ", bordered " << g1
+            << " (relative shift " << shift << ")\n";
+  EXPECT_GT(shift, 1e-4);
+  EXPECT_LT(shift, 10.0);
+
+  // (b) All three borders, both routes.
+  auto pe = run(12, true, false);
+  auto pm = run(12, true, true);
+  {
+    GridFunction d(pe->Displacement());
+    d -= pm->Displacement();
+    EXPECT_LT(d.Norml2() / pe->Displacement().Norml2(), 1e-7);
+  }
+  EXPECT_NEAR(pm->UniformPotentialTerm(), pe->UniformPotentialTerm(),
+              1e-7 * std::abs(pe->UniformPotentialTerm()));
+  Vector dw(pm->AngularVelocity());
+  dw -= pe->AngularVelocity();
+  EXPECT_LT(dw.Norml2() / pe->AngularVelocity().Norml2(), 1e-7);
+}
+
 }  // namespace
