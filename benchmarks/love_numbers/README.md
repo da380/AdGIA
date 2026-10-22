@@ -79,6 +79,7 @@ counts compared in `timing.png` and in the summary:
 |---|---|
 | `dahlen` | Eulerian, fluid eliminated (`doc/self_gravitation.md`); `--cmb` picks its fluid-interface treatment |
 | `dahlen` + `-level-border <n>` (love_benchmark directly) | the same with the level border of `doc/dahlen_closure.tex`: the degree-0 hole closed on an n-node grid in Phi_0 per fluid region; 16 is right for h 0.3 to 0.2 |
+| `referential` + `-level-border <n>` (love_benchmark directly) | the referential closure: the fluid eliminated through the potential glue with the wall seam and closed by the level border (identity mapping only; no tidal leg). On `fluid_core` h 0.2/o2: h'_0 0.47%, h'_1 0.06% against pyslfp; h'_2 is order-limited by the wall kernels' facet geometry (0.94% at o2, 0.007% at o3) |
 | `gauged` | Eulerian, the fluid in the displacement space with a gauge shear penalty (`doc/gauged_fluid.md`) |
 | `referential` | the welded gauged referential formulation (`doc/gravitating_elasticity.md`): bare moduli from the exported hydrostatic pressure `p0`, equilibrium stress `-p0 I` |
 | `maxwell` | the referential formulation with the fluid by Maxwell relaxation (`SetFluid`'s default treatment, the general method): the core an artificial Maxwell solid relaxed to the secular static state (`doc/static_fluid_core.tex`); `-mxbeta` sets the physical-phase dt/tau |
