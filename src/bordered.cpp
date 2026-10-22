@@ -31,6 +31,19 @@ bool BorderedElimination::Eliminate(const std::vector<State>& columns,
         MFEM_VERIFY(static_cast<int>(columns[j].size()) == nc_,
                     "Eliminate: every column must have the configured "
                     "components");
+        // A zero column (a border unknown coupled only within the dense
+        // block) has the zero response: no solve.
+        real_t nrm2 = 0.0;
+        for (int c = 0; c < nc_; c++) {
+          nrm2 += dot_(columns[j][c], columns[j][c]);
+        }
+        if (nrm2 == 0.0) {
+          for (int c = 0; c < nc_; c++) {
+            e.Y[j][c].SetSize(columns[j][c].Size());
+            e.Y[j][c] = 0.0;
+          }
+          continue;
+        }
         ok = solve_(columns[j], e.Y[j]) && ok;
       }
       e.BtY.SetSize(nb);

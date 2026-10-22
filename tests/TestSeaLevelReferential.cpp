@@ -800,4 +800,98 @@ TEST(SeaLevelReferential, ConservationCertificate) {
 INSTANTIATE_TEST_SUITE_P(SeaLevelReferential, SeaLevelReferentialTest,
                          testing::Values(1, 2));
 
+
+// The referential closure COMPOSED with the water border: on the
+// two-layer fluid-core ball, referential (glue + level border + water)
+// against mixed (level border + water) — the same Eulerian fluid and
+// border assemblies through the glue, the water's zeta-zeta sum stacked
+// on the glue's, the ocean and the wall on disjoint surfaces so the
+// water column needs no conjugation. Phi_g — the degree-0 water
+// constant the border corrects — and the displacement agree at the two
+// solid assemblies' common level, improving with order.
+TEST(SeaLevelReferential, LevelBorderWaterMatchesMixed) {
+  const int dim = 3;
+  const double r_cmb = kRCmb;
+  std::vector<double> g_diff, u_diff;
+  for (int order : {1, 2}) {
+    Mesh parent(TwoLayerMeshFile(dim).c_str(), 1, 1);
+    Array<int> fluid_attr({1}), solid_attr({2}), buffer_attr({3});
+    SubMesh body(SubMesh::CreateFromDomain(parent, solid_attr));
+    SubMesh fluid(SubMesh::CreateFromDomain(parent, fluid_attr));
+    SubMesh buffer(SubMesh::CreateFromDomain(parent, buffer_attr));
+    H1_FECollection fec(order, dim);
+    FiniteElementSpace fes_u(&body, &fec, dim), fes_zeta(&parent, &fec);
+    FiniteElementSpace fes_fluid(&fluid, &fec, dim);
+    FiniteElementSpace fes_buffer(&buffer, &fec, dim);
+    Vector bb_min, bb_max;
+    parent.GetBoundingBox(bb_min, bb_max);
+    const double r_out = bb_max.Normlinf();
+
+    RadialHydrostaticBackground bg(
+        dim,
+        [](double r) {
+          return r < kRCmb ? 1.2 - 0.1 * (r - kRIcb) / (kRCmb - kRIcb) : kRho;
+        },
+        [](double) { return kKappa; },
+        [r_cmb](double r) { return r < r_cmb ? 0.0 : kMu; }, kG, 1.0);
+
+    ConstantCoefficient kappa(kKappa), mu(kMu), kappa_f(kKappa);
+    FunctionCoefficient rho_f(FluidDensity);
+    FluidRegion core;
+    core.attributes = Array<int>({1});
+    core.density = &rho_f;
+    core.interface_marker.SetSize(body.bdr_attributes.Max());
+    core.interface_marker = 0;
+    core.interface_marker[0] = 1;  // the CMB
+    core.bulk_modulus = &kappa_f;
+    std::vector<FluidRegion> fluids{core};
+
+    // A degree-0-BEARING load: Phi_g is the degree-0 water constant,
+    // and on a zero-mean load it is a near-zero scalar whose relative
+    // comparison is noise.
+    FunctionCoefficient sigma_data(
+        [](const Vector& x) { return 0.02 + Degree2(x); });
+    ConstantCoefficient w(0.05);
+    auto surface = SurfaceMarker(body);
+
+    IsotropicElasticRheology e_rheology(dim, kappa, mu);
+    LinearQuasiStaticMixedSelfGravitatingProblem mixed(
+        &fes_u, &fes_zeta, e_rheology, bg.Density(), kG, kDtNDegree, nullptr,
+        fluids);
+    mixed.SetLevelBorder(12);
+    mixed.SetWaterLoad(w, sigma_data, surface);
+    mixed.SetRelTol(1e-11);
+    mixed.AssembleForce(0.0);
+    ASSERT_TRUE(mixed.Solve());
+
+    LinearQuasiStaticReferentialSelfGravitatingProblem referential(
+        &fes_u, &fes_zeta, bg.Rheology(), bg.Density(), kG, kDtNDegree,
+        nullptr, fluids);
+    auto Ev = NewRadialVacuumExtension(fes_u, fes_buffer, 1.0, r_out);
+    referential.SetPrescribedVacuumExtension(fes_buffer, *Ev);
+    auto Ef = NewRadialFluidExtension(fes_u, fes_fluid, r_cmb);
+    referential.SetFluidPotentialGlue(fes_fluid, *Ef, bg.Pressure());
+    referential.SetLevelBorder(12);
+    referential.SetWaterLoad(w, sigma_data, surface);
+    referential.SetRelTol(1e-11);
+    referential.AssembleForce(0.0);
+    ASSERT_TRUE(referential.Solve());
+
+    g_diff.push_back(
+        std::abs(referential.UniformPotentialTerm() -
+                 mixed.UniformPotentialTerm()) /
+        std::max(1e-30, std::abs(mixed.UniformPotentialTerm())));
+    GridFunction d(referential.Displacement());
+    d -= mixed.Displacement();
+    u_diff.push_back(L2Norm(d) / L2Norm(mixed.Displacement()));
+  }
+  std::cout << "water+border cross-check: Phi_g " << g_diff[0] << " -> "
+            << g_diff[1] << ", u " << u_diff[0] << " -> " << u_diff[1]
+            << "\n";
+  EXPECT_LT(g_diff[1], 5e-2);
+  EXPECT_LT(g_diff[1], 0.5 * g_diff[0]);
+  EXPECT_LT(u_diff[1], 5e-2);
+  EXPECT_LT(u_diff[1], 0.5 * u_diff[0]);
+}
+
 }  // namespace

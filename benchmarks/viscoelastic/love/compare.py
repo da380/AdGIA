@@ -109,6 +109,10 @@ def errors(fe: dict, ref: dict) -> dict:
             if any(v is None for v in ft + rt):
                 continue
             scale = max(abs(v) for v in rt + [r0])
+            if scale == 0.0:
+                # A channel the reference leaves identically zero
+                # (l' at degree 0) has no scale to judge against.
+                continue
             hist = max(abs(a - b) for a, b in zip(ft + [f0], rt + [r0]))
             drift = max((abs(b - r0) for b in rt), default=0.0)
             relax = max((abs((a - f0) - (b - r0)) for a, b in zip(ft, rt)),

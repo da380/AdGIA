@@ -82,6 +82,30 @@ benchmark_launcher(love_numbers love_numbers plot)
 benchmark_launcher(love_numbers love_numbers cmb_report)
 benchmark_launcher(common love_numbers make_case)
 
+# --- Elastic, non-gravitating (E1 of the cross-code hierarchy) --------------
+
+# The exchange files this driver writes record which commit computed them.
+execute_process(COMMAND git rev-parse --short HEAD
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE ADGIA_GIT_COMMIT OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET)
+if(NOT ADGIA_GIT_COMMIT)
+    set(ADGIA_GIT_COMMIT "unknown")
+endif()
+benchmark_driver(elastic/nongrav traction_benchmark)
+target_compile_definitions(traction_benchmark PRIVATE
+    ADGIA_GIT_COMMIT="${ADGIA_GIT_COMMIT}")
+benchmark_launcher(elastic/nongrav elastic/nongrav reference)
+benchmark_launcher(elastic/nongrav elastic/nongrav compare)
+# pyslfp_reference.py runs from the pyslfp checkout's own environment
+# (see its docstring), so it gets no launcher here.
+
+# --- Elastic, gravitating (E2): conventional Love numbers across the codes --
+
+benchmark_launcher(elastic/grav elastic/grav from_results)
+benchmark_launcher(elastic/nongrav elastic/grav compare)
+# pyslfp_reference.py again runs from the pyslfp checkout.
+
 # --- Disc (the 2-D family; rung 0 is gravity-free) --------------------------
 
 benchmark_driver(sea_level sea_level_benchmark)
@@ -119,6 +143,10 @@ benchmark_driver(viscoelastic/love viscoelastic_love)
 benchmark_launcher(viscoelastic/love viscoelastic/love laplace_reference)
 benchmark_launcher(viscoelastic/love viscoelastic/love compare)
 benchmark_launcher(common viscoelastic/love make_case)
+# The V1 cross-code flow: the JSON-to-exchange converter; exchange files
+# are compared with elastic/nongrav's `compare` launcher, and
+# pyslfp_histories.py runs from the pyslfp checkout.
+benchmark_launcher(viscoelastic/love viscoelastic/love from_results)
 
 benchmark_driver(viscoelastic/box viscoelastic_box)
 benchmark_launcher(viscoelastic/box viscoelastic/box cases)

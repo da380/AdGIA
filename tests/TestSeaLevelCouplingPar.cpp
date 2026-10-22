@@ -157,6 +157,64 @@ void RunCase(int order, const std::string& label) {
 
 }  // namespace
 
+// The three-border composition (water + rotation + level border) on the
+// three-layer fluid-shell model: serial and parallel build the same
+// bordered system, so Phi_g and omega_3 match the serial values.
+void LevelBorderComposedCase(const std::string& label) {
+  Mesh smesh(ThreeLayerMeshFile(3).c_str(), 1, 1);
+  const int order = 1;
+  Array<int> solid_attr({1, 3});
+  ConstantCoefficient kappa(kKappa), mu(kMu), kappa_f(kKappa);
+  FunctionCoefficient rho_s(SolidDensity), rho_f(FluidDensity);
+  IsotropicElasticRheology rheology(3, kappa, mu);
+  FunctionCoefficient sigma_data(Degree2);
+  ConstantCoefficient w(0.05);
+  Array<int> inner_core({1});
+  Vector moments(3);
+  moments[0] = 1.5262;
+  moments[1] = 1.5262;
+  moments[2] = 1.5312;
+  double phi_g = 0.0, w3 = 0.0;
+  auto run = [&](FiniteElementSpace& fes_u, FiniteElementSpace& fes_phi,
+                 Mesh& solid) {
+    std::vector<FluidRegion> fluids;
+    fluids.push_back(OuterCore(solid, rho_f));
+    fluids.back().bulk_modulus = &kappa_f;
+    Array<int> surface(solid.bdr_attributes.Max());
+    surface = 0;
+    surface[solid.bdr_attributes.Max() - 1] = 1;
+    auto p = std::make_unique<LinearQuasiStaticMixedSelfGravitatingProblem>(
+        &fes_u, &fes_phi, rheology, rho_s, kG, kDtNDegree, nullptr, fluids);
+    p->AddRegionRotations(inner_core);
+    p->SetRelTol(1e-12);
+    p->SetLevelBorder(12);
+    p->SetRotation(0.1, moments);
+    p->SetWaterLoad(w, sigma_data, surface);
+    p->AssembleForce(0.0);
+    Check(p->Solve() ? 0.0 : 1.0, 0.0, label + ": solve");
+    phi_g = p->UniformPotentialTerm();
+    w3 = p->AngularVelocity()[2];
+  };
+  double phi_g_ref = 0.0, w3_ref = 0.0;
+  {
+    SubMesh solid(SubMesh::CreateFromDomain(smesh, solid_attr));
+    H1_FECollection fec(order, 3);
+    FiniteElementSpace fes_u(&solid, &fec, 3), fes_phi(&smesh, &fec);
+    run(fes_u, fes_phi, solid);
+    phi_g_ref = phi_g;
+    w3_ref = w3;
+  }
+  ParMesh pmesh(MPI_COMM_WORLD, smesh);
+  ParSubMesh solid(ParSubMesh::CreateFromDomain(pmesh, solid_attr));
+  H1_FECollection fec(order, 3);
+  ParFiniteElementSpace fes_u(&solid, &fec, 3), fes_phi(&pmesh, &fec);
+  run(fes_u, fes_phi, solid);
+  Check(std::abs(phi_g - phi_g_ref) / std::abs(phi_g_ref), 1e-6,
+        label + ": Phi_g serial == parallel");
+  Check(std::abs(w3 - w3_ref) / std::abs(w3_ref), 1e-6,
+        label + ": omega_3 serial == parallel");
+}
+
 int main(int argc, char* argv[]) {
   Mpi::Init(argc, argv);
   Hypre::Init();
@@ -164,6 +222,8 @@ int main(int argc, char* argv[]) {
   // Order 1 alone: the parallel twin exercises the plumbing; the order
   // axis lives in the serial suite.
   RunCase(1, "p=1");
+
+    LevelBorderComposedCase("composed");
 
   if (Mpi::Root()) {
     if (num_fails == 0) {

@@ -19,6 +19,7 @@ target_sources(${PROJECT_NAME} PRIVATE null_space.cpp
                                        quasi_static_problem.cpp
                                        fault_problem.cpp
                                        referential_problem.cpp
+    level_border.cpp
     mixed_problem.cpp
                                        viscoelastic.cpp
                                        adjoint.cpp

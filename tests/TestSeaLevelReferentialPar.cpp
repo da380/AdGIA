@@ -419,6 +419,105 @@ void RunFluidCase(const std::string& label) {
   }
 }
 
+// The referential closure composed with the water border, parallel leg
+// (fluid core + glue + level border + water): the same discrete system
+// on every rank count — Phi_g and the field norms match serial.
+void LevelBorderWaterCase(const std::string& label) {
+  Mesh smesh("../data/earth_fluidcore_3d.msh", 1, 1);
+  const int dim = 3, order = 1;
+  const double r_cmb = 3483.0 / 6371.0;
+  const double r_icb = 1221.5 / 6371.0;
+  Array<int> fluid_attr({1}), solid_attr({2}), buffer_attr({3});
+  Vector bb_min, bb_max;
+  smesh.GetBoundingBox(bb_min, bb_max);
+  const double r_out = bb_max.Normlinf();
+  RadialHydrostaticBackground bg(
+      dim,
+      [r_cmb, r_icb](double r) {
+        return r < r_cmb ? 1.2 - 0.1 * (r - r_icb) / (r_cmb - r_icb) : kRho;
+      },
+      [](double) { return kKappa; },
+      [r_cmb](double r) { return r < r_cmb ? 0.0 : kMu; }, kG, 1.0);
+  FunctionCoefficient rho_f([r_cmb, r_icb](const Vector& x) {
+    const double r = x.Norml2();
+    return 1.2 - 0.1 * (r - r_icb) / (r_cmb - r_icb);
+  });
+  ConstantCoefficient kappa_f(kKappa), w(0.05);
+  FunctionCoefficient sigma_data(
+      [](const Vector& x) { return 0.02 + Degree2(x); });
+  double phi_g = 0.0, u_norm = 0.0;
+  auto run = [&](FiniteElementSpace& fes_u, FiniteElementSpace& fes_zeta,
+                 FiniteElementSpace& fes_fluid,
+                 FiniteElementSpace& fes_buffer, Mesh& solid, bool parallel) {
+    FluidRegion core;
+    core.attributes = Array<int>({1});
+    core.density = &rho_f;
+    core.interface_marker.SetSize(solid.bdr_attributes.Max());
+    core.interface_marker = 0;
+    core.interface_marker[0] = 1;
+    core.bulk_modulus = &kappa_f;
+    std::vector<FluidRegion> fluids{core};
+    Array<int> surface(solid.bdr_attributes.Max());
+    surface = 0;
+    surface[solid.bdr_attributes.Max() - 1] = 1;
+    LinearQuasiStaticReferentialSelfGravitatingProblem p(
+        &fes_u, &fes_zeta, bg.Rheology(), bg.Density(), kG, kDtNDegree,
+        nullptr, fluids);
+    if (parallel) {
+#ifdef MFEM_USE_MPI
+      auto Ev = NewRadialVacuumExtension(
+          static_cast<ParFiniteElementSpace&>(fes_u),
+          static_cast<ParFiniteElementSpace&>(fes_buffer), 1.0, r_out);
+      p.SetPrescribedVacuumExtension(
+          static_cast<ParFiniteElementSpace&>(fes_buffer), *Ev);
+      auto Ef = NewRadialFluidExtension(
+          static_cast<ParFiniteElementSpace&>(fes_u),
+          static_cast<ParFiniteElementSpace&>(fes_fluid), r_cmb);
+      p.SetFluidPotentialGlue(static_cast<ParFiniteElementSpace&>(fes_fluid),
+                              *Ef, bg.Pressure());
+#endif
+    } else {
+      auto Ev = NewRadialVacuumExtension(fes_u, fes_buffer, 1.0, r_out);
+      p.SetPrescribedVacuumExtension(fes_buffer, *Ev);
+      auto Ef = NewRadialFluidExtension(fes_u, fes_fluid, r_cmb);
+      p.SetFluidPotentialGlue(fes_fluid, *Ef, bg.Pressure());
+    }
+    p.SetLevelBorder(12);
+    p.SetWaterLoad(w, sigma_data, surface);
+    p.SetRelTol(1e-11);
+    p.AssembleForce(0.0);
+    Check(p.Solve() ? 0.0 : 1.0, 0.0, label + ": solve");
+    phi_g = p.UniformPotentialTerm();
+    u_norm = L2Norm(p.Displacement());
+  };
+  double phi_g_ref = 0.0, u_ref = 0.0;
+  {
+    SubMesh body(SubMesh::CreateFromDomain(smesh, solid_attr));
+    SubMesh fluid(SubMesh::CreateFromDomain(smesh, fluid_attr));
+    SubMesh buffer(SubMesh::CreateFromDomain(smesh, buffer_attr));
+    H1_FECollection fec(order, dim);
+    FiniteElementSpace fes_u(&body, &fec, dim), fes_zeta(&smesh, &fec);
+    FiniteElementSpace fes_fluid(&fluid, &fec, dim);
+    FiniteElementSpace fes_buffer(&buffer, &fec, dim);
+    run(fes_u, fes_zeta, fes_fluid, fes_buffer, body, false);
+    phi_g_ref = phi_g;
+    u_ref = u_norm;
+  }
+  ParMesh pmesh(MPI_COMM_WORLD, smesh);
+  ParSubMesh body(ParSubMesh::CreateFromDomain(pmesh, solid_attr));
+  ParSubMesh fluid(ParSubMesh::CreateFromDomain(pmesh, fluid_attr));
+  ParSubMesh buffer(ParSubMesh::CreateFromDomain(pmesh, buffer_attr));
+  H1_FECollection fec(order, dim);
+  ParFiniteElementSpace fes_u(&body, &fec, dim), fes_zeta(&pmesh, &fec);
+  ParFiniteElementSpace fes_fluid(&fluid, &fec, dim);
+  ParFiniteElementSpace fes_buffer(&buffer, &fec, dim);
+  run(fes_u, fes_zeta, fes_fluid, fes_buffer, body, true);
+  Check(std::abs(phi_g - phi_g_ref) / std::abs(phi_g_ref), 1e-6,
+        label + ": Phi_g serial == parallel");
+  Check(std::abs(u_norm - u_ref) / u_ref, 1e-6,
+        label + ": displacement norm serial == parallel");
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -434,6 +533,8 @@ int main(int argc, char* argv[]) {
   const int fails = num_fails;
   int global_fails = 0;
   MPI_Allreduce(&fails, &global_fails, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    LevelBorderWaterCase("water+border");
+
   if (Mpi::Root()) {
     std::cout << (global_fails == 0 ? "PASS" : "FAIL") << " ("
               << num_checks << " checks)\n";

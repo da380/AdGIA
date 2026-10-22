@@ -1353,6 +1353,51 @@ class ReferentialGravityCouplingIntegrator
 };
 
 /**
+ * @brief The symmetric normal--surface-divergence wall kernel
+ * \f[
+ *   N[\pi](\bvec u, \bvec v) = \tfrac12\oint_\Sigma \pi\,
+ *     [\,(\bvec m\cdot\bvec u)\,\mathrm{div}_\Sigma\bvec v
+ *       + (\bvec m\cdot\bvec v)\,\mathrm{div}_\Sigma\bvec u\,]\dd S,
+ * \f]
+ * one-sided on the solid SubMesh's boundary elements, \f$\bvec m\f$
+ * the element's unit normal (CalcOrtho) and
+ * \f$\mathrm{div}_\Sigma\f$ the surface divergence of the
+ * interpolated field (facet-wise on order-1 geometry; the field's
+ * surface gradients carry the curvature). Together with the symmetrised
+ * SlipInterfacePressureIntegrator this is the follower load of a wall
+ * held by a hydrostatic fluid: \f$-\pi\f$ times the second variation
+ * of the enclosed volume (the eliminated-fluid glue's wall seam;
+ * doc/dahlen_closure.tex, "A general pre-stressed solid"). Identity
+ * equilibrium mapping only; byNODES vector space.
+ */
+class BoundaryNormalSurfaceDivergenceIntegrator
+    : public mfem::BilinearFormIntegrator {
+ private:
+  mfem::Coefficient* pi_;
+
+#ifndef MFEM_THREAD_SAFE
+  mfem::Vector shape_, normal_, nu_;
+  mfem::DenseMatrix dshape_, gshape_, Jt_, JtJ_, JtJi_, F_, Fi_, PT_;
+#endif
+
+ public:
+  /** @param pi The wall coefficient (the follower's
+   *  \f$p^0 - |\nabla\zeta^0|^2/8\pi G\f$); not owned.
+   *  @param ir Optional integration rule. */
+  explicit BoundaryNormalSurfaceDivergenceIntegrator(
+      mfem::Coefficient& pi, const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), pi_{&pi} {}
+
+  /** @brief Default rule: 2 el.GetOrder() + Trans.OrderW(). */
+  static const mfem::IntegrationRule& GetRule(
+      const mfem::FiniteElement& el, const mfem::ElementTransformation& Trans);
+
+  void AssembleElementMatrix(const mfem::FiniteElement& el,
+                             mfem::ElementTransformation& Trans,
+                             mfem::DenseMatrix& elmat) override;
+};
+
+/**
  * @brief BilinearFormIntegrator for the transformed Laplace integrator.
  *
  * The bilinear form acts on a pair of scalar fields through

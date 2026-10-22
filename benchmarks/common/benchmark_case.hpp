@@ -246,6 +246,10 @@ struct CaseOptions {
   real_t mx_prec_eps = 0.0;       // maxwell: frozen-preconditioner epsilon
   const char* cmb = "full";
   bool cmb_keep_inner = false;    // keep fluid-enclosed solids meshed
+  int level_border = 0;           // dahlen: level-border nodes (0: off)
+  bool level_monolithic = false;  // dahlen: solve the bordered system
+                                  // monolithically (MINRES) instead of
+                                  // by the elimination (3-D only)
   const char* method = "dahlen";
   real_t slip_theta = 1e2;
   real_t gs_scale = 1.0;
@@ -353,6 +357,17 @@ struct CaseOptions {
                    "standard unmeshed-core condition of the GIA codes), "
                    "'winkler' (uniform without the interface potential "
                    "coupling F3: buoyancy alone).");
+    args.AddOption(&level_border, "-level-border", "--level-border",
+                   "Methods dahlen and referential: close the reduction's free function with "
+                   "the level border of doc/dahlen_closure.tex on a grid of "
+                   "this many nodes in Phi_0 per fluid region (0: off). "
+                   "Turns degree 0 into the compressible fluid problem and "
+                   "leaves the sphere's l >= 1 untouched.");
+    args.AddOption(&level_monolithic, "-level-mono", "--level-monolithic",
+                   "-no-level-mono", "--no-level-monolithic",
+                   "With -level-border: solve the bordered system "
+                   "monolithically (one MINRES on [A B; B^T Db]) instead "
+                   "of by the cached-column elimination. 3-D only.");
     args.AddOption(&cmb_keep_inner, "-cmb-keep-inner",
                    "--cmb-keep-inner-core", "-cmb-drop-inner",
                    "--cmb-drop-inner-core",
@@ -505,6 +520,22 @@ class Case {
                 "slip or slip_broken.");
     eulerian = method == "dahlen" || method == "gauged";
     const bool slip_method = method == "slip" || method == "slip_broken";
+    // -level-border with -method referential: the eliminated fluid
+    // through the potential glue and the border (the referential
+    // closure, doc/dahlen_closure.tex "Implementation"); the gauged
+    // fluid is not configured.
+    const bool ref_eliminated =
+        method == "referential" && options.level_border > 0;
+    MFEM_VERIFY(!ref_eliminated || (options.map_amplitude == 0.0 &&
+                                    options.map_shift == 0.0),
+                "-level-border with -method referential: identity "
+                "equilibrium mapping only (the glue's mapped variant is "
+                "not built).");
+    MFEM_VERIFY(!options.level_monolithic || method == "dahlen",
+                "-level-mono is the mixed class's route (-method dahlen).");
+    MFEM_VERIFY(!ref_eliminated || options.gauge_prec_eps == 0.0,
+                "-gpe is a gauge-treatment knob; the eliminated fluid "
+                "has no gauge penalty.");
     MFEM_VERIFY(!eulerian || (options.map_amplitude == 0.0 &&
                               options.map_shift == 0.0 &&
                               std::string(options.profiles).empty()),
@@ -581,8 +612,8 @@ class Case {
       }
     }
     Array<int> u_attributes(solid_attributes);
-    if (method == "gauged" || method == "referential" ||
-        method == "maxwell") {
+    if (method == "gauged" || method == "maxwell" ||
+        (method == "referential" && !ref_eliminated)) {
       u_attributes.Append(fluid_attributes);
       u_attributes.Sort();
     }
@@ -595,6 +626,7 @@ class Case {
     kappa_c_ = std::make_unique<GridFunctionCoefficient>(kappa_solid_.get());
     mu_c_ = std::make_unique<GridFunctionCoefficient>(mu_solid_.get());
     rho_parent_c_ = std::make_unique<GridFunctionCoefficient>(rho.get());
+    kappa_parent_c_ = std::make_unique<GridFunctionCoefficient>(kappa.get());
     if (options.model_fields) {
       MFEM_VERIFY(eulerian,
                   "-model-fields: the Eulerian methods (the referential "
@@ -612,6 +644,10 @@ class Case {
           Marker(ToArray(manifest.BodyAttributes()), parent->attributes.Max());
       rho_parent_c_ =
           std::make_unique<RestrictedCoefficient>(*model_rho_, body_marker);
+      model_kappa_ =
+          std::make_unique<ModelScalarCoefficient>(*model_file_, "kappa");
+      kappa_parent_c_ = std::make_unique<RestrictedCoefficient>(*model_kappa_,
+                                                                body_marker);
       if (root) {
         std::cout << "Constitutive coefficients from the model file "
                   << manifest.ModelFile().filename().string() << "\n";
@@ -648,8 +684,7 @@ class Case {
     // The fluid layers: the density on the parent's fluid elements, and on
     // the solid's boundary elements the density of the fluid beyond them.
     const int n_bdr = solid->bdr_attributes.Max();
-    std::vector<FluidRegion> fluids;
-    if (method == "dahlen") {
+    if (method == "dahlen" || ref_eliminated) {
       fluid_side_ = FluidSideDensity(manifest, n_bdr);
       rho_interface_c_ = std::make_unique<PWConstCoefficient>(fluid_side_);
       const int first = manifest.Interfaces().front().attribute;
@@ -670,6 +705,7 @@ class Case {
           }
         }
         f.density = rho_parent_c_.get();
+        f.bulk_modulus = kappa_parent_c_.get();
         f.interface_density = rho_interface_c_.get();
         // Only interfaces with a meshed solid side assemble: a folded
         // inner core's ICB is interior to the unmeshed region.
@@ -726,6 +762,19 @@ class Case {
                                           fluids);
       if (options.amg_rbm) {
         problem->SetElasticityNearNull();
+      }
+      if (options.level_border > 0 && method == "dahlen" && !fluids.empty()) {
+        problem->SetLevelBorder(options.level_border);
+        if (options.level_monolithic) {
+          problem->SetMonolithicBorder();
+        }
+        if (root) {
+          std::cout << "Dahlen fluid closed by the level border ("
+                    << options.level_border << " nodes per region"
+                    << (options.level_monolithic ? ", monolithic route"
+                                                 : "")
+                    << ").\n";
+        }
       }
       if (method == "gauged" && fluid_attributes.Size() > 0) {
         // The gauge shear scale is the model's own bulk modulus (the
@@ -956,7 +1005,10 @@ class Case {
   // potential is meaningful (an observable) on the displacement region,
   // not by layer.
   bool SupportsTide() const {
-    return method != "slip" && method != "slip_broken";
+    // The eliminated-fluid referential path refuses SetTidalLoad (the
+    // fluid mass term's tidal load is not folded through the glue).
+    return method != "slip" && method != "slip_broken" &&
+           !(method == "referential" && !fluids.empty());
   }
   bool SupportsProfiles() const { return eulerian; }
 
@@ -1289,6 +1341,8 @@ class Case {
   // The welded referential and the two slipping methods: bare moduli
   // from the hydrostatic pressure p0, S_e = -p0 I, phi_e = id.
   void BuildReferential(const CaseOptions& options) {
+    const bool ref_eliminated =
+        method == "referential" && options.level_border > 0;
     const bool root = Mpi::Root();
     MFEM_VERIFY(p0,
                 "The referential methods need the p0 field: re-make the "
@@ -1515,13 +1569,35 @@ class Case {
     if (!slip) {
       ref_problem = std::make_unique<LinearQuasiStaticReferentialSelfGravitatingProblem>(
           fes_u.get(), fes_phi.get(), *ref_rheology_, *rho_use, G,
-          options.dtn_degree);
+          options.dtn_degree, nullptr, ref_eliminated
+                                           ? fluids
+                                           : std::vector<FluidRegion>{});
       if (options.amg_rbm) {
         ref_problem->SetElasticityNearNull();
       }
       Evac_ = NewRadialVacuumExtension(*fes_u, *fes_buffer_, radius, r_out);
       ref_problem->SetPrescribedVacuumExtension(*fes_buffer_, *Evac_);
-      if (fluid_attributes.Size() > 0) {
+      if (ref_eliminated) {
+        const int first = manifest.Interfaces().front().attribute;
+        const auto blist = manifest.FluidSolidInterfaces(fluid_attributes[0]);
+        MFEM_VERIFY(fluid_attributes.Size() == 1 && blist.size() == 1,
+                    "-level-border with -method referential supports one "
+                    "fluid core inside a solid shell (the radial fluid "
+                    "extension is one-sided).");
+        const auto& itf = manifest.Interfaces()[blist[0] - first];
+        fluid_sub_ = std::make_unique<ParSubMesh>(
+            ParSubMesh::CreateFromDomain(*parent, fluid_attributes));
+        fes_f_ = std::make_unique<ParFiniteElementSpace>(fluid_sub_.get(),
+                                                         fec_.get(), dim);
+        Ef_ = NewRadialFluidExtension(*fes_u, *fes_f_, itf.radius);
+        ref_problem->SetFluidPotentialGlue(*fes_f_, *Ef_, *p0_use);
+        ref_problem->SetLevelBorder(options.level_border);
+        if (root) {
+          std::cout << "Referential, eliminated fluid: the potential glue "
+                       "with the wall seam, closed by the level border ("
+                    << options.level_border << " nodes per region).\n";
+        }
+      } else if (fluid_attributes.Size() > 0) {
         gauge_marker_.SetSize(solid->attributes.Max());
         gauge_marker_ = 0;
         for (const int a : fluid_attributes) {
@@ -1753,7 +1829,8 @@ class Case {
  private:
   std::vector<std::unique_ptr<ParFiniteElementSpace>> spaces_;
   std::unique_ptr<ParGridFunction> rho_solid_, kappa_solid_, mu_solid_;
-  std::unique_ptr<Coefficient> rho_c_, kappa_c_, mu_c_, rho_parent_c_;
+  std::unique_ptr<Coefficient> rho_c_, kappa_c_, mu_c_, rho_parent_c_,
+      kappa_parent_c_, model_kappa_;
   std::optional<planetmodel::ModelFile> model_file_;
   std::unique_ptr<ModelScalarCoefficient> model_rho_;
   Vector fluid_side_;
@@ -1794,6 +1871,9 @@ class Case {
   std::unique_ptr<ReferentialElasticRheology> ref_rheology_;
   std::unique_ptr<PWConstCoefficient> pi_c_;
   Array<int> interface_marker_;
+  // The eliminated-fluid regions (dahlen, and referential with the
+  // level border); their coefficients are the members above.
+  std::vector<FluidRegion> fluids;
   std::unique_ptr<HypreParMatrix> Evac_, Ef_;
 
   // The standalone load-potential solve (SetupLoadPotential).

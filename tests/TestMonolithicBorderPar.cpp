@@ -187,10 +187,67 @@ void RunCase(int order, const std::string& label) {
 
 }  // namespace
 
+// The level border through the monolithic route, parallel: the two
+// routes solve the same bordered system (serial gate
+// TestMonolithicBorder.LevelBorderMatchesElimination), so the parallel
+// fields agree at solver grade across ranks.
+void RunLevelBorderCase(const std::string& label) {
+  Mesh smesh("../data/earth_fluidcore_3d.msh", 1, 1);
+  ParMesh pmesh(MPI_COMM_WORLD, smesh);
+  Array<int> solid_attr({2});
+  ParSubMesh body(ParSubMesh::CreateFromDomain(pmesh, solid_attr));
+  H1_FECollection fec(1, 3);
+  ParFiniteElementSpace fes_u(&body, &fec, 3), fes_phi(&pmesh, &fec);
+  ConstantCoefficient kappa(kKappa), mu(kMu), rho(kRho), kappa_f(kKappa);
+  IsotropicElasticRheology rheology(3, kappa, mu);
+  FunctionCoefficient rho_f([](const Vector& x) {
+    const double r = x.Norml2();
+    return 1.2 - 0.1 * r;
+  });
+  FluidRegion core;
+  core.attributes = Array<int>({1});
+  core.density = &rho_f;
+  core.interface_marker.SetSize(body.bdr_attributes.Max());
+  core.interface_marker = 0;
+  core.interface_marker[0] = 1;  // the CMB
+  core.bulk_modulus = &kappa_f;
+  std::vector<FluidRegion> fluids{core};
+  ConstantCoefficient sigma(0.02);
+  Array<int> surface(body.bdr_attributes.Max());
+  surface = 0;
+  surface[body.bdr_attributes.Max() - 1] = 1;
+
+  auto run = [&](bool monolithic) {
+    auto p = std::make_unique<LinearQuasiStaticMixedSelfGravitatingProblem>(
+        &fes_u, &fes_phi, rheology, rho, kG, kDtNDegree, nullptr, fluids);
+    p->SetSolverType(
+        LinearQuasiStaticMixedSelfGravitatingProblem::SolverType::
+            BlockMINRES);
+    p->SetRelTol(1e-12);
+    p->SetLevelBorder(12);
+    if (monolithic) {
+      p->SetMonolithicBorder();
+    }
+    p->SetSurfaceLoad(sigma, surface);
+    p->AssembleForce(0.0);
+    Check(p->Solve() ? 0.0 : 1.0, 0.0,
+          label + (monolithic ? ": monolithic solve" : ": elimination solve"));
+    return p;
+  };
+  auto pe = run(false);
+  auto pm = run(true);
+  Check(RelDiff(pm->Displacement(), pe->Displacement()), 1e-7,
+        label + ": displacement");
+  Check(RelDiff(pm->Potential(), pe->Potential()), 1e-7,
+        label + ": potential");
+}
+
 int main(int argc, char* argv[]) {
   Mpi::Init(argc, argv);
   Hypre::Init();
   RunCase(1, "order 1");
+    RunLevelBorderCase("level border");
+
   if (Mpi::Root()) {
     std::cout << num_checks << " checks, " << num_failures
               << " failures\n";

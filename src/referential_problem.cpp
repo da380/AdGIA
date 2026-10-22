@@ -1149,12 +1149,13 @@ LinearQuasiStaticReferentialSelfGravitatingProblem::LinearQuasiStaticReferential
     FiniteElementSpace* fes_u, FiniteElementSpace* fes_zeta,
     const ReferentialElasticRheology& rheology, Coefficient& density,
     real_t gravitational_constant, int dtn_degree,
-    Coefficient* background_zeta0)
+    Coefficient* background_zeta0, const std::vector<FluidRegion>& fluids)
     : LinearQuasiStaticProblemBase(fes_u, rheology),
       dim_(fes_u->GetMesh()->Dimension()),
       fes_zeta_(fes_zeta),
       ref_rheology_(&rheology),
       rho_(&density),
+      fluids_(fluids),
       G_(gravitational_constant),
       four_pi_G_(4.0 * kPi * gravitational_constant),
       dtn_degree_(dtn_degree),
@@ -1206,6 +1207,42 @@ LinearQuasiStaticReferentialSelfGravitatingProblem::LinearQuasiStaticReferential
     }
     injection_ =
         std::make_unique<SubMeshDofInjection>(*shadow_zeta_, *fes_zeta_);
+  }
+
+  // Fluid regions: markers on the parent's attributes and the SubMesh's
+  // boundary attributes, as in the mixed class. The CMB-approximation
+  // ladder is the mixed class's hydrostatic machinery and is refused
+  // here, as is ball-wide mode (the fluid terms are built on the
+  // prescribed extension, a SubMesh device).
+  MFEM_VERIFY(fluids_.empty() || !ball_wide_,
+              "LinearQuasiStaticReferentialSelfGravitatingProblem: fluid "
+              "regions need the displacement on a SubMesh excluding them, "
+              "not ball-wide mode.");
+  for (auto& f : fluids_) {
+    MFEM_VERIFY(f.treatment == FluidRegion::Treatment::Full,
+                "LinearQuasiStaticReferentialSelfGravitatingProblem: "
+                "Treatment::Full only; the CMB-approximation ladder lives "
+                "on the mixed class.");
+    MFEM_VERIFY(f.density,
+                "LinearQuasiStaticReferentialSelfGravitatingProblem: a fluid "
+                "region needs a (referential) density.");
+    MFEM_VERIFY(f.attributes.Size() > 0,
+                "LinearQuasiStaticReferentialSelfGravitatingProblem: a fluid "
+                "region needs parent-mesh attributes.");
+    MFEM_VERIFY(
+        f.interface_marker.Size() == fes_->GetMesh()->bdr_attributes.Max(),
+        "LinearQuasiStaticReferentialSelfGravitatingProblem: a fluid "
+        "region's interface_marker must be sized to the SubMesh's "
+        "bdr_attributes.Max().");
+    Array<int> marker(fes_zeta_->GetMesh()->attributes.Max());
+    marker = 0;
+    for (int a : f.attributes) {
+      MFEM_VERIFY(a >= 1 && a <= marker.Size(),
+                  "LinearQuasiStaticReferentialSelfGravitatingProblem: fluid "
+                  "attribute out of range.");
+      marker[a - 1] = 1;
+    }
+    fluid_markers_.push_back(marker);
   }
 
   // Potential fields.
@@ -1391,7 +1428,11 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::ComputeBackgroundPotent
     zeta0_->ProjectCoefficient(*zeta0);
   } else {
     // (K_a + DtN) Zeta0 / 4 pi G = -(rho, chi)_B with the referential
-    // density integrated on the SubMesh and injected into the ball.
+    // density integrated on the SubMesh and injected into the ball, and
+    // the referential fluid densities integrated on the parent (at a
+    // natural reference state this is the mixed class's background
+    // problem; the fluid mass term is a perturbation quantity and does
+    // not enter it there either).
     Vector bL(fes_zeta_->GetVSize()), B;
     if (ball_wide_) {
       auto rho_form = detail::MakeLinearForm(fes_zeta_);
@@ -1403,6 +1444,17 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::ComputeBackgroundPotent
       rho_form->AddDomainIntegrator(new DomainLFIntegrator(*rho_));
       rho_form->Assemble();
       injection_->Mult(*rho_form, bL);
+    }
+    if (!fluids_.empty()) {
+      auto fluid_form = detail::MakeLinearForm(fes_zeta_);
+      auto marker = fluid_markers_.begin();
+      for (auto& f : fluids_) {
+        fluid_form->AddDomainIntegrator(new DomainLFIntegrator(*f.density),
+                                        *marker);
+        ++marker;
+      }
+      fluid_form->Assemble();
+      bL += *fluid_form;
     }
     ToTrueDofs(*fes_zeta_, bL, B);
     B *= -1.0;
@@ -1566,6 +1618,9 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetSurfaceLoad(
 
 void LinearQuasiStaticReferentialSelfGravitatingProblem::SetTidalLoad(
     VectorCoefficient& grad_psi) {
+  MFEM_VERIFY(fluids_.empty(),
+              "SetTidalLoad: not with eliminated fluid regions yet (the "
+              "fluid mass term's tidal load is not folded).");
   RegisterTimeDependent(grad_psi);
   // -rho_tilde (grad psi o phi_e) . v on the displacement row; the
   // composition with the mapping is the caller's (the coefficient's),
@@ -1581,6 +1636,11 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetTidalLoad(
 void LinearQuasiStaticReferentialSelfGravitatingProblem::SetWaterLoad(
     Coefficient& ocean_weight, Coefficient& sigma_data,
     const Array<int>& surface_marker, Coefficient* surface_jacobian) {
+  MFEM_VERIFY(fluids_.empty() || glue_set_,
+              "SetWaterLoad: with eliminated fluid regions, call "
+              "SetFluidPotentialGlue (and SetLevelBorder, if wanted) "
+              "first; the water terms then compose on the same bordered "
+              "elimination.");
   MFEM_VERIFY(!sea_enabled_, "SetWaterLoad: already set.");
   MFEM_VERIFY(dim_ == 3,
               "SetWaterLoad: the sea-level equation is 3-D only (a 2-D "
@@ -1633,7 +1693,11 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::BuildWaterZetaMass() {
   // Rebuild-order contract: this replaces A_zeta_sea_, so callers must not
   // hold block_op_ across RefreshWaterLoad(); SetupSolver rebuilds it
   // because operator_dirty_ is set.
-  A_zeta_sea_ = std::make_unique<SumOperator>(const_cast<Operator*>(A_zeta_),
+  // With the eliminated-fluid glue the base already carries the fluid
+  // mass term: the water boundary mass stacks on A_zeta + M_F.
+  const Operator* sea_base =
+      glue_set_ ? static_cast<const Operator*>(A_zeta_glue_.get()) : A_zeta_;
+  A_zeta_sea_ = std::make_unique<SumOperator>(const_cast<Operator*>(sea_base),
                                               1.0, S_sea_.Ptr(), 1.0, false,
                                               false);
 }
@@ -1681,6 +1745,9 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::RefreshWaterLoad() {
 
 void LinearQuasiStaticReferentialSelfGravitatingProblem::SetRotation(
     real_t Omega, const Vector& principal_moments) {
+  MFEM_VERIFY(fluids_.empty(),
+              "SetRotation: not with eliminated fluid regions yet "
+              "(the border's glue conjugation is not built).");
   MFEM_VERIFY(!rot_enabled_, "SetRotation: already set.");
   MFEM_VERIFY(dim_ == 3,
               "SetRotation: the referential rotation border is 3-D only.");
@@ -1767,6 +1834,9 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetTisserandGauge(
 
 void LinearQuasiStaticReferentialSelfGravitatingProblem::SetRotation(
     real_t Omega) {
+  MFEM_VERIFY(fluids_.empty(),
+              "SetRotation: not with eliminated fluid regions yet "
+              "(the border's glue conjugation is not built).");
   MFEM_VERIFY(dim_ == 3,
               "SetRotation: the referential rotation border is 3-D only.");
   const DenseMatrix I0 = ModelInertiaTensor();
@@ -1973,6 +2043,565 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetPrescribedVacuumExte
 }
 #endif
 
+namespace {
+
+// The nodal glue rows shared by the serial and parallel builders: for
+// the scalar node j of the fluid-region potential shadow space, the row
+// of s = (Eu).grad Phi0 reads the components of the nodal gradient
+// field g (a GridFunction on the fluid displacement space, the local
+// projection of grad zeta0 — element choice at shared nodes is gauge)
+// against the vector dofs of node j.
+void GlueRowEntries(const mfem::FiniteElementSpace& fes_fluid,
+                    const mfem::GridFunction& g, int node, int dim,
+                    mfem::Array<int>& cols, mfem::Vector& vals) {
+  cols.SetSize(dim);
+  vals.SetSize(dim);
+  for (int d = 0; d < dim; d++) {
+    const int vd = fes_fluid.DofToVDof(node, d);
+    cols[d] = vd;
+    vals[d] = g(vd);
+  }
+}
+
+}  // namespace
+
+void LinearQuasiStaticReferentialSelfGravitatingProblem::SetFluidPotentialGlue(
+    FiniteElementSpace& fes_fluid, const SparseMatrix& E,
+    Coefficient& wall_pressure) {
+  MFEM_VERIFY(!ParallelPotential(),
+              "SetFluidPotentialGlue: vdof overload is serial; use the "
+              "true-dof overload in parallel.");
+  MFEM_VERIFY(fluids_.size() == 1,
+              "SetFluidPotentialGlue: exactly one fluid region (the radial "
+              "fluid extension is one-sided).");
+  MFEM_VERIFY(!glue_set_, "SetFluidPotentialGlue: already set.");
+  MFEM_VERIFY(ext_EtGE_ != nullptr,
+              "SetFluidPotentialGlue: call SetPrescribedVacuumExtension "
+              "first (the folds compose onto it).");
+  MFEM_VERIFY(ref_rheology_->EquilibriumMapping()->IsIdentity(),
+              "SetFluidPotentialGlue: identity equilibrium mapping only "
+              "(the mapped variant pulls the Eulerian forms back with "
+              "Jacobians; not built).");
+  MFEM_VERIFY(!sea_enabled_,
+              "SetFluidPotentialGlue: call this before SetWaterLoad (the "
+              "water's zeta-zeta sum stacks on the glue's).");
+  MFEM_VERIFY(!rot_enabled_,
+              "SetFluidPotentialGlue: not composed with the rotation "
+              "border yet (the omega field columns are not conjugated).");
+  MFEM_VERIFY(E.Height() == fes_fluid.GetVSize() &&
+                  E.Width() == fes_->GetVSize(),
+              "SetFluidPotentialGlue: E must map solid vdofs to fluid "
+              "vdofs.");
+  auto* fluid_sub = dynamic_cast<SubMesh*>(fes_fluid.GetMesh());
+  MFEM_VERIFY(fluid_sub && fluid_sub->GetParent() == fes_zeta_->GetMesh(),
+              "SetFluidPotentialGlue: the fluid space must live on a "
+              "SubMesh of the ball.");
+  FluidRegion& f = fluids_.front();
+
+  // zeta0 on the fluid region, for the nodal gradient and the
+  // barotropic density gradient.
+  shadow_zeta_fluid_ =
+      SubMeshDofInjection::MakeShadowSpace(*fes_zeta_, *fluid_sub);
+  MFEM_VERIFY(
+      shadow_zeta_fluid_->GetNDofs() == fes_fluid.GetNDofs() &&
+          fes_fluid.GetVDim() == dim_,
+      "SetFluidPotentialGlue: the fluid space must share the potential "
+      "space's nodes (same H1 order on the fluid SubMesh, vdim = dim).");
+  SubMeshDofInjection inj_f(*shadow_zeta_fluid_, *fes_zeta_);
+  zeta0_fluid_ = detail::MakeGridFunction(shadow_zeta_fluid_.get());
+  inj_f.MultTranspose(*zeta0_, *zeta0_fluid_);
+
+  // The glue matrix S (zeta vdofs x solid vdofs): nodal dot with the
+  // locally projected grad zeta0, through the extension.
+  {
+    GridFunction g(&fes_fluid);
+    GradientGridFunctionCoefficient grad0(zeta0_fluid_.get());
+    // Arithmetic nodal averaging over the elements sharing each node:
+    // deterministic and identical serial/parallel (the one-element
+    // nodal projection differs between the two at O(h^k), which is
+    // physics at the wall rows).
+    g.ProjectDiscCoefficient(grad0, GridFunction::ARITHMETIC);
+    SparseMatrix S_L(shadow_zeta_fluid_->GetVSize(), fes_fluid.GetVSize());
+    Array<int> cols;
+    Vector vals;
+    for (int j = 0; j < shadow_zeta_fluid_->GetNDofs(); j++) {
+      GlueRowEntries(fes_fluid, g, j, dim_, cols, vals);
+      S_L.AddRow(j, cols, vals);
+    }
+    S_L.Finalize();
+    std::unique_ptr<SparseMatrix> SLE(mfem::Mult(S_L, E));
+    glue_S_ = inj_f.RemapRows(*SLE);
+  }
+
+  // The Eulerian fluid blocks, exactly as the mixed class assembles
+  // them (doc/self_gravitation.md): A_F = K_F / 4 pi G + M_F on the
+  // parent's fluid elements, C_F = -oint rho_F phi (m.v) on the wall.
+  Array<int> empty;
+  Array<int>& marker = fluid_markers_.front();
+  Coefficient* rho_prime = f.density_gradient;
+  if (!rho_prime) {
+    l2_fec_ = std::make_unique<L2_FECollection>(
+        fes_zeta_->GetMaxElementOrder(), dim_);
+    l2_fes_ = detail::MakeFESpace(*fes_zeta_, l2_fec_.get());
+    rho_fluid_l2_ = detail::MakeGridFunction(l2_fes_.get());
+    rho_fluid_l2_->ProjectCoefficient(*f.density);
+    auto rp = std::make_unique<BarotropicDensityGradientCoefficient>(
+        *rho_fluid_l2_, *zeta0_);
+    rho_prime = rp.get();
+    fluid_coefs_.push_back(std::move(rp));
+  }
+  glue_rho_prime_.assign(1, rho_prime);
+  M_fluid_.SetType(Operator::MFEM_SPARSEMAT);
+  m_fluid_form_ = detail::MakeBilinearForm(fes_zeta_);
+  m_fluid_form_->AddDomainIntegrator(new MassIntegrator(*rho_prime), marker);
+  m_fluid_form_->Assemble();
+  m_fluid_form_->FormSystemMatrix(empty, M_fluid_);
+
+  BilinearForm k_f_form(fes_zeta_);
+  k_f_form.AddDomainIntegrator(
+      new TransformedDiffusionIntegrator(*ref_rheology_->EquilibriumMapping()),
+      marker);
+  k_f_form.Assemble();
+  k_f_form.Finalize();
+  std::unique_ptr<SparseMatrix> A_F(
+      Add(1.0 / four_pi_G_, k_f_form.SpMat(), 1.0,
+          *M_fluid_.As<SparseMatrix>()));
+
+  Coefficient& rho_i =
+      f.interface_density ? *f.interface_density : *f.density;
+  auto minus_rho = std::make_unique<ProductCoefficient>(-1.0, rho_i);
+  SubMeshMixedBilinearForm c_f_form(fes_zeta_, fes_);
+  c_f_form.AddBoundaryIntegrator(new BoundaryNormalScalarIntegrator(*minus_rho),
+                                 f.interface_marker);
+  c_f_form.Assemble();
+  OperatorHandle C_F_h(Operator::MFEM_SPARSEMAT);
+  c_f_form.FormRectangularSystemMatrix(empty, empty, C_F_h);
+  SparseMatrix& C_F = *C_F_h.As<SparseMatrix>();
+  fluid_coefs_.push_back(std::move(minus_rho));
+
+  // The conjugation by T = [I, 0; -S, I]: uu gains
+  // S^T A_F S - C_F S - S^T C_F^T (folded into ext_EtGE_, the one uu
+  // fold); the coupling gains C_F - S^T A_F; zeta-zeta gains M_F alone
+  // (the fluid Laplacian is already inside K_zeta_).
+  std::unique_ptr<SparseMatrix> St(Transpose(*glue_S_));
+  std::unique_ptr<SparseMatrix> AFS(mfem::Mult(*A_F, *glue_S_));
+  std::unique_ptr<SparseMatrix> StAFS(mfem::Mult(*St, *AFS));
+  std::unique_ptr<SparseMatrix> CFS(mfem::Mult(C_F, *glue_S_));
+  std::unique_ptr<SparseMatrix> StCFt(Transpose(*CFS));
+  std::unique_ptr<SparseMatrix> Xuu(Add(1.0, *StAFS, -1.0, *CFS));
+  Xuu.reset(Add(1.0, *Xuu, -1.0, *StCFt));
+  ext_EtGE_.reset(Add(*ext_EtGE_, *Xuu));
+
+  std::unique_ptr<SparseMatrix> StAF(mfem::Mult(*St, *A_F));
+  std::unique_ptr<SparseMatrix> Xc(Add(1.0, C_F, -1.0, *StAF));
+  ext_C_total_.reset(Add(*ext_C_total_, *Xc));
+
+  // The gravity half of the wall seam (hybrid_wall_seam.md, "Assembly
+  // map"): W3 the symmetrised gravity kernel +1/2(G_A + G_A^T) into the
+  // uu fold, W4 the scalar gravity kernel B_s into the coupling and,
+  // conjugated through the glue's wall rows, -1/2(B_s S + S^T B_s^T)
+  // into the uu fold. The seam uses only the wall trace of S, so it is
+  // extension-independent.
+  {
+    BilinearForm ga_form(fes_);
+    ga_form.AddBoundaryIntegrator(
+        new SlipInterfaceGravityIntegrator(*grad_zeta0_shadow_, G_),
+        f.interface_marker);
+    ga_form.Assemble();
+    ga_form.Finalize();
+    std::unique_ptr<SparseMatrix> Gat(Transpose(ga_form.SpMat()));
+    std::unique_ptr<SparseMatrix> W3(
+        Add(0.5, ga_form.SpMat(), 0.5, *Gat));
+    ext_EtGE_.reset(Add(*ext_EtGE_, *W3));
+
+    SubMeshMixedBilinearForm bs_form(fes_zeta_, fes_);
+    bs_form.AddBoundaryIntegrator(
+        new SlipInterfaceGravityScalarIntegrator(*grad_zeta0_shadow_, G_),
+        f.interface_marker);
+    bs_form.Assemble();
+    OperatorHandle Bs_h(Operator::MFEM_SPARSEMAT);
+    bs_form.FormRectangularSystemMatrix(empty, empty, Bs_h);
+    SparseMatrix& Bs = *Bs_h.As<SparseMatrix>();
+    ext_C_total_.reset(Add(*ext_C_total_, Bs));
+    std::unique_ptr<SparseMatrix> BsS(mfem::Mult(Bs, *glue_S_));
+    std::unique_ptr<SparseMatrix> BsSt(Transpose(*BsS));
+    std::unique_ptr<SparseMatrix> W4c(Add(-0.5, *BsS, -0.5, *BsSt));
+    ext_EtGE_.reset(Add(*ext_EtGE_, *W4c));
+  }
+  ext_Ct_total_.reset(Transpose(*ext_C_total_));
+  C_op_ = ext_C_total_.get();
+  Ct_op_ = ext_Ct_total_.get();
+
+  SetupFluidWallIntegrators(wall_pressure);
+  glue_set_ = true;
+  MarkOperatorDirty();
+}
+
+#ifdef MFEM_USE_MPI
+void LinearQuasiStaticReferentialSelfGravitatingProblem::SetFluidPotentialGlue(
+    ParFiniteElementSpace& fes_fluid, const HypreParMatrix& E,
+    Coefficient& wall_pressure) {
+  MFEM_VERIFY(ParallelPotential(),
+              "SetFluidPotentialGlue(par): parallel spaces only.");
+  MFEM_VERIFY(fluids_.size() == 1,
+              "SetFluidPotentialGlue: exactly one fluid region (the radial "
+              "fluid extension is one-sided).");
+  MFEM_VERIFY(!glue_set_, "SetFluidPotentialGlue: already set.");
+  MFEM_VERIFY(pext_EtGE_ != nullptr,
+              "SetFluidPotentialGlue: call SetPrescribedVacuumExtension "
+              "first (the folds compose onto it).");
+  MFEM_VERIFY(ref_rheology_->EquilibriumMapping()->IsIdentity(),
+              "SetFluidPotentialGlue: identity equilibrium mapping only "
+              "(the mapped variant pulls the Eulerian forms back with "
+              "Jacobians; not built).");
+  MFEM_VERIFY(!sea_enabled_,
+              "SetFluidPotentialGlue: call this before SetWaterLoad (the "
+              "water's zeta-zeta sum stacks on the glue's).");
+  MFEM_VERIFY(!rot_enabled_,
+              "SetFluidPotentialGlue: not composed with the rotation "
+              "border yet (the omega field columns are not conjugated).");
+  MFEM_VERIFY(E.Height() == fes_fluid.TrueVSize() &&
+                  E.Width() == pfes_->TrueVSize(),
+              "SetFluidPotentialGlue: E must map solid true dofs to fluid "
+              "true dofs.");
+  auto* fluid_sub = dynamic_cast<ParSubMesh*>(fes_fluid.GetParMesh());
+  MFEM_VERIFY(fluid_sub && fluid_sub->GetParent() == pfes_zeta_->GetParMesh(),
+              "SetFluidPotentialGlue: the fluid space must live on a "
+              "ParSubMesh of the ball.");
+  FluidRegion& f = fluids_.front();
+
+  auto shadow = SubMeshDofInjection::MakeShadowSpace(*pfes_zeta_, *fluid_sub);
+  auto* shadow_p = shadow.get();
+  shadow_zeta_fluid_ = std::move(shadow);
+  MFEM_VERIFY(
+      shadow_zeta_fluid_->GetNDofs() == fes_fluid.GetNDofs() &&
+          fes_fluid.GetVDim() == dim_,
+      "SetFluidPotentialGlue: the fluid space must share the potential "
+      "space's nodes (same H1 order on the fluid SubMesh, vdim = dim).");
+  SubMeshDofInjection inj_f(*shadow_zeta_fluid_, *pfes_zeta_);
+  zeta0_fluid_ = detail::MakeGridFunction(shadow_zeta_fluid_.get());
+  inj_f.MultTranspose(*zeta0_, *zeta0_fluid_);
+
+  // The glue matrix S on true dofs: the nodal-dot block D_g (shadow
+  // scalar true dofs x global fluid vector true dofs, built as
+  // SubMeshDofInjection::NewTrueDofMatrix builds its rows: the owner of
+  // each scalar true dof reads the global numbers of its node's vector
+  // dofs), the true-dof injection Pi into the ball, and E.
+  {
+    ParGridFunction g(&fes_fluid);
+    GradientGridFunctionCoefficient grad0(zeta0_fluid_.get());
+    // Arithmetic nodal averaging, as in serial: the parallel overload
+    // reduces over every element sharing the node across ranks, so the
+    // serial and parallel glue matrices agree to round-off.
+    g.ProjectDiscCoefficient(grad0, GridFunction::ARITHMETIC);
+
+    const int nrows = shadow_p->TrueVSize();
+    Array<int> I(nrows + 1);
+    Array<HYPRE_BigInt> J(std::max(nrows * dim_, 1));
+    Vector data(std::max(nrows * dim_, 1));
+    for (int j = 0; j < shadow_p->GetNDofs(); j++) {
+      const int lt = shadow_p->GetLocalTDofNumber(j);
+      if (lt < 0) {
+        continue;
+      }
+      for (int d = 0; d < dim_; d++) {
+        const int vd = fes_fluid.DofToVDof(j, d);
+        J[lt * dim_ + d] = fes_fluid.GetGlobalTDofNumber(vd);
+        data[lt * dim_ + d] = g(vd);
+      }
+    }
+    for (int i = 0; i <= nrows; i++) {
+      I[i] = i * dim_;
+    }
+    HypreParMatrix D_g(
+        shadow_p->GetComm(), nrows, shadow_p->GlobalTrueVSize(),
+        fes_fluid.GlobalTrueVSize(), I.GetData(), J.GetData(), data.GetData(),
+        shadow_p->GetTrueDofOffsets(), fes_fluid.GetTrueDofOffsets());
+    auto Pi = inj_f.NewTrueDofMatrix();
+    std::unique_ptr<HypreParMatrix> DgE(
+        ParMult(&D_g, const_cast<HypreParMatrix*>(&E)));
+    pglue_S_.reset(ParMult(Pi.get(), DgE.get()));
+  }
+
+  // The Eulerian fluid blocks, exactly as the mixed class assembles
+  // them: A_F = K_F / 4 pi G + M_F on the parent's fluid elements,
+  // C_F = -oint rho_F phi (m.v) on the wall.
+  Array<int> empty;
+  Array<int>& marker = fluid_markers_.front();
+  Coefficient* rho_prime = f.density_gradient;
+  if (!rho_prime) {
+    l2_fec_ = std::make_unique<L2_FECollection>(
+        fes_zeta_->GetMaxElementOrder(), dim_);
+    l2_fes_ = detail::MakeFESpace(*fes_zeta_, l2_fec_.get());
+    rho_fluid_l2_ = detail::MakeGridFunction(l2_fes_.get());
+    rho_fluid_l2_->ProjectCoefficient(*f.density);
+    auto rp = std::make_unique<BarotropicDensityGradientCoefficient>(
+        *rho_fluid_l2_, *zeta0_);
+    rho_prime = rp.get();
+    fluid_coefs_.push_back(std::move(rp));
+  }
+  glue_rho_prime_.assign(1, rho_prime);
+  M_fluid_.SetType(Operator::Hypre_ParCSR);
+  m_fluid_form_ = detail::MakeBilinearForm(fes_zeta_);
+  m_fluid_form_->AddDomainIntegrator(new MassIntegrator(*rho_prime), marker);
+  m_fluid_form_->Assemble();
+  m_fluid_form_->FormSystemMatrix(empty, M_fluid_);
+
+  ParBilinearForm k_f_form(pfes_zeta_);
+  k_f_form.AddDomainIntegrator(
+      new TransformedDiffusionIntegrator(*ref_rheology_->EquilibriumMapping()),
+      marker);
+  k_f_form.Assemble();
+  k_f_form.Finalize();
+  OperatorHandle K_F(Operator::Hypre_ParCSR);
+  k_f_form.FormSystemMatrix(empty, K_F);
+  std::unique_ptr<HypreParMatrix> A_F(
+      mfem::Add(1.0 / four_pi_G_, *K_F.As<HypreParMatrix>(), 1.0,
+                *M_fluid_.As<HypreParMatrix>()));
+
+  Coefficient& rho_i =
+      f.interface_density ? *f.interface_density : *f.density;
+  auto minus_rho = std::make_unique<ProductCoefficient>(-1.0, rho_i);
+  ParSubMeshMixedBilinearForm c_f_form(pfes_zeta_, pfes_);
+  c_f_form.AddBoundaryIntegrator(new BoundaryNormalScalarIntegrator(*minus_rho),
+                                 f.interface_marker);
+  c_f_form.Assemble();
+  OperatorHandle C_F_h(Operator::Hypre_ParCSR);
+  c_f_form.FormRectangularSystemMatrix(empty, empty, C_F_h);
+  HypreParMatrix& C_F = *C_F_h.As<HypreParMatrix>();
+  fluid_coefs_.push_back(std::move(minus_rho));
+
+  // The conjugation, as in serial: uu gains S^T A_F S - C_F S - S^T
+  // C_F^T, folded into pext_EtGE_; the coupling gains C_F - S^T A_F;
+  // zeta-zeta gains the mass term through A_zeta_glue_.
+  std::unique_ptr<HypreParMatrix> StAFS(mfem::RAP(A_F.get(), pglue_S_.get()));
+  std::unique_ptr<HypreParMatrix> CFS(ParMult(&C_F, pglue_S_.get()));
+  std::unique_ptr<HypreParMatrix> StCFt(CFS->Transpose());
+  std::unique_ptr<HypreParMatrix> Xuu(
+      mfem::Add(1.0, *StAFS, -1.0, *CFS));
+  Xuu.reset(mfem::Add(1.0, *Xuu, -1.0, *StCFt));
+  pext_EtGE_.reset(ParAdd(pext_EtGE_.get(), Xuu.get()));
+
+  std::unique_ptr<HypreParMatrix> St(pglue_S_->Transpose());
+  std::unique_ptr<HypreParMatrix> StAF(ParMult(St.get(), A_F.get()));
+  std::unique_ptr<HypreParMatrix> Xc(mfem::Add(1.0, C_F, -1.0, *StAF));
+  pext_C_total_.reset(ParAdd(pext_C_total_.get(), Xc.get()));
+
+  // The gravity half of the wall seam, as in serial: W3 into the uu
+  // fold, W4 into the coupling and its glue-conjugated uu part.
+  {
+    ParBilinearForm ga_form(pfes_);
+    ga_form.AddBoundaryIntegrator(
+        new SlipInterfaceGravityIntegrator(*grad_zeta0_shadow_, G_),
+        f.interface_marker);
+    ga_form.Assemble();
+    ga_form.Finalize();
+    OperatorHandle Ga_h(Operator::Hypre_ParCSR);
+    ga_form.FormSystemMatrix(empty, Ga_h);
+    std::unique_ptr<HypreParMatrix> Gat(Ga_h.As<HypreParMatrix>()->Transpose());
+    std::unique_ptr<HypreParMatrix> W3(
+        mfem::Add(0.5, *Ga_h.As<HypreParMatrix>(), 0.5, *Gat));
+    pext_EtGE_.reset(ParAdd(pext_EtGE_.get(), W3.get()));
+
+    ParSubMeshMixedBilinearForm bs_form(pfes_zeta_, pfes_);
+    bs_form.AddBoundaryIntegrator(
+        new SlipInterfaceGravityScalarIntegrator(*grad_zeta0_shadow_, G_),
+        f.interface_marker);
+    bs_form.Assemble();
+    OperatorHandle Bs_h(Operator::Hypre_ParCSR);
+    bs_form.FormRectangularSystemMatrix(empty, empty, Bs_h);
+    HypreParMatrix& Bs = *Bs_h.As<HypreParMatrix>();
+    pext_C_total_.reset(ParAdd(pext_C_total_.get(), &Bs));
+    std::unique_ptr<HypreParMatrix> BsS(ParMult(&Bs, pglue_S_.get()));
+    std::unique_ptr<HypreParMatrix> BsSt(BsS->Transpose());
+    std::unique_ptr<HypreParMatrix> W4c(
+        mfem::Add(-0.5, *BsS, -0.5, *BsSt));
+    pext_EtGE_.reset(ParAdd(pext_EtGE_.get(), W4c.get()));
+  }
+  pext_Ct_total_.reset(pext_C_total_->Transpose());
+  C_op_ = pext_C_total_.get();
+  Ct_op_ = pext_Ct_total_.get();
+
+  SetupFluidWallIntegrators(wall_pressure);
+  glue_set_ = true;
+  MarkOperatorDirty();
+}
+#endif
+
+void LinearQuasiStaticReferentialSelfGravitatingProblem::CheckWallTraction(
+    Coefficient& wall_pressure) {
+  // Step (v) of the referential closure (doc/dahlen_closure.tex, "A
+  // general pre-stressed solid"): the wall seam is derived under
+  // S_e n = -p0 n on the wall — the pre-stress carries the fluid's
+  // normal traction and no shear there. Measure the relative misfit at
+  // the wall quadrature points and refuse an inadmissible pre-stress
+  // rather than assemble a seam whose symmetry it has broken.
+  FluidRegion& f = fluids_.front();
+  Mesh* ms = fes_->GetMesh();
+  const int qorder = 2 * fes_->GetMaxElementOrder() + 2;
+  const int nattr = f.interface_marker.Size();
+  MatrixCoefficient& Se = ref_rheology_->EquilibriumStress();
+  DenseMatrix S(dim_);
+  Vector nrm(dim_), t(dim_);
+  real_t num = 0.0, den = 0.0;
+  for (int be = 0; be < ms->GetNBE(); be++) {
+    const int a = ms->GetBdrAttribute(be);
+    if (a > nattr || !f.interface_marker[a - 1]) {
+      continue;
+    }
+    ElementTransformation* T = ms->GetBdrElementTransformation(be);
+    const IntegrationRule& ir = IntRules.Get(T->GetGeometryType(), qorder);
+    for (int q = 0; q < ir.GetNPoints(); q++) {
+      const IntegrationPoint& ip = ir.IntPoint(q);
+      T->SetIntPoint(&ip);
+      CalcOrtho(T->Jacobian(), nrm);
+      const real_t nn = nrm.Norml2();
+      if (nn <= 0.0) {
+        continue;
+      }
+      nrm /= nn;
+      const real_t w = ip.weight * T->Weight();
+      const real_t p0 = wall_pressure.Eval(*T, ip);
+      Se.Eval(S, *T, ip);
+      S.Mult(nrm, t);
+      t.Add(p0, nrm);
+      num += w * (t * t);
+      den += w * p0 * p0;
+    }
+  }
+#ifdef MFEM_USE_MPI
+  if (pfes_) {
+    real_t buf[2] = {num, den};
+    MPI_Allreduce(MPI_IN_PLACE, buf, 2, MPITypeMap<real_t>::mpi_type,
+                  MPI_SUM, pfes_->GetComm());
+    num = buf[0];
+    den = buf[1];
+  }
+#endif
+  wall_traction_res_ = den > 0.0 ? std::sqrt(num / den) : std::sqrt(num);
+  MFEM_VERIFY(wall_traction_res_ <= 1e-3,
+              "SetFluidPotentialGlue: the equilibrium stress does not carry "
+              "the wall pressure (|S_e n + p0 n| / |p0| = "
+                  << wall_traction_res_
+                  << " on the wall): the wall seam requires S_e n = -p0 n "
+                     "(doc/dahlen_closure.tex, step (v)).");
+}
+
+void LinearQuasiStaticReferentialSelfGravitatingProblem::
+    SetupFluidWallIntegrators(Coefficient& wall_pressure) {
+  CheckWallTraction(wall_pressure);
+  // The solid-side wall terms, shared by the serial and parallel glue:
+  // the wall buoyancy term F2 (normal-normal) exactly as the mixed
+  // class has it, and the integrator half of the hybrid wall seam
+  // (doc/dahlen_closure.tex, "A general pre-stressed solid"; derivation
+  // in doc/planning/hybrid_wall_seam.md): W1 the normal--surface-
+  // divergence kernel at pi_minus = p0 - |grad zeta0|^2/8piG and W2 the
+  // symmetrised one-sided pressure kernel at p0 — together the follower
+  // load, -p0 times the second variation of the enclosed volume, with
+  // its gravity correction. The gravity-kernel folds W3/W4 are matrix-
+  // side and live in SetFluidPotentialGlue.
+  FluidRegion& f = fluids_.front();
+  auto& integs = StiffnessIntegrators();
+  // The zeta-zeta composition for the solver (the fluid Laplacian is
+  // already inside K_zeta_, so the glue adds the mass term alone).
+  A_zeta_glue_ = std::make_unique<SumOperator>(
+      const_cast<Operator*>(A_zeta_), 1.0, M_fluid_.Ptr(), 1.0, false, false);
+  m_dot_grad_zeta0_ =
+      std::make_unique<BoundaryNormalDotCoefficient>(*grad_zeta0_shadow_);
+  Coefficient& rho_i =
+      f.interface_density ? *f.interface_density : *f.density;
+  auto q = std::make_unique<ProductCoefficient>(rho_i, *m_dot_grad_zeta0_);
+  auto minus_q = std::make_unique<ProductCoefficient>(-1.0, *q);
+  integs.AddBoundaryIntegrator(new BoundaryNormalNormalIntegrator(*minus_q),
+                               f.interface_marker);
+  fluid_coefs_.push_back(std::move(q));
+  fluid_coefs_.push_back(std::move(minus_q));
+
+  auto q_grav = std::make_unique<InnerProductCoefficient>(
+      *grad_zeta0_shadow_, *grad_zeta0_shadow_);
+  auto q_scaled = std::make_unique<ProductCoefficient>(
+      -1.0 / (2.0 * four_pi_G_), *q_grav);
+  auto pi_minus =
+      std::make_unique<SumCoefficient>(wall_pressure, *q_scaled);
+  integs.AddBoundaryIntegrator(
+      new BoundaryNormalSurfaceDivergenceIntegrator(*pi_minus),
+      f.interface_marker);
+  fluid_coefs_.push_back(std::move(q_grav));
+  fluid_coefs_.push_back(std::move(q_scaled));
+  fluid_coefs_.push_back(std::move(pi_minus));
+
+  auto mhalf_p0 =
+      std::make_unique<ProductCoefficient>(-0.5, wall_pressure);
+  auto* G = new SlipInterfacePressureIntegrator(*mhalf_p0);
+  auto* Gt = new SlipInterfacePressureIntegrator(*mhalf_p0);
+  integs.AddBoundaryIntegrator(G, f.interface_marker);
+  integs.AddBoundaryIntegrator(new TransposeIntegrator(Gt, 1),
+                               f.interface_marker);
+  fluid_coefs_.push_back(std::move(mhalf_p0));
+}
+
+void LinearQuasiStaticReferentialSelfGravitatingProblem::SetLevelBorder(
+    int levels) {
+  MFEM_VERIFY(glue_set_,
+              "SetLevelBorder: call SetFluidPotentialGlue first (the border "
+              "is conjugated through its glue matrix).");
+  MFEM_VERIFY(levels >= 2, "SetLevelBorder: at least two nodes.");
+  for (const auto& f : fluids_) {
+    MFEM_VERIFY(f.bulk_modulus,
+                "SetLevelBorder: every region needs its bulk_modulus.");
+  }
+  MFEM_VERIFY(glue_rho_prime_.size() == fluids_.size(),
+              "SetLevelBorder: the fluid mass term is not set up.");
+  level_n_ = levels - 1;
+  if (!grad_zeta0_) {
+    grad_zeta0_ =
+        std::make_unique<GradientGridFunctionCoefficient>(zeta0_.get());
+  }
+  level_coefs_.clear();
+  LevelBorderContext ctx;
+  ctx.fes_u = fes_;
+  ctx.fes_pot = fes_zeta_;
+  ctx.pot0 = zeta0_.get();
+  ctx.pot0_shadow = ball_wide_ ? zeta0_.get() : zeta0_shadow_.get();
+  ctx.grad_pot0 = grad_zeta0_.get();
+  ctx.grad_pot0_shadow = grad_zeta0_shadow_.get();
+  ctx.n = level_n_;
+  level_ = AdGIA::BuildLevelBorders(ctx, fluids_, fluid_markers_,
+                                    glue_rho_prime_, level_coefs_);
+  // The glue conjugation: in (u, zeta) a mixed column (b_u, b_phi)
+  // becomes (b_u - S^T b_phi, b_phi); only the nu columns carry a
+  // potential part, and the wall columns, already in u_s, are
+  // unchanged.
+  for (auto& L : level_) {
+    L.nu_u.resize(L.nu_phi.size());
+    for (size_t k = 0; k < L.nu_phi.size(); k++) {
+      L.nu_u[k].SetSize(fes_->GetTrueVSize());
+#ifdef MFEM_USE_MPI
+      if (pglue_S_) {
+        pglue_S_->MultTranspose(L.nu_phi[k], L.nu_u[k]);
+      } else
+#endif
+      {
+        glue_S_->MultTranspose(L.nu_phi[k], L.nu_u[k]);
+      }
+      L.nu_u[k].Neg();
+    }
+  }
+  level_enabled_ = true;
+  if (border_elim_) {
+    border_elim_->InvalidateCache();
+  }
+}
+
+void LinearQuasiStaticReferentialSelfGravitatingProblem::LevelBorderSolution(
+    int region, Vector& c, Vector& U, Vector& s, Vector& nu,
+    Vector& lambda) const {
+  MFEM_VERIFY(level_enabled_ && region >= 0 &&
+                  region < static_cast<int>(level_.size()),
+              "LevelBorderSolution: no such level border.");
+  level_[region].Solution(c, U, s, nu, lambda);
+}
+
 void LinearQuasiStaticReferentialSelfGravitatingProblem::ConfigureFluidOperator(
     const Array<int>& marker, Coefficient& mu, real_t epsilon,
     GaugePenalty form, Diffeomorphism* map) {
@@ -2088,6 +2717,13 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::OnFlavorRelease(
 }
 
 void LinearQuasiStaticReferentialSelfGravitatingProblem::SetupSolver(OperatorHandle& A) {
+  // A fluid region without the potential glue would silently drop the
+  // fluid's response: refuse (doc/dahlen_closure.tex, "Implementation",
+  // the referential variant).
+  MFEM_VERIFY(fluids_.empty() || glue_set_,
+              "LinearQuasiStaticReferentialSelfGravitatingProblem: fluid "
+              "regions need SetFluidPotentialGlue() before the first "
+              "Solve().");
   // The solid-everywhere preconditioner mode
   // (SetGaugePreconditionerOnly): the preconditioner is built on the
   // handle passed in (A + eps_prec Q when gauged), while the Krylov
@@ -2154,9 +2790,9 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetupSolver(OperatorHan
   // mass; the preconditioner stays on the base block (the water term is
   // a small boundary perturbation).
   block_op_->SetBlock(1, 1,
-                      sea_enabled_
-                          ? static_cast<Operator*>(A_zeta_sea_.get())
-                          : const_cast<Operator*>(A_zeta_));
+                      sea_enabled_ ? static_cast<Operator*>(A_zeta_sea_.get())
+                      : glue_set_  ? static_cast<Operator*>(A_zeta_glue_.get())
+                                   : const_cast<Operator*>(A_zeta_));
 
   block_prec_ = std::make_unique<BlockDiagonalPreconditioner>(offsets_);
   block_prec_->SetDiagonalBlock(0, prec_.get());
@@ -2223,7 +2859,7 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetupSolver(OperatorHan
 
 bool LinearQuasiStaticReferentialSelfGravitatingProblem::SolveLinearSystem(const Vector& B,
                                                             Vector& X) {
-  if (!sea_enabled_ && !rot_enabled_) {
+  if (!sea_enabled_ && !rot_enabled_ && !level_enabled_) {
     return SolveUnbordered(B, X);
   }
   // The bordered solve, referential form (quasi_static_models.tex, the
@@ -2234,7 +2870,12 @@ bool LinearQuasiStaticReferentialSelfGravitatingProblem::SolveLinearSystem(const
   // shared engine with its version-keyed column cache.
   const int ns = sea_enabled_ ? 1 : 0;
   const int nw = rot_enabled_ ? static_cast<int>(rot_psi_.size()) : 0;
-  const int nb = ns + nw;
+  const int nb0 = ns + nw;
+  int nl = 0;
+  for (const auto& L : level_) {
+    nl += L.size;
+  }
+  const int nb = nb0 + nl;
   bool ok = SolveUnbordered(B, X);
   if (!border_elim_) {
     border_elim_ = std::make_unique<BorderedElimination>(
@@ -2246,6 +2887,10 @@ bool LinearQuasiStaticReferentialSelfGravitatingProblem::SolveLinearSystem(const
                                  BorderedElimination::State& xs) mutable {
           B_zeta_.Swap(zwork);
           B_zeta_ = rhs[1];
+          // 2-D: the level border's nu columns need the compatibility
+          // gauge, as in the mixed class (no-op in 3-D, where the
+          // sea/rotation borders live).
+          MakeCompatible(B_zeta_);
           xs[0].SetSize(rhs[0].Size());
           xs[0] = 0.0;
           const bool converged = SolveUnbordered(rhs[0], xs[0]);
@@ -2290,6 +2935,33 @@ bool LinearQuasiStaticReferentialSelfGravitatingProblem::SolveLinearSystem(const
       Db(0, ns + k) = Db(ns + k, 0) = rot_mpsi_[k];
     }
   }
+  // The level borders: the glue-conjugated nu columns, the wall
+  // columns, and the dense blocks; the border rows carry no data.
+  if (level_enabled_) {
+    Vector zero_u2(X.Size());
+    zero_u2 = 0.0;
+    Vector zero_z2(fes_zeta_->GetTrueVSize());
+    zero_z2 = 0.0;
+    int off = nb0;
+    for (const auto& L : level_) {
+      for (int j = 0; j < L.size; j++) {
+        columns[off + j] = {zero_u2, zero_z2};
+      }
+      for (int k = 0; k <= L.n; k++) {
+        columns[off + L.onu + k] = {L.nu_u[k], L.nu_phi[k]};
+      }
+      for (size_t w = 0; w < L.wall_u.size(); w++) {
+        columns[off + L.ol + static_cast<int>(w)] = {L.wall_u[w], zero_z2};
+      }
+      for (int i = 0; i < L.size; i++) {
+        for (int j = 0; j < L.size; j++) {
+          Db(off + i, off + j) = L.Db(i, j);
+        }
+      }
+      off += L.size;
+    }
+  }
+
   BorderedElimination::State xs = {X, Zeta_true_};
   Vector y;
   ok = border_elim_->Eliminate(columns, Db, r, OperatorVersion(), RelTol(),
@@ -2298,6 +2970,16 @@ bool LinearQuasiStaticReferentialSelfGravitatingProblem::SolveLinearSystem(const
   phi_g_ = sea_enabled_ ? y[0] : 0.0;
   for (int k = 0; k < nw; k++) {
     omega_[k] = y[ns + k];
+  }
+  if (level_enabled_) {
+    int off = nb0;
+    for (auto& L : level_) {
+      L.y.SetSize(L.size);
+      for (int j = 0; j < L.size; j++) {
+        L.y[j] = y[off + j];
+      }
+      off += L.size;
+    }
   }
   if (rot_enabled_) {
     static_cast<CentrifugalPotential*>(rot_psi_total_.get())

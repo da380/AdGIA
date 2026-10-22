@@ -182,7 +182,12 @@ int main(int argc, char* argv[]) try {
   std::vector<real_t> times = ParseList(times_arg);
   if (times.empty()) {
     for (int k = 0; k <= 12; k++) {
-      times.push_back(0.011 * tau_min * std::pow(2.0, k * 10.0 / 12.0));
+      // Rounded to six decimals in units of tau_min, as the Laplace
+      // reference and the spectral V1 drivers write them, so that the
+      // exchange files share one time column exactly.
+      times.push_back(
+          std::round(0.011 * std::pow(2.0, k * 10.0 / 12.0) * 1e6) / 1e6 *
+          tau_min);
     }
   }
   for (std::size_t j = 0; j < times.size(); j++) {
@@ -244,7 +249,7 @@ int main(int argc, char* argv[]) try {
     for (const auto& layer : manifest.Layers()) {
       if (!layer.in_geometry) continue;
       std::cout << " " << layer.name;
-      if (layer.fluid) {
+      if (layer.fluid.value_or(false)) {
         std::cout << " (fluid)";
       } else {
         std::cout << " (tau " << tau_of[layer.attribute] << ")";
@@ -463,8 +468,8 @@ int main(int argc, char* argv[]) try {
       if (!layer.in_geometry) continue;
       os << (first ? "" : ",") << "\n    {\"attribute\": " << layer.attribute
          << ", \"name\": \"" << layer.name << "\", \"fluid\": "
-         << (layer.fluid ? "true" : "false") << ", \"tau\": ";
-      if (layer.fluid) {
+         << (layer.fluid.value_or(false) ? "true" : "false") << ", \"tau\": ";
+      if (layer.fluid.value_or(false)) {
         os << "null";
       } else if (!std::isfinite(tau_of[layer.attribute])) {
         os << "\"inf\"";

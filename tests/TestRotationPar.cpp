@@ -160,6 +160,69 @@ void FluidCase(int order, const std::string& label) {
         5e-8, label + ": omega-row residual");
 }
 
+// The level border's centrifugal coupling, parallel leg: the bordered
+// system with the cross-block builds the same global matrix on every
+// rank count, so omega matches the serial value.
+void LevelBorderCase(const std::string& label) {
+  Mesh smesh("../data/earth_fluidcore_3d.msh", 1, 1);
+  const int dim = 3, order = 1;
+  Array<int> solid_attr({2});
+  ConstantCoefficient kappa(kKappa), mu(kMu), kappa_f(kKappa);
+  ConstantCoefficient rho_s(kRho);
+  FunctionCoefficient rho_f(FluidDensity);
+  IsotropicElasticRheology rheology(dim, kappa, mu);
+  ConstantCoefficient sigma(0.02);
+  Vector moments(3);
+  moments[0] = 1.5262;
+  moments[1] = 1.5262;
+  moments[2] = 1.5312;
+  double inertia_trace = 0.0;
+  auto run = [&](FiniteElementSpace& fes_u, FiniteElementSpace& fes_phi,
+                 Mesh& solid) {
+    FluidRegion core;
+    core.attributes = Array<int>({1});
+    core.density = &rho_f;
+    core.interface_marker.SetSize(solid.bdr_attributes.Max());
+    core.interface_marker = 0;
+    core.interface_marker[0] = 1;
+    core.bulk_modulus = &kappa_f;
+    std::vector<FluidRegion> fluids{core};
+    Array<int> surface(solid.bdr_attributes.Max());
+    surface = 0;
+    surface[solid.bdr_attributes.Max() - 1] = 1;
+    auto p = std::make_unique<LinearQuasiStaticMixedSelfGravitatingProblem>(
+        &fes_u, &fes_phi, rheology, rho_s, kG, kDtNDegree, nullptr, fluids);
+    p->SetLevelBorder(12);
+    p->SetRotation(0.1, moments);
+    p->SetSurfaceLoad(sigma, surface);
+    p->SetRelTol(1e-11);
+    p->AssembleForce(0.0);
+    Check(p->Solve() ? 0.0 : 1.0, 0.0, label + ": solve");
+    // The whole-body model inertia reduces identically on any rank
+    // count (the generalised door's ingredient).
+    const DenseMatrix I0 = p->ModelInertiaTensor();
+    inertia_trace = (I0(0, 0) + I0(1, 1) + I0(2, 2)) / 3.0;
+    return p->AngularVelocity()[2];
+  };
+  double w3_ref = 0.0, inertia_ref = 0.0;
+  {
+    SubMesh solid(SubMesh::CreateFromDomain(smesh, solid_attr));
+    H1_FECollection fec(order, dim);
+    FiniteElementSpace fes_u(&solid, &fec, dim), fes_phi(&smesh, &fec);
+    w3_ref = run(fes_u, fes_phi, solid);
+    inertia_ref = inertia_trace;
+  }
+  ParMesh pmesh(MPI_COMM_WORLD, smesh);
+  ParSubMesh solid(ParSubMesh::CreateFromDomain(pmesh, solid_attr));
+  H1_FECollection fec(order, dim);
+  ParFiniteElementSpace fes_u(&solid, &fec, dim), fes_phi(&pmesh, &fec);
+  const double w3 = run(fes_u, fes_phi, solid);
+  Check(std::abs(w3 - w3_ref) / std::abs(w3_ref), 1e-7,
+        label + ": omega_3 serial == parallel");
+  Check(std::abs(inertia_trace - inertia_ref) / inertia_ref, 1e-12,
+        label + ": model inertia serial == parallel");
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -170,6 +233,7 @@ int main(int argc, char* argv[]) {
     SolidCase(order, "solid p=" + std::to_string(order));
     FluidCase(order, "fluid p=" + std::to_string(order));
   }
+  LevelBorderCase("level border");
 
   if (Mpi::Root()) {
     if (num_fails == 0) {
