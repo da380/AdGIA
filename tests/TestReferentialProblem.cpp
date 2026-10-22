@@ -731,6 +731,117 @@ TEST(ReferentialProblem, FluidCoreBackgroundPotential) {
   }
 }
 
+// The eliminated-fluid glue (SetFluidPotentialGlue; the referential
+// closure's steps (ii)-(iii)): on the two-layer fluid-core disc at
+// phi_e = id, under a degree-2 surface load, the referential class with
+// the glue must reproduce the mixed class with the same FluidRegion —
+// the naked Dahlen reduction on both sides, no level border. The fluid
+// blocks are the mixed class's own forms conjugated by the discrete
+// change of variables, so the comparison tests the glue matrix, the
+// conjugation folds and the solid-side wall terms (the F2 term and the
+// follower kernel at pi = p0): u agrees directly, zeta = phi +
+// u.grad(Phi0) on the body, both at the two solid assemblies' common
+// discretisation level, improving with order.
+TEST(ReferentialProblem, FluidCoreGlueCrossCheck2D) {
+  const int dim = 2;
+  const double r_cmb = kRCmb;
+  std::vector<double> u_diff, z_diff;
+  for (int order : {1, 2}) {
+    Mesh parent(TwoLayerMeshFile(dim).c_str(), 1, 1);
+    Array<int> fluid_attr({1}), solid_attr({2}), buffer_attr({3});
+    SubMesh body(SubMesh::CreateFromDomain(parent, solid_attr));
+    SubMesh fluid(SubMesh::CreateFromDomain(parent, fluid_attr));
+    SubMesh buffer(SubMesh::CreateFromDomain(parent, buffer_attr));
+    H1_FECollection fec(order, dim);
+    FiniteElementSpace fes_u(&body, &fec, dim), fes_zeta(&parent, &fec);
+    FiniteElementSpace fes_fluid(&fluid, &fec, dim);
+    FiniteElementSpace fes_buffer(&buffer, &fec, dim);
+    Vector bb_min, bb_max;
+    parent.GetBoundingBox(bb_min, bb_max);
+    const double r_out = bb_max.Normlinf();
+
+    // The consistent hydrostatic background of the whole model.
+    RadialHydrostaticBackground bg(
+        dim,
+        [](double r) {
+          return r < kRCmb ? 1.2 - 0.1 * (r - kRIcb) / (kRCmb - kRIcb) : kRho;
+        },
+        [](double) { return kKappa; },
+        [r_cmb](double r) { return r < r_cmb ? 0.0 : kMu; }, kG, 1.0);
+
+    FluidRegion core;
+    core.attributes = Array<int>({1});
+    FunctionCoefficient rho_f(FluidDensity);
+    core.density = &rho_f;
+    core.interface_marker.SetSize(body.bdr_attributes.Max());
+    core.interface_marker = 0;
+    core.interface_marker[0] = 1;  // the CMB
+    std::vector<FluidRegion> fluids{core};
+
+    // Zero-mean degree-2 load: with an eliminated fluid the potential
+    // constant is not a null direction, and the two classes gauge it on
+    // different variables (phi vs zeta), so a load with a mean picks
+    // different degree-0 members however good the wall seam
+    // (doc/planning/hybrid_wall_seam.md, "Reconciliation with the
+    // gate").
+    FunctionCoefficient sigma([](const Vector& x) {
+      const double r2 = x * x;
+      return r2 == 0.0 ? 0.0 : 0.03 * (x[0] * x[0] - x[1] * x[1]) / r2;
+    });
+    auto surface = SurfaceMarker(body);
+
+    // The mixed reference (the naked Dahlen reduction).
+    ConstantCoefficient kappa(kKappa), mu(kMu);
+    IsotropicElasticRheology e_rheology(dim, kappa, mu);
+    LinearQuasiStaticMixedSelfGravitatingProblem mixed(
+        &fes_u, &fes_zeta, e_rheology, bg.Density(), kG, kDtNDegree, nullptr,
+        fluids);
+    mixed.SetSurfaceLoad(sigma, surface);
+    mixed.SetRelTol(1e-11);
+    mixed.AssembleForce(0.0);
+    ASSERT_TRUE(mixed.Solve());
+
+    // The referential problem with the glue.
+    LinearQuasiStaticReferentialSelfGravitatingProblem referential(
+        &fes_u, &fes_zeta, bg.Rheology(), bg.Density(), kG, kDtNDegree,
+        nullptr, fluids);
+    auto Ev = NewRadialVacuumExtension(fes_u, fes_buffer, 1.0, r_out);
+    referential.SetPrescribedVacuumExtension(fes_buffer, *Ev);
+    auto Ef = NewRadialFluidExtension(fes_u, fes_fluid, r_cmb);
+    referential.SetFluidPotentialGlue(fes_fluid, *Ef, bg.Pressure());
+    referential.SetSurfaceLoad(sigma, surface);
+    referential.SetRelTol(1e-11);
+    referential.AssembleForce(0.0);
+    ASSERT_TRUE(referential.Solve());
+
+    {
+      GridFunction d(referential.Displacement());
+      d -= mixed.Displacement();
+      u_diff.push_back(L2Norm(d) / L2Norm(mixed.Displacement()));
+    }
+    {
+      VectorGridFunctionCoefficient u_c(&mixed.Displacement());
+      InnerProductCoefficient advect(u_c, mixed.BackgroundGravity());
+      GridFunctionCoefficient phi1(&mixed.PotentialOnBody());
+      SumCoefficient zeta_expected(phi1, advect);
+      GridFunction d(referential.PotentialOnBody());
+      GridFunction z(d);
+      z.ProjectCoefficient(zeta_expected);
+      d -= z;
+      d -= d.Sum() / d.Size();  // both carry the 2-D constant gauge
+      z_diff.push_back(L2Norm(d) /
+                       std::max(1e-30, L2Norm(referential.PotentialOnBody())));
+    }
+  }
+  // Measured 0.35 -> 2.0e-3 (u) and 0.23 -> 3.1e-4 (zeta): the order-1
+  // numbers are the facet-geometry floor of the wall kernels, and the
+  // complete seam collapses them by two orders at order 2.
+  EXPECT_LT(u_diff[1], 1e-2);
+  EXPECT_LT(u_diff[1], 0.1 * u_diff[0]);
+  EXPECT_LT(z_diff[1], 2e-3);
+  EXPECT_LT(z_diff[1], 0.1 * z_diff[0]);
+}
+
 // The fluid dictionary test: on a two-layer disc with a uniform
 // fluid core, a linearised relabelling supported inside the core (w =
 // curl psi, div w = 0 exactly) is a null pair (w, 0) of the full block

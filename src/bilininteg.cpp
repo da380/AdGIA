@@ -1420,6 +1420,55 @@ const mfem::IntegrationRule& SlipInterfacePressureIntegrator::GetRule(
   return mfem::IntRules.Get(el.GetGeomType(), order);
 }
 
+const mfem::IntegrationRule& BoundaryNormalSurfaceDivergenceIntegrator::GetRule(
+    const mfem::FiniteElement& el, const mfem::ElementTransformation& Trans) {
+  const auto order = 2 * el.GetOrder() + Trans.OrderW();
+  return mfem::IntRules.Get(el.GetGeomType(), order);
+}
+
+void BoundaryNormalSurfaceDivergenceIntegrator::AssembleElementMatrix(
+    const mfem::FiniteElement& el, mfem::ElementTransformation& Trans,
+    mfem::DenseMatrix& elmat) {
+  using namespace mfem;
+  const auto dim = Trans.GetSpaceDim();
+  const auto sdim = el.GetDim();
+  const auto dof = el.GetDof();
+
+#ifdef MFEM_THREAD_SAFE
+  Vector shape_, normal_, nu_;
+  DenseMatrix dshape_, gshape_, Jt_, JtJ_, JtJi_, F_, Fi_, PT_;
+#endif
+  shape_.SetSize(dof);
+  dshape_.SetSize(dof, sdim);
+  elmat.SetSize(dim * dof);
+  elmat = 0.0;
+
+  const auto* ir = IntRule ? IntRule : &GetRule(el, Trans);
+  for (auto q = 0; q < ir->GetNPoints(); q++) {
+    const auto& ip = ir->IntPoint(q);
+    if (!SlipSurfaceData(el, Trans, ip, nullptr, shape_, dshape_, gshape_,
+                         normal_, nu_, F_, Fi_, PT_, Jt_, JtJ_, JtJi_)) {
+      continue;
+    }
+    // (1/2) pi [ (m.u) div_S v + (m.v) div_S u ]: for u = phi_a e_i,
+    // v = phi_b e_j the entry is
+    // (w pi / 2) [ m_i phi_a gshape(b, j) + gshape(a, i) m_j phi_b ].
+    const auto w = 0.5 * ip.weight * Trans.Weight() * pi_->Eval(Trans, ip);
+    for (int i = 0; i < dim; i++) {
+      for (int a = 0; a < dof; a++) {
+        const real_t ma = w * normal_[i] * shape_[a];
+        const real_t ga = w * gshape_(a, i);
+        for (int j = 0; j < dim; j++) {
+          for (int b = 0; b < dof; b++) {
+            elmat(a + i * dof, b + j * dof) +=
+                ma * gshape_(b, j) + ga * normal_[j] * shape_[b];
+          }
+        }
+      }
+    }
+  }
+}
+
 void SlipInterfacePressureIntegrator::AssembleElementMatrix(
     const mfem::FiniteElement& el, mfem::ElementTransformation& Trans,
     mfem::DenseMatrix& elmat) {
