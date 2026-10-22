@@ -247,6 +247,9 @@ struct CaseOptions {
   const char* cmb = "full";
   bool cmb_keep_inner = false;    // keep fluid-enclosed solids meshed
   int level_border = 0;           // dahlen: level-border nodes (0: off)
+  bool level_monolithic = false;  // dahlen: solve the bordered system
+                                  // monolithically (MINRES) instead of
+                                  // by the elimination (3-D only)
   const char* method = "dahlen";
   real_t slip_theta = 1e2;
   real_t gs_scale = 1.0;
@@ -360,6 +363,11 @@ struct CaseOptions {
                    "this many nodes in Phi_0 per fluid region (0: off). "
                    "Turns degree 0 into the compressible fluid problem and "
                    "leaves the sphere's l >= 1 untouched.");
+    args.AddOption(&level_monolithic, "-level-mono", "--level-monolithic",
+                   "-no-level-mono", "--no-level-monolithic",
+                   "With -level-border: solve the bordered system "
+                   "monolithically (one MINRES on [A B; B^T Db]) instead "
+                   "of by the cached-column elimination. 3-D only.");
     args.AddOption(&cmb_keep_inner, "-cmb-keep-inner",
                    "--cmb-keep-inner-core", "-cmb-drop-inner",
                    "--cmb-drop-inner-core",
@@ -742,9 +750,15 @@ class Case {
       }
       if (options.level_border > 0 && method == "dahlen" && !fluids.empty()) {
         problem->SetLevelBorder(options.level_border);
+        if (options.level_monolithic) {
+          problem->SetMonolithicBorder();
+        }
         if (root) {
           std::cout << "Dahlen fluid closed by the level border ("
-                    << options.level_border << " nodes per region).\n";
+                    << options.level_border << " nodes per region"
+                    << (options.level_monolithic ? ", monolithic route"
+                                                 : "")
+                    << ").\n";
         }
       }
       if (method == "gauged" && fluid_attributes.Size() > 0) {

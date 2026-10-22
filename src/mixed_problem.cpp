@@ -2182,8 +2182,12 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveBorderedMonolithic(
                     static_cast<ParFiniteElementSpace*>(fes_)->GetComm());
     }
 #endif
-    bscale[j] =
-        1.0 / std::max(std::sqrt(cn2), std::sqrt(std::abs(Db(j, j))));
+    const real_t scale =
+        std::max(std::sqrt(cn2), std::sqrt(std::abs(Db(j, j))));
+    // A border scalar with no field column and no diagonal (a
+    // constraint row coupled only off-diagonally, e.g. the level
+    // border's s rows on a uniform core) keeps unit scale.
+    bscale[j] = scale > 0.0 ? 1.0 / scale : 1.0;
     cols[j] *= bscale[j];
     rs[j] *= bscale[j];
   }
@@ -2494,9 +2498,8 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetLevelBorder(int levels) {
     MFEM_VERIFY(f.bulk_modulus,
                 "SetLevelBorder: every region needs its bulk_modulus.");
   }
-  MFEM_VERIFY(!picard_border_ && !monolithic_border_,
-              "SetLevelBorder: incompatible with the Picard and monolithic "
-              "border routes.");
+  MFEM_VERIFY(!picard_border_,
+              "SetLevelBorder: incompatible with the Picard border route.");
   MFEM_VERIFY(!rot_enabled_, "SetLevelBorder: the border's centrifugal "
                              "columns are not wired; no SetRotation().");
   MFEM_VERIFY(!gauge_kkt_, "SetLevelBorder: incompatible with the KKT gauge.");

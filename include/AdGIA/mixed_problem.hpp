@@ -419,7 +419,13 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
    * solves disappear at the price of an indefinite outer iteration
    * whose cost is flat in the border count. Gated to agree with the
    * elimination at solver grade; the elimination stays the default.
-   * BlockMINRES/BlockCG
+   * With the level border (measured, fluid_core h0.2 order 2, 8
+   * ranks): agreement to eight digits; the one-off degree-0 solve is
+   * ~2.4x cheaper than the elimination's column setup (2.9 s against
+   * 6.9 s), but EVERY solve then costs 3-6x the naked iterations
+   * (the border scalars degrade the outer Krylov), so the elimination
+   * wins from the second solve at a frozen operator — take this route
+   * for one-off static problems only. BlockMINRES/BlockCG
    * solver types with the plain gauge, in 3-D only. */
   void SetMonolithicBorder(bool on = true) {
     MFEM_VERIFY(!on || dim_ == 3,
@@ -427,8 +433,6 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
                 "relocation makes the bordered system asymmetric).");
     MFEM_VERIFY(!on || !picard_border_,
                 "SetMonolithicBorder: incompatible with SetPicardBorder.");
-    MFEM_VERIFY(!on || !level_enabled_,
-                "SetMonolithicBorder: incompatible with SetLevelBorder.");
     monolithic_border_ = on;
   }
 
