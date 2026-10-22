@@ -860,6 +860,9 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   // water psi columns already subtracted) and the psi-psi fluid block.
   std::vector<mfem::Vector> rot_Bu_, rot_Bphi_;
   mfem::DenseMatrix rot_TT_;
+  /// The border's centrifugal cross-block per region: the nu columns
+  /// against the psi interpolants, cached with the rotation columns.
+  std::vector<mfem::DenseMatrix> rot_level_nu_;
   int rot_cache_version_ = -1;
   mfem::Vector omega_;
   // The shared elimination engine (bordered.hpp): it owns the

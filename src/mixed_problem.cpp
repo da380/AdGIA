@@ -1654,6 +1654,24 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveLinearSystem(
           rot_Bphi_[k] -= rot_cpsi_phi_[k];
         }
       }
+      // The border's centrifugal cross-block (the closure's omega
+      // columns): each nu row reads the level means of psi_k through
+      // the SAME pairing as the potential — the discrete
+      // int N_i(Phi0) psi_k dV, the nu column against the psi
+      // interpolant — and the omega rows gain the transposes by the
+      // symmetry of the functional (doc/dahlen_closure.tex,
+      // "Rotation"). This is the -f' part of the fluid's inertia
+      // perturbation that the reduction alone lacks.
+      rot_level_nu_.clear();
+      for (const auto& L : level_) {
+        DenseMatrix M(L.n + 1, nw);
+        for (int i = 0; i <= L.n; i++) {
+          for (int k = 0; k < nw; k++) {
+            M(i, k) = Dot(L.nu_phi[i], Psi[k]);
+          }
+        }
+        rot_level_nu_.push_back(M);
+      }
       rot_cache_version_ = OperatorVersion();
     }
     for (int k = 0; k < nw; k++) {
@@ -1694,6 +1712,7 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveLinearSystem(
   // the 1-D block; their columns are zero and the engine skips them.
   if (level_enabled_) {
     int off = nb0;
+    int lr = 0;
     for (const auto& L : level_) {
       for (int j = 0; j < L.size; j++) {
         Bu[off + j].SetSize(fes_->GetTrueVSize());
@@ -1712,7 +1731,17 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveLinearSystem(
           Db(off + i, off + j) = L.Db(i, j);
         }
       }
+      if (rot_enabled_) {
+        const DenseMatrix& M = rot_level_nu_[lr];
+        for (int k = 0; k < nw; k++) {
+          for (int i = 0; i <= L.n; i++) {
+            Db(off + L.onu + i, ns + k) = M(i, k);
+            Db(ns + k, off + L.onu + i) = M(i, k);
+          }
+        }
+      }
       off += L.size;
+      lr++;
     }
   }
 
@@ -2460,14 +2489,14 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetLevelBorder(int levels) {
   }
   MFEM_VERIFY(!picard_border_,
               "SetLevelBorder: incompatible with the Picard border route.");
-  MFEM_VERIFY(!rot_enabled_, "SetLevelBorder: the border's centrifugal "
-                             "columns are not wired; no SetRotation().");
+
   MFEM_VERIFY(!gauge_kkt_, "SetLevelBorder: incompatible with the KKT gauge.");
   MFEM_VERIFY(fluid_rho_prime_.size() == fluids_.size(),
               "SetLevelBorder: the fluid mass term is not set up.");
   level_n_ = levels - 1;
   level_enabled_ = true;
   BuildLevelBorders();
+  rot_cache_version_ = -1;  // the centrifugal cross-block is border data
   if (border_elim_) {
     border_elim_->InvalidateCache();
   }
