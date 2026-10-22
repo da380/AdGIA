@@ -561,6 +561,37 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
    */
   void SetMassWeightedGauge(bool on = true);
 
+  /** @brief The Tisserand gauge of the generalised rotational door
+   * (Maitra & Al-Attar 2024, \S 3.8): on this class it IS the
+   * mass-weighted gauge — the displacement mesh holds the solid alone,
+   * so the solid restriction of the Tisserand condition (forced with an
+   * eliminated fluid, whose relative angular momentum is pure
+   * relabelling) is automatic. A named alias for the rotational door's
+   * reading of SetMassWeightedGauge(). */
+  void SetTisserandGauge(bool on = true) { SetMassWeightedGauge(on); }
+
+  /** @brief The model's whole-body inertia tensor
+   * @f$\int\rho\,(|x|^2\mathbf 1 - x\otimes x)\dV@f$: the solid's
+   * density over the displacement SubMesh plus every fluid region's
+   * hydrostatic density over the parent's fluid elements (3-D). */
+  mfem::DenseMatrix ModelInertiaTensor();
+
+  /**
+   * @brief The GENERALISED rotational door (Maitra & Al-Attar 2024):
+   * the traditional border with D built from the model's OWN inertia
+   * (ModelInertiaTensor, whole-body), the displacement pinned by the
+   * Tisserand gauge and @f$\Omega@f$ along a principal axis — as on
+   * the referential class, which this mirrors; the mixed class's
+   * hydrostatic natural reference admits it on rotating hydrostatic
+   * figures, where the model inertia is realistic. Verifies the
+   * principal-axis and non-degeneracy conditions (a near-spherical
+   * model has no finite wander response of its own — use the
+   * input-moments overload, whose uniqueness the gauge supplies
+   * equally), enables SetTisserandGauge() and dispatches to the same
+   * border, including the level border's centrifugal cross-block.
+   */
+  void SetRotation(mfem::real_t Omega);
+
   /** @brief Replace the background potential and mark the operator stale. */
   void SetBackgroundPotential(mfem::Coefficient& phi0);
 

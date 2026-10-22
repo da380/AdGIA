@@ -363,6 +363,55 @@ TEST(RotationFluid, LevelBorderCentrifugalCoupling) {
   EXPECT_GT(shift, 1e-3);  // the contamination is real ...
   EXPECT_LT(shift, 10.0);  // ... and finite
 
+  // (c) The generalised door's ingredients on this class. The
+  // whole-body model inertia (solid SubMesh + fluid region on the
+  // parent) against the radial analytic value, I = (8 pi / 3)
+  // int rho(r) r^4 dr; the coarse faceted ball carries its geometry
+  // error, and the tensor is isotropic to the same grade (the full
+  // model-inertia door rightly refuses such a degenerate model — its
+  // physics gate lives on the oblate figures).
+  {
+    auto fluids = make_fluids();
+    LinearQuasiStaticMixedSelfGravitatingProblem p(
+        &fes_u, &fes_phi, rheology, rho_s, kG, kDtNDegree, nullptr, fluids);
+    const DenseMatrix I0 = p.ModelInertiaTensor();
+    const double A = 1.2 + 0.1 * kRIcb / (kRCmb - kRIcb);
+    const double B = 0.1 / (kRCmb - kRIcb);
+    const double rc = kRCmb;
+    const double radial = A * std::pow(rc, 5) / 5.0 -
+                          B * std::pow(rc, 6) / 6.0 +
+                          kRho * (1.0 - std::pow(rc, 5)) / 5.0;
+    const double exact = 8.0 * std::numbers::pi / 3.0 * radial;
+    const double trace = (I0(0, 0) + I0(1, 1) + I0(2, 2)) / 3.0;
+    EXPECT_LT(std::abs(trace - exact) / exact, 3e-2);
+    double offdiag = 0.0;
+    for (int i = 0; i < 3; i++) {
+      for (int j = i + 1; j < 3; j++) {
+        offdiag = std::max(offdiag, std::abs(I0(i, j)));
+      }
+    }
+    EXPECT_LT(offdiag / trace, 3e-2);
+  }
+
+  // (d) The Tisserand gauge (the door's reading of the mass-weighted
+  // gauge; solid-restricted automatically here) pins the rigid
+  // representative only: omega is gauge-invariant, so the bordered
+  // omega_3 must not move.
+  {
+    auto fluids = make_fluids();
+    auto p = std::make_unique<LinearQuasiStaticMixedSelfGravitatingProblem>(
+        &fes_u, &fes_phi, rheology, rho_s, kG, kDtNDegree, nullptr, fluids);
+    p->SetLevelBorder(12);
+    p->SetRotation(0.1, moments);
+    p->SetTisserandGauge(true);
+    p->SetSurfaceLoad(uniform, surface);
+    p->SetRelTol(1e-11);
+    p->AssembleForce(0.0);
+    EXPECT_TRUE(p->Solve());
+    EXPECT_LT(std::abs(p->AngularVelocity()[2] - w3_border) /
+                  std::abs(w3_border),
+              1e-7);
+  }
 }
 
 INSTANTIATE_TEST_SUITE_P(Rotation, RotationTest,

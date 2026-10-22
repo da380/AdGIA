@@ -176,6 +176,7 @@ void LevelBorderCase(const std::string& label) {
   moments[0] = 1.5262;
   moments[1] = 1.5262;
   moments[2] = 1.5312;
+  double inertia_trace = 0.0;
   auto run = [&](FiniteElementSpace& fes_u, FiniteElementSpace& fes_phi,
                  Mesh& solid) {
     FluidRegion core;
@@ -197,14 +198,19 @@ void LevelBorderCase(const std::string& label) {
     p->SetRelTol(1e-11);
     p->AssembleForce(0.0);
     Check(p->Solve() ? 0.0 : 1.0, 0.0, label + ": solve");
+    // The whole-body model inertia reduces identically on any rank
+    // count (the generalised door's ingredient).
+    const DenseMatrix I0 = p->ModelInertiaTensor();
+    inertia_trace = (I0(0, 0) + I0(1, 1) + I0(2, 2)) / 3.0;
     return p->AngularVelocity()[2];
   };
-  double w3_ref = 0.0;
+  double w3_ref = 0.0, inertia_ref = 0.0;
   {
     SubMesh solid(SubMesh::CreateFromDomain(smesh, solid_attr));
     H1_FECollection fec(order, dim);
     FiniteElementSpace fes_u(&solid, &fec, dim), fes_phi(&smesh, &fec);
     w3_ref = run(fes_u, fes_phi, solid);
+    inertia_ref = inertia_trace;
   }
   ParMesh pmesh(MPI_COMM_WORLD, smesh);
   ParSubMesh solid(ParSubMesh::CreateFromDomain(pmesh, solid_attr));
@@ -213,6 +219,8 @@ void LevelBorderCase(const std::string& label) {
   const double w3 = run(fes_u, fes_phi, solid);
   Check(std::abs(w3 - w3_ref) / std::abs(w3_ref), 1e-7,
         label + ": omega_3 serial == parallel");
+  Check(std::abs(inertia_trace - inertia_ref) / inertia_ref, 1e-12,
+        label + ": model inertia serial == parallel");
 }
 
 }  // namespace

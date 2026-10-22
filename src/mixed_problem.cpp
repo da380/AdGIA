@@ -929,6 +929,84 @@ real_t LinearQuasiStaticMixedSelfGravitatingProblem::SurfaceIntegralOnMarker(
   return v;
 }
 
+DenseMatrix LinearQuasiStaticMixedSelfGravitatingProblem::ModelInertiaTensor() {
+  MFEM_VERIFY(dim_ == 3, "ModelInertiaTensor: 3-D only.");
+  // Whole-body (G9 of doc/dahlen_closure.tex): the solid over the
+  // displacement SubMesh, every fluid region's hydrostatic density over
+  // the parent's fluid elements. phi_e = id on this class.
+  DenseMatrix I(3);
+  I = 0.0;
+  auto accumulate = [&](Mesh* mesh, Coefficient& rho,
+                        const Array<int>* marker) {
+    Vector x(dim_);
+    const int order = fes_phi_->GetMaxElementOrder();
+    for (int e = 0; e < mesh->GetNE(); e++) {
+      if (marker && !(*marker)[mesh->GetAttribute(e) - 1]) {
+        continue;
+      }
+      auto* T = mesh->GetElementTransformation(e);
+      const auto& ir =
+          IntRules.Get(mesh->GetElementGeometry(e), 2 * order + 4);
+      for (int q = 0; q < ir.GetNPoints(); q++) {
+        const auto& ip = ir.IntPoint(q);
+        T->SetIntPoint(&ip);
+        T->Transform(ip, x);
+        const real_t w = ip.weight * T->Weight() * rho.Eval(*T, ip);
+        const real_t r2 = x * x;
+        for (int i = 0; i < 3; i++) {
+          for (int j = 0; j < 3; j++) {
+            I(i, j) += w * ((i == j ? r2 : 0.0) - x[i] * x[j]);
+          }
+        }
+      }
+    }
+  };
+  accumulate(fes_->GetMesh(), *rho_, nullptr);
+  auto marker = fluid_markers_.begin();
+  for (auto& f : fluids_) {
+    accumulate(fes_phi_->GetMesh(), *f.density, &(*marker));
+    ++marker;
+  }
+#ifdef MFEM_USE_MPI
+  if (pfes_) {
+    MPI_Allreduce(MPI_IN_PLACE, I.Data(), 9, MPITypeMap<real_t>::mpi_type,
+                  MPI_SUM, pfes_->GetComm());
+  }
+#endif
+  return I;
+}
+
+void LinearQuasiStaticMixedSelfGravitatingProblem::SetRotation(real_t Omega) {
+  MFEM_VERIFY(dim_ == 3, "SetRotation: the model-inertia door is 3-D only.");
+  const DenseMatrix I0 = ModelInertiaTensor();
+  const real_t scale = (I0(0, 0) + I0(1, 1) + I0(2, 2)) / 3.0;
+  real_t offdiag = 0.0;
+  for (int i = 0; i < 3; i++) {
+    for (int j = i + 1; j < 3; j++) {
+      offdiag = std::max(offdiag, std::abs(I0(i, j)));
+    }
+  }
+  MFEM_VERIFY(offdiag <= 1e-2 * scale,
+              "SetRotation (model inertia): Omega must lie along a "
+              "principal axis of the model's inertia tensor (equilibrium "
+              "consistency; off-diagonal "
+                  << offdiag << " against the scale " << scale << ").");
+  Vector moments(3);
+  moments[0] = I0(0, 0);
+  moments[1] = I0(1, 1);
+  moments[2] = I0(2, 2);
+  MFEM_VERIFY(
+      std::abs(moments[2] - moments[0]) > 1e-3 * scale &&
+          std::abs(moments[2] - moments[1]) > 1e-3 * scale,
+      "SetRotation (model inertia): the model's wander response is "
+      "near-degenerate (C3 - C1 ~ 0): a near-spherical model has no "
+      "finite polar wander of its own. Supply observed moments through "
+      "SetRotation(Omega, moments) — the input-inertia option, whose "
+      "uniqueness the Tisserand gauge supplies equally.");
+  SetTisserandGauge(true);
+  SetRotation(Omega, moments);
+}
+
 void LinearQuasiStaticMixedSelfGravitatingProblem::SetRotation(
     real_t Omega, const Vector& principal_moments) {
   MFEM_VERIFY(!rot_enabled_, "SetRotation: already set.");
