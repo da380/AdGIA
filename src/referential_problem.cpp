@@ -1149,12 +1149,13 @@ LinearQuasiStaticReferentialSelfGravitatingProblem::LinearQuasiStaticReferential
     FiniteElementSpace* fes_u, FiniteElementSpace* fes_zeta,
     const ReferentialElasticRheology& rheology, Coefficient& density,
     real_t gravitational_constant, int dtn_degree,
-    Coefficient* background_zeta0)
+    Coefficient* background_zeta0, const std::vector<FluidRegion>& fluids)
     : LinearQuasiStaticProblemBase(fes_u, rheology),
       dim_(fes_u->GetMesh()->Dimension()),
       fes_zeta_(fes_zeta),
       ref_rheology_(&rheology),
       rho_(&density),
+      fluids_(fluids),
       G_(gravitational_constant),
       four_pi_G_(4.0 * kPi * gravitational_constant),
       dtn_degree_(dtn_degree),
@@ -1206,6 +1207,42 @@ LinearQuasiStaticReferentialSelfGravitatingProblem::LinearQuasiStaticReferential
     }
     injection_ =
         std::make_unique<SubMeshDofInjection>(*shadow_zeta_, *fes_zeta_);
+  }
+
+  // Fluid regions: markers on the parent's attributes and the SubMesh's
+  // boundary attributes, as in the mixed class. The CMB-approximation
+  // ladder is the mixed class's hydrostatic machinery and is refused
+  // here, as is ball-wide mode (the fluid terms are built on the
+  // prescribed extension, a SubMesh device).
+  MFEM_VERIFY(fluids_.empty() || !ball_wide_,
+              "LinearQuasiStaticReferentialSelfGravitatingProblem: fluid "
+              "regions need the displacement on a SubMesh excluding them, "
+              "not ball-wide mode.");
+  for (auto& f : fluids_) {
+    MFEM_VERIFY(f.treatment == FluidRegion::Treatment::Full,
+                "LinearQuasiStaticReferentialSelfGravitatingProblem: "
+                "Treatment::Full only; the CMB-approximation ladder lives "
+                "on the mixed class.");
+    MFEM_VERIFY(f.density,
+                "LinearQuasiStaticReferentialSelfGravitatingProblem: a fluid "
+                "region needs a (referential) density.");
+    MFEM_VERIFY(f.attributes.Size() > 0,
+                "LinearQuasiStaticReferentialSelfGravitatingProblem: a fluid "
+                "region needs parent-mesh attributes.");
+    MFEM_VERIFY(
+        f.interface_marker.Size() == fes_->GetMesh()->bdr_attributes.Max(),
+        "LinearQuasiStaticReferentialSelfGravitatingProblem: a fluid "
+        "region's interface_marker must be sized to the SubMesh's "
+        "bdr_attributes.Max().");
+    Array<int> marker(fes_zeta_->GetMesh()->attributes.Max());
+    marker = 0;
+    for (int a : f.attributes) {
+      MFEM_VERIFY(a >= 1 && a <= marker.Size(),
+                  "LinearQuasiStaticReferentialSelfGravitatingProblem: fluid "
+                  "attribute out of range.");
+      marker[a - 1] = 1;
+    }
+    fluid_markers_.push_back(marker);
   }
 
   // Potential fields.
@@ -1391,7 +1428,11 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::ComputeBackgroundPotent
     zeta0_->ProjectCoefficient(*zeta0);
   } else {
     // (K_a + DtN) Zeta0 / 4 pi G = -(rho, chi)_B with the referential
-    // density integrated on the SubMesh and injected into the ball.
+    // density integrated on the SubMesh and injected into the ball, and
+    // the referential fluid densities integrated on the parent (at a
+    // natural reference state this is the mixed class's background
+    // problem; the fluid mass term is a perturbation quantity and does
+    // not enter it there either).
     Vector bL(fes_zeta_->GetVSize()), B;
     if (ball_wide_) {
       auto rho_form = detail::MakeLinearForm(fes_zeta_);
@@ -1403,6 +1444,17 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::ComputeBackgroundPotent
       rho_form->AddDomainIntegrator(new DomainLFIntegrator(*rho_));
       rho_form->Assemble();
       injection_->Mult(*rho_form, bL);
+    }
+    if (!fluids_.empty()) {
+      auto fluid_form = detail::MakeLinearForm(fes_zeta_);
+      auto marker = fluid_markers_.begin();
+      for (auto& f : fluids_) {
+        fluid_form->AddDomainIntegrator(new DomainLFIntegrator(*f.density),
+                                        *marker);
+        ++marker;
+      }
+      fluid_form->Assemble();
+      bL += *fluid_form;
     }
     ToTrueDofs(*fes_zeta_, bL, B);
     B *= -1.0;
@@ -2088,6 +2140,15 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::OnFlavorRelease(
 }
 
 void LinearQuasiStaticReferentialSelfGravitatingProblem::SetupSolver(OperatorHandle& A) {
+  // Fluid regions so far source the background potential only; solving
+  // without their perturbation terms would silently drop the fluid's
+  // response, so refuse until the remaining construction steps of
+  // doc/dahlen_closure.tex, "Implementation" (the extension glue, the
+  // wall terms, the level border) are assembled.
+  MFEM_VERIFY(fluids_.empty(),
+              "LinearQuasiStaticReferentialSelfGravitatingProblem: the fluid "
+              "regions' perturbation terms are not yet assembled; "
+              "construction and the background potential only.");
   // The solid-everywhere preconditioner mode
   // (SetGaugePreconditionerOnly): the preconditioner is built on the
   // handle passed in (A + eps_prec Q when gauged), while the Krylov

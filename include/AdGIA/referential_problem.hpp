@@ -312,6 +312,17 @@ class ReferentialElasticRheology : public Rheology {
  * @f$\varphi_e@f$ (a Diffeomorphism on the ball, tapering to the identity
  * at the DtN sphere — assumed, not checked) and the referential fields.
  *
+ * **Fluid regions.** Eliminated hydrostatic fluid regions (FluidRegion,
+ * Treatment::Full only) are taken on the mixed class's geometry: parent
+ * attributes outside the displacement SubMesh, the referential fluid
+ * density on the parent. They source the background potential
+ * @f$\zeta^0@f$. Their perturbation terms — the fluid mass term F1 in
+ * @f$\phi^1 = \zeta^1 - (Eu)\cdot\nabla\Phi_0@f$ through the prescribed
+ * radial extension, the wall terms F2/F3, the follower load at
+ * @f$\pi = p^0@f$ and the level border — are the construction steps of
+ * doc/dahlen_closure.tex, "Implementation", and Solve() refuses a fluid
+ * problem until they are assembled.
+ *
  * **Weak form** (doc/gravitating_elasticity.md §3.1, with
  * @f$a_e = J_e F_e^{-1} F_e^{-T}@f$, @f$\mathbf{g}_0 = \nabla\zeta^0@f$):
  * @f[
@@ -371,13 +382,26 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
    * @param gravitational_constant @f$G@f$ in the units of the problem.
    * @param dtn_degree Truncation degree of the DtN expansion.
    * @param background_zeta0 Optional @f$\zeta^0@f$ (projected onto
-   * @p fes_zeta); solved from the density when null.
+   * @p fes_zeta); solved from the densities when null.
+   * @param fluids Eliminated hydrostatic fluid regions (copied; their
+   * coefficients must outlive the problem), on the mixed class's
+   * geometry: parent-mesh attributes outside the displacement SubMesh,
+   * with the *referential* fluid density on the parent (equal to the
+   * physical density at a natural reference state). Treatment::Full
+   * only — the CMB-approximation ladder lives on the mixed class — and
+   * SubMesh mode only (no ball-wide displacement). The regions source
+   * the background potential; their perturbation terms — F1, F2, the
+   * fluid halves of F3, the follower load and the level border
+   * (doc/dahlen_closure.tex, "A general pre-stressed solid" and the
+   * implementation plan) — are not yet assembled, and Solve() refuses
+   * until they are. Empty for a solid body.
    */
   LinearQuasiStaticReferentialSelfGravitatingProblem(
       mfem::FiniteElementSpace* fes_u, mfem::FiniteElementSpace* fes_zeta,
       const ReferentialElasticRheology& rheology, mfem::Coefficient& density,
       mfem::real_t gravitational_constant, int dtn_degree,
-      mfem::Coefficient* background_zeta0 = nullptr);
+      mfem::Coefficient* background_zeta0 = nullptr,
+      const std::vector<FluidRegion>& fluids = {});
 
   /** @brief Surface mass load @f$\sigma@f$ per referential area
    * (registered as time-dependent) on the marked boundary attributes of
@@ -558,6 +582,9 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
   /** @brief True when the displacement lives on the ball itself. */
   bool BallWide() const { return ball_wide_; }
 
+  bool HasFluidRegions() const { return !fluids_.empty(); }
+  const std::vector<FluidRegion>& FluidRegions() const { return fluids_; }
+
   /**
    * @brief Zero the stored solution iterate. The block solvers
    * warm-start from the previous Solve(), and the gauge refinement's
@@ -670,6 +697,13 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
   // physics
   const ReferentialElasticRheology* ref_rheology_;
   mfem::Coefficient* rho_;
+
+  // eliminated fluid regions (constructor): geometry and background
+  // sources so far; the perturbation terms and the level border follow
+  // the plan of doc/dahlen_closure.tex, "Implementation".
+  std::vector<FluidRegion> fluids_;
+  std::list<mfem::Array<int>> fluid_markers_;  ///< parent-attribute markers
+
   std::vector<std::unique_ptr<mfem::Coefficient>> tidal_scalar_coefs_;
   std::vector<std::unique_ptr<mfem::VectorCoefficient>> tidal_coefs_;
   mfem::real_t G_, four_pi_G_;

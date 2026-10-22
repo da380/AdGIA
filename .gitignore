@@ -36,3 +36,12 @@ doc/*.pdf
 doc/*.fls
 doc/*.fdb_latexmk
 doc/*.synctex.gz
+
+# The method, theory and planning notes (and the benchmark figures) are
+# kept in the working tree only for now; the Doxygen machinery
+# (Doxyfile.in, mainpage.dox, macros.inc, mathjax_config.js) stays tracked.
+doc/*.tex
+doc/*.md
+doc/planning/
+doc/BenchmarkPapers/
+doc/figures/

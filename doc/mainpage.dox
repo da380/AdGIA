@@ -108,8 +108,7 @@
  * (at N² ≠ 0 its semi-convergence is Rayleigh–Taylor growth); Dahlen's mixed
  * formulation is the workhorse for hydrostatic models, and the slipping
  * and welded formulations are idealisations that serve as instruments
- * (`doc/static_fluid_core.tex`); the generalisation of Dahlen's closure to
- * fluid regions of any shape is `doc/dahlen_closure.tex`.
+ *.
  *
  * @subsection sec_background Background states
  * `background.hpp` generates the reference state the referential classes
@@ -196,47 +195,11 @@
  * writer, the interchange form the Python reads back and draws.
  *
  * @section docs Documentation index
- * Paths are relative to the source tree.
- *
- * Reference (how the library works and why):
- * - `doc/quasi_static_models.tex` (PDF beside it): every problem class —
- *   model, assumptions, discretisation, solvers, verification.
- * - `doc/gravitating_elasticity.md`: the linearised theory of
- *   self-gravitating, pre-stressed elasticity behind the referential
- *   classes and the background module.
- * - `doc/self_gravitation.md`: the mixed problem with Dahlen fluid regions,
- *   its fluid–solid interface conditions and CMB approximations.
- * - `doc/gauged_fluid.md`: the gauge-penalty treatment of fluid regions.
- * - `doc/static_fluid_core.tex`: the static fluid-core problem and the status
- *   of the formulations (Maxwell relaxation, gauge penalty, Dahlen, slipping,
- *   welded).
- * - `doc/slip_interface.tex`: the slipping fluid–solid interface —
- *   derivation, discretisation, constraint enforcement, verification.
- * - `doc/gauge_penalty_iteration.tex`: gauge penalties and their iterated
- *   refinement.
- * - `doc/generalised_rotation.md`: the generalised (Maitra & Al-Attar)
- *   rotational theory — the traditional border's gauge ambiguity, the
- *   Tisserand resolution and its secular reduction.
- * - `doc/mappings.md`: the mapping (relabelling) layer.
- * - `doc/submesh_coupling.md`, `doc/viscoelasticity.md`,
- *   `doc/elastic_tensors.md`, `doc/null_space.md`, `doc/mfem_notes.md`:
- *   SubMesh coupling, rheologies and time stepping, elastic tensors,
- *   projected solvers, MFEM facts and pitfalls.
- * - `doc/equilibrium_figures.tex`: equilibrium states and hydrostatic
- *   figures by constrained optimisation.
- * - `doc/benchmark_programme.tex`: the benchmark programme — the cross-code
- *   hierarchy with sl3dpp and pyslfp (elastic, viscoelastic loading, sea
- *   level), its conventions, status and results, with the internal families
- *   placed in it.
- * - `doc/benchmarks.tex`: the benchmark families and their results.
- * - `doc/BenchmarkPapers/code_survey.md`: a survey of the published 3-D
- *   GIA codes and benchmarks, set against the library's treatments.
- * - `INSTALL.md`, `examples/README.md`, `meshes/README.md`,
- *   `benchmarks/README.md`, `earth_data/README.md`.
- *
- * Planning (open issues and future work, not a description of the code):
- * `doc/planning/`, indexed by its `README.md` — `open_issues.md`,
- * `solvers.md`, `future_work.md`, `equilibrium_figures.md`.
+ * Paths are relative to the source tree. The method, theory and planning
+ * notes live under `doc/` in the working tree but are not tracked in the
+ * repository for now. The tracked documentation is practical:
+ * `INSTALL.md`, `examples/README.md`, `meshes/README.md`,
+ * `benchmarks/README.md`, `earth_data/README.md`.
  *
  * @section install Installation
  * MFEM must be built first, serial or parallel. Configuration is with CMake;
@@ -254,6 +217,5 @@
  * - `meshes/`: Python scripts generating the gmsh meshes into the build
  *   tree's `data/`.
  * - `data/`: small MFEM-format meshes copied to the build tree.
- * - `doc/`: Doxygen configuration, this page, and the documents listed
- *   above.
+ * - `doc/`: Doxygen configuration, this page, and the untracked notes.
  */

@@ -660,6 +660,77 @@ TEST(ReferentialProblem, TransformationLawCoefficients) {
   }
 }
 
+// Eliminated fluid regions, the construction step of the referential
+// closure (doc/dahlen_closure.tex, "Implementation", the referential
+// variant): geometry and the background potential. At phi_e = id on the
+// two-layer fluid-core mesh the referential background problem is the
+// mixed class's — the same density forms against the same Laplace-DtN
+// system — so zeta0 == Phi0 to the two assemblies' common quadrature;
+// and dropping the region must change zeta0 by the core's mass.
+TEST(ReferentialProblem, FluidCoreBackgroundPotential) {
+  for (int dim : {2, 3}) {
+    std::vector<double> diffs;
+    for (int order : {1, 2}) {
+    Mesh parent(TwoLayerMeshFile(dim).c_str(), 1, 1);
+    Array<int> solid_attrs({2});
+    SubMesh body(SubMesh::CreateFromDomain(parent, solid_attrs));
+    H1_FECollection fec(order, dim);
+    FiniteElementSpace fes_u(&body, &fec, dim);
+    FiniteElementSpace fes_zeta(&parent, &fec);
+
+    ConstantCoefficient kappa(kKappa), mu(kMu), rho(kRho);
+    FunctionCoefficient rho_f(FluidDensity);
+    FluidRegion core;
+    core.attributes = Array<int>({1});
+    core.density = &rho_f;
+    core.interface_marker.SetSize(body.bdr_attributes.Max());
+    core.interface_marker = 0;
+    core.interface_marker[0] = 1;  // the CMB
+    std::vector<FluidRegion> fluids{core};
+
+    // The mixed reference.
+    IsotropicElasticRheology e_rheology(dim, kappa, mu);
+    LinearQuasiStaticMixedSelfGravitatingProblem mixed(
+        &fes_u, &fes_zeta, e_rheology, rho, kG, kDtNDegree, nullptr, fluids);
+
+    // The referential problem at phi_e = id; the elastic content is
+    // immaterial to the background.
+    auto map = IdentityMap(dim);
+    auto C = IsotropicElasticTensorCoefficient::FromBulkModulus(dim, kappa, mu);
+    MatrixFunctionCoefficient S(dim, [](const Vector& x, DenseMatrix& S) {
+      S.SetSize(x.Size());
+      S = 0.0;
+    });
+    ReferentialElasticRheology r_rheology(dim, C, S, map);
+    LinearQuasiStaticReferentialSelfGravitatingProblem referential(
+        &fes_u, &fes_zeta, r_rheology, rho, kG, kDtNDegree, nullptr, fluids);
+    EXPECT_TRUE(referential.HasFluidRegions());
+
+    GridFunction d(referential.BackgroundPotential());
+    d -= mixed.BackgroundPotential();
+    if (dim == 2) {
+      // Both carry the 2-D constant gauge: compare modulo the constant.
+      d -= d.Sum() / d.Size();
+    }
+    const double denom = L2Norm(mixed.BackgroundPotential());
+    diffs.push_back(L2Norm(d) / denom);
+
+    // Without the region the core's mass is missing.
+    LinearQuasiStaticReferentialSelfGravitatingProblem solid_only(
+        &fes_u, &fes_zeta, r_rheology, rho, kG, kDtNDegree);
+    GridFunction d2(referential.BackgroundPotential());
+    d2 -= solid_only.BackgroundPotential();
+    EXPECT_GT(L2Norm(d2) / denom, 0.1);
+    }
+    // The two assemblies differ at their common quadrature only (the
+    // transformed and the plain diffusion integrators pick different
+    // default rules, exact on affine elements but not on curved ones):
+    // small, and falling with order.
+    EXPECT_LT(diffs[0], dim == 2 ? 3e-4 : 1e-3);
+    EXPECT_LT(diffs[1], 0.3 * diffs[0]);
+  }
+}
+
 // The fluid dictionary test: on a two-layer disc with a uniform
 // fluid core, a linearised relabelling supported inside the core (w =
 // curl psi, div w = 0 exactly) is a null pair (w, 0) of the full block

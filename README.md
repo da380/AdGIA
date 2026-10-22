@@ -28,10 +28,8 @@ reciprocity and finite differences (`adjoint.hpp`). Next are the interface
 beyond store-all and a production interface for inversion; the shape stage
 of the equilibrium-figures programme and nonlinear forward models lie
 further out. Benchmarking against independent reference solutions
-(`benchmarks/`, `doc/benchmarks.tex`) and solver performance continue. The
-library is under active development and is not yet user-facing:
-interfaces move, and the documents below — not this page — are the working
-contract.
+(`benchmarks/`) and solver performance continue. The library is under
+active development and is not yet user-facing: interfaces move.
 
 **Fluid regions.** For coupled elasto-gravity problems with fluid regions,
 the Maxwell relaxation of the fluid (`SetFluid`'s default treatment) is the
@@ -41,8 +39,7 @@ at N² ≠ 0 its semi-convergence is Rayleigh–Taylor growth, and answers are
 defined only to the stratification band. For hydrostatic (spherical)
 models Dahlen's mixed formulation is the practical workhorse; the slipping
 and welded formulations are finite idealisations of the dissipative
-completion and serve as instruments. The full account is
-`doc/static_fluid_core.tex`, "The status of the formulations".
+completion and serve as instruments.
 
 ## Quick start
 
@@ -151,39 +148,19 @@ load and tidal Love numbers read off one solve per degree.
 
 The API is documented in the headers: the Doxygen pages are hosted at
 [da380.github.io/AdGIA](https://da380.github.io/AdGIA/), rebuilt from `main`
-by CI, and are built locally with `BUILD_DOCS`. The documents in the source
-tree are of two kinds.
+by CI, and are built locally with `BUILD_DOCS`.
 
-**Reference** — how the library works and why:
+The method, theory and planning notes live under `doc/` in the working
+tree but are not tracked in the repository for now. The tracked
+documentation is practical:
 
 | Document | Subject |
 |---|---|
-| `doc/quasi_static_models.tex` (PDF beside it) | every problem class: model, assumptions, discretisation, solvers, verification |
-| `doc/gravitating_elasticity.md` | the linearised theory of self-gravitating, pre-stressed elasticity behind the referential classes and the background module |
-| `doc/self_gravitation.md` | the mixed problem with Dahlen fluid regions: weak form, fluid–solid interface conditions and CMB approximations, solvers, null space, 2-D caveats, verification |
-| `doc/gauged_fluid.md` | the gauge-penalty treatment of fluid regions: why tangential slip is not gauge, the Adams–Williamson equivalence, the penalty window |
-| `doc/static_fluid_core.tex` (PDF) | the static fluid-core problem and the status of the formulations: Maxwell relaxation, gauge penalty, Dahlen, slipping and welded |
-| `doc/dahlen_closure.tex` (PDF) | Dahlen's fluid closure and its generalisation: hydrostatic fluid regions of any shape as a one-dimensional border on the level foliation, general pre-stressed solids, rotation, implementation and gates |
-| `doc/slip_interface.tex` (PDF) | the slipping fluid–solid interface: derivation, discretisation, constraint enforcement, implementation, verification |
-| `doc/gauge_penalty_iteration.tex` (PDF) | gauge penalties and their iterated (Tikhonov) refinement |
-| `doc/equilibrium_figures.tex` (PDF) | equilibrium states and hydrostatic figures by constrained optimisation: the feasibility functionals, their derivatives, Sobolev gradients, the advection route |
-| `doc/mappings.md` | the mapping (relabelling) layer: pulled-back forms, assembly recipe, change-of-variables identity |
-| `doc/submesh_coupling.md` | forms between a mesh and its SubMesh: the dof injection, its parallel construction, constraints |
-| `doc/viscoelasticity.md` | the quasi-static problem interface, rheologies, time stepping, strain maps, state-dependent relaxation, composite rheologies |
-| `doc/elastic_tensors.md` | the Mandel convention, the elastic tensor coefficients and the anisotropic integrator |
-| `doc/null_space.md` | projected solvers for singular systems, the two gauges, element order on curved meshes |
-| `doc/mfem_notes.md` | MFEM facts and pitfalls |
-| `doc/benchmarks.tex` (PDF) | the benchmark families and their results |
-| `doc/BenchmarkPapers/code_survey.md` | a survey of the published 3-D GIA codes and benchmarks, set against the library's treatments |
 | `INSTALL.md` | prerequisites, configuration, build options |
 | `examples/README.md` | how to run the examples, and what each one does |
 | `meshes/README.md` | mesh generation, the files written and the attribute conventions |
 | `benchmarks/README.md` | the benchmark families: comparisons with independent reference solutions |
 | `earth_data/README.md` | the earth-data tools: real-Earth datasets in, maps out (maps, NetCDF, ice-ng sampling, topography grids) |
-
-**Planning** — open issues and future work, not a description of the code:
-`doc/planning/`, indexed by its `README.md` (`open_issues.md`, `solvers.md`,
-`future_work.md`, `equilibrium_figures.md`).
 
 ## Installation
 
