@@ -23,6 +23,7 @@
 
 #include "mfem.hpp"
 #include "AdGIA/bordered.hpp"
+#include "AdGIA/level_border.hpp"
 #include "AdGIA/coefficient.hpp"
 #include "AdGIA/poisson.hpp"
 #include "AdGIA/quasi_static_problem.hpp"
@@ -927,19 +928,8 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   std::unique_ptr<mfem::IterativeSolver> minres_;  ///< MINRES or block CG
 
   // ---- the level border (SetLevelBorder) ----
-  struct LevelBorder {
-    int n = 0;                 ///< elements of the 1-D grid (n+1 nodes)
-    bool centre = false;       ///< the region contains a centre: U_0 = 0
-    mfem::Vector c;            ///< node levels, c[0] < ... < c[n]
-    mfem::Vector vol, mass, kap;   ///< per-element volume, mass, kappa-volume
-    mfem::DenseMatrix Db;      ///< the 1-D block, local ordering below
-    std::vector<mfem::Vector> nu_phi;   ///< the nu columns on phi true dofs
-    std::vector<mfem::Vector> wall_u;   ///< the wall columns on u true dofs
-    std::vector<int> wall_node;         ///< node of each wall (n: outer)
-    int nU = 0, oU = 0, os = 0, onu = 0, ol = 0, size = 0;
-    mfem::Vector y;            ///< the last solve's border unknowns
-    int UIndex(int node) const { return centre ? node - 1 : node; }
-  };
+  // LevelBorder and its builder live in level_border.hpp, shared with
+  // the referential class.
   bool level_enabled_ = false;
   int level_n_ = 0;
   std::vector<LevelBorder> level_;

@@ -842,6 +842,102 @@ TEST(ReferentialProblem, FluidCoreGlueCrossCheck2D) {
   EXPECT_LT(z_diff[1], 0.1 * z_diff[0]);
 }
 
+// The level border on the referential class (step (iv) of the
+// referential closure): under a UNIFORM surface load — pure degree 0,
+// exactly the freedom the border closes — the referential class with
+// the glue and the border must reproduce the mixed class with the
+// border on the fluid-core ball: the same border physics (the shared
+// builder's columns, conjugated through the glue), on the two solid
+// assemblies' common accuracy, improving with order. 3-D: in 2-D the
+// two classes gauge the potential constant on different variables.
+TEST(ReferentialProblem, FluidCoreLevelBorder3D) {
+  const int dim = 3;
+  const double r_cmb = kRCmb;
+  std::vector<double> u_diff, z_diff;
+  for (int order : {1, 2}) {
+    Mesh parent(TwoLayerMeshFile(dim).c_str(), 1, 1);
+    Array<int> fluid_attr({1}), solid_attr({2}), buffer_attr({3});
+    SubMesh body(SubMesh::CreateFromDomain(parent, solid_attr));
+    SubMesh fluid(SubMesh::CreateFromDomain(parent, fluid_attr));
+    SubMesh buffer(SubMesh::CreateFromDomain(parent, buffer_attr));
+    H1_FECollection fec(order, dim);
+    FiniteElementSpace fes_u(&body, &fec, dim), fes_zeta(&parent, &fec);
+    FiniteElementSpace fes_fluid(&fluid, &fec, dim);
+    FiniteElementSpace fes_buffer(&buffer, &fec, dim);
+    Vector bb_min, bb_max;
+    parent.GetBoundingBox(bb_min, bb_max);
+    const double r_out = bb_max.Normlinf();
+
+    RadialHydrostaticBackground bg(
+        dim,
+        [](double r) {
+          return r < kRCmb ? 1.2 - 0.1 * (r - kRIcb) / (kRCmb - kRIcb) : kRho;
+        },
+        [](double) { return kKappa; },
+        [r_cmb](double r) { return r < r_cmb ? 0.0 : kMu; }, kG, 1.0);
+
+    ConstantCoefficient kappa(kKappa), mu(kMu), kappa_f(kKappa);
+    FunctionCoefficient rho_f(FluidDensity);
+    FluidRegion core;
+    core.attributes = Array<int>({1});
+    core.density = &rho_f;
+    core.interface_marker.SetSize(body.bdr_attributes.Max());
+    core.interface_marker = 0;
+    core.interface_marker[0] = 1;  // the CMB
+    core.bulk_modulus = &kappa_f;
+    std::vector<FluidRegion> fluids{core};
+
+    ConstantCoefficient sigma(0.02);
+    auto surface = SurfaceMarker(body);
+
+    IsotropicElasticRheology e_rheology(dim, kappa, mu);
+    LinearQuasiStaticMixedSelfGravitatingProblem mixed(
+        &fes_u, &fes_zeta, e_rheology, bg.Density(), kG, kDtNDegree, nullptr,
+        fluids);
+    mixed.SetLevelBorder(12);
+    mixed.SetSurfaceLoad(sigma, surface);
+    mixed.SetRelTol(1e-11);
+    mixed.AssembleForce(0.0);
+    ASSERT_TRUE(mixed.Solve());
+
+    LinearQuasiStaticReferentialSelfGravitatingProblem referential(
+        &fes_u, &fes_zeta, bg.Rheology(), bg.Density(), kG, kDtNDegree,
+        nullptr, fluids);
+    auto Ev = NewRadialVacuumExtension(fes_u, fes_buffer, 1.0, r_out);
+    referential.SetPrescribedVacuumExtension(fes_buffer, *Ev);
+    auto Ef = NewRadialFluidExtension(fes_u, fes_fluid, r_cmb);
+    referential.SetFluidPotentialGlue(fes_fluid, *Ef, bg.Pressure());
+    referential.SetLevelBorder(12);
+    referential.SetSurfaceLoad(sigma, surface);
+    referential.SetRelTol(1e-11);
+    referential.AssembleForce(0.0);
+    ASSERT_TRUE(referential.Solve());
+
+    {
+      GridFunction d(referential.Displacement());
+      d -= mixed.Displacement();
+      u_diff.push_back(L2Norm(d) / L2Norm(mixed.Displacement()));
+    }
+    {
+      VectorGridFunctionCoefficient u_c(&mixed.Displacement());
+      InnerProductCoefficient advect(u_c, mixed.BackgroundGravity());
+      GridFunctionCoefficient phi1(&mixed.PotentialOnBody());
+      SumCoefficient zeta_expected(phi1, advect);
+      GridFunction d(referential.PotentialOnBody());
+      GridFunction z(d);
+      z.ProjectCoefficient(zeta_expected);
+      d -= z;
+      z_diff.push_back(L2Norm(d) /
+                       std::max(1e-30, L2Norm(referential.PotentialOnBody())));
+    }
+  }
+  // Measured 2.0e-2 -> 9.4e-4 (u) and 1.2e-3 -> 6.6e-5 (zeta).
+  EXPECT_LT(u_diff[1], 5e-3);
+  EXPECT_LT(u_diff[1], 0.2 * u_diff[0]);
+  EXPECT_LT(z_diff[1], 5e-4);
+  EXPECT_LT(z_diff[1], 0.2 * z_diff[0]);
+}
+
 // The fluid dictionary test: on a two-layer disc with a uniform
 // fluid core, a linearised relabelling supported inside the core (w =
 // curl psi, div w = 0 exactly) is a null pair (w, 0) of the full block

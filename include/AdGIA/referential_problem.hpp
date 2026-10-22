@@ -18,6 +18,7 @@
 #include "AdGIA/bordered.hpp"
 #include "AdGIA/centrifugal.hpp"
 #include "AdGIA/coefficient.hpp"
+#include "AdGIA/level_border.hpp"
 #include "AdGIA/mappings.hpp"
 #include "AdGIA/null_space.hpp"
 #include "AdGIA/poisson.hpp"
@@ -631,6 +632,31 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
   /** @brief True once SetFluidPotentialGlue() has been called. */
   bool HasFluidPotentialGlue() const { return glue_set_; }
 
+  /**
+   * @brief Close the eliminated fluid's degree-0 freedom with the level
+   * border (step (iv) of the referential closure;
+   * doc/dahlen_closure.tex, "Implementation"): the shared builder's
+   * border (level_border.hpp) with its @f$
+u@f$ columns CONJUGATED
+   * through the potential glue — in the referential variables a mixed
+   * column @f$(b_u, b_\phi)@f$ becomes @f$(b_u - S^T b_\phi, b_\phi)@f$,
+   * while the wall columns, already in @f$u_s@f$, are unchanged — and
+   * eliminated by the shared engine with its version-keyed column
+   * cache. Requires SetFluidPotentialGlue() (the glue supplies S and
+   * the wall physics) and every region's FluidRegion::bulk_modulus.
+   * @param levels Nodes of the 1-D grid per fluid region; the
+   * mixed class's default and node-count guidance apply.
+   */
+  void SetLevelBorder(int levels = 16);
+
+  bool HasLevelBorder() const { return level_enabled_; }
+
+  /** @brief The last solve's border unknowns of region @p region on its
+   * grid, as the mixed class's accessor. */
+  void LevelBorderSolution(int region, mfem::Vector& c, mfem::Vector& U,
+                           mfem::Vector& s, mfem::Vector& nu,
+                           mfem::Vector& lambda) const;
+
   /** @brief True when the displacement lives on the ball itself. */
   bool BallWide() const { return ball_wide_; }
 
@@ -784,6 +810,16 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
 #ifdef MFEM_USE_MPI
   std::unique_ptr<mfem::HypreParMatrix> pglue_S_;
 #endif
+  std::vector<mfem::Coefficient*> glue_rho_prime_;  ///< per region
+
+  // The level border (SetLevelBorder): the shared builder's borders
+  // with glue-conjugated nu columns, eliminated with the sea/rotation
+  // machinery's engine.
+  bool level_enabled_ = false;
+  int level_n_ = 0;
+  std::vector<LevelBorder> level_;
+  std::vector<std::unique_ptr<mfem::Coefficient>> level_coefs_;
+  std::unique_ptr<mfem::GradientGridFunctionCoefficient> grad_zeta0_;
 
   std::vector<std::unique_ptr<mfem::Coefficient>> tidal_scalar_coefs_;
   std::vector<std::unique_ptr<mfem::VectorCoefficient>> tidal_coefs_;

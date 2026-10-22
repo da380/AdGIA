@@ -2140,6 +2140,7 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetFluidPotentialGlue(
     rho_prime = rp.get();
     fluid_coefs_.push_back(std::move(rp));
   }
+  glue_rho_prime_.assign(1, rho_prime);
   M_fluid_.SetType(Operator::MFEM_SPARSEMAT);
   m_fluid_form_ = detail::MakeBilinearForm(fes_zeta_);
   m_fluid_form_->AddDomainIntegrator(new MassIntegrator(*rho_prime), marker);
@@ -2326,6 +2327,7 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetFluidPotentialGlue(
     rho_prime = rp.get();
     fluid_coefs_.push_back(std::move(rp));
   }
+  glue_rho_prime_.assign(1, rho_prime);
   M_fluid_.SetType(Operator::Hypre_ParCSR);
   m_fluid_form_ = detail::MakeBilinearForm(fes_zeta_);
   m_fluid_form_->AddDomainIntegrator(new MassIntegrator(*rho_prime), marker);
@@ -2463,6 +2465,68 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::
   integs.AddBoundaryIntegrator(new TransposeIntegrator(Gt, 1),
                                f.interface_marker);
   fluid_coefs_.push_back(std::move(mhalf_p0));
+}
+
+void LinearQuasiStaticReferentialSelfGravitatingProblem::SetLevelBorder(
+    int levels) {
+  MFEM_VERIFY(glue_set_,
+              "SetLevelBorder: call SetFluidPotentialGlue first (the border "
+              "is conjugated through its glue matrix).");
+  MFEM_VERIFY(levels >= 2, "SetLevelBorder: at least two nodes.");
+  for (const auto& f : fluids_) {
+    MFEM_VERIFY(f.bulk_modulus,
+                "SetLevelBorder: every region needs its bulk_modulus.");
+  }
+  MFEM_VERIFY(glue_rho_prime_.size() == fluids_.size(),
+              "SetLevelBorder: the fluid mass term is not set up.");
+  level_n_ = levels - 1;
+  if (!grad_zeta0_) {
+    grad_zeta0_ =
+        std::make_unique<GradientGridFunctionCoefficient>(zeta0_.get());
+  }
+  level_coefs_.clear();
+  LevelBorderContext ctx;
+  ctx.fes_u = fes_;
+  ctx.fes_pot = fes_zeta_;
+  ctx.pot0 = zeta0_.get();
+  ctx.pot0_shadow = ball_wide_ ? zeta0_.get() : zeta0_shadow_.get();
+  ctx.grad_pot0 = grad_zeta0_.get();
+  ctx.grad_pot0_shadow = grad_zeta0_shadow_.get();
+  ctx.n = level_n_;
+  level_ = AdGIA::BuildLevelBorders(ctx, fluids_, fluid_markers_,
+                                    glue_rho_prime_, level_coefs_);
+  // The glue conjugation: in (u, zeta) a mixed column (b_u, b_phi)
+  // becomes (b_u - S^T b_phi, b_phi); only the nu columns carry a
+  // potential part, and the wall columns, already in u_s, are
+  // unchanged.
+  for (auto& L : level_) {
+    L.nu_u.resize(L.nu_phi.size());
+    for (size_t k = 0; k < L.nu_phi.size(); k++) {
+      L.nu_u[k].SetSize(fes_->GetTrueVSize());
+#ifdef MFEM_USE_MPI
+      if (pglue_S_) {
+        pglue_S_->MultTranspose(L.nu_phi[k], L.nu_u[k]);
+      } else
+#endif
+      {
+        glue_S_->MultTranspose(L.nu_phi[k], L.nu_u[k]);
+      }
+      L.nu_u[k].Neg();
+    }
+  }
+  level_enabled_ = true;
+  if (border_elim_) {
+    border_elim_->InvalidateCache();
+  }
+}
+
+void LinearQuasiStaticReferentialSelfGravitatingProblem::LevelBorderSolution(
+    int region, Vector& c, Vector& U, Vector& s, Vector& nu,
+    Vector& lambda) const {
+  MFEM_VERIFY(level_enabled_ && region >= 0 &&
+                  region < static_cast<int>(level_.size()),
+              "LevelBorderSolution: no such level border.");
+  level_[region].Solution(c, U, s, nu, lambda);
 }
 
 void LinearQuasiStaticReferentialSelfGravitatingProblem::ConfigureFluidOperator(
@@ -2722,7 +2786,7 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetupSolver(OperatorHan
 
 bool LinearQuasiStaticReferentialSelfGravitatingProblem::SolveLinearSystem(const Vector& B,
                                                             Vector& X) {
-  if (!sea_enabled_ && !rot_enabled_) {
+  if (!sea_enabled_ && !rot_enabled_ && !level_enabled_) {
     return SolveUnbordered(B, X);
   }
   // The bordered solve, referential form (quasi_static_models.tex, the
@@ -2733,7 +2797,12 @@ bool LinearQuasiStaticReferentialSelfGravitatingProblem::SolveLinearSystem(const
   // shared engine with its version-keyed column cache.
   const int ns = sea_enabled_ ? 1 : 0;
   const int nw = rot_enabled_ ? static_cast<int>(rot_psi_.size()) : 0;
-  const int nb = ns + nw;
+  const int nb0 = ns + nw;
+  int nl = 0;
+  for (const auto& L : level_) {
+    nl += L.size;
+  }
+  const int nb = nb0 + nl;
   bool ok = SolveUnbordered(B, X);
   if (!border_elim_) {
     border_elim_ = std::make_unique<BorderedElimination>(
@@ -2745,6 +2814,10 @@ bool LinearQuasiStaticReferentialSelfGravitatingProblem::SolveLinearSystem(const
                                  BorderedElimination::State& xs) mutable {
           B_zeta_.Swap(zwork);
           B_zeta_ = rhs[1];
+          // 2-D: the level border's nu columns need the compatibility
+          // gauge, as in the mixed class (no-op in 3-D, where the
+          // sea/rotation borders live).
+          MakeCompatible(B_zeta_);
           xs[0].SetSize(rhs[0].Size());
           xs[0] = 0.0;
           const bool converged = SolveUnbordered(rhs[0], xs[0]);
@@ -2789,6 +2862,33 @@ bool LinearQuasiStaticReferentialSelfGravitatingProblem::SolveLinearSystem(const
       Db(0, ns + k) = Db(ns + k, 0) = rot_mpsi_[k];
     }
   }
+  // The level borders: the glue-conjugated nu columns, the wall
+  // columns, and the dense blocks; the border rows carry no data.
+  if (level_enabled_) {
+    Vector zero_u2(X.Size());
+    zero_u2 = 0.0;
+    Vector zero_z2(fes_zeta_->GetTrueVSize());
+    zero_z2 = 0.0;
+    int off = nb0;
+    for (const auto& L : level_) {
+      for (int j = 0; j < L.size; j++) {
+        columns[off + j] = {zero_u2, zero_z2};
+      }
+      for (int k = 0; k <= L.n; k++) {
+        columns[off + L.onu + k] = {L.nu_u[k], L.nu_phi[k]};
+      }
+      for (size_t w = 0; w < L.wall_u.size(); w++) {
+        columns[off + L.ol + static_cast<int>(w)] = {L.wall_u[w], zero_z2};
+      }
+      for (int i = 0; i < L.size; i++) {
+        for (int j = 0; j < L.size; j++) {
+          Db(off + i, off + j) = L.Db(i, j);
+        }
+      }
+      off += L.size;
+    }
+  }
+
   BorderedElimination::State xs = {X, Zeta_true_};
   Vector y;
   ok = border_elim_->Eliminate(columns, Db, r, OperatorVersion(), RelTol(),
@@ -2797,6 +2897,16 @@ bool LinearQuasiStaticReferentialSelfGravitatingProblem::SolveLinearSystem(const
   phi_g_ = sea_enabled_ ? y[0] : 0.0;
   for (int k = 0; k < nw; k++) {
     omega_[k] = y[ns + k];
+  }
+  if (level_enabled_) {
+    int off = nb0;
+    for (auto& L : level_) {
+      L.y.SetSize(L.size);
+      for (int j = 0; j < L.size; j++) {
+        L.y[j] = y[off + j];
+      }
+      off += L.size;
+    }
   }
   if (rot_enabled_) {
     static_cast<CentrifugalPotential*>(rot_psi_total_.get())
