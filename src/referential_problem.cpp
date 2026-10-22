@@ -2415,8 +2415,68 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetFluidPotentialGlue(
 }
 #endif
 
+void LinearQuasiStaticReferentialSelfGravitatingProblem::CheckWallTraction(
+    Coefficient& wall_pressure) {
+  // Step (v) of the referential closure (doc/dahlen_closure.tex, "A
+  // general pre-stressed solid"): the wall seam is derived under
+  // S_e n = -p0 n on the wall — the pre-stress carries the fluid's
+  // normal traction and no shear there. Measure the relative misfit at
+  // the wall quadrature points and refuse an inadmissible pre-stress
+  // rather than assemble a seam whose symmetry it has broken.
+  FluidRegion& f = fluids_.front();
+  Mesh* ms = fes_->GetMesh();
+  const int qorder = 2 * fes_->GetMaxElementOrder() + 2;
+  const int nattr = f.interface_marker.Size();
+  MatrixCoefficient& Se = ref_rheology_->EquilibriumStress();
+  DenseMatrix S(dim_);
+  Vector nrm(dim_), t(dim_);
+  real_t num = 0.0, den = 0.0;
+  for (int be = 0; be < ms->GetNBE(); be++) {
+    const int a = ms->GetBdrAttribute(be);
+    if (a > nattr || !f.interface_marker[a - 1]) {
+      continue;
+    }
+    ElementTransformation* T = ms->GetBdrElementTransformation(be);
+    const IntegrationRule& ir = IntRules.Get(T->GetGeometryType(), qorder);
+    for (int q = 0; q < ir.GetNPoints(); q++) {
+      const IntegrationPoint& ip = ir.IntPoint(q);
+      T->SetIntPoint(&ip);
+      CalcOrtho(T->Jacobian(), nrm);
+      const real_t nn = nrm.Norml2();
+      if (nn <= 0.0) {
+        continue;
+      }
+      nrm /= nn;
+      const real_t w = ip.weight * T->Weight();
+      const real_t p0 = wall_pressure.Eval(*T, ip);
+      Se.Eval(S, *T, ip);
+      S.Mult(nrm, t);
+      t.Add(p0, nrm);
+      num += w * (t * t);
+      den += w * p0 * p0;
+    }
+  }
+#ifdef MFEM_USE_MPI
+  if (pfes_) {
+    real_t buf[2] = {num, den};
+    MPI_Allreduce(MPI_IN_PLACE, buf, 2, MPITypeMap<real_t>::mpi_type,
+                  MPI_SUM, pfes_->GetComm());
+    num = buf[0];
+    den = buf[1];
+  }
+#endif
+  wall_traction_res_ = den > 0.0 ? std::sqrt(num / den) : std::sqrt(num);
+  MFEM_VERIFY(wall_traction_res_ <= 1e-3,
+              "SetFluidPotentialGlue: the equilibrium stress does not carry "
+              "the wall pressure (|S_e n + p0 n| / |p0| = "
+                  << wall_traction_res_
+                  << " on the wall): the wall seam requires S_e n = -p0 n "
+                     "(doc/dahlen_closure.tex, step (v)).");
+}
+
 void LinearQuasiStaticReferentialSelfGravitatingProblem::
     SetupFluidWallIntegrators(Coefficient& wall_pressure) {
+  CheckWallTraction(wall_pressure);
   // The solid-side wall terms, shared by the serial and parallel glue:
   // the wall buoyancy term F2 (normal-normal) exactly as the mixed
   // class has it, and the integrator half of the hybrid wall seam

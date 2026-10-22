@@ -632,6 +632,14 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
   /** @brief True once SetFluidPotentialGlue() has been called. */
   bool HasFluidPotentialGlue() const { return glue_set_; }
 
+  /** @brief The wall-admissibility residual measured by the glue (step
+   * (v) of the referential closure): the relative wall misfit
+   * @f$(\oint_\Sigma|\Se\hat{\bnu}_s + p^0\hat{\bnu}_s|^2 /
+   * \oint_\Sigma |p^0|^2)^{1/2}@f$. The closure's wall seam assumes the
+   * pre-stress carries the fluid's normal traction and no shear on the
+   * wall; the glue refuses above @f$10^{-3}@f$. */
+  mfem::real_t WallTractionResidual() const { return wall_traction_res_; }
+
   /**
    * @brief Close the eliminated fluid's degree-0 freedom with the level
    * border (step (iv) of the referential closure;
@@ -811,6 +819,10 @@ u@f$ columns CONJUGATED
   std::unique_ptr<mfem::HypreParMatrix> pglue_S_;
 #endif
   std::vector<mfem::Coefficient*> glue_rho_prime_;  ///< per region
+  mfem::real_t wall_traction_res_ = 0.0;
+  /** @brief Step (v): measure the wall misfit |S_e n + p0 n| on the
+   * region's interfaces and refuse an inadmissible pre-stress. */
+  void CheckWallTraction(mfem::Coefficient& wall_pressure);
 
   // The level border (SetLevelBorder): the shared builder's borders
   // with glue-conjugated nu columns, eliminated with the sea/rotation

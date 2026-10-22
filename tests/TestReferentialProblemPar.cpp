@@ -334,6 +334,7 @@ void RunFluidCoreGlueCase(int order, const std::string& label) {
   problem.SetPrescribedVacuumExtension(fes_buffer, *Ev);
   auto Ef = NewRadialFluidExtension(fes_u, fes_fluid, r_cmb);
   problem.SetFluidPotentialGlue(fes_fluid, *Ef, bg.Pressure());
+  Check(problem.WallTractionResidual(), 1e-12, label + " wall traction");
   auto surface = surface_marker(body);
   FunctionCoefficient sigma2(SurfaceLoad);
   problem.SetSurfaceLoad(sigma2, surface);

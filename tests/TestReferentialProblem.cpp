@@ -809,6 +809,8 @@ TEST(ReferentialProblem, FluidCoreGlueCrossCheck2D) {
     referential.SetPrescribedVacuumExtension(fes_buffer, *Ev);
     auto Ef = NewRadialFluidExtension(fes_u, fes_fluid, r_cmb);
     referential.SetFluidPotentialGlue(fes_fluid, *Ef, bg.Pressure());
+    // Step (v): the hydrostatic background is admissible, S_e = -p0 I.
+    EXPECT_LT(referential.WallTractionResidual(), 1e-12);
     referential.SetSurfaceLoad(sigma, surface);
     referential.SetRelTol(1e-11);
     referential.AssembleForce(0.0);
