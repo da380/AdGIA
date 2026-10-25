@@ -17,6 +17,8 @@
 #include "AdGIA/bilininteg.hpp"
 #include "AdGIA/bordered.hpp"
 #include "AdGIA/centrifugal.hpp"
+#include "AdGIA/coefficient.hpp"
+#include "AdGIA/level_border.hpp"
 #include "AdGIA/mappings.hpp"
 #include "AdGIA/null_space.hpp"
 #include "AdGIA/poisson.hpp"
@@ -312,6 +314,17 @@ class ReferentialElasticRheology : public Rheology {
  * @f$\varphi_e@f$ (a Diffeomorphism on the ball, tapering to the identity
  * at the DtN sphere — assumed, not checked) and the referential fields.
  *
+ * **Fluid regions.** Eliminated hydrostatic fluid regions (FluidRegion,
+ * Treatment::Full only) are taken on the mixed class's geometry: parent
+ * attributes outside the displacement SubMesh, the referential fluid
+ * density on the parent. They source the background potential
+ * @f$\zeta^0@f$. Their perturbation terms — the fluid mass term F1 in
+ * @f$\phi^1 = \zeta^1 - (Eu)\cdot\nabla\Phi_0@f$ through the prescribed
+ * radial extension, the wall terms F2/F3, the follower load at
+ * @f$\pi = p^0@f$ and the level border — are the construction steps of
+ * doc/dahlen_closure.tex, "Implementation", and Solve() refuses a fluid
+ * problem until they are assembled.
+ *
  * **Weak form** (doc/gravitating_elasticity.md §3.1, with
  * @f$a_e = J_e F_e^{-1} F_e^{-T}@f$, @f$\mathbf{g}_0 = \nabla\zeta^0@f$):
  * @f[
@@ -371,13 +384,26 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
    * @param gravitational_constant @f$G@f$ in the units of the problem.
    * @param dtn_degree Truncation degree of the DtN expansion.
    * @param background_zeta0 Optional @f$\zeta^0@f$ (projected onto
-   * @p fes_zeta); solved from the density when null.
+   * @p fes_zeta); solved from the densities when null.
+   * @param fluids Eliminated hydrostatic fluid regions (copied; their
+   * coefficients must outlive the problem), on the mixed class's
+   * geometry: parent-mesh attributes outside the displacement SubMesh,
+   * with the *referential* fluid density on the parent (equal to the
+   * physical density at a natural reference state). Treatment::Full
+   * only — the CMB-approximation ladder lives on the mixed class — and
+   * SubMesh mode only (no ball-wide displacement). The regions source
+   * the background potential; their perturbation terms — F1, F2, the
+   * fluid halves of F3, the follower load and the level border
+   * (doc/dahlen_closure.tex, "A general pre-stressed solid" and the
+   * implementation plan) — are not yet assembled, and Solve() refuses
+   * until they are. Empty for a solid body.
    */
   LinearQuasiStaticReferentialSelfGravitatingProblem(
       mfem::FiniteElementSpace* fes_u, mfem::FiniteElementSpace* fes_zeta,
       const ReferentialElasticRheology& rheology, mfem::Coefficient& density,
       mfem::real_t gravitational_constant, int dtn_degree,
-      mfem::Coefficient* background_zeta0 = nullptr);
+      mfem::Coefficient* background_zeta0 = nullptr,
+      const std::vector<FluidRegion>& fluids = {});
 
   /** @brief Surface mass load @f$\sigma@f$ per referential area
    * (registered as time-dependent) on the marked boundary attributes of
@@ -555,8 +581,95 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
                                     const mfem::HypreParMatrix& E);
 #endif
 
+  /**
+   * @brief The eliminated-fluid potential glue — steps (ii) and (iii) of
+   * the referential closure (doc/dahlen_closure.tex, "Implementation",
+   * the referential variant): a DISCRETE change of variables. The fluid
+   * region's perturbation terms are assembled as the Eulerian forms of
+   * the mixed class — the fluid mass term F1, the wall buoyancy term F2
+   * (normal-normal), the interface potential coupling F3 — and
+   * conjugated algebraically
+   * by @f$T = [I, 0; -S, I]@f$, where the sparse nodal glue @f$S@f$ maps
+   * solid displacement true dofs to fluid-region potential dofs
+   * representing @f$(Eu)\cdot\nabla\Phi_0@f$: on the fluid region the
+   * potential unknown @f$\zeta@f$ stays continuous and the Eulerian
+   * perturbation is @f$\phi = \zeta - S u@f$. The nodal evaluation of the
+   * discontinuous discrete @f$\nabla\Phi_0@f$ is a gauge choice, touching
+   * only the interpretation of @f$\zeta@f$ inside the fluid. The wall
+   * follower load — the @f$-p^0@f$ times the perturbed area element that
+   * the mixed class's symmetrised advective form absorbs — is assembled
+   * separately on the solid side (the one-sided
+   * SlipInterfacePressureIntegrator kernel at @f$\pi = p^0@f$,
+   * symmetrised; on a level wall it is symmetric by itself).
+   *
+   * Requirements: exactly one fluid region (a core; the radial fluid
+   * extension is one-sided); the equilibrium mapping the identity (the
+   * mapped variant pulls the Eulerian forms back with Jacobians — not
+   * built); SetPrescribedVacuumExtension() already called (the folds
+   * compose); no water, rotation or tidal loads. The level border
+   * (step (iv)) is separate.
+   *
+   * @param fes_fluid Displacement-type space on a (Par)SubMesh of the
+   * fluid region (same collection and order as the solid space); hosts
+   * the extension field. Not owned.
+   * @param E The prescribed radial fluid extension
+   * (NewRadialFluidExtension): solid vdofs to fluid vdofs in serial,
+   * true dofs in parallel. Copied into the folds; may be discarded.
+   * @param wall_pressure @f$p^0@f$ on the wall (the SubMesh boundary
+   * elements of the interface), consistent with the rheology's
+   * @f$\Se = -p^0 I@f$ there; must outlive the problem.
+   */
+  void SetFluidPotentialGlue(mfem::FiniteElementSpace& fes_fluid,
+                             const mfem::SparseMatrix& E,
+                             mfem::Coefficient& wall_pressure);
+#ifdef MFEM_USE_MPI
+  /** @brief Parallel overload: @p E on true dofs. */
+  void SetFluidPotentialGlue(mfem::ParFiniteElementSpace& fes_fluid,
+                             const mfem::HypreParMatrix& E,
+                             mfem::Coefficient& wall_pressure);
+#endif
+
+  /** @brief True once SetFluidPotentialGlue() has been called. */
+  bool HasFluidPotentialGlue() const { return glue_set_; }
+
+  /** @brief The wall-admissibility residual measured by the glue (step
+   * (v) of the referential closure): the relative wall misfit
+   * @f$(\oint_\Sigma|\Se\hat{\bnu}_s + p^0\hat{\bnu}_s|^2 /
+   * \oint_\Sigma |p^0|^2)^{1/2}@f$. The closure's wall seam assumes the
+   * pre-stress carries the fluid's normal traction and no shear on the
+   * wall; the glue refuses above @f$10^{-3}@f$. */
+  mfem::real_t WallTractionResidual() const { return wall_traction_res_; }
+
+  /**
+   * @brief Close the eliminated fluid's degree-0 freedom with the level
+   * border (step (iv) of the referential closure;
+   * doc/dahlen_closure.tex, "Implementation"): the shared builder's
+   * border (level_border.hpp) with its @f$
+u@f$ columns CONJUGATED
+   * through the potential glue — in the referential variables a mixed
+   * column @f$(b_u, b_\phi)@f$ becomes @f$(b_u - S^T b_\phi, b_\phi)@f$,
+   * while the wall columns, already in @f$u_s@f$, are unchanged — and
+   * eliminated by the shared engine with its version-keyed column
+   * cache. Requires SetFluidPotentialGlue() (the glue supplies S and
+   * the wall physics) and every region's FluidRegion::bulk_modulus.
+   * @param levels Nodes of the 1-D grid per fluid region; the
+   * mixed class's default and node-count guidance apply.
+   */
+  void SetLevelBorder(int levels = 16);
+
+  bool HasLevelBorder() const { return level_enabled_; }
+
+  /** @brief The last solve's border unknowns of region @p region on its
+   * grid, as the mixed class's accessor. */
+  void LevelBorderSolution(int region, mfem::Vector& c, mfem::Vector& U,
+                           mfem::Vector& s, mfem::Vector& nu,
+                           mfem::Vector& lambda) const;
+
   /** @brief True when the displacement lives on the ball itself. */
   bool BallWide() const { return ball_wide_; }
+
+  bool HasFluidRegions() const { return !fluids_.empty(); }
+  const std::vector<FluidRegion>& FluidRegions() const { return fluids_; }
 
   /**
    * @brief Zero the stored solution iterate. The block solvers
@@ -648,6 +761,11 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
   // the potential machinery, the coupling and the extension folds.
   void SetupPotentialOperators();
   void SetupCoupling();
+  /** @brief The solid-side wall terms of the eliminated-fluid glue (the
+   * F2 normal-normal term, the follower kernel at pi = p0) and the
+   * zeta-zeta composition; shared by the serial and parallel
+   * SetFluidPotentialGlue(). */
+  void SetupFluidWallIntegrators(mfem::Coefficient& wall_pressure);
   void SetupGravityIntegrators();
   void SetupRigidModes();
   void ComputeBackgroundPotential(mfem::Coefficient* zeta0);
@@ -670,6 +788,51 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
   // physics
   const ReferentialElasticRheology* ref_rheology_;
   mfem::Coefficient* rho_;
+
+  // eliminated fluid regions (constructor): geometry and background
+  // sources; the perturbation terms come through the potential glue
+  // (SetFluidPotentialGlue), the level border is still to come
+  // (doc/dahlen_closure.tex, "Implementation").
+  std::vector<FluidRegion> fluids_;
+  std::list<mfem::Array<int>> fluid_markers_;  ///< parent-attribute markers
+
+  // The eliminated-fluid potential glue (SetFluidPotentialGlue): the
+  // conjugated Eulerian fluid blocks. The uu part folds into
+  // (p)ext_EtGE_ (one fold, one SetupSolver path); the coupling part
+  // into (p)ext_C(t)_total_; the zeta-zeta part is the fluid mass term
+  // alone (the fluid Laplacian is already inside K_zeta_), composed as
+  // A_zeta_glue_ at solver setup. The glue matrix S is kept for
+  // diagnostics and the border's column conjugation.
+  bool glue_set_ = false;
+  std::unique_ptr<mfem::FiniteElementSpace> shadow_zeta_fluid_;
+  std::unique_ptr<mfem::GridFunction> zeta0_fluid_;
+  std::vector<std::unique_ptr<mfem::Coefficient>> fluid_coefs_;
+  std::unique_ptr<mfem::L2_FECollection> l2_fec_;
+  std::unique_ptr<mfem::FiniteElementSpace> l2_fes_;
+  std::unique_ptr<mfem::GridFunction> rho_fluid_l2_;
+  std::unique_ptr<BoundaryNormalDotCoefficient> m_dot_grad_zeta0_;
+  std::unique_ptr<mfem::BilinearForm> m_fluid_form_;
+  mfem::OperatorHandle M_fluid_;
+  std::unique_ptr<mfem::SumOperator> A_zeta_glue_;
+  std::unique_ptr<mfem::SparseMatrix> glue_S_;
+#ifdef MFEM_USE_MPI
+  std::unique_ptr<mfem::HypreParMatrix> pglue_S_;
+#endif
+  std::vector<mfem::Coefficient*> glue_rho_prime_;  ///< per region
+  mfem::real_t wall_traction_res_ = 0.0;
+  /** @brief Step (v): measure the wall misfit |S_e n + p0 n| on the
+   * region's interfaces and refuse an inadmissible pre-stress. */
+  void CheckWallTraction(mfem::Coefficient& wall_pressure);
+
+  // The level border (SetLevelBorder): the shared builder's borders
+  // with glue-conjugated nu columns, eliminated with the sea/rotation
+  // machinery's engine.
+  bool level_enabled_ = false;
+  int level_n_ = 0;
+  std::vector<LevelBorder> level_;
+  std::vector<std::unique_ptr<mfem::Coefficient>> level_coefs_;
+  std::unique_ptr<mfem::GradientGridFunctionCoefficient> grad_zeta0_;
+
   std::vector<std::unique_ptr<mfem::Coefficient>> tidal_scalar_coefs_;
   std::vector<std::unique_ptr<mfem::VectorCoefficient>> tidal_coefs_;
   mfem::real_t G_, four_pi_G_;

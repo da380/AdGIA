@@ -128,6 +128,7 @@ def solve_degree(model: DiscGravityModel, l: int, *, p: int = 8,
                  R: float = 1.5, t: float = 1.0,
                  eps_reg: float = 1e-10,
                  method: str = "welded",
+                 l0_border: bool = True,
                  _return_system: bool = False) -> RadialSolution:
     """Degree-l solve under the dead surface traction
     -t cos(l theta) rhat (shear-free). `method`:
@@ -145,9 +146,23 @@ def solve_degree(model: DiscGravityModel, l: int, *, p: int = 8,
               volume + interface coupling c, Eulerian phi
               (continuous — no zeta glue), no buffer u-extension,
               fluid displacement eliminated. At l = 0 the reduction
-              misses the fluid's bulk modulus (M4), so this method
-              dispatches to the welded full-fluid solve — exactly
-              pyslfp's l = 0 treatment in this organisation.
+              alone leaves the level function f free (doc/
+              static_fluid_core.tex, Step G1) and picks an arbitrary
+              member of the family; with `l0_border` (the default)
+              the level-mean border of Step G7 is added: the
+              cumulative volume change V(c) of the core below each
+              level, here V = r u_f with u_f the fluid's degree-0
+              radial displacement on the core nodes, carrying the
+              bulk energy, the self-gravity term rho (1/A)' V^2, and
+              the potential coupling through the level mean of
+              phi, closed by the wall constraint V(c) = c U(c) with
+              its multiplier (the level-mean wall pressure minus the
+              level-mean buoyancy). The level means of (F1) and (F2)
+              cancel against the border's terms and (F3) stays, so
+              the l = 0 system is the welded compressible fluid in
+              a different assembly — the check that the border
+              equations are right. `l0_border=False` is the naked
+              reduction (the 3-D mixed class's present l = 0).
 
     Every interface-form sign is pinned by the aw_core_2d null test
     (welded == slip == dahlen on the neutral core)."""
@@ -155,10 +170,9 @@ def solve_degree(model: DiscGravityModel, l: int, *, p: int = 8,
     assert method in ("welded", "slip", "dahlen")
     if l == 0 and method == "slip":
         method = "welded"  # no tangential channel at l = 0
-    if l == 0 and method == "dahlen":
-        method = "welded"  # the l = 0 tweak: full fluid (M4 hole)
     slip = method == "slip"
     dahlen = method == "dahlen"
+    border = dahlen and l == 0 and l0_border
     G = model.G
     c, a = model.c, model.a
     has_V = l >= 1
@@ -204,7 +218,9 @@ def solve_degree(model: DiscGravityModel, l: int, *, p: int = 8,
         nU = nb
         nV = nb if has_V else 0
     n_extra = 1 if (slip and has_V) else 0    # broken V_f(c)
-    ndof = nU + nV + n_extra + npnt
+    nF = ic + 1 if border else 0              # border: u_f on core nodes
+    nL = 1 if border else 0                   # border: wall multiplier
+    ndof = nU + nV + n_extra + npnt + nF + nL
     if dahlen:
         iU = lambda k: k - ic
         iV = lambda k: nU + (k - ic)
@@ -213,6 +229,8 @@ def solve_degree(model: DiscGravityModel, l: int, *, p: int = 8,
         iV = lambda k: nU + k
     iVfc = nU + nV                            # slip: fluid V at c
     iZ = lambda k: nU + nV + n_extra + k
+    iF = lambda k: nU + nV + n_extra + npnt + k   # border u_f, k <= ic
+    iL = nU + nV + n_extra + npnt + nF            # border multiplier
 
     K = np.zeros((ndof, ndof))
     F = np.zeros(ndof)
@@ -398,6 +416,37 @@ def solve_degree(model: DiscGravityModel, l: int, *, p: int = 8,
                         for zb, wb in zmap[jj]:
                             K[za, zb] += wa * wb * val
 
+        # the level-mean border (Step G7) in the core, per unit angle,
+        # r dr measure, U = r u_f, A = r / g, d/dc = g^-1 d/dr:
+        #   (V)  int kappa (r u)' (r w)' / r            [bulk energy]
+        #      + int rho (g/r)' r^2 u w                  [rho (1/A)' V W]
+        #      - int Z (rho r w)'                        [potential coupling]
+        #   (P)  - int (rho'/g) Z X r                    [cancels (F1)]
+        #      - int (rho r u)' X                        [transpose]
+        if border and dahlen_fluid:
+            rho_f = model.rho[0](r)
+            rp_f = model.rho_prime_core(r)
+            dgr = 4.0 * math.pi * G * rho_f / r - 2.0 * g0 / r ** 2  # (g/r)'
+            Nv, Nd = Vq, Dq / J
+            rU = r[:, None] * Nv                 # r u  per local dof
+            drU = Nv + r[:, None] * Nd           # (r u)'
+            with np.errstate(invalid="ignore", divide="ignore"):
+                rpg = np.where(g0 > 0, rp_f / np.maximum(g0, 1e-300), 0.0)
+            for ii in range(nloc):
+                for jj in range(nloc):
+                    kv = np.sum((kap * drU[:, ii] * drU[:, jj] / r
+                                 + rho_f * dgr * rU[:, ii] * rU[:, jj])
+                                * gw * J)
+                    K[iF(bi[ii]), iF(bi[jj])] += kv
+                    # - int Z (rho r w)' with (rho r w)' = rho' r w + rho (r w)'
+                    cv = -np.sum(Nv[:, ii] * (rp_f * rU[:, jj]
+                                              + rho_f * drU[:, jj]) * gw * J)
+                    K[iZ(pi_[ii]), iF(bi[jj])] += cv
+                    K[iF(bi[jj]), iZ(pi_[ii])] += cv
+                    # - int (rho'/g) Z X r: the level mean of (F1)
+                    pv = -np.sum(rpg * Nv[:, ii] * Nv[:, jj] * w)
+                    K[iZ(pi_[ii]), iZ(pi_[jj])] += pv
+
         # gravity-gravity: (1/8 pi G) g^2 a''_rr(u, v) — the
         # referential organisation only
         if G > 0 and nu > 0 and not dahlen:
@@ -493,6 +542,15 @@ def solve_degree(model: DiscGravityModel, l: int, *, p: int = 8,
         # F3 = -rho_F [phi (m.u') + phi' (m.u)] -> + rho_F c (Z U)
         K[dU, dZ] += rhoF_c * c
         K[dZ, dU] += rhoF_c * c
+        if border:
+            # (S): - lambda S[v] - (rho_F / A_w) S[u] S[v], S[v] = c v(c),
+            # A_w = c / g: the second cancels (F2) at the level mean;
+            # (V): + lambda W(c) with W = r w_f; (C): c u_f(c) - c U(c) = 0.
+            K[dU, dU] += -rhoF_c * gc * c
+            K[dU, iL] += -c
+            K[iL, dU] += -c
+            K[iF(ic), iL] += c
+            K[iL, iF(ic)] += c
 
     # DtN at R (l >= 1): harmonic-decay energy l Z(R)^2 / (4 pi G)
     if l >= 1:
@@ -514,6 +572,8 @@ def solve_degree(model: DiscGravityModel, l: int, *, p: int = 8,
     else:
         if not dahlen:
             fixed += [iU(0)]
+        if border:
+            fixed += [iF(0)]      # V(c_min) = 0: regularity at the centre
         fixed += [iZ(npnt - 1)]  # l = 0 exterior constant gauge
     if _return_system:
         # private: the assembled (K, F) and dof maps, for reuse by
@@ -528,7 +588,9 @@ def solve_degree(model: DiscGravityModel, l: int, *, p: int = 8,
     # Jacobi equilibration: the Laplace block scales as 1/4 pi G and
     # at small G swamps the elastic scales; the scaled system is
     # O(1) throughout and a direct solve is accurate.
-    dscale = 1.0 / np.sqrt(np.maximum(np.abs(np.diag(Kr)), 1e-300))
+    dabs = np.abs(np.diag(Kr))
+    dscale = np.where(dabs > 0.0, 1.0 / np.sqrt(np.maximum(dabs, 1e-300)),
+                      1.0)   # the border's constraint row has a zero diagonal
     Ks = dscale[:, None] * Kr * dscale[None, :]
     xr = dscale * np.linalg.solve(Ks, dscale * Fr)
     x = np.zeros(ndof)
@@ -537,11 +599,16 @@ def solve_degree(model: DiscGravityModel, l: int, *, p: int = 8,
     r_sol = rb[ic:] if dahlen else rb
     U = x[:nU]
     Vsol = x[nU:nU + nV] if has_V else None
-    Z = x[nU + nV + n_extra:]
+    Z = x[nU + nV + n_extra:nU + nV + n_extra + npnt]
     out = RadialSolution(l, r_sol, U, Vsol, rp, Z, model)
     if slip and has_V:
         out.ut_c_fluid = float(x[iVfc])
         out.slip_amplitude = float(x[iVfc] - x[iV(ic)])
+    if border:
+        out.border_r = rb[:ic + 1]
+        out.border_ur = x[nU + nV + n_extra + npnt:
+                          nU + nV + n_extra + npnt + nF]
+        out.border_multiplier = float(x[iL])
     return out
 
 
@@ -792,6 +859,48 @@ def validate(verbose: bool = True) -> bool:
                      f" dahlen {d_:.6f} (vs slip — the genuine"
                      f" fluid-treatment gap — {abs(d_/s_-1):.3%})")
 
+    # ---- the level-mean border at l = 0 (Step G7) ----
+    # Dahlen's reduction with the border assembled from the level-
+    # foliation equations must equal the welded compressible fluid
+    # (the same physics in a different assembly): surface and CMB
+    # displacement, the fluid's degree-0 profile, the surface
+    # potential as a variable change (referential zeta = g u_r + phi),
+    # and the wall multiplier's identity lambda = -kappa div u + rho_F phi.
+    stable = disc_models._attach_state(dataclasses.replace(
+        aw, kappa=(lambda r: 2.0 * aw.kappa[0](np.asarray(r)),
+                   aw.kappa[1])))
+    for name, m in (("fc", fc), ("aw", aw), ("stable", stable)):
+        w0 = solve_degree(m, 0)
+        d0 = solve_degree(m, 0, method="dahlen")
+        rw, rd = w0.responses(), d0.responses()
+        record(f"border l=0 {name}: |dahlen/welded - 1| ur_a (strict)",
+               abs(rd["ur_a"] / rw["ur_a"] - 1.0), 1e-9)
+        record(f"border l=0 {name}: |dahlen/welded - 1| ur_c (strict)",
+               abs(rd["ur_c"] / rw["ur_c"] - 1.0), 1e-9)
+        uf_w = np.interp(d0.border_r, w0._rb, w0._U)
+        record(f"border l=0 {name}: fluid profile vs welded (strict)",
+               np.max(np.abs(d0.border_ur - uf_w)) / np.max(np.abs(uf_w)),
+               1e-9)
+        ga = float(m.g(m.a))
+        record(f"border l=0 {name}: zeta_a = g u_a + phi_a (strict)",
+               abs((ga * rd["ur_a"] + rd["z_a"]) / rw["z_a"] - 1.0), 1e-9)
+        # multiplier identity from the last core element's derivative
+        ref = _gll_nodes(8)
+        r_el = d0.border_r[-9:]
+        ru = r_el * d0.border_ur[-9:]
+        _, Dm = _lagrange_eval(ref, np.array([1.0]))
+        divu = float(Dm[0] @ ru) / (0.5 * (r_el[-1] - r_el[0])) / m.c
+        lam = (-float(m.kappa[0](np.array([m.c]))[0]) * divu
+               + float(m.rho[0](np.array([m.c]))[0])
+               * float(np.interp(m.c, d0._rp, d0._Z)))
+        record(f"border l=0 {name}: multiplier identity (strict)",
+               abs(d0.border_multiplier / lam - 1.0), 1e-9)
+    n0 = solve_degree(fc, 0, method="dahlen", l0_border=False).responses()
+    w0 = solve_degree(fc, 0).responses()
+    lines.append(f"  [info] fc l=0 naked reduction ur_a = {n0['ur_a']:.4f}"
+                 f" against welded/border {w0['ur_a']:.6f}: the arbitrary"
+                 " family member of Step G1 (kappa-blind)")
+
     # ---- Maxwell relaxation route (the secular time-stepping) ----
     # G -> 0: the relaxed core is the no-gravity fluid exactly
     for l in (0, 2):
@@ -840,9 +949,6 @@ def validate(verbose: bool = True) -> bool:
     # stable twin (N^2 > 0: AW density, kappa x 2): no RT, converges;
     # dahlen is kappa-blind (identical to aw) while maxwell sees the
     # stratification — the band made visible by a method pair
-    stable = disc_models._attach_state(dataclasses.replace(
-        aw, kappa=(lambda r: 2.0 * aw.kappa[0](np.asarray(r)),
-                   aw.kappa[1])))
     ms = solve_degree_maxwell(stable, 2)
     d_st = solve_degree(stable, 2, method="dahlen").responses()["ur_a"]
     record(f"maxwell stable (N^2>0) l=2 vs dahlen (within band, < 1%) "

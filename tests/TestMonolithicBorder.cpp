@@ -202,4 +202,108 @@ TEST_P(MonolithicBorderTest, RotationMatchesElimination) {
 INSTANTIATE_TEST_SUITE_P(MonolithicBorder, MonolithicBorderTest,
                          testing::Values(Param{3, 1}, Param{3, 2}));
 
+// The level border (SetLevelBorder) through the monolithic route, on
+// the two-layer fluid-core ball under a uniform (degree-0-rich)
+// surface load: both routes solve the same bordered system, so the
+// fields agree at solver grade. Measured cost sits in the
+// SetMonolithicBorder doc: the monolithic one-off is ~2.4x cheaper
+// than the elimination's column setup, every solve then 3-6x the
+// naked iterations — the one-off static route.
+TEST(MonolithicBorder, LevelBorderMatchesElimination) {
+  const int dim = 3, order = 1;
+  Mesh parent(TwoLayerMeshFile(dim).c_str(), 1, 1);
+  Array<int> solid_attr({2});
+  SubMesh body(SubMesh::CreateFromDomain(parent, solid_attr));
+  H1_FECollection fec(order, dim);
+  FiniteElementSpace fes_u(&body, &fec, dim), fes_phi(&parent, &fec);
+  ConstantCoefficient kappa(kKappa), mu(kMu), rho(kRho), kappa_f(kKappa);
+  IsotropicElasticRheology rheology(dim, kappa, mu);
+  FunctionCoefficient rho_f(FluidDensity);
+  FluidRegion core;
+  core.attributes = Array<int>({1});
+  core.density = &rho_f;
+  core.interface_marker.SetSize(body.bdr_attributes.Max());
+  core.interface_marker = 0;
+  core.interface_marker[0] = 1;  // the CMB
+  core.bulk_modulus = &kappa_f;
+  std::vector<FluidRegion> fluids{core};
+  ConstantCoefficient sigma(0.02);
+  auto surface = SurfaceMarker(body);
+
+  auto run = [&](bool monolithic) {
+    auto p = std::make_unique<LinearQuasiStaticMixedSelfGravitatingProblem>(
+        &fes_u, &fes_phi, rheology, rho, kG, kDtNDegree, nullptr, fluids);
+    p->SetSolverType(
+        LinearQuasiStaticMixedSelfGravitatingProblem::SolverType::
+            BlockMINRES);
+    p->SetRelTol(1e-12);
+    p->SetLevelBorder(12);
+    if (monolithic) {
+      p->SetMonolithicBorder();
+    }
+    p->SetSurfaceLoad(sigma, surface);
+    p->AssembleForce(0.0);
+    EXPECT_TRUE(p->Solve());
+    return p;
+  };
+  auto pe = run(false);
+  auto pm = run(true);
+  EXPECT_LT(RelDiff(pm->Displacement(), pe->Displacement()), 1e-7);
+  EXPECT_LT(RelDiff(pm->Potential(), pe->Potential()), 1e-7);
+}
+
+// The level border WITH rotation through both routes: the centrifugal
+// cross-block enters the same bordered matrix, so elimination and
+// monolithic agree in the fields and in omega.
+TEST(MonolithicBorder, LevelBorderRotationMatchesElimination) {
+  const int dim = 3, order = 1;
+  Mesh parent(TwoLayerMeshFile(dim).c_str(), 1, 1);
+  Array<int> solid_attr({2});
+  SubMesh body(SubMesh::CreateFromDomain(parent, solid_attr));
+  H1_FECollection fec(order, dim);
+  FiniteElementSpace fes_u(&body, &fec, dim), fes_phi(&parent, &fec);
+  ConstantCoefficient kappa(kKappa), mu(kMu), rho(kRho), kappa_f(kKappa);
+  IsotropicElasticRheology rheology(dim, kappa, mu);
+  FunctionCoefficient rho_f(FluidDensity);
+  FluidRegion core;
+  core.attributes = Array<int>({1});
+  core.density = &rho_f;
+  core.interface_marker.SetSize(body.bdr_attributes.Max());
+  core.interface_marker = 0;
+  core.interface_marker[0] = 1;
+  core.bulk_modulus = &kappa_f;
+  std::vector<FluidRegion> fluids{core};
+  ConstantCoefficient sigma(0.02);
+  auto surface = SurfaceMarker(body);
+  Vector moments(3);
+  moments[0] = 1.5262;
+  moments[1] = 1.5262;
+  moments[2] = 1.5312;
+
+  auto run = [&](bool monolithic) {
+    auto p = std::make_unique<LinearQuasiStaticMixedSelfGravitatingProblem>(
+        &fes_u, &fes_phi, rheology, rho, kG, kDtNDegree, nullptr, fluids);
+    p->SetSolverType(
+        LinearQuasiStaticMixedSelfGravitatingProblem::SolverType::
+            BlockMINRES);
+    p->SetRelTol(1e-12);
+    p->SetLevelBorder(12);
+    p->SetRotation(0.1, moments);
+    if (monolithic) {
+      p->SetMonolithicBorder();
+    }
+    p->SetSurfaceLoad(sigma, surface);
+    p->AssembleForce(0.0);
+    EXPECT_TRUE(p->Solve());
+    return p;
+  };
+  auto pe = run(false);
+  auto pm = run(true);
+  EXPECT_LT(RelDiff(pm->Displacement(), pe->Displacement()), 1e-7);
+  EXPECT_LT(RelDiff(pm->Potential(), pe->Potential()), 1e-7);
+  Vector dw(pm->AngularVelocity());
+  dw -= pe->AngularVelocity();
+  EXPECT_LT(dw.Norml2() / pe->AngularVelocity().Norml2(), 1e-7);
+}
+
 }  // namespace

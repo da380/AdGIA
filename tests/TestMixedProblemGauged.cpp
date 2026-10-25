@@ -1,3 +1,6 @@
+#include <cstdlib>
+#include <iostream>
+
 #include "MixedProblemTestCommon.hpp"
 #include "TestCommon.hpp"
 
@@ -131,6 +134,110 @@ double RelDiff(const GridFunction& a, const GridFunction& b) {
   GridFunction d(a);
   d -= b;
   return self_grav_test::L2Norm(d) / self_grav_test::L2Norm(b);
+}
+
+// The Dahlen path closed by the level border (SetLevelBorder) under the
+// uniform load: the outer core carries the same Adams-Williamson bulk
+// modulus as the gauged body, so at degree 0 the two must now agree
+// (doc/dahlen_closure.tex, "The closure in the cumulative-volume
+// variable": at l = 0 the bordered system is the welded compressible
+// fluid in a different assembly).
+struct DahlenBorderCase {
+  std::unique_ptr<Mesh> parent;
+  std::unique_ptr<SubMesh> solid;
+  std::unique_ptr<H1_FECollection> fec;
+  std::unique_ptr<FiniteElementSpace> fes_u, fes_phi;
+  ConstantCoefficient kappa{kKappa}, mu{kMu};
+  AWBulkModulus kappa_f;
+  FunctionCoefficient rho_s{SolidDensity}, rho_f{FluidDensity};
+  std::unique_ptr<IsotropicElasticRheology> rheology;
+  FunctionCoefficient sigma{SurfaceLoad};
+  Array<int> surface;
+  std::vector<FluidRegion> fluids;
+  std::unique_ptr<LinearQuasiStaticMixedSelfGravitatingProblem> problem;
+  // The background gravity on the PARENT mesh, where the border evaluates
+  // the fluid's bulk modulus (BackgroundGravity() lives on the body).
+  std::unique_ptr<GradientGridFunctionCoefficient> g_parent;
+
+  DahlenBorderCase(int dim, int order, int levels) {
+    parent = std::make_unique<Mesh>(ThreeLayerMeshFile(dim).c_str(), 1, 1);
+    Array<int> attrs({1, 3});
+    solid =
+        std::make_unique<SubMesh>(SubMesh::CreateFromDomain(*parent, attrs));
+    fec = std::make_unique<H1_FECollection>(order, dim);
+    fes_u = std::make_unique<FiniteElementSpace>(solid.get(), fec.get(), dim);
+    fes_phi = std::make_unique<FiniteElementSpace>(parent.get(), fec.get());
+    rheology = std::make_unique<IsotropicElasticRheology>(dim, kappa, mu);
+    surface = SurfaceMarker(*solid);
+    fluids.push_back(OuterCore(*solid, rho_f));
+    fluids.back().bulk_modulus = &kappa_f;
+    problem = std::make_unique<LinearQuasiStaticMixedSelfGravitatingProblem>(
+        fes_u.get(), fes_phi.get(), *rheology, rho_s, kG, kDtNDegree, nullptr,
+        fluids);
+    g_parent = std::make_unique<GradientGridFunctionCoefficient>(
+        &problem->BackgroundPotential());
+    kappa_f.g = g_parent.get();
+    problem->SetSurfaceLoad(sigma, surface);
+    problem->AddRegionRotations(Array<int>({1}));
+    problem->SetRelTol(1e-11);
+    problem->SetLevelBorder(levels);
+  }
+};
+
+void ExpectDegree0Agreement(int dim, int order, int levels, double tol) {
+  GaugedCase g(dim, order);
+  DahlenBorderCase d(dim, order, levels);
+  g.problem->AssembleForce(0.0);
+  EXPECT_TRUE(g.problem->Solve());
+  d.problem->AssembleForce(0.0);
+  EXPECT_TRUE(d.problem->Solve());
+  const double dphi = RelDiff(g.problem->Potential(), d.problem->Potential());
+  FiniteElementSpace fes_parent(g.parent.get(), g.fec.get(), dim);
+  GridFunction on_parent(&fes_parent);
+  on_parent = 0.0;
+  SubMesh::Transfer(g.problem->Displacement(), on_parent);
+  GridFunction u_g(d.fes_u.get());
+  SubMesh::Transfer(on_parent, u_g);
+  const double du = RelDiff(u_g, d.problem->Displacement());
+  if (std::getenv("ADGIA_TEST_VERBOSE")) {
+    Vector c, U, s, nu, lambda;
+    d.problem->LevelBorderSolution(0, c, U, s, nu, lambda);
+    std::cout << "degree-0 border vs gauged, dim " << dim << ": potential "
+              << dphi << ", displacement " << du << "; wall multipliers";
+    for (int w = 0; w < lambda.Size(); w++) {
+      std::cout << " " << lambda[w];
+    }
+    std::cout << "\n  diagnostics (U, flux per wall; bulk, wall mass): ";
+    d.problem->LevelBorderDiagnostics(0).Print(std::cout, 8);
+    std::cout << "  U: ";
+    U.Print(std::cout, 12);
+    std::cout << "  s: ";
+    s.Print(std::cout, 12);
+    std::cout << "  nu: ";
+    nu.Print(std::cout, 12);
+  }
+  EXPECT_LT(dphi, tol);
+  EXPECT_LT(du, tol);
+}
+
+// The agreement is at the two discretisations' own level, and the gauged
+// twin carries its O(eps) bias; on the coarse canned meshes it tightens
+// with the order (3-D: potential 4.7% -> 0.4%, displacement 13% -> 2.7%
+// from order 1 to 2). The order-2 case is the gate; the others record
+// the coarse levels (and 2-D carries the class's constant-mode
+// regularisation, which is a degree-0 matter). Compare with
+// Degree0DiffersFromDahlen2D, where the reduction alone is 1e-2 off and
+// more.
+TEST(MixedProblemGauged, Degree0MatchesDahlenWithLevelBorder2D) {
+  ExpectDegree0Agreement(2, 2, 16, 1.5e-1);
+}
+
+TEST(MixedProblemGauged, Degree0MatchesDahlenWithLevelBorder3D) {
+  ExpectDegree0Agreement(3, 1, 12, 1.5e-1);
+}
+
+TEST(MixedProblemGauged, Degree0MatchesDahlenWithLevelBorder3DOrder2) {
+  ExpectDegree0Agreement(3, 2, 16, 5.0e-2);
 }
 
 TEST(MixedProblemGauged, MatchesDahlenZeroMeanLoad2D) {

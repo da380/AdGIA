@@ -165,6 +165,290 @@ void RunCase(int order, const std::string& label) {
         label + " potential norm");
 }
 
+// Eliminated fluid regions, the construction step of the referential
+// closure (doc/dahlen_closure.tex, "Implementation", the referential
+// variant): geometry and the background potential, serial and parallel.
+// At phi_e = id the referential background problem is the mixed class's,
+// so the parallel zeta0 equals the parallel Phi0 directly (same space),
+// and its global norm equals the serial one.
+double FluidCoreDensity(const Vector& x) { return 1.2 - 0.1 * x.Norml2(); }
+
+void RunFluidCoreBackgroundCase(int dim, const std::string& label) {
+  Mesh smesh(dim == 2 ? "../data/earth_fluidcore_2d.msh"
+                      : "../data/earth_fluidcore_3d.msh",
+             1, 1);
+  const int order = dim == 2 ? 2 : 1;
+  Array<int> solid_attr({2});
+
+  auto phi = IdentityMap(dim);
+  ConstantCoefficient kappa(kKappa), mu(kMu), rho(kRho);
+  FunctionCoefficient rho_f(FluidCoreDensity);
+  auto C =
+      IsotropicElasticTensorCoefficient::FromBulkModulus(dim, kappa, mu);
+  MatrixFunctionCoefficient S(dim, [](const Vector& x, DenseMatrix& S) {
+    S.SetSize(x.Size());
+    S = 0.0;
+  });
+  ReferentialElasticRheology rheology(dim, C, S, phi);
+  IsotropicElasticRheology e_rheology(dim, kappa, mu);
+  auto make_core = [&](Mesh& solid) {
+    FluidRegion core;
+    core.attributes = Array<int>({1});
+    core.density = &rho_f;
+    core.interface_marker.SetSize(solid.bdr_attributes.Max());
+    core.interface_marker = 0;
+    core.interface_marker[0] = 1;  // the CMB
+    return core;
+  };
+
+  // Serial reference on every rank.
+  double z_ref = 0.0;
+  {
+    SubMesh body(SubMesh::CreateFromDomain(smesh, solid_attr));
+    H1_FECollection fec(order, dim);
+    FiniteElementSpace fes_u(&body, &fec, dim), fes_zeta(&smesh, &fec);
+    std::vector<FluidRegion> fluids{make_core(body)};
+    LinearQuasiStaticReferentialSelfGravitatingProblem problem(
+        &fes_u, &fes_zeta, rheology, rho, kG, kDtNDegree, nullptr, fluids);
+    z_ref = L2Norm(problem.BackgroundPotential());
+  }
+
+  // Parallel problems: the referential zeta0 against the mixed Phi0.
+  ParMesh pmesh(MPI_COMM_WORLD, smesh);
+  ParSubMesh body(ParSubMesh::CreateFromDomain(pmesh, solid_attr));
+  H1_FECollection fec(order, dim);
+  ParFiniteElementSpace fes_u(&body, &fec, dim), fes_zeta(&pmesh, &fec);
+  std::vector<FluidRegion> fluids{make_core(body)};
+  LinearQuasiStaticReferentialSelfGravitatingProblem referential(
+      &fes_u, &fes_zeta, rheology, rho, kG, kDtNDegree, nullptr, fluids);
+  LinearQuasiStaticMixedSelfGravitatingProblem mixed(
+      &fes_u, &fes_zeta, e_rheology, rho, kG, kDtNDegree, nullptr, fluids);
+  // ParGridFunction copies: a plain GridFunction copy would slice the
+  // parallel type and make the norms rank-local.
+  ParGridFunction d(&fes_zeta);
+  d = referential.BackgroundPotential();
+  d -= mixed.BackgroundPotential();
+  const double z_par = L2Norm(referential.BackgroundPotential());
+  // The two assemblies differ at their common quadrature (different
+  // default rules on curved elements; the serial suite checks the
+  // order convergence): 2e-6 at 2-D order 2, 2e-4 at 3-D order 1.
+  Check(L2Norm(d) / z_par, dim == 2 ? 1e-5 : 1e-3, label + " zeta0 == Phi0");
+  Check(RelErr(z_par, z_ref), 1e-8, label + " zeta0 norm serial == parallel");
+
+  // Without the region the core's mass is missing.
+  LinearQuasiStaticReferentialSelfGravitatingProblem solid_only(
+      &fes_u, &fes_zeta, rheology, rho, kG, kDtNDegree);
+  ParGridFunction d2(&fes_zeta);
+  d2 = referential.BackgroundPotential();
+  d2 -= solid_only.BackgroundPotential();
+  Check(L2Norm(d2) / z_par > 0.1 ? 0.0 : 1.0, 0.0,
+        label + " fluid mass present");
+}
+
+// The eliminated-fluid glue (SetFluidPotentialGlue), parallel leg: on
+// the two-layer fluid-core disc the parallel glue (hypre folds, the
+// true-dof nodal glue matrix) builds the same discrete system as the
+// serial one, so the global field norms agree; and the parallel
+// referential solution cross-checks against the parallel mixed class
+// as in the serial suite (u direct, at the discretisation level).
+void RunFluidCoreGlueCase(int order, const std::string& label) {
+  const char* mesh_file = "../data/earth_fluidcore_2d.msh";
+  Mesh smesh(mesh_file, 1, 1);
+  const int dim = smesh.Dimension();
+  const double r_cmb = 3483.0 / 6371.0;
+  const double r_icb = 1221.5 / 6371.0;
+  Array<int> fluid_attr({1}), solid_attr({2}), buffer_attr({3});
+  Vector bb_min, bb_max;
+  smesh.GetBoundingBox(bb_min, bb_max);
+  const double r_out = bb_max.Normlinf();
+
+  RadialHydrostaticBackground bg(
+      dim,
+      [r_cmb, r_icb](double r) {
+        return r < r_cmb ? 1.2 - 0.1 * (r - r_icb) / (r_cmb - r_icb) : kRho;
+      },
+      [](double) { return kKappa; },
+      [r_cmb](double r) { return r < r_cmb ? 0.0 : kMu; }, kG, 1.0);
+  FunctionCoefficient rho_f([r_cmb, r_icb](const Vector& x) {
+    const double r = x.Norml2();
+    return 1.2 - 0.1 * (r - r_icb) / (r_cmb - r_icb);
+  });
+  FunctionCoefficient sigma(SurfaceLoad);
+  auto make_core = [&](Mesh& solid) {
+    FluidRegion core;
+    core.attributes = Array<int>({1});
+    core.density = &rho_f;
+    core.interface_marker.SetSize(solid.bdr_attributes.Max());
+    core.interface_marker = 0;
+    core.interface_marker[0] = 1;  // the CMB
+    return core;
+  };
+  auto surface_marker = [](Mesh& solid) {
+    Array<int> m(solid.bdr_attributes.Max());
+    m = 0;
+    m[solid.bdr_attributes.Max() - 1] = 1;
+    return m;
+  };
+
+  // Serial reference on every rank.
+  double u_ref = 0.0, z_ref = 0.0;
+  {
+    SubMesh body(SubMesh::CreateFromDomain(smesh, solid_attr));
+    SubMesh fluid(SubMesh::CreateFromDomain(smesh, fluid_attr));
+    SubMesh buffer(SubMesh::CreateFromDomain(smesh, buffer_attr));
+    H1_FECollection fec(order, dim);
+    FiniteElementSpace fes_u(&body, &fec, dim), fes_zeta(&smesh, &fec);
+    FiniteElementSpace fes_fluid(&fluid, &fec, dim);
+    FiniteElementSpace fes_buffer(&buffer, &fec, dim);
+    std::vector<FluidRegion> fluids{make_core(body)};
+    LinearQuasiStaticReferentialSelfGravitatingProblem problem(
+        &fes_u, &fes_zeta, bg.Rheology(), bg.Density(), kG, kDtNDegree,
+        nullptr, fluids);
+    auto Ev = NewRadialVacuumExtension(fes_u, fes_buffer, 1.0, r_out);
+    problem.SetPrescribedVacuumExtension(fes_buffer, *Ev);
+    auto Ef = NewRadialFluidExtension(fes_u, fes_fluid, r_cmb);
+    problem.SetFluidPotentialGlue(fes_fluid, *Ef, bg.Pressure());
+    auto surface = surface_marker(body);
+    problem.SetSurfaceLoad(sigma, surface);
+    problem.SetRelTol(1e-11);
+    problem.AssembleForce(0.0);
+    Check(problem.Solve() ? 0.0 : 1.0, 0.0, label + " serial glue solve");
+    u_ref = L2Norm(problem.Displacement());
+    z_ref = L2Norm(problem.Potential());
+  }
+
+  // Parallel problem.
+  ParMesh pmesh(MPI_COMM_WORLD, smesh);
+  ParSubMesh body(ParSubMesh::CreateFromDomain(pmesh, solid_attr));
+  ParSubMesh fluid(ParSubMesh::CreateFromDomain(pmesh, fluid_attr));
+  ParSubMesh buffer(ParSubMesh::CreateFromDomain(pmesh, buffer_attr));
+  H1_FECollection fec(order, dim);
+  ParFiniteElementSpace fes_u(&body, &fec, dim), fes_zeta(&pmesh, &fec);
+  ParFiniteElementSpace fes_fluid(&fluid, &fec, dim);
+  ParFiniteElementSpace fes_buffer(&buffer, &fec, dim);
+  std::vector<FluidRegion> fluids{make_core(body)};
+  LinearQuasiStaticReferentialSelfGravitatingProblem problem(
+      &fes_u, &fes_zeta, bg.Rheology(), bg.Density(), kG, kDtNDegree, nullptr,
+      fluids);
+  auto Ev = NewRadialVacuumExtension(fes_u, fes_buffer, 1.0, r_out);
+  problem.SetPrescribedVacuumExtension(fes_buffer, *Ev);
+  auto Ef = NewRadialFluidExtension(fes_u, fes_fluid, r_cmb);
+  problem.SetFluidPotentialGlue(fes_fluid, *Ef, bg.Pressure());
+  Check(problem.WallTractionResidual(), 1e-12, label + " wall traction");
+  auto surface = surface_marker(body);
+  FunctionCoefficient sigma2(SurfaceLoad);
+  problem.SetSurfaceLoad(sigma2, surface);
+  problem.SetRelTol(1e-11);
+  problem.AssembleForce(0.0);
+  Check(problem.Solve() ? 0.0 : 1.0, 0.0, label + " parallel glue solve");
+  Check(RelErr(L2Norm(problem.Displacement()), u_ref), 1e-5,
+        label + " glue displacement norm");
+  Check(RelErr(L2Norm(problem.Potential()), z_ref), 1e-5,
+        label + " glue potential norm");
+}
+
+// The level border on the referential class, parallel leg: the glue's
+// conjugated border columns and the shared builder give the same
+// discrete system serial and parallel, so the global field norms agree.
+// 3-D (the border's degree-0 physics), order 1, uniform load.
+void RunLevelBorderCase(const std::string& label) {
+  Mesh smesh("../data/earth_fluidcore_3d.msh", 1, 1);
+  const int dim = 3, order = 1;
+  const double r_cmb = 3483.0 / 6371.0;
+  const double r_icb = 1221.5 / 6371.0;
+  Array<int> fluid_attr({1}), solid_attr({2}), buffer_attr({3});
+  Vector bb_min, bb_max;
+  smesh.GetBoundingBox(bb_min, bb_max);
+  const double r_out = bb_max.Normlinf();
+
+  RadialHydrostaticBackground bg(
+      dim,
+      [r_cmb, r_icb](double r) {
+        return r < r_cmb ? 1.2 - 0.1 * (r - r_icb) / (r_cmb - r_icb) : kRho;
+      },
+      [](double) { return kKappa; },
+      [r_cmb](double r) { return r < r_cmb ? 0.0 : kMu; }, kG, 1.0);
+  FunctionCoefficient rho_f([r_cmb, r_icb](const Vector& x) {
+    const double r = x.Norml2();
+    return 1.2 - 0.1 * (r - r_icb) / (r_cmb - r_icb);
+  });
+  ConstantCoefficient kappa_f(kKappa);
+  ConstantCoefficient sigma(0.02);
+  auto make_core = [&](Mesh& solid) {
+    FluidRegion core;
+    core.attributes = Array<int>({1});
+    core.density = &rho_f;
+    core.interface_marker.SetSize(solid.bdr_attributes.Max());
+    core.interface_marker = 0;
+    core.interface_marker[0] = 1;  // the CMB
+    core.bulk_modulus = &kappa_f;
+    return core;
+  };
+  auto surface_marker = [](Mesh& solid) {
+    Array<int> m(solid.bdr_attributes.Max());
+    m = 0;
+    m[solid.bdr_attributes.Max() - 1] = 1;
+    return m;
+  };
+
+  // Serial reference on every rank.
+  double u_ref = 0.0, z_ref = 0.0;
+  {
+    SubMesh body(SubMesh::CreateFromDomain(smesh, solid_attr));
+    SubMesh fluid(SubMesh::CreateFromDomain(smesh, fluid_attr));
+    SubMesh buffer(SubMesh::CreateFromDomain(smesh, buffer_attr));
+    H1_FECollection fec(order, dim);
+    FiniteElementSpace fes_u(&body, &fec, dim), fes_zeta(&smesh, &fec);
+    FiniteElementSpace fes_fluid(&fluid, &fec, dim);
+    FiniteElementSpace fes_buffer(&buffer, &fec, dim);
+    std::vector<FluidRegion> fluids{make_core(body)};
+    LinearQuasiStaticReferentialSelfGravitatingProblem problem(
+        &fes_u, &fes_zeta, bg.Rheology(), bg.Density(), kG, kDtNDegree,
+        nullptr, fluids);
+    auto Ev = NewRadialVacuumExtension(fes_u, fes_buffer, 1.0, r_out);
+    problem.SetPrescribedVacuumExtension(fes_buffer, *Ev);
+    auto Ef = NewRadialFluidExtension(fes_u, fes_fluid, r_cmb);
+    problem.SetFluidPotentialGlue(fes_fluid, *Ef, bg.Pressure());
+    problem.SetLevelBorder(12);
+    auto surface = surface_marker(body);
+    problem.SetSurfaceLoad(sigma, surface);
+    problem.SetRelTol(1e-11);
+    problem.AssembleForce(0.0);
+    Check(problem.Solve() ? 0.0 : 1.0, 0.0, label + " serial solve");
+    u_ref = L2Norm(problem.Displacement());
+    z_ref = L2Norm(problem.Potential());
+  }
+
+  // Parallel problem.
+  ParMesh pmesh(MPI_COMM_WORLD, smesh);
+  ParSubMesh body(ParSubMesh::CreateFromDomain(pmesh, solid_attr));
+  ParSubMesh fluid(ParSubMesh::CreateFromDomain(pmesh, fluid_attr));
+  ParSubMesh buffer(ParSubMesh::CreateFromDomain(pmesh, buffer_attr));
+  H1_FECollection fec(order, dim);
+  ParFiniteElementSpace fes_u(&body, &fec, dim), fes_zeta(&pmesh, &fec);
+  ParFiniteElementSpace fes_fluid(&fluid, &fec, dim);
+  ParFiniteElementSpace fes_buffer(&buffer, &fec, dim);
+  std::vector<FluidRegion> fluids{make_core(body)};
+  LinearQuasiStaticReferentialSelfGravitatingProblem problem(
+      &fes_u, &fes_zeta, bg.Rheology(), bg.Density(), kG, kDtNDegree, nullptr,
+      fluids);
+  auto Ev = NewRadialVacuumExtension(fes_u, fes_buffer, 1.0, r_out);
+  problem.SetPrescribedVacuumExtension(fes_buffer, *Ev);
+  auto Ef = NewRadialFluidExtension(fes_u, fes_fluid, r_cmb);
+  problem.SetFluidPotentialGlue(fes_fluid, *Ef, bg.Pressure());
+  problem.SetLevelBorder(12);
+  auto surface = surface_marker(body);
+  ConstantCoefficient sigma2(0.02);
+  problem.SetSurfaceLoad(sigma2, surface);
+  problem.SetRelTol(1e-11);
+  problem.AssembleForce(0.0);
+  Check(problem.Solve() ? 0.0 : 1.0, 0.0, label + " parallel solve");
+  Check(RelErr(L2Norm(problem.Displacement()), u_ref), 1e-5,
+        label + " displacement norm");
+  Check(RelErr(L2Norm(problem.Potential()), z_ref), 1e-5,
+        label + " potential norm");
+}
+
 // Serial-vs-parallel agreement of the three-block slip solver on the
 // two-layer disc (fluid core, solid mantle): the parallel pairing,
 // fluid extension, B_Sigma blocks and mismatch folds build the same
@@ -466,6 +750,11 @@ int main(int argc, char* argv[]) {
 
   RunCase(1, "o1");
   RunCase(2, "o2");
+  RunFluidCoreBackgroundCase(2, "fluid bg 2d");
+  RunFluidCoreBackgroundCase(3, "fluid bg 3d");
+  RunFluidCoreGlueCase(1, "glue o1");
+  RunFluidCoreGlueCase(2, "glue o2");
+  RunLevelBorderCase("level border 3d");
   RunSlipCase(1, "slip o1");
   RunSlipCase(2, "slip o2");
   RunBrokenSlipCase(1, "broken o1");

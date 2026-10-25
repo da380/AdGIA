@@ -123,6 +123,92 @@ struct MaxwellRelaxationOptions {
   mfem::real_t prec_eps = 0.0;
 };
 
+/**
+ * @brief A fluid region of a self-gravitating body: a set of parent-mesh
+ * attributes carrying no displacement unknown, its density, and its
+ * interfaces with the solid. Consumed by
+ * LinearQuasiStaticMixedSelfGravitatingProblem (the full treatment ladder
+ * below) and by LinearQuasiStaticReferentialSelfGravitatingProblem
+ * (Treatment::Full only; doc/dahlen_closure.tex, "A general pre-stressed
+ * solid").
+ *
+ * - @p attributes: the parent-mesh attributes of the fluid (not part of the
+ *   displacement SubMesh).
+ * - @p density: @f$\rho_F@f$, evaluated on the parent's fluid elements (for
+ *   the background potential and, through the fallback below, for
+ *   @f$\rho'_F@f$) and, unless @p interface_density is given, on the
+ *   *SubMesh's boundary elements* of the interfaces: a coefficient of
+ *   position (FunctionCoefficient) serves both; a coefficient keyed by
+ *   domain attribute or a GridFunctionCoefficient on the parent does not.
+ * - @p density_gradient: @f$\rho'_F = d\rho/d\Phi_0 = g^{-1}\partial_r\rho@f$
+ *   on the fluid elements (BarotropicDensityGradientCoefficient, or an
+ *   analytic form for radial models). When null it is computed from the
+ *   element-wise L2 projection of @p density and the discrete
+ *   @f$\nabla\Phi_0@f$.
+ * - @p interface_marker: the SubMesh boundary attributes of the fluid's
+ *   interfaces with the solid (sized to the SubMesh's bdr_attributes.Max()).
+ *   Nothing distinguishes a fluid below the solid from a fluid above: the
+ *   sign of @f$\mathbf{m}\cdot\nabla\Phi_0@f$ does that.
+ * - @p interface_density: @f$\rho_F@f$ on those boundary elements; default
+ *   @p density.
+ * - @p interface_potential_coupling: when false, the interface potential
+ *   coupling is dropped — both halves, so the operator stays symmetric —
+ *   and the fluid presses on the solid through the buoyancy term alone
+ *   (a "Winkler foundation").
+ * - @p treatment: a named rung of the CMB-approximation ladder
+ *   (doc/quasi_static_models.tex, "Fluid regions and the ladder of CMB
+ *   approximations"; doc/self_gravitation.md, "The CMB approximations of
+ *   the GIA literature"; the benchmark option `-cmb` is this enum). A
+ *   non-Full treatment owns its degradations: it refuses a user-supplied
+ *   @p density_gradient, UniformCore and Winkler refuse a user-supplied
+ *   @p interface_density and require @p uniform_density > 0, and
+ *   @p interface_potential_coupling must be left true (Winkler drops it
+ *   itself). The expert fields above remain available under Full for
+ *   custom configurations. A solid region enclosed by the fluid (an
+ *   inner core) may be left out of the displacement SubMesh and its
+ *   attributes listed in @p attributes under a non-Full treatment — the
+ *   literature's condition, which models nothing below the CMB: the
+ *   treatment zeroes @f$\rho'_F@f$ over it, its background density still
+ *   sources @f$\Phi_0@f$ (an attribute in neither the SubMesh nor a
+ *   FluidRegion contributes no mass), and its interfaces, interior to
+ *   the unmeshed region, assemble nothing. Do not fold under Full: the
+ *   barotropic fallback would compute @f$\rho'_F@f$ over the solid, and
+ *   no check catches it (the class cannot know which attributes are
+ *   solid).
+ * - @p uniform_density: the constant interface density of UniformCore and
+ *   Winkler; the literature's choice is the fluid-side density at the
+ *   region's outermost interface (the core-top density for a core).
+ * - @p bulk_modulus: @f$\kappa@f$ on the parent's fluid elements, needed
+ *   only by the level border (SetLevelBorder()), which is the one place
+ *   the closure consults the fluid's compressibility. Evaluated like
+ *   @p density, on the parent mesh.
+ */
+struct FluidRegion {
+  /** @brief The CMB-approximation ladder: each rung degrades the full
+   * Dahlen treatment (F1)+(F2)+(F3) one step further towards the
+   * unmeshed-core boundary condition of the GIA literature. */
+  enum class Treatment {
+    Full,         ///< (F1)+(F2)+(F3) with the model's own densities.
+    NoMass,       ///< (F1) dropped: the fluid's Eulerian density
+                  ///< perturbation is removed (density_gradient zero).
+    UniformCore,  ///< As NoMass, and the interface density replaced by
+                  ///< the constant uniform_density on every interface:
+                  ///< the standard unmeshed-core CMB condition.
+    Winkler       ///< As UniformCore, and the interface potential
+                  ///< coupling dropped (both halves): buoyancy only.
+  };
+
+  mfem::Array<int> attributes;
+  mfem::Coefficient* density = nullptr;
+  mfem::Coefficient* density_gradient = nullptr;
+  mfem::Array<int> interface_marker;
+  mfem::Coefficient* interface_density = nullptr;
+  bool interface_potential_coupling = true;
+  Treatment treatment = Treatment::Full;
+  mfem::real_t uniform_density = 0.0;
+  mfem::Coefficient* bulk_modulus = nullptr;
+};
+
 /** @brief The gauge penalty's form: Deviatoric (a fluid: dev-dev
  * shear) or Harmonic (a vacuum-extension field: full-gradient
  * @f$\epsilon\mu_g\nabla u:\nabla v@f$). */

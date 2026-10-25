@@ -92,7 +92,8 @@ yet:
   fluid, continuous displacement), `slip` (full fluid, free-slip CMB
   with the B_Sigma and G_Sigma interface forms) and `dahlen` (the
   Eulerian mixed-class system with F1-F3, fluid displacement
-  eliminated; at l = 0 it uses the welded full-fluid solve). Degrees
+  eliminated; at l = 0 closed by the level-mean border of
+  doc/static_fluid_core.tex Step G7, verified against the welded solve). Degrees
   l = 0 and l >= 2; l = 1 is pending.
 - `solve_degree_maxwell(model, l, ...)` — the Maxwell relaxation (the
   default `SetFluid` treatment of the library, here as a 1-D calculation), the secular time-stepping

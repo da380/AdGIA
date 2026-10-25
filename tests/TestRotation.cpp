@@ -281,6 +281,139 @@ TEST(RotationFluid, FluidCoreTermsEnterTheBorder) {
             5e-8);
 }
 
+// The level border's centrifugal coupling (the closure's omega
+// columns; doc/dahlen_closure.tex, "Rotation"): on the fluid-core ball
+// with Earth-like near-neutral moments, (a) polar wander is pure
+// degree 2 and must be INERT to the border, while (b) the omega_3
+// (length-of-day) response reads the fluid's degree-0 inertia
+// perturbation, whose -f' part only the border supplies: under a
+// degree-0-bearing load the bordered omega_3 differs finitely from the
+// naked reduction's — the G9 contamination, measured.
+TEST(RotationFluid, LevelBorderCentrifugalCoupling) {
+  const int dim = 3, order = 1;
+  Mesh parent(TwoLayerMeshFile(dim).c_str(), 1, 1);
+  Array<int> solid_attr({2});
+  SubMesh solid(SubMesh::CreateFromDomain(parent, solid_attr));
+  H1_FECollection fec(order, dim);
+  FiniteElementSpace fes_u(&solid, &fec, dim);
+  FiniteElementSpace fes_phi(&parent, &fec);
+  ConstantCoefficient kappa(kKappa), mu(kMu), kappa_f(kKappa);
+  ConstantCoefficient rho_s(kRho);
+  FunctionCoefficient rho_f(FluidDensity);
+  IsotropicElasticRheology rheology(dim, kappa, mu);
+  auto make_fluids = [&]() {
+    FluidRegion core;
+    core.attributes = Array<int>({1});
+    core.density = &rho_f;
+    core.interface_marker.SetSize(solid.bdr_attributes.Max());
+    core.interface_marker = 0;
+    core.interface_marker[0] = 1;  // the CMB
+    core.bulk_modulus = &kappa_f;
+    return std::vector<FluidRegion>{core};
+  };
+  const Array<int> surface = SurfaceMarker(solid);
+  Vector moments(3);
+  moments[0] = 1.5262;
+  moments[1] = 1.5262;
+  moments[2] = 1.5312;
+
+  auto solve = [&](Coefficient& sigma, int levels) {
+    auto fluids = make_fluids();
+    auto p = std::make_unique<LinearQuasiStaticMixedSelfGravitatingProblem>(
+        &fes_u, &fes_phi, rheology, rho_s, kG, kDtNDegree, nullptr, fluids);
+    if (levels > 0) {
+      p->SetLevelBorder(levels);
+    }
+    p->SetRotation(0.1, moments);
+    p->SetSurfaceLoad(sigma, surface);
+    p->SetRelTol(1e-11);
+    p->AssembleForce(0.0);
+    EXPECT_TRUE(p->Solve());
+    return p;
+  };
+
+  // (a) A tesseral (m = 1) degree-2 load drives the wander, which is
+  // border-inert: no degree-0 content anywhere in its loop.
+  FunctionCoefficient tesseral([](const Vector& x) {
+    const double r2 = x * x;
+    return r2 == 0.0 ? 0.0 : 0.02 * x[0] * x[2] / r2;
+  });
+  auto pw0 = solve(tesseral, 0);
+  auto pw1 = solve(tesseral, 12);
+  const Vector &w0 = pw0->AngularVelocity(), &w1 = pw1->AngularVelocity();
+  ASSERT_GT(std::hypot(w0[0], w0[1]), 1e-12);  // the wander is driven
+  // Inert to the discrete-foliation floor: the level sets are spheres
+  // only to facet accuracy, so the border leaks O(1e-6) into degree 2
+  // on this mesh (the Love-number inertness is 4e-5 at h = 0.2).
+  EXPECT_LT(std::abs(w1[0] - w0[0]) / std::hypot(w0[0], w0[1]), 1e-5);
+  EXPECT_LT(std::abs(w1[1] - w0[1]) / std::hypot(w0[0], w0[1]), 1e-5);
+
+  // (b) A uniform (degree-0) load: the naked reduction's omega_3 is
+  // contaminated by the arbitrary degree-0 family member; the border
+  // changes it by a finite, physical amount.
+  ConstantCoefficient uniform(0.02);
+  auto p0 = solve(uniform, 0);
+  auto p1 = solve(uniform, 12);
+  const double w3_naked = p0->AngularVelocity()[2];
+  const double w3_border = p1->AngularVelocity()[2];
+  ASSERT_GT(std::abs(w3_naked), 1e-12);
+  const double shift = std::abs(w3_border - w3_naked) / std::abs(w3_naked);
+  std::cout << "omega_3: naked " << w3_naked << ", bordered " << w3_border
+            << " (relative shift " << shift << ")\n";
+  EXPECT_GT(shift, 1e-3);  // the contamination is real ...
+  EXPECT_LT(shift, 10.0);  // ... and finite
+
+  // (c) The generalised door's ingredients on this class. The
+  // whole-body model inertia (solid SubMesh + fluid region on the
+  // parent) against the radial analytic value, I = (8 pi / 3)
+  // int rho(r) r^4 dr; the coarse faceted ball carries its geometry
+  // error, and the tensor is isotropic to the same grade (the full
+  // model-inertia door rightly refuses such a degenerate model — its
+  // physics gate lives on the oblate figures).
+  {
+    auto fluids = make_fluids();
+    LinearQuasiStaticMixedSelfGravitatingProblem p(
+        &fes_u, &fes_phi, rheology, rho_s, kG, kDtNDegree, nullptr, fluids);
+    const DenseMatrix I0 = p.ModelInertiaTensor();
+    const double A = 1.2 + 0.1 * kRIcb / (kRCmb - kRIcb);
+    const double B = 0.1 / (kRCmb - kRIcb);
+    const double rc = kRCmb;
+    const double radial = A * std::pow(rc, 5) / 5.0 -
+                          B * std::pow(rc, 6) / 6.0 +
+                          kRho * (1.0 - std::pow(rc, 5)) / 5.0;
+    const double exact = 8.0 * std::numbers::pi / 3.0 * radial;
+    const double trace = (I0(0, 0) + I0(1, 1) + I0(2, 2)) / 3.0;
+    EXPECT_LT(std::abs(trace - exact) / exact, 3e-2);
+    double offdiag = 0.0;
+    for (int i = 0; i < 3; i++) {
+      for (int j = i + 1; j < 3; j++) {
+        offdiag = std::max(offdiag, std::abs(I0(i, j)));
+      }
+    }
+    EXPECT_LT(offdiag / trace, 3e-2);
+  }
+
+  // (d) The Tisserand gauge (the door's reading of the mass-weighted
+  // gauge; solid-restricted automatically here) pins the rigid
+  // representative only: omega is gauge-invariant, so the bordered
+  // omega_3 must not move.
+  {
+    auto fluids = make_fluids();
+    auto p = std::make_unique<LinearQuasiStaticMixedSelfGravitatingProblem>(
+        &fes_u, &fes_phi, rheology, rho_s, kG, kDtNDegree, nullptr, fluids);
+    p->SetLevelBorder(12);
+    p->SetRotation(0.1, moments);
+    p->SetTisserandGauge(true);
+    p->SetSurfaceLoad(uniform, surface);
+    p->SetRelTol(1e-11);
+    p->AssembleForce(0.0);
+    EXPECT_TRUE(p->Solve());
+    EXPECT_LT(std::abs(p->AngularVelocity()[2] - w3_border) /
+                  std::abs(w3_border),
+              1e-7);
+  }
+}
+
 INSTANTIATE_TEST_SUITE_P(Rotation, RotationTest,
                          testing::Values(Param{2, 1}, Param{2, 2},
                                          Param{3, 1}));

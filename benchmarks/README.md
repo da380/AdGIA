@@ -22,6 +22,47 @@ READMEs here say how to run them.
 | `disc/` | the 2-D testing ground of the slipping interface: the gravity-free disc (welded against slip, interface shift, uniform pre-pressure) and the gravitating per-degree radial reference with its `explore` tool | closed-form disc solutions; the 1-D hp-FEM radial reference |
 | `viscoelastic/` | the viscoelastic time stepping, in four sub-families: non-gravitating box and sphere problems, the stepper survey, Maxwell Love-number histories | exact modal/Talbot references; RK4 at a small step; pyslfp through the correspondence principle |
 | `sea_level/` | the monolithic sea-level solve (`SetWaterLoad`): elastic fingerprints, with rotation, shoreline-migration and timing legs, and `--earth` — the same comparison on the real ICE-7G geography and the coastline-refined mesh, melting Greenland or West Antarctica; not a campaign stage, run through its launchers | pyslfp's pseudo-spectral solution of the same problem |
+| `elastic/nongrav/` | E1 of the cross-code hierarchy: traction numbers of solid spherical models with gravity off, compared across pyslfp, sl3dpp and this library's traction problem (`traction_benchmark`) | the exact piecewise-homogeneous propagator (`common/analytic.py`) |
+| `elastic/grav/` | E2: conventional Love numbers (load primed, geodetic tidal) of solid and fluid–solid spherical models, across the three codes — `love_benchmark` results converted by `from_results` | pyslfp's radial solver (itself checked against closed forms and an independent code) |
+
+## The cross-code hierarchy
+
+Besides the families above, this directory is the home of the
+cross-code benchmark programme against the two spectral codes,
+[sl3dpp](https://github.com/da380/sl3dpp) (C++, 1D and laterally
+varying viscosity) and [pyslfp](https://github.com/da380/pyslfp)
+(Python, the elastic oracle and the 1D viscoelastic reference). The
+programme climbs a hierarchy rather than jumping to full sea-level
+solves: **elastic** spherical models first (non-gravitating, where the
+piecewise-homogeneous ladder has closed forms, then gravitating; solid,
+then fluid–solid), then **viscoelastic loading without the sea-level
+equation** (gravity and rotation switched separately; laterally varying
+viscosity for the two codes that have it), and only then the **sea
+level** tiers. The internal families above are benchmarks of a
+different kind — references that are exact or independent of any other
+code — and stay as they are.
+
+Three conventions carry the programme:
+
+- **One model definition.** The spherical ladder of `common/models.py`
+  is the model set. pyslfp consumes the planetmodel objects directly;
+  sl3dpp reads the same models as full-precision elastic decks written
+  by `common/decks.py` (for the polynomial layers the deck *is* the
+  model to rounding); the FE side meshes the objects as the families do
+  now.
+- **One exchange format.** Each code reduces its answer to a small text
+  file of named scalars and one table — SI, `%.17g`, provenance lines
+  first — written and read by `common/exchange.py` and reproduced by
+  hand in the C++ drivers. Comparisons read two such files and report
+  relative differences; they never need the producing code. Degree 1 is
+  compared in the centre-of-mass frame; degree 0 of the Dahlen family
+  is excluded by design (`doc/benchmarks.tex`).
+- **Tiered tolerances.** Where two codes solve the identical discrete
+  problem (pyslfp and sl3dpp on the same deck and mesh rule), near
+  machine precision. Across discretisations (FEM against spectral),
+  the discretisation level, measured by refinement. The physical
+  yardstick throughout is observational error: the codes must be
+  reliable against it, not against machine epsilon.
 
 ## Setting up
 
@@ -227,6 +268,9 @@ In brief (the measurements are in `doc/benchmarks.tex`):
 | file | what it does |
 |---|---|
 | `models.py` | the models, as planetmodel models in SI, and the units they are solved in |
+| `analytic.py` | exact non-gravitating solutions of piecewise-homogeneous spheres: the E1 reference |
+| `decks.py` | the ladder models as full-precision elastic decks: the bridge to sl3dpp |
+| `exchange.py` | the cross-code exchange format: named scalars and one table, SI, with provenance |
 | `make_case.py` | one case: mesh, fields and manifest through planetmodel, reference through pyslfp |
 | `benchmark_case.hpp` | what the Love-number drivers share: a case set up as a problem, the analysis of its solution, the common options |
 | `relabelling.hpp` | the mapped layer of the drivers: relabellings, interface shifts, exact radial profiles |
