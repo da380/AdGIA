@@ -83,6 +83,19 @@ real_t DiscreteSecondOrderSolver::Dot(const Vector& dual, const GridFunction& u,
   return dual * u;
 }
 
+real_t DiscreteSecondOrderSolver::SumOverRanks(real_t local,
+                                               FiniteElementSpace& fes) const {
+#ifdef MFEM_USE_MPI
+  if (auto* pfes = dynamic_cast<ParFiniteElementSpace*>(&fes)) {
+    MPI_Allreduce(MPI_IN_PLACE, &local, 1, MPITypeMap<real_t>::mpi_type,
+                  MPI_SUM, pfes->GetComm());
+  }
+#else
+  (void)fes;
+#endif
+  return local;
+}
+
 bool DiscreteSecondOrderSolver::RunStatic() {
   // K dlambda_i = -K(v) lambda_i: the Born force of v on each dual.
   FiniteElementSpace& fes = twin_->DisplacementSpace();
@@ -229,31 +242,35 @@ real_t DiscreteSecondOrderSolver::Directional(
   ForwardTrajectoryData fdata(*forward_);
   TangentTrajectoryData tdata(*tangent_v_, forward_->Op());
   const Rheology& rh = op_->Problem().Rheology();
+  FiniteElementSpace& fes_u = op_->Problem().DisplacementSpace();
   Vector f_u, cb, dcb, dn, dn1, d2itau;
   std::vector<Vector> zeta;
-  real_t H = 0.0;
+  // H: the displacement-row pairings, each global (Dot); internal: the
+  // rank's local sums on the element-local internal dofs, reduced once
+  // at the end.
+  real_t H = 0.0, internal = 0.0;
 
   // The derivative duals against delta's sources on the forward
   // trajectory, and the first-order duals against delta's sources on
   // v's tangent trajectory (the sources are linear in the data).
   auto pair_sources = [&](TangentData& data, auto lambda_of, auto mu_of) {
     src_d.ComputeSources(data, 0, false, f_u, zeta);
-    real_t s = f_u * lambda_of(0);
+    real_t s = Dot(f_u, lambda_of(0), fes_u);
     op_->Coupling(lambda_of(0), cb);
     for (int k = 0; k < K; k++) {
-      if (zeta[k].Size() > 0) s += zeta[k] * cb;
+      if (zeta[k].Size() > 0) internal += zeta[k] * cb;
     }
     for (int n = 0; n < N; n++) {
       src_d.PrepareStep(data, n, n + 1);
       src_d.ComputeSources(data, n + 1, true, f_u, zeta);
-      s += f_u * lambda_of(n + 1);
+      s += Dot(f_u, lambda_of(n + 1), fes_u);
       op_->Coupling(lambda_of(n + 1), cb);
       for (int k = 0; k < K; k++) {
-        if (zeta[k].Size() > 0) s += zeta[k] * cb;
+        if (zeta[k].Size() > 0) internal += zeta[k] * cb;
         const Vector& st = src_d.StateSource(k);
         if (st.Size() > 0) {
           Vector mu_k = op_->Branch(mu_of(n + 1), k);
-          s += st * mu_k;
+          internal += st * mu_k;
         }
       }
     }
@@ -355,7 +372,7 @@ real_t DiscreteSecondOrderSolver::Directional(
                            dh_d * dh_v * (r2 + d2b * dn1[i]));
         }
       }
-      H += sum;
+      internal += sum;
     }
     if (total) {
       auto form = detail::MakeBilinearForm(&forward_->Op().Problem().DisplacementSpace());
@@ -364,10 +381,10 @@ real_t DiscreteSecondOrderSolver::Directional(
       form->Finalize();
       Vector ku(u1.Size());
       form->Mult(u1, ku);
-      H -= ku * lam;
+      H -= Dot(ku, lam, fes_u);
     }
   }
-  return H;
+  return H + SumOverRanks(internal, op_->InternalScalarSpace());
 }
 
 }  // namespace AdGIA

@@ -70,7 +70,9 @@ class DualData : public TangentData {
  * with delta's sources on the forward trajectory, plus the first-order
  * duals paired with delta's sources on v's tangent trajectory, plus the
  * parameter cross terms (the scheme's second derivative in the model).
- * Whole-mesh branches, linear isotropic rheologies; serial pairings.
+ * Whole-mesh branches, linear isotropic rheologies. The pairings are
+ * global in parallel (shared displacement dofs counted once, the
+ * internal-space sums reduced over ranks), as in DiscreteAdjointSolver.
  */
 class DiscreteSecondOrderSolver {
  public:
@@ -119,6 +121,10 @@ class DiscreteSecondOrderSolver {
   mfem::real_t DirectionalStatic(const TangentDirection& delta);
   mfem::real_t Dot(const mfem::Vector& dual, const mfem::GridFunction& u,
                    mfem::FiniteElementSpace& fes) const;
+  // The sum over ranks of a local pairing on the element-local (L2)
+  // internal dofs; the identity in serial.
+  mfem::real_t SumOverRanks(mfem::real_t local,
+                            mfem::FiniteElementSpace& fes) const;
 
   DiscreteAdjointSolver& first_;
   // Static configuration.

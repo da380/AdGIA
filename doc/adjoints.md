@@ -312,8 +312,7 @@ first order differentiated along v.
 
 **Limits.** The kernel duals are quasi-static only. The discrete
 second order returns directional values only (the dual vector of H[v, ·] is
-not built), pairs in serial and has
-no water-load gate. Both discrete drivers require the Galerkin strain map,
+not built). Both discrete drivers require the Galerkin strain map,
 whole-mesh branches and linear isotropic rheologies; neither plays back a
 migrating shoreline.
 
@@ -354,10 +353,10 @@ exercises it.
 | static | gated by `Adjoint.StaticKernels2D`, `Adjoint.StaticKernels3D` | gated by `Tangent.Static2D` | gated by `SecondOrder.Static2D` | gated by `DiscreteAdjoint.Static2D` | gated by `DiscreteSecondOrder.Static2D` |
 | viscoelastic | gated by `Adjoint.ViscoelasticKernels` | gated by `Tangent.Viscoelastic2D` | gated by `SecondOrder.Viscoelastic2D` | gated by `DiscreteAdjoint.PairsWithTangent2D`, `DiscreteAdjoint.KernelDualsPairExactly2D` | gated by `DiscreteSecondOrder.SymmetricAndMatchesFD2D` |
 | gravitating mixed class | gated by `Adjoint.GravitatingReciprocity`, `Adjoint.GravitatingViscoelasticKernels` | gated by `Tangent.GravitatingStatic2D`, `Tangent.GravitatingViscoelastic2D`, `Tangent.CurvedElements3D` | built, ungated | gated by `DiscreteAdjoint.GravitatingStatic2D`, `DiscreteAdjoint.WaterLoadFrozen3D` | built, ungated |
-| water load, frozen shoreline | gated by `AdjointFingerprint.FullPhysicsKernels`; played-back moving ocean: `AdjointFingerprint.PlaybackKernels`, `AdjointFingerprint.IceKernels` | gated by `Tangent.WaterLoadFrozen3D` | built, ungated (no sea-level kernel derivative) | gated by `DiscreteAdjoint.WaterLoadFrozen3D` | built, ungated |
-| rotation | gated, with the water load, by `AdjointFingerprint.FullPhysicsKernels` | gated, with the water load, by `Tangent.WaterLoadFrozen3D` | built, ungated | gated, with the water load, by `DiscreteAdjoint.WaterLoadFrozen3D` | built, ungated |
+| water load, frozen shoreline | gated by `AdjointFingerprint.FullPhysicsKernels`; played-back moving ocean: `AdjointFingerprint.PlaybackKernels`, `AdjointFingerprint.IceKernels` | gated by `Tangent.WaterLoadFrozen3D` | built, ungated (no sea-level kernel derivative) | gated by `DiscreteAdjoint.WaterLoadFrozen3D` | gated by `DiscreteSecondOrder.WaterLoadFrozen3D` |
+| rotation | gated, with the water load, by `AdjointFingerprint.FullPhysicsKernels` | gated, with the water load, by `Tangent.WaterLoadFrozen3D` | built, ungated | gated, with the water load, by `DiscreteAdjoint.WaterLoadFrozen3D` | gated, with the water load, by `DiscreteSecondOrder.WaterLoadFrozen3D` |
 | Prony multi-branch | gated by `Adjoint.PronyKernels` | gated by `Tangent.Prony2D` | built, ungated | built, ungated | built, ungated |
-| parallel | gated by `TestAdjointPar` | gated by `TestTangentPar` | built, ungated | gated by `TestDiscreteAdjointPar` (the identity; kernel duals ungated) | not built (serial pairings) |
+| parallel | gated by `TestAdjointPar` | gated by `TestTangentPar` | built, ungated | gated by `TestDiscreteAdjointPar` (the identity; kernel duals ungated) | gated by `TestDiscreteSecondOrderPar` (the identity against FD of the parallel discrete gradient; symmetry) |
 
 ## 8. Verification
 
@@ -454,6 +453,13 @@ identities to 1e-8; the static pairing as local sums to 1e-12.
   final-time and continuous: symmetric to 1e-9, within 1e-5 of FD on the
   block's scale; every entry agrees to six digits.
 - `Static2D`: κ and μ blobs: symmetric to 1e-9, FD to 1e-5 (gated).
+- `WaterLoadFrozen3D`: the ball with water and rotation, 8 steps, η and μ
+  blobs, the displacement and the four-slot sea-level functionals: every
+  entry of the 2 × 2 blocks agrees with FD to six digits (gated 1e-5) and
+  the blocks are symmetric (gated 1e-7); solver tolerance 1e-12.
+
+`TestDiscreteSecondOrderPar` (1, 2, 4 ranks): the 2-D evolution case
+against FD of the parallel discrete gradient (1e-5) and symmetry (1e-9).
 
 Also: `TestAdjointLove` (the η kernel on the gravitating Maxwell sphere
 against the Love-number closed form, 1.0037 at order 3; a radial direction

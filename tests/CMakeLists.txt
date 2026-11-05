@@ -136,6 +136,8 @@ if(USE_MPI)
     target_link_libraries(TestTangentPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestDiscreteAdjointPar TestDiscreteAdjointPar.cpp)
     target_link_libraries(TestDiscreteAdjointPar PRIVATE AdGIA MPI::MPI_CXX)
+    add_executable(TestDiscreteSecondOrderPar TestDiscreteSecondOrderPar.cpp)
+    target_link_libraries(TestDiscreteSecondOrderPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestAdjointFingerprintPar TestAdjointFingerprintPar.cpp)
     target_link_libraries(TestAdjointFingerprintPar PRIVATE AdGIA MPI::MPI_CXX)
     foreach(np 1 2 4)
@@ -170,6 +172,9 @@ if(USE_MPI)
         add_test(NAME TestDiscreteAdjointPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestDiscreteAdjointPar>)
+        add_test(NAME TestDiscreteSecondOrderPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestDiscreteSecondOrderPar>)
         add_test(NAME TestAdjointFingerprintPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestAdjointFingerprintPar>)
@@ -257,6 +262,7 @@ if(USE_MPI)
             TestAdjointPar_np${np}
             TestTangentPar_np${np}
             TestDiscreteAdjointPar_np${np}
+            TestDiscreteSecondOrderPar_np${np}
             TestFluidGaugePar_np${np}
             TestBoundaryNormalIntegratorsPar_np${np}
             TestMixedProblemFluidPar_np${np}
