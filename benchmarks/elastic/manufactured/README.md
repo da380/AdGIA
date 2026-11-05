@@ -139,15 +139,21 @@ With the discrete Hessian at the SAME order the stress is optimal (order
 3: 3.0) and the displacement is held at p by the gradient (3.0); at
 order 2 nothing changes (second order was already optimal).
 
+**The class default is now the discrete Hessian** (David, 5 November
+2026). Costs on the 3-D h 0.15 mesh (4 ranks, laptop): interpolant 2.1 s
+/ 10.0 s at orders 2 / 3; discrete Hessian 2.4 s / 10.8 s, same
+iteration counts; with the potential one order up 4.2 s / 18.3 s, the
+potential unknowns tripling. The driver's `-interpolant` (`run
+--interpolant`) restores the old route; the potential order is the
+drivers' `-ophi`.
+
 **Consequence for the benchmark programme.** Every gravitating solve of
-the mixed class, the E2 and V1 order-3 runs included, is second-order
-accurate in the energy norm; surface observables (Love numbers) gain the
-duality orders and did improve about 20× from order 2 to 3 at h 0.3,
-consistent with an L2-like rate of 3 rather than 4. Whether the class
-should switch its default to the product rule (the discrete Hessian with
-the potential one order up) is a decision for the programme: it changes
-every gravitating result at the discretisation level, for the better,
-and the gates against pyslfp would move accordingly.
+the mixed class before the default changed, the E2 and V1 order-3 runs
+of 5 November included, was second-order accurate in the energy norm;
+surface observables (Love numbers) gain the duality orders and did
+improve about 20× from order 2 to 3 at h 0.3, consistent with an
+L2-like rate of 3 rather than 4. Results at the discretisation level
+move with the new default (see the E2 rerun noted below).
 
 Tables of every run: `runs_facet/d2_g2*/table.txt`, `d3_g2*/table.txt`
 in the build tree, copied to `~/dev/planning/runsheets/manufactured-2026-11-05/`.

@@ -230,6 +230,7 @@ struct CaseOptions {
   const char* manifest = "case.json";
   bool model_fields = false;
   int order = 2;
+  int order_phi = 0;  // the potential space's order; 0: the displacement's
   int dtn_degree = 16;
   int lmax = 6;
   int solver = 1;
@@ -415,6 +416,13 @@ struct CaseOptions {
                    "(dahlen, gauged); the .gf fields still carry the "
                    "partitioning.");
     args.AddOption(&order, "-o", "--order", "Finite element order.");
+    args.AddOption(&order_phi, "-ophi", "--order-phi",
+                   "Order of the potential space (0: the displacement's). "
+                   "One order higher restores the displacement's optimal "
+                   "L2 rate, which the gradient of the projected background "
+                   "potential otherwise holds one order down "
+                   "(benchmarks/elastic/manufactured); about twice the "
+                   "cost.");
     args.AddOption(&dtn_degree, "-deg", "--dtn-degree",
                    "DtN expansion degree.");
     args.AddOption(&lmax, "-lmax", "--max-degree", "Highest harmonic degree.");
@@ -667,10 +675,12 @@ class Case {
     gravity = G * mass / (radius * radius);
 
     fec_ = std::make_unique<H1_FECollection>(options.order, dim);
+    fec_phi_ = std::make_unique<H1_FECollection>(
+        options.order_phi > 0 ? options.order_phi : options.order, dim);
     fes_u = std::make_unique<ParFiniteElementSpace>(solid.get(), fec_.get(),
                                                     dim);
     fes_phi = std::make_unique<ParFiniteElementSpace>(parent.get(),
-                                                      fec_.get());
+                                                      fec_phi_.get());
     displacement_unknowns = fes_u->GlobalTrueVSize();
     potential_unknowns = fes_phi->GlobalTrueVSize();
     if (root) {
@@ -1848,7 +1858,7 @@ class Case {
   Array<int> gauge_marker_;
   std::unique_ptr<PWConstCoefficient> rho_interface_c_;
   ConstantCoefficient zero_{0.0};
-  std::unique_ptr<H1_FECollection> fec_;
+  std::unique_ptr<H1_FECollection> fec_, fec_phi_;
   std::unique_ptr<IsotropicElasticRheology> rheology_;
 
   // The referential family (BuildReferential).

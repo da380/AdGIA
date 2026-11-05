@@ -611,21 +611,26 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
    * @brief Assemble the gravity term @f$\tfrac12\rho\,v\cdot\grad(u\cdot
    * \grad\Phi_0)@f$ (and its transpose) by the product rule with this
    * Hessian of the background potential, @f$H_{kl} = \partial_k\partial_l
-   * \Phi_0@f$, instead of differentiating the nodal interpolant of
-   * @f$u\cdot\grad\Phi_0@f$ (DomainVectorGradVectorIntegrator). The
-   * interpolant limits the energy-norm accuracy of a gravitating solve
-   * to second order whatever the element order
-   * (benchmarks/elastic/manufactured); with the Hessian the rates are
-   * optimal. Call before the first assembly (AssembleForce()); not
-   * owned; nullptr restores the interpolant.
+   * \Phi_0@f$ (an analytic one, say), instead of the default below.
+   * Differentiating the nodal interpolant of @f$u\cdot\grad\Phi_0@f$
+   * (DomainVectorGradVectorIntegrator's own default) limits the
+   * energy-norm accuracy of a gravitating solve to second order whatever
+   * the element order (benchmarks/elastic/manufactured); with a Hessian
+   * the rates are optimal. Call before the first assembly
+   * (AssembleForce()); not owned; nullptr selects the interpolant.
    */
   void SetBackgroundHessian(mfem::MatrixCoefficient* hessian);
 
-  /** @brief SetBackgroundHessian() with the Hessian of the discrete
-   * background potential itself (HessianGridFunctionCoefficient on its
-   * shadow): accurate to one order below the potential space, so a
-   * potential space one order above the displacement's gives the
-   * optimal rates. Call before the first assembly. */
+  /** @brief THE DEFAULT (5 November 2026): SetBackgroundHessian() with
+   * the Hessian of the discrete background potential itself
+   * (HessianGridFunctionCoefficient on its shadow), accurate to one
+   * order below the potential space. With the potential space at the
+   * displacement's order the stress converges at the optimal rate and
+   * the displacement one order below it (held by the gradient of the
+   * projected @f$\Phi_0@f$); one order above, both are optimal, at about
+   * twice the cost (the potential unknowns triple). The Hessian itself
+   * costs 10-15 % of a solve. SetBackgroundHessian(nullptr) restores
+   * the interpolant. */
   void UseDiscreteBackgroundHessian();
 
   /**

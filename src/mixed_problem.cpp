@@ -605,6 +605,10 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetupGravityIntegrators() {
   auto* g1 =
       new DomainVectorGradVectorIntegrator(*grad_phi0_shadow_, *half_rho_);
   grav_g1_ = g1;
+  // The product rule with the Hessian of the discrete Phi0 is the
+  // default (5 November 2026): the nodal interpolant limited every
+  // gravitating solve to second order in the energy norm.
+  UseDiscreteBackgroundHessian();
   auto* g2 = new DomainVectorDivVectorIntegrator(*minus_half_rho_grad_);
   auto& integs = StiffnessIntegrators();
   integs.AddDomainIntegrator(g1);

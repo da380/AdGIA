@@ -522,8 +522,10 @@ class DomainDivVectorDivVectorIntegrator : public mfem::BilinearFormIntegrator {
  * the form is also applied to oscillatory test functions (through its
  * transpose in a symmetrised form): on a smooth problem the energy-norm
  * error of a gravitating solve is then O(h^2) at every order
- * (benchmarks/elastic/manufactured, 5 November 2026). With
- * SetGradient() the integrator uses the product rule instead,
+ * (benchmarks/elastic/manufactured, 5 November 2026; the mixed
+ * self-gravitating class therefore supplies the Hessian of its discrete
+ * background potential by default). With SetGradient() the integrator
+ * uses the product rule instead,
  * \f$\grad(\bvec{w}\cdot\bvec{u}) = (\grad\bvec{u})^T\bvec{w} +
  * (\grad\bvec{w})^T\bvec{u}\f$, with the supplied gradient
  * \f$G_{kl} = \partial_k w_l\f$ at the quadrature points: no

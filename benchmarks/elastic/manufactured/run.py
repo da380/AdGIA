@@ -64,8 +64,8 @@ def run_one(args, mesh: Path, order: int, result: Path) -> dict:
         cmd.append("-schur")
     if args.exact_hessian:
         cmd.append("-exact-hessian")
-    if args.discrete_hessian:
-        cmd.append("-discrete-hessian")
+    if args.interpolant:
+        cmd.append("-interpolant")
     print("  $ " + " ".join(cmd))
     log = result.with_suffix(".log")
     with open(log, "w") as f:
@@ -122,10 +122,11 @@ def main(argv=None) -> None:
                    help="Schur-complement CG instead of block MINRES")
     p.add_argument("--exact-hessian", action="store_true",
                    help="gravity term by the product rule with the exact "
-                        "Hessian of Phi0 instead of the nodal interpolant")
-    p.add_argument("--discrete-hessian", action="store_true",
-                   help="gravity term by the product rule with the Hessian "
-                        "of the discrete Phi0 (the production route)")
+                        "Hessian of Phi0 instead of the class's default, "
+                        "the Hessian of the discrete Phi0")
+    p.add_argument("--interpolant", action="store_true",
+                   help="gravity term by the nodal interpolant of "
+                        "u.grad Phi0 (the default before 5 November 2026)")
     p.add_argument("--out", type=Path, default=Path("runs"))
     p.add_argument("--programs", default=".",
                    help="directory of the drivers")
@@ -139,8 +140,8 @@ def main(argv=None) -> None:
         tag += f"_phi+{args.phi_offset}"
     if args.exact_hessian:
         tag += "_hess"
-    if args.discrete_hessian:
-        tag += "_dhess"
+    if args.interpolant:
+        tag += "_interp"
     out = args.out / tag
     results: dict[tuple[float, int], dict] = {}
     for h in args.h:

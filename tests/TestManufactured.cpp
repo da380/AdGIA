@@ -145,7 +145,9 @@ struct Errors {
   double u, phi, rigid;
 };
 
-Errors Solve(int dim, int order, bool exact_hessian = false,
+enum class Gravity { Default, Interpolant, ExactHessian };
+
+Errors Solve(int dim, int order, Gravity gravity = Gravity::Default,
              int order_phi = 0) {
   Mesh parent(MeshFile(dim).c_str(), 1, 1);
   SubMesh body(SubMesh::CreateFromDomain(parent, BodyMarker(parent)));
@@ -172,8 +174,10 @@ Errors Solve(int dim, int order, bool exact_hessian = false,
       for (int j = 0; j < dim; j++) H(i, j) = flat[i * dim + j];
     }
   });
-  if (exact_hessian) {
+  if (gravity == Gravity::ExactHessian) {
     problem.SetBackgroundHessian(&hess);
+  } else if (gravity == Gravity::Interpolant) {
+    problem.SetBackgroundHessian(nullptr);
   }
 
   FunctionCoefficient q([&](const Vector& x) { return ex.PotentialSource(x); });
@@ -363,22 +367,28 @@ TEST(Manufactured, ConvergesWithOrder2D) {
   EXPECT_LT(e[2].u, e[1].u / 20.0);
 }
 
-// The gravity term assembled by the product rule with the exact Hessian
-// of Phi0 (SetBackgroundHessian) against the default nodal interpolant,
-// at order 3 with the potential one order higher (so that the background
-// gravity itself is exact): the interpolant's second-order consistency
-// error shows at order 3, the product rule removes it. Measured 5 Nov
-// 2026 on disc_buffer_2d: u 1.8e-7 vs 8.9e-8, stress 1.2e-5 vs 3.8e-6.
-TEST(Manufactured, ExactHessianBeatsInterpolant2D) {
-  const Errors interp = Solve(2, 3, false, 4);
-  const Errors exact = Solve(2, 3, true, 4);
+// The gravity term assembled by the product rule with the Hessian of
+// Phi0 -- the class's default, with the Hessian of the discrete Phi0, and
+// the exact Hessian (SetBackgroundHessian) -- against the nodal
+// interpolant (the default before 5 November 2026), at order 3 with the
+// potential one order higher (so that the background gravity itself is
+// exact and the discrete Hessian equals the exact one): the interpolant's
+// second-order consistency error shows at order 3, the product rule
+// removes it. Measured 5 Nov 2026 on disc_buffer_2d: u 1.8e-7 vs 8.9e-8,
+// stress 1.2e-5 vs 3.8e-6.
+TEST(Manufactured, HessianBeatsInterpolant2D) {
+  const Errors interp = Solve(2, 3, Gravity::Interpolant, 4);
+  const Errors exact = Solve(2, 3, Gravity::ExactHessian, 4);
+  const Errors def = Solve(2, 3, Gravity::Default, 4);
   if (std::getenv("ADGIA_TEST_VERBOSE")) {
-    std::cout << "2-D order 3, potential order 4: u " << interp.u << " vs "
-              << exact.u << " with the exact Hessian\n";
+    std::cout << "2-D order 3, potential order 4: u " << interp.u
+              << " (interpolant) vs " << exact.u << " (exact Hessian) vs "
+              << def.u << " (default, discrete Hessian)\n";
   }
   EXPECT_LT(exact.u, 1.5e-7);
   EXPECT_LT(exact.u, 0.7 * interp.u);
   EXPECT_LT(exact.phi, 1e-6);
+  EXPECT_LT(std::abs(def.u - exact.u), 0.05 * exact.u);
 }
 
 TEST(Manufactured, ConvergesWithOrder3D) {

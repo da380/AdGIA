@@ -250,7 +250,7 @@ int main(int argc, char* argv[]) try {
   int order = 2, order_phi = 0, dtn_degree = 12;
   double rel_tol = 1e-11;
   bool schur = false, mass_gauge = false, exact_hessian = false,
-       discrete_hessian = false;
+       interpolant = false;
 
   OptionsParser args(argc, argv);
   args.AddOption(&mesh_file, "-m", "--mesh",
@@ -268,16 +268,14 @@ int main(int argc, char* argv[]) try {
   args.AddOption(&schur, "-schur", "--schur-cg", "-minres", "--block-minres",
                  "Schur-complement CG instead of block MINRES.");
   args.AddOption(&exact_hessian, "-exact-hessian", "--exact-hessian",
-                 "-interpolant", "--interpolant",
+                 "-discrete-hessian", "--discrete-hessian",
                  "Assemble the gravity term by the product rule with the "
-                 "exact Hessian of Phi0 (SetBackgroundHessian) instead of "
-                 "the nodal interpolant of u.grad Phi0.");
-  args.AddOption(&discrete_hessian, "-discrete-hessian",
-                 "--discrete-hessian", "-no-discrete-hessian",
-                 "--no-discrete-hessian",
-                 "The product rule with the Hessian of the DISCRETE "
-                 "background potential (UseDiscreteBackgroundHessian), "
-                 "the production route.");
+                 "EXACT Hessian of Phi0 (SetBackgroundHessian) instead of "
+                 "the class's default, the Hessian of the discrete Phi0.");
+  args.AddOption(&interpolant, "-interpolant", "--interpolant",
+                 "-hessian", "--hessian",
+                 "The nodal interpolant of u.grad Phi0 (the default before "
+                 "5 November 2026) instead of the product rule.");
   args.AddOption(&mass_gauge, "-mass-gauge", "--mass-weighted-gauge",
                  "-euclid-gauge", "--euclidean-gauge",
                  "Gauge the rigid modes by zero momentum instead of the "
@@ -331,11 +329,11 @@ int main(int argc, char* argv[]) try {
       for (int j = 0; j < dim; j++) H(i, j) = flat[i * dim + j];
     }
   });
-  MFEM_VERIFY(!(exact_hessian && discrete_hessian), "one Hessian route");
+  MFEM_VERIFY(!(exact_hessian && interpolant), "one gravity route");
   if (exact_hessian) {
     problem.SetBackgroundHessian(&hess);
-  } else if (discrete_hessian) {
-    problem.UseDiscreteBackgroundHessian();
+  } else if (interpolant) {
+    problem.SetBackgroundHessian(nullptr);
   }
 
   // The loads: the potential row's volume and surface sources through
@@ -540,9 +538,9 @@ int main(int argc, char* argv[]) try {
         "  \"total_seconds\": {:.6g},\n  \"ranks\": {}\n}}\n",
         mesh_file, dim, order, order_phi, dtn_degree, schur ? "schur" : "minres",
         mass_gauge ? "mass" : "euclid",
-        exact_hessian      ? "exact-hessian"
-        : discrete_hessian ? "discrete-hessian"
-                           : "interpolant",
+        exact_hessian ? "exact-hessian"
+        : interpolant ? "interpolant"
+                      : "discrete-hessian",
         ne, ndof_u, ndof_phi,
         h_min, h_max,
         u_err, stress_err, stress_layer, stress_interior, grad_err, phi_err,
