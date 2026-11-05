@@ -357,6 +357,10 @@ add_executable(TestMixedProblem TestMixedProblem.cpp)
 target_link_libraries(TestMixedProblem PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestMixedProblem)
 
+add_executable(TestDiscreteAdjoint TestDiscreteAdjoint.cpp)
+target_link_libraries(TestDiscreteAdjoint PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestDiscreteAdjoint)
+
 add_executable(TestSecondOrder TestSecondOrder.cpp)
 target_link_libraries(TestSecondOrder PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestSecondOrder)

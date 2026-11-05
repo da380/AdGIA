@@ -212,6 +212,23 @@ class TangentViscoelasticOperator : public ViscoelasticOperator {
   bool Step(mfem::Vector& dm, mfem::real_t& t, TangentData& data, int n0,
             int n1);
 
+  // --- the sources as vectors (the discrete adjoint pairs them) -----------
+
+  /** @brief Prepare the sources of the step n0 -> n1 of @p data (the
+   * state source, the known-part branch sources, the effective Born
+   * form), engaging the effective modulus for its step size. */
+  void PrepareStep(TangentData& data, int n0, int n1);
+  /** @brief The displacement-row source (L-vector, @p f_u) and the
+   * branch-layout sources (@p zeta, one per branch, empty when zero) of
+   * the solve at @p node of @p data: the effective solve of the step
+   * prepared by PrepareStep() when @p in_step, the unrelaxed solve
+   * otherwise. The step's state source is StateSource(). */
+  void ComputeSources(TangentData& data, int node, bool in_step,
+                      mfem::Vector& f_u, std::vector<mfem::Vector>& zeta);
+  /** @brief The state source s_k of the step prepared by PrepareStep()
+   * (branch layout; empty when zero). */
+  const mfem::Vector& StateSource(int k) const { return s_[k]; }
+
  private:
   void Inject(mfem::real_t t);
   void RelaxationSource(TangentData& data, int n0, int n1);

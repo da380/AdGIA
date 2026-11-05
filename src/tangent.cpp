@@ -240,26 +240,28 @@ void TangentViscoelasticOperator::BuildEffectiveBorn() {
   born_eff_dt_ = step_dt_;
 }
 
-void TangentViscoelasticOperator::Inject(real_t) {
-  const int n = node_;
-  fbuf_.SetSize(problem_.DisplacementSpace().GetVSize());
-  if (in_step_) {
+void TangentViscoelasticOperator::ComputeSources(TangentData& data, int n,
+                                                 bool in_step, Vector& f_u,
+                                                 std::vector<Vector>& zeta) {
+  data_ = &data;
+  f_u.SetSize(problem_.DisplacementSpace().GetVSize());
+  f_u = 0.0;
+  zeta.assign(NumBranches(), Vector());
+  if (in_step) {
     // The effective solve: the Born force of the moduli and of the
     // weights on u^{n+1}, and the step's known-part branch sources.
     if (born_eff_dt_ != step_dt_) {
       BuildEffectiveBorn();
     }
     if (born_eff_) {
-      const GridFunction& u = data_->Displacement(n);
+      const GridFunction& u = data.Displacement(n);
       bbuf_.SetSize(u.Size());
       born_eff_->Mult(u, bbuf_);
-      fbuf_ = 0.0;
-      fbuf_.Add(-1.0, bbuf_);
-      problem_.AddForce(fbuf_);
+      f_u.Add(-1.0, bbuf_);
     }
     for (int k = 0; k < NumBranches(); k++) {
       if (known_[k].Size() > 0) {
-        AddCoupledForce(k, known_[k]);
+        zeta[k] = known_[k];
       }
     }
     return;
@@ -268,21 +270,37 @@ void TangentViscoelasticOperator::Inject(real_t) {
   // displacement and the branch-modulus perturbation on the forward
   // internal variables at this node.
   if (born_ && !born_->Empty()) {
-    fbuf_ = 0.0;
-    born_->AddTo(data_->Displacement(n), fbuf_);
-    problem_.AddForce(fbuf_);
+    born_->AddTo(data.Displacement(n), f_u);
   }
   for (int k = 0; k < NumBranches(); k++) {
     const int nd = nodes_[k].Size();
     if (has_dmu_[k]) {
-      Vector mk = Branch(data_->State(n), k);
-      zbuf_.SetSize(nd * nc_);
+      Vector mk = Branch(data.State(n), k);
+      zeta[k].SetSize(nd * nc_);
       for (int c = 0; c < nc_; c++) {
         for (int q = 0; q < nd; q++) {
-          zbuf_[c * nd + q] = 2.0 * dmu_[k][q] * mk[c * nd + q];
+          zeta[k][c * nd + q] = 2.0 * dmu_[k][q] * mk[c * nd + q];
         }
       }
-      AddCoupledForce(k, zbuf_);
+    }
+  }
+}
+
+void TangentViscoelasticOperator::PrepareStep(TangentData& data, int n0,
+                                              int n1) {
+  data_ = &data;
+  SetEffectiveModulus(data.Time(n1) - data.Time(n0),
+                      Scheme::ExponentialTrapezoid);
+  RelaxationSource(data, n0, n1);
+}
+
+void TangentViscoelasticOperator::Inject(real_t) {
+  std::vector<Vector> zeta;
+  ComputeSources(*data_, node_, in_step_, fbuf_, zeta);
+  problem_.AddForce(fbuf_);
+  for (int k = 0; k < NumBranches(); k++) {
+    if (zeta[k].Size() > 0) {
+      AddCoupledForce(k, zeta[k]);
     }
   }
 }
