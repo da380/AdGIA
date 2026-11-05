@@ -502,10 +502,12 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
    * region classified by the sign of @f$\mathbf m\cdot\nabla\Phi_0@f$
    * as the region's outer or inner wall); the level foliation regular
    * (asserted: @f$|\nabla\Phi_0|@f$ away from zero on the fluid except
-   * near a centre). Incompatible with SetPicardBorder(),
-   * SetMonolithicBorder() and, for now, SetRotation() (the border's
-   * centrifugal columns are not wired). Call once, after construction
-   * and before the first Solve().
+   * near a centre). Incompatible with SetPicardBorder() and
+   * SetMonolithicBorder(). Composes with SetRotation(): the border's
+   * centrifugal columns are wired on this class (the level means of
+   * the centrifugal potential pair with the @f$\nu@f$ rows;
+   * TestRotation's LevelBorderCentrifugalCoupling). Call once, after
+   * construction and before the first Solve().
    */
   void SetLevelBorder(int levels = 16);
 

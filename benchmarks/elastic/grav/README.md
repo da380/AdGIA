@@ -6,9 +6,13 @@ fluid–solid — compared across the three codes as conventional Love
 numbers: the load numbers h' l' k' (Farrell's, referred to the load's
 direct potential, geodetic sign) and the geodetic tidal numbers h l k
 (NaN below degree 2). Degree 1 is in the centre-of-mass frame in every
-code (k'_1 = -1 identically); degree 0 of AdGIA's Dahlen fluid is
-excluded by design and NaN — the Maxwell-core route covers it
-(`doc/static_fluid_core.tex`).
+code (k'_1 = -1 identically). Degree 0 of AdGIA's Dahlen fluid is
+benchmarked when the run closes the fluid by the level border
+(`love_benchmark -level-border <n>`, the default of the love_numbers
+family's `run` script on the fluid models; `doc/dahlen_closure.tex`);
+the naked reduction (`-level-border 0`) has a degree 0 that is wrong by
+design, exhibited rather than benchmarked, and `from_results` writes it
+as NaN. The Maxwell-core route also carries degree 0, at a cost.
 
 **The reference here is pyslfp**: the most thoroughly tested of the
 three (checked in its own suite against closed forms and an independent
@@ -75,10 +79,11 @@ Columns `l hp lp kp hT lT kT`, dimensionless:
   `make_case <model> --h 0.3 --buffer 0.2 --angular 0.3 --thin 4 --lmax
   10`, solved by `love_benchmark -o 2 -rt 1e-10 -s 1 -method
   dahlen|maxwell -lmin 0 -lmax 6 -deg 16`): the fluid_core pattern
-  repeats on every variant. `from_results` leaves degree 0 out (NaN) of
-  the exchange file of a Dahlen run on a model with a fluid layer, so the
-  Dahlen worst is over l >= 1; the Dahlen degree-0 values quoted below
-  are from the results JSON. The worst entry
+  repeats on every variant. These are NAKED Dahlen runs (no level
+  border, before the closure was built): `from_results` leaves their
+  degree 0 out (NaN) of the exchange file, so the Dahlen worst is over
+  l >= 1; the Dahlen degree-0 values quoted below are from the results
+  JSON. Runs closed by the level border are to follow. The worst entry
   is h'_6 in every run; seconds on 8 ranks:
 
   | model | route | worst | hp2 | hp1, lp1 | hp0 | s |

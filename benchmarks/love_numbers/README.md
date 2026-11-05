@@ -180,11 +180,14 @@ Eulerian methods: an off-axis cap load summed over the degrees up to
 the solid, phi over body and buffer). Its outputs give the maps
 `field_<run>.png` and the error by degree `field_spectrum.png`;
 `--paraview` writes the fields, the reference and their difference.
-With a fluid layer the summed load starts at degree 1 by default;
-`field_benchmark -lmin 0` (run by hand) includes degree zero for either
-method and shows Dahlen's degree-zero difference from the reference
-(`doc/benchmarks.tex`, "Degree zero with a fluid layer"). The Love-number
-plots show Dahlen's degree-zero point for the same reason.
+With a fluid layer and the naked Dahlen reduction the summed load
+starts at degree 1 by default; `field_benchmark -lmin 0` (run by hand)
+includes degree zero for either method and shows the naked Dahlen's
+degree-zero difference from the reference (`doc/dahlen_closure.tex`).
+Closed by the level border (`-level-border <n>`, the `run` script's
+default on the fluid models) degree zero is included like any other.
+The Love-number plots show the naked Dahlen's degree-zero point for the
+same reason.
 
 ## Combined solves
 
@@ -208,9 +211,10 @@ by degree discard and the combined solve adds to each degree's number. On
 `fluid_core` at h = 0.3, order 2, the difference is 2e-5 to 4.5e-3
 relative, below the error against the reference in all entries but one;
 `doc/benchmarks.tex` ("Combined solves") has the numbers and the cost.
-Dahlen's fluid leaves degree zero out of the combined load, since its
-degree-zero response differs from the reference by design (it does not
-represent the fluid's compressibility there); the other methods keep it.
+The naked Dahlen fluid leaves degree zero out of the combined load,
+since its degree-zero response differs from the reference by design (it
+does not represent the fluid's compressibility there); closed by the
+level border it keeps it, as the other methods do.
 
 ## Resolution and h-refinement
 

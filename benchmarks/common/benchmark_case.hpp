@@ -1254,6 +1254,17 @@ class Case {
                ? std::string(",\n  \"cmb_keep_inner\": ") +
                      (options_.cmb_keep_inner ? "true" : "false")
                : std::string())
+       // The level border (doc/dahlen_closure.tex): the node count of the
+       // closure on the dahlen and referential routes, 0 when the fluid
+       // is left to the naked reduction; the converters read it.
+       << (method == "dahlen" || method == "referential"
+               ? ",\n  \"level_border\": " +
+                     std::to_string(options_.level_border) +
+                     (options_.level_border > 0
+                          ? std::string(",\n  \"level_monolithic\": ") +
+                                (options_.level_monolithic ? "true" : "false")
+                          : std::string())
+               : std::string())
        << (options_.map_amplitude != 0.0
                ? ",\n  \"map_amplitude\": " + Num(options_.map_amplitude) +
                      ",\n  \"map_mode\": \"" +

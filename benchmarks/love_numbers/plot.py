@@ -102,6 +102,10 @@ class Run:
     iterations: dict[int, int] | None = None
     #: the CMB treatment of the Dahlen path ("full" otherwise)
     cmb: str = "full"
+    #: the level-border closure of the fluid (dahlen, referential): nodes
+    #: per fluid region, 0 for the naked reduction
+    level_border: int = 0
+    level_monolithic: bool = False
     map_amplitude: float = 0.0
     schur: bool = False
     combined: bool = False
@@ -117,6 +121,10 @@ class Run:
     def variant_name(self) -> str:
         """The variant as a legend label: the method and its tags."""
         name = self.method if self.cmb == "full" else f"cmb {self.cmb}"
+        if self.level_border:
+            name += f", level border {self.level_border}"
+            if self.level_monolithic:
+                name += " (monolithic)"
         if self.map_amplitude:
             name += f", map {self.map_amplitude:g}"
         if self.schur:
@@ -145,6 +153,8 @@ def read_run(path: Path) -> Run:
                    "gauged" if r.get("fluid_treatment") == "gauged"
                    else "dahlen")
     cmb = r.get("cmb", "full")
+    level_border = int(r.get("level_border", 0))
+    level_monolithic = bool(r.get("level_monolithic", False))
     schur = r.get("solver") == "schur_cg"
     map_amplitude = r.get("map_amplitude", 0.0)
     values: dict[str, dict[int, float]] = {key: {} for key, *_ in QUANTITIES}
@@ -170,10 +180,12 @@ def read_run(path: Path) -> Run:
             if forcing == "load" and l == 0 and name != "h":
                 # k' and l' vanish at degree zero: nothing to be relative to
                 continue
-            # Dahlen's fluid differs from the reference at degree zero by
-            # design (doc/gauged_fluid.md, "Degree 0"): its degree-zero point
-            # is kept, to show the difference; the welded and slipping
-            # treatments describe the fluid compressibly and agree there.
+            # The naked Dahlen fluid differs from the reference at degree
+            # zero by design (doc/dahlen_closure.tex): its degree-zero
+            # point is kept, to show the difference; closed by the level
+            # border it is benchmarked like every other degree, as are the
+            # welded and slipping treatments, which describe the fluid
+            # compressibly.
             if forcing == "load" and l == 1 and name == "k":
                 # minus one by the choice of frame
                 continue
@@ -186,6 +198,10 @@ def read_run(path: Path) -> Run:
     if cmb != "full":
         tag += f"_{cmb}"
         label += f" (cmb {cmb})"
+    if level_border:
+        tag += f"_lb{level_border}" + ("_mono" if level_monolithic else "")
+        label += (f" (lb {level_border}" +
+                  (", mono)" if level_monolithic else ")"))
     if schur:
         tag += "_schur"
         label += " (schur)"
@@ -200,7 +216,9 @@ def read_run(path: Path) -> Run:
                values=values, label=label, method=method, tag=tag,
                setup_seconds=r["setup_seconds"],
                solve_seconds=solve_seconds, iterations=iterations,
-               cmb=cmb, map_amplitude=map_amplitude, schur=schur,
+               cmb=cmb, level_border=level_border,
+               level_monolithic=level_monolithic,
+               map_amplitude=map_amplitude, schur=schur,
                combined=combined)
 
 
@@ -703,7 +721,9 @@ def plot_field_maps(field: dict, title: str, out: Path) -> None:
     cap = field["cap"]
     variant = field_method(field) + (
         "" if field.get("cmb", "full") == "full"
-        else f", cmb {field['cmb']}")
+        else f", cmb {field['cmb']}") + (
+        f", level border {int(field['level_border'])}"
+        if int(field.get("level_border", 0)) > 0 else "")
     fig.suptitle(
         f"{title} ({variant}): response on the surface to a "
         f"cap of radius "
@@ -741,6 +761,9 @@ def field_key(case: str, field: dict) -> str:
         key += f"_{method}"
     if field.get("cmb", "full") != "full":
         key += f"_{field['cmb']}"
+    if int(field.get("level_border", 0)) > 0:
+        key += f"_lb{int(field['level_border'])}" + (
+            "_mono" if field.get("level_monolithic") else "")
     if field.get("solver") == "schur_cg":
         key += "_schur"
     return key

@@ -107,9 +107,15 @@ Laplace reference there carries that band (`doc/static_fluid_core.tex`).
 
 ```
 mpiexec -np 8 <build>/benchmarks/bin/viscoelastic_love \
-    -c case.json -o 2 -lmax 4 -tau 1 -out results.json
+    -c case.json -o 2 -lmax 4 -tau 1 -level-border 16 -out results.json
 ./compare results.json --reference laplace_fluid_core_tauf_1.json
 ```
+
+On a model with a fluid layer `-level-border <n>` closes the Dahlen
+fluid by the level border of `doc/dahlen_closure.tex` (the default
+static route; the campaign passes 16), so that the degree-0 history is
+benchmarked; without it the naked reduction's degree 0 is wrong by
+design. The results file records `"level_border"`.
 
 The case can be any Love-number case (`./make_case <model> --h 0.3
 --out <dir>` makes one). `compare.py` prints and writes, per degree and

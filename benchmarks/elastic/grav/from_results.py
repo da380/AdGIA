@@ -4,9 +4,12 @@
 turns one such file into the cross-code exchange format of the E2 tier:
 columns l hp lp kp hT lT kT, dimensionless, NaN where a degree or a
 tidal solve is absent (degree 1 of the tide, say).  Degree 0 of a Dahlen
-run on a case with a fluid layer is NaN as well, computed or not: there
-the method is wrong by design (the exhibited values stay in the JSON),
-and the exchange file carries what is benchmarked.  The numbers are
+run on a case with a fluid layer is NaN as well when the run left the
+fluid to the naked reduction (no level border, `"level_border": 0` or
+absent in the JSON): there the method is wrong by design (the exhibited
+values stay in the JSON), and the exchange file carries what is
+benchmarked.  A run closed by the level border (`-level-border <n>`,
+doc/dahlen_closure.tex) keeps its degree 0.  The numbers are
 copied, not recomputed: love_benchmark's load numbers are the
 conventional primed ones and its tidal numbers the geodetic ones already.
 
@@ -59,7 +62,9 @@ def main(argv: list[str] | None = None) -> None:
 
     results = json.loads(args.results.read_text())
     entries = {int(d["degree"]): d for d in results["degrees"]}
+    level_border = int(results.get("level_border", 0))
     dahlen_fluid = (results.get("method") == "dahlen"
+                    and level_border == 0
                     and has_fluid_layer(args.results, results))
     if dahlen_fluid:
         entries.pop(0, None)
@@ -78,9 +83,12 @@ def main(argv: list[str] | None = None) -> None:
         "E2 conventional Love numbers from AdGIA (love_benchmark)",
         exchange.provenance_line("adgia", HERE),
         f"results {args.results}; method {results.get('method', '?')}, "
-        f"order {results.get('order', '?')}; dimensionless (load primed, "
-        "geodetic tidal; NaN = absent solve"
-        + (", degree 0 of a Dahlen fluid run left out by design)"
+        f"order {results.get('order', '?')}"
+        + (f", level border {level_border} nodes"
+           + (" (monolithic)" if results.get("level_monolithic") else "")
+           if level_border > 0 else "")
+        + "; dimensionless (load primed, geodetic tidal; NaN = absent solve"
+        + (", degree 0 of a naked Dahlen fluid run left out by design)"
            if dahlen_fluid else ")"),
     ]
     scalars = {"gravitating": 1.0}

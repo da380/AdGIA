@@ -15,9 +15,17 @@ as fields:
   <out>/<model>/h<h>/parts_<np>/          with --partition
 
 The suffix <s> is empty for the Dahlen method with the full CMB
-treatment and block MINRES; otherwise it names the method, the CMB
-treatment, the map amplitude (_map<A>), the Schur solver (_schur) and,
-for the Love-number results, --combined, in that order.
+treatment, no level border and block MINRES; otherwise it names the
+method, the CMB treatment, the level border (_lb<n>, _lb<n>_mono), the
+map amplitude (_map<A>), the Schur solver (_schur) and, for the
+Love-number results, --combined, in that order.
+
+On the fluid models the Dahlen method closes the fluid by the level
+border of doc/dahlen_closure.tex by default (`--level-border 16`, the
+default static route; results_o<p>_lb16.json), so that its degree 0 is
+benchmarked; `--level-border 0` runs the naked reduction, whose degree 0
+is the exhibited defect, and `--level-border 16 0` both. The referential
+closure takes the same node counts under `--referential-border`.
 
 A run whose results file exists is skipped unless `--force` is given, and a
 case that exists is kept unless `--remake` is, so a sweep can be extended or
@@ -61,6 +69,7 @@ sys.path.insert(0, str(HERE.parent / "common"))
 
 import models  # noqa: E402
 from drivers import find_programs, run  # noqa: E402
+from planetmodel import is_fluid  # noqa: E402
 from outputs import outside_source  # noqa: E402
 
 
@@ -88,6 +97,22 @@ def check_settings(results: Path, settings: dict) -> None:
                 if have.get(k) != v}
         print(f"  warning: {results} was made with other settings "
               f"(file, now): {diff}; --force to rerun")
+
+
+def has_fluid_layer(name: str) -> bool:
+    """Whether the named model has a fluid layer (the level border applies)."""
+    return any(is_fluid(layer) for layer in models.model(name).layers)
+
+
+def borders_for(method: str, fluid: bool, args: argparse.Namespace) -> list[int]:
+    """The level-border node counts a method runs with on a model: the
+    naked reduction alone (0) where the border does not apply."""
+    if not fluid:
+        return [0]
+    if method == "dahlen" or (method == "referential"
+                              and args.referential_border):
+        return [16] if args.level_border is None else list(args.level_border)
+    return [0]
 
 
 def main() -> None:
@@ -140,6 +165,24 @@ def main() -> None:
                         "non-full results carry the choice as a suffix, "
                         "and cmb_report.py compares their cost and "
                         "accuracy")
+    p.add_argument("--level-border", type=int, nargs="+", default=None,
+                   metavar="N",
+                   help="level-border closures of the Dahlen method on the "
+                        "fluid models (doc/dahlen_closure.tex), one results "
+                        "file each: N nodes per fluid region, 0 the naked "
+                        "reduction whose degree 0 is the exhibited defect "
+                        "(default: 16; the solid models, the other methods "
+                        "and the non-full CMB treatments run unbordered). "
+                        "Bordered results carry the suffix _lb<N>")
+    p.add_argument("--level-mono", action="store_true",
+                   help="solve the bordered Dahlen system monolithically "
+                        "(love_benchmark -level-mono; suffix _lb<N>_mono)")
+    p.add_argument("--referential-border", action="store_true",
+                   help="run the referential method with the level border "
+                        "too, at the --level-border node counts (the "
+                        "referential closure: identity mapping only, no "
+                        "tidal leg); without it the referential method "
+                        "runs unbordered")
     p.add_argument("--solver", type=int, nargs="+", default=[1],
                    choices=(0, 1),
                    help="Eulerian linear solvers to run, one results file "
@@ -220,21 +263,29 @@ def main() -> None:
                 failures.append(f"{case}: partition_case")
                 continue
         methods = list(args.method)
-        for order, method, solver, cmb in ((o, m, s, c) for o in args.order
-                                           for m in methods
-                                           for s in args.solver
-                                           for c in args.cmb):
+        fluid = has_fluid_layer(name)
+        for order, method, solver, cmb, border in (
+                (o, m, s, c, b) for o in args.order for m in methods
+                for s in args.solver for c in args.cmb
+                for b in borders_for(m, fluid, args)):
             if method not in ("dahlen", "gauged") and solver != args.solver[0]:
                 continue  # the referential solvers ignore the choice
             if method != "dahlen" and cmb != args.cmb[0]:
                 continue  # the treatments are the Dahlen path's: one
                 # run of the other methods per sweep, without them
+            if border > 0 and cmb != "full":
+                continue  # the border closes the full treatment's fluid
             mapped = args.map != 0.0
             if mapped and method not in ("referential", "slip_broken"):
                 continue  # the mapped benchmark runs the mapped methods
+            if mapped and border > 0:
+                continue  # the referential closure: identity mapping only
+            mono = args.level_mono and method == "dahlen" and border > 0
             suffix = "" if method == "dahlen" else f"_{method}"
             if cmb != "full" and method == "dahlen":
                 suffix += f"_{cmb}"
+            if border > 0:
+                suffix += f"_lb{border}" + ("_mono" if mono else "")
             if mapped:
                 suffix += f"_map{args.map:g}"
             if solver == 0:
@@ -243,6 +294,8 @@ def main() -> None:
             common = ["-c", str(case / "case.json"), "-o", str(order),
                       "-rt", f"{args.rel_tol:g}", "-s", str(solver),
                       "-method", method,
+                      *(["-level-border", str(border)] if border > 0 else []),
+                      *(["-level-mono"] if mono else []),
                       *(["-map", f"{args.map:g}"] if mapped else []),
                       *(["-cmb", cmb]
                         if cmb != "full" and method == "dahlen"

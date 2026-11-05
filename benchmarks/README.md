@@ -55,8 +55,10 @@ Three conventions carry the programme:
   first — written and read by `common/exchange.py` and reproduced by
   hand in the C++ drivers. Comparisons read two such files and report
   relative differences; they never need the producing code. Degree 1 is
-  compared in the centre-of-mass frame; degree 0 of the Dahlen family
-  is excluded by design (`doc/benchmarks.tex`).
+  compared in the centre-of-mass frame; degree 0 of a Dahlen run is
+  compared when the fluid is closed by the level border (the default
+  static route, `doc/dahlen_closure.tex`) and excluded, by design, for
+  the naked reduction.
 - **Tiered tolerances.** Where two codes solve the identical discrete
   problem (pyslfp and sl3dpp on the same deck and mesh rule), near
   machine precision. Across discretisations (FEM against spectral),
@@ -240,28 +242,31 @@ In brief (the measurements are in `doc/benchmarks.tex`):
   spread at coarse resolution is mesh error, not physics. The welded
   mapped assembly passes a solver-level change-of-variables identity to
   ~1e-6; the slipping-interface forms under a mapping are not verified.
-- For loading at l >= 1 on hydrostatic (spherical) models the Dahlen path
-  is the cheapest and as accurate as anything here: the practical
-  workhorse. The dearer formulations buy physics it cannot represent: the
-  compressible fluid at degree zero, the slipping interface, and the
-  referential family's mapped machinery. They do **not** buy non-neutral
-  core stratification: at N² ≠ 0 the gauged and referential
-  (gauge-penalty) methods are band-limited, their answers defined only to
-  the stratification band, and their semi-convergence there is
-  Rayleigh–Taylor growth. The general fluid method is the Maxwell
-  relaxation (`SetFluid`'s default treatment, method `maxwell`): any
-  geometry, any stratification, any number of fluid regions. The slipping
-  and welded formulations are finite idealisations of the dissipative
-  completion and serve as instruments (`doc/static_fluid_core.tex`, "The
-  status of the formulations"). The gauged and referential methods cost
+- On hydrostatic (spherical) models the Dahlen path closed by the level
+  border (`-level-border <n>`, `doc/dahlen_closure.tex`) is the default
+  static route: the cheapest here, as accurate as anything at l >= 1,
+  and with the border its degree zero is right too (the naked reduction
+  leaves degree zero to an arbitrary function, exhibited as the defect).
+  The dearer formulations buy the slipping interface and the referential
+  family's mapped machinery. None buys non-neutral core stratification:
+  at N² ≠ 0 the gauged and referential (gauge-penalty) methods are
+  band-limited, their answers defined only to the stratification band,
+  and their semi-convergence there is Rayleigh–Taylor growth; the
+  Maxwell relaxation (method `maxwell`) is physically right for any
+  geometry and stratification but cannot resolve the displacement of a
+  stratified fluid, which collapses to zero length scale at the
+  boundary, so it is not the reference either. The slipping and welded
+  formulations are finite idealisations of the dissipative completion
+  and serve as instruments. The gauged and referential methods cost
   several times the Dahlen path per load solve, the slipping methods one
   to two orders of magnitude more.
 - The standard unmeshed-core CMB condition (`uniform`) is safe for
   loading at l >= 2 (h' within 0.1 %, l'_2 and k'_2 ~0.3 %), about ten
   times worse on tides and so on the rotational feedback, which runs
   through the degree-2 tidal response; buoyancy alone (`winkler`) is safe
-  for neither. At degree zero every Dahlen-family treatment is wrong and
-  the gauged one is right.
+  for neither. At degree zero every naked Dahlen-family treatment is
+  wrong; the level border (full treatment only) and the gauged method
+  are right.
 
 ## The shared pieces (`common/`)
 

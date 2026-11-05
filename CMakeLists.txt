@@ -69,7 +69,7 @@ endif()
 include(FetchContent)
 FetchContent_Declare(planetmodel
     GIT_REPOSITORY https://github.com/da380/planetmodel.git
-    GIT_TAG        v1.3.0
+    GIT_TAG        v1.5.0
     SOURCE_SUBDIR  cpp)
 if(USE_MPI)
     get_filename_component(_mpi_bin_dir "${CMAKE_CXX_COMPILER}" DIRECTORY)
