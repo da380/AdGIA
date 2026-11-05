@@ -514,10 +514,21 @@ class DomainDivVectorDivVectorIntegrator : public mfem::BilinearFormIntegrator {
  * formed from the product of scalar nodal spaces. On the trial space, the
  * gradient operator must be defined.
  *
- * The product \f$\bvec{w}\cdot\bvec{u}\f$ is replaced by its nodal
- * interpolant on the trial space: \f$\bvec{w}\f$ is evaluated at the
- * trial element's nodes, and the gradient is that of the interpolant. The
- * trial element must therefore be nodal.
+ * By default the product \f$\bvec{w}\cdot\bvec{u}\f$ is replaced by its
+ * nodal interpolant on the trial space: \f$\bvec{w}\f$ is evaluated at
+ * the trial element's nodes, and the gradient is that of the interpolant.
+ * The trial element must therefore be nodal. The interpolant's error is
+ * second order in the energy norm WHATEVER the element order, because
+ * the form is also applied to oscillatory test functions (through its
+ * transpose in a symmetrised form): on a smooth problem the energy-norm
+ * error of a gravitating solve is then O(h^2) at every order
+ * (benchmarks/elastic/manufactured, 5 November 2026). With
+ * SetGradient() the integrator uses the product rule instead,
+ * \f$\grad(\bvec{w}\cdot\bvec{u}) = (\grad\bvec{u})^T\bvec{w} +
+ * (\grad\bvec{w})^T\bvec{u}\f$, with the supplied gradient
+ * \f$G_{kl} = \partial_k w_l\f$ at the quadrature points: no
+ * interpolation, optimal rates. The exact mode is not available with a
+ * mapping.
  */
 class DomainVectorGradVectorIntegrator : public mfem::BilinearFormIntegrator {
  private:
@@ -526,6 +537,8 @@ class DomainVectorGradVectorIntegrator : public mfem::BilinearFormIntegrator {
   mfem::VectorCoefficient* QV =
       nullptr; /**< Pointer to the vector coefficient \f$\bvec{w}\f$. */
   Diffeomorphism* map_ = nullptr; /**< Optional mapping (pull-back form). */
+  mfem::MatrixCoefficient* grad_w_ =
+      nullptr; /**< Optional \f$\partial_k w_l\f$: the exact product rule. */
 
 #ifndef MFEM_THREAD_SAFE
   mfem::Vector qv, test_shape; /**< Internal buffers for vector coefficient
@@ -558,6 +571,12 @@ class DomainVectorGradVectorIntegrator : public mfem::BilinearFormIntegrator {
                                    mfem::Coefficient& q,
                                    const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir), Q{&q}, QV{&qv} {}
+
+  /** @brief Use the product rule with the gradient @p grad_w of
+   * \f$\bvec{w}\f$ (\f$G_{kl} = \partial_k w_l\f$) instead of the
+   * nodal interpolant; nullptr restores the interpolant. Not owned. */
+  void SetGradient(mfem::MatrixCoefficient* grad_w) { grad_w_ = grad_w; }
+  bool UsesGradient() const { return grad_w_ != nullptr; }
 
   /** @brief Pull-back of the form through a mapping (referential
    * coefficients). */

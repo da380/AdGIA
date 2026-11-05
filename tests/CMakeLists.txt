@@ -351,6 +351,12 @@ add_executable(TestMixedProblem TestMixedProblem.cpp)
 target_link_libraries(TestMixedProblem PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestMixedProblem)
 
+add_executable(TestManufactured TestManufactured.cpp)
+target_link_libraries(TestManufactured PRIVATE AdGIA gtest_main)
+target_include_directories(TestManufactured PRIVATE
+    "${CMAKE_SOURCE_DIR}/benchmarks/elastic/manufactured")
+gtest_discover_tests(TestManufactured)
+
 add_executable(TestMixedProblemFluid TestMixedProblemFluid.cpp)
 target_link_libraries(TestMixedProblemFluid PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestMixedProblemFluid)

@@ -32,6 +32,8 @@
 
 namespace AdGIA {
 
+class DomainVectorGradVectorIntegrator;
+
 
 /**
  * @brief Self-gravitating linear quasi-static problem in the mixed
@@ -606,6 +608,27 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   void SetBackgroundPotential(mfem::Coefficient& phi0);
 
   /**
+   * @brief Assemble the gravity term @f$\tfrac12\rho\,v\cdot\grad(u\cdot
+   * \grad\Phi_0)@f$ (and its transpose) by the product rule with this
+   * Hessian of the background potential, @f$H_{kl} = \partial_k\partial_l
+   * \Phi_0@f$, instead of differentiating the nodal interpolant of
+   * @f$u\cdot\grad\Phi_0@f$ (DomainVectorGradVectorIntegrator). The
+   * interpolant limits the energy-norm accuracy of a gravitating solve
+   * to second order whatever the element order
+   * (benchmarks/elastic/manufactured); with the Hessian the rates are
+   * optimal. Call before the first assembly (AssembleForce()); not
+   * owned; nullptr restores the interpolant.
+   */
+  void SetBackgroundHessian(mfem::MatrixCoefficient* hessian);
+
+  /** @brief SetBackgroundHessian() with the Hessian of the discrete
+   * background potential itself (HessianGridFunctionCoefficient on its
+   * shadow): accurate to one order below the potential space, so a
+   * potential space one order above the displacement's gives the
+   * optimal rates. Call before the first assembly. */
+  void UseDiscreteBackgroundHessian();
+
+  /**
    * @brief Project out the rigid rotations of the solid region(s) with the
    * given SubMesh attributes (a solid inner core enclosed by fluid), which
    * are near-null vectors when density and background potential are
@@ -968,6 +991,8 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   mfem::Array<int> offsets_;
   std::unique_ptr<mfem::BlockOperator> block_op_;
   std::unique_ptr<mfem::BlockDiagonalPreconditioner> block_prec_;
+  DomainVectorGradVectorIntegrator* grav_g1_ = nullptr;  // owned by the form
+  std::unique_ptr<mfem::MatrixCoefficient> hess_phi0_shadow_;
   std::unique_ptr<ProjectedSolver> projected_prec_;  ///< P M P, both solvers
   std::unique_ptr<mfem::IterativeSolver> minres_;  ///< MINRES or block CG
 

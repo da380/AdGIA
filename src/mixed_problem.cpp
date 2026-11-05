@@ -584,6 +584,19 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetupCoupling() {
   Ct_op_ = Ct_owned_.get();
 }
 
+void LinearQuasiStaticMixedSelfGravitatingProblem::SetBackgroundHessian(
+    MatrixCoefficient* hessian) {
+  MFEM_VERIFY(grav_g1_, "SetBackgroundHessian: no gravity integrator.");
+  grav_g1_->SetGradient(hessian);
+}
+
+void LinearQuasiStaticMixedSelfGravitatingProblem::
+    UseDiscreteBackgroundHessian() {
+  hess_phi0_shadow_ =
+      std::make_unique<HessianGridFunctionCoefficient>(phi0_shadow_.get());
+  SetBackgroundHessian(hess_phi0_shadow_.get());
+}
+
 void LinearQuasiStaticMixedSelfGravitatingProblem::SetupGravityIntegrators() {
   half_rho_ = std::make_unique<ProductCoefficient>(0.5, *rho_);
   minus_half_rho_ = std::make_unique<ProductCoefficient>(-0.5, *rho_);
@@ -591,6 +604,7 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetupGravityIntegrators() {
       *minus_half_rho_, *grad_phi0_shadow_);
   auto* g1 =
       new DomainVectorGradVectorIntegrator(*grad_phi0_shadow_, *half_rho_);
+  grav_g1_ = g1;
   auto* g2 = new DomainVectorDivVectorIntegrator(*minus_half_rho_grad_);
   auto& integs = StiffnessIntegrators();
   integs.AddDomainIntegrator(g1);
