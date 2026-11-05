@@ -33,4 +33,5 @@
 #include "AdGIA/second_order.hpp"
 #include "AdGIA/discrete_adjoint.hpp"
 #include "AdGIA/discrete_second_order.hpp"
+#include "AdGIA/measurement.hpp"
 #include "AdGIA/viscoelastic.hpp"

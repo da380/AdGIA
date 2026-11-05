@@ -413,6 +413,8 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   /** @brief @f$\omega@f$ of the last Solve() (zero before; empty
    * without SetRotation()). */
   const mfem::Vector& AngularVelocity() const { return omega_; }
+  /** @brief The rotation rate of SetRotation() (0 without rotation). */
+  mfem::real_t RotationRate() const { return rot_Omega_; }
 
   /** @brief Solve the bordered system monolithically — one MINRES on
    * @f$[K\ B; B^T D_b]@f$ with a block-diagonal preconditioner whose

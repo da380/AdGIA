@@ -31,7 +31,10 @@ direction (`second_order.hpp`, gated against finite differences of the
 kernels); and the discrete flavour of both, the exact transpose of the
 stepping and its derivative (`discrete_adjoint.hpp`,
 `discrete_second_order.hpp`, gated by identities with the tangent and
-by symmetry), the method a user option (`doc/adjoints.md`). The library is under active development and is not yet
+by symmetry), the method a user option; and the measurement layer, each
+observable yielding its value and its adjoint dual, so a data vector and
+an adjoint force come from one definition (`measurement.hpp`,
+`doc/adjoints.md`). The library is under active development and is not yet
 user-facing: interfaces move.
 
 **Fluid regions.** For coupled elasto-gravity problems with fluid regions

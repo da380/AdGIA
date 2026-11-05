@@ -316,6 +316,37 @@ not built). Both discrete drivers require the Galerkin strain map,
 whole-mesh branches and linear isotropic rheologies; neither plays back a
 migrating shoreline.
 
+## 5a. Measurements (`measurement.hpp`)
+
+A `Measurement` is a linear observable of the state (u, φ, Φ_g, ω) that
+yields both its value and its dual: `Assemble` builds the dual once on a
+problem's spaces as a `MeasurementDual` (owned slot data in the
+`AdjointLoad` layouts), and the value is the pairing of that dual with
+the state (`Evaluate`), the same pairing the tangent uses in `Pair`, so
+J(u) and ⟨dJ, δu⟩ are consistent to rounding. Built in:
+`SurfaceDisplacementMeasurement` (∫ w·u dS: stations, caps, components,
+with `CapWindowCoefficient` and `RadialVectorCoefficient` for the usual
+weights), `SurfacePotentialMeasurement` (∫ w φ dS on the potential rows),
+`HarmonicCoefficientMeasurement` (one surface-harmonic coefficient of the
+radial displacement or of the potential, the dual being
+`BoundaryHarmonicCoefficients::LoadVector` of the unit coefficient, so the
+value is R^{d−1} times the analysis coefficient), `RotationMeasurement`
+(ω_k, polar motion ω_k/Ω, the relative length-of-day change −ω_3/Ω) and
+`SeaLevelMeasurement` (∫ h SL₁ dS with all four slots: u = −(h/g)∇Φ₀,
+φ = −h/g, uniform ∫ h/g dS, ω_k = −∫ h ψ_k/g dS, with g the body's
+discrete |∇Φ₀|; the potential-row integrals are assembled on the body's
+surface and carried to the potential space node by node).
+
+A `MeasurementSet` orders observations: point terms at forward times and
+time-integrated terms ∫ w(t) J(t) dt (displacement and potential rows
+only). `Data` gives the data vector of a forward trajectory (one elastic
+re-solve per node an observation needs; integrated terms by the grid's
+trapezoid rule, which is how the tangent and the discrete adjoints sample
+them) or of a static state; `Force(c)` is the `AdjointForce` of Σ c_i J_i
+(point terms at one time merged into one observation, integrated terms as
+continuous fillers), so a misfit's residual, a unit vector for one kernel
+or any weighting goes straight to every adjoint driver.
+
 ## 6. Choosing between the continuous and the discrete flavours
 
 The continuous flavour is the default and the discrete one the user's
@@ -460,6 +491,21 @@ identities to 1e-8; the static pairing as local sums to 1e-12.
 
 `TestDiscreteSecondOrderPar` (1, 2, 4 ranks): the 2-D evolution case
 against FD of the parallel discrete gradient (1e-5) and symmetry (1e-9).
+
+`TestMeasurement`:
+
+- `WaterLoadedBall3D`: the ball with water and rotation, 8 steps. The
+  radial-cap and harmonic duals equal the hand-built ones to 1e-13; the
+  sea-level four slots agree with the hand-built ones (which take g = g₀)
+  to the background's discretisation error, 0.7–1.0e-2 on this coarse
+  mesh; the identity ⟨dJ_i, δu⟩_tangent = FD of J_i along an η blob holds
+  to 1e-7 for the radial cap, the sea-level cap, polar motion, the length
+  of day and the (2,0) potential and (2,1) radial-u coefficients (gated
+  1e-4), and for the merged set.
+- `TimeIntegrated2D`: the unit-square Maxwell body, a point station and a
+  time-integrated station: the data equal the hand-computed pairing and
+  trapezoid sum (solver tolerance); tangent = FD (1e-5) and the discrete
+  adjoint = tangent (1e-8) for both, through `Force`.
 
 Also: `TestAdjointLove` (the η kernel on the gravitating Maxwell sphere
 against the Love-number closed form, 1.0037 at order 3; a radial direction
