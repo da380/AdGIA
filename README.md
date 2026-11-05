@@ -23,7 +23,9 @@ the shoreline; and ice histories read from the ICE-NG models — in serial
 and in parallel (MPI). The first-order adjoints are in as well: static,
 viscoelastic and gravitating, with the water and rotation feedbacks,
 giving kernels for viscosity, ice load and moduli, each checked by
-reciprocity and finite differences (`adjoint.hpp`). Next are the interface
+reciprocity and finite differences (`adjoint.hpp`), and the tangent-linear
+problem along moduli, viscosity and load directions (`tangent.hpp`, gated
+against finite differences and the adjoint). Next are the interface
 (lithospheric-thickness) kernels, the second-order adjoints, checkpointing
 beyond store-all and a production interface for inversion; the shape stage
 of the equilibrium-figures programme and nonlinear forward models lie

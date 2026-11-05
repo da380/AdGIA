@@ -351,6 +351,10 @@ add_executable(TestMixedProblem TestMixedProblem.cpp)
 target_link_libraries(TestMixedProblem PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestMixedProblem)
 
+add_executable(TestTangent TestTangent.cpp)
+target_link_libraries(TestTangent PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestTangent)
+
 add_executable(TestManufactured TestManufactured.cpp)
 target_link_libraries(TestManufactured PRIVATE AdGIA gtest_main)
 target_include_directories(TestManufactured PRIVATE

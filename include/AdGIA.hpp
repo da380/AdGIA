@@ -29,4 +29,5 @@
 #include "AdGIA/spherical_harmonics.hpp"
 #include "AdGIA/submesh.hpp"
 #include "AdGIA/adjoint.hpp"
+#include "AdGIA/tangent.hpp"
 #include "AdGIA/viscoelastic.hpp"
