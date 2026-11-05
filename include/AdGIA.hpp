@@ -30,4 +30,5 @@
 #include "AdGIA/submesh.hpp"
 #include "AdGIA/adjoint.hpp"
 #include "AdGIA/tangent.hpp"
+#include "AdGIA/second_order.hpp"
 #include "AdGIA/viscoelastic.hpp"

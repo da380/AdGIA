@@ -189,20 +189,6 @@ void TangentViscoelasticOperator::SetDirection(const TangentDirection& dir) {
   }
 }
 
-int TangentViscoelasticOperator::NodeAt(real_t t) const {
-  const int N = fwd_->Size();
-  int best = 0;
-  for (int n = 1; n < N; n++) {
-    if (std::abs(fwd_->Time(n) - t) < std::abs(fwd_->Time(best) - t)) {
-      best = n;
-    }
-  }
-  const real_t span = fwd_->Time(N - 1) - fwd_->Time(0);
-  MFEM_VERIFY(std::abs(fwd_->Time(best) - t) <= 1e-8 * (span > 0 ? span : 1.0),
-              "TangentViscoelasticOperator: a solve off the forward grid.");
-  return best;
-}
-
 void TangentViscoelasticOperator::BuildEffectiveBorn() {
   // delta mu_eff = delta mu_inf + sum_k [beta_k delta mu_k + delta beta_k mu_k],
   // with beta_k the operator's own weight coefficients (the ones the
@@ -254,8 +240,8 @@ void TangentViscoelasticOperator::BuildEffectiveBorn() {
   born_eff_dt_ = step_dt_;
 }
 
-void TangentViscoelasticOperator::Inject(real_t t) {
-  const int n = in_step_ ? target_ : NodeAt(t);
+void TangentViscoelasticOperator::Inject(real_t) {
+  const int n = node_;
   fbuf_.SetSize(problem_.DisplacementSpace().GetVSize());
   if (in_step_) {
     // The effective solve: the Born force of the moduli and of the
@@ -264,7 +250,7 @@ void TangentViscoelasticOperator::Inject(real_t t) {
       BuildEffectiveBorn();
     }
     if (born_eff_) {
-      const GridFunction& u = fwd_->Displacement(n);
+      const GridFunction& u = data_->Displacement(n);
       bbuf_.SetSize(u.Size());
       born_eff_->Mult(u, bbuf_);
       fbuf_ = 0.0;
@@ -283,13 +269,13 @@ void TangentViscoelasticOperator::Inject(real_t t) {
   // internal variables at this node.
   if (born_ && !born_->Empty()) {
     fbuf_ = 0.0;
-    born_->AddTo(fwd_->Displacement(n), fbuf_);
+    born_->AddTo(data_->Displacement(n), fbuf_);
     problem_.AddForce(fbuf_);
   }
   for (int k = 0; k < NumBranches(); k++) {
     const int nd = nodes_[k].Size();
     if (has_dmu_[k]) {
-      Vector mk = Branch(fwd_->State(n), k);
+      Vector mk = Branch(data_->State(n), k);
       zbuf_.SetSize(nd * nc_);
       for (int c = 0; c < nc_; c++) {
         for (int q = 0; q < nd; q++) {
@@ -301,9 +287,11 @@ void TangentViscoelasticOperator::Inject(real_t t) {
   }
 }
 
-void TangentViscoelasticOperator::RelaxationSource(int n, real_t dt) {
-  fwd_->Strain(n, dn_);
-  fwd_->Strain(n + 1, dn1_);
+void TangentViscoelasticOperator::RelaxationSource(TangentData& data, int n0,
+                                                   int n1) {
+  const real_t dt = data.Time(n1) - data.Time(n0);
+  data.Strain(n0, dn_);
+  data.Strain(n1, dn1_);
   const bool new_dt = dt != step_dt_ || born_eff_dt_ < 0.0;
   step_dt_ = dt;
   for (int k = 0; k < NumBranches(); k++) {
@@ -315,7 +303,7 @@ void TangentViscoelasticOperator::RelaxationSource(int n, real_t dt) {
     if (!has_ditau_[k] && !has_dmu_[k]) {
       continue;
     }
-    Vector mk = Branch(fwd_->State(n), k);
+    Vector mk = Branch(data.State(n0), k);
     // The known part of the step's branch force, 2 dmu (e m^n + a d^n)
     // + C_k (de m^n + da d^n) dh, and the state source s_k.
     Vector rel(nd * nc_);
@@ -352,42 +340,65 @@ void TangentViscoelasticOperator::RelaxationSource(int n, real_t dt) {
   }
 }
 
-bool TangentViscoelasticOperator::Run(ForwardTrajectory& forward,
-                                      TangentTrajectory& out) {
+bool TangentViscoelasticOperator::Start(const Vector& dm, real_t t,
+                                        TangentData& data, int node) {
   MFEM_VERIFY(born_ || !dmu_.empty(), "TangentViscoelasticOperator: call "
                                        "SetDirection() first.");
-  fwd_ = &forward;
+  data_ = &data;
+  node_ = node;
+  in_step_ = false;
+  InvalidateDisplacement();
+  return SolveElastic(dm, t);
+}
+
+bool TangentViscoelasticOperator::Step(Vector& dm, real_t& t, TangentData& data,
+                                       int n0, int n1) {
+  data_ = &data;
+  // The step reuses the start's displacement; if the state was not
+  // started on this data (or was changed), start it here.
+  if (!CacheMatches(dm, t)) {
+    if (!Start(dm, t, data, n0)) {
+      return false;
+    }
+  }
+  const real_t dt = data.Time(n1) - data.Time(n0);
+  RelaxationSource(data, n0, n1);
+  node_ = n1;
+  in_step_ = true;
+  ExponentialTrapezoidStep(dm, t, dt);
+  in_step_ = false;
+  // Complete the state with the relaxation source: the solve of the step
+  // already carried it, so the displacement is consistent with the
+  // completed state.
+  for (int k = 0; k < NumBranches(); k++) {
+    if (has_ditau_[k]) {
+      Vector mk = Branch(dm, k);
+      mk += s_[k];
+    }
+  }
+  t = data.Time(n1);  // no drift against the data's grid
+  SetTime(t);
+  UpdateCache(dm, t);
+  return true;
+}
+
+bool TangentViscoelasticOperator::Run(ForwardTrajectory& forward,
+                                      TangentTrajectory& out) {
+  ForwardTrajectoryData data(forward);
   out.Clear();
   const int N = forward.Size() - 1;
   MFEM_VERIFY(N >= 0, "TangentViscoelasticOperator: an empty trajectory.");
   Vector dm(Height());
   dm = 0.0;
   real_t t = forward.Time(0);
-  in_step_ = false;
-  InvalidateDisplacement();
-  if (!SolveElastic(dm, t)) {
+  if (!Start(dm, t, data, 0)) {
     return false;
   }
   out.Record(t, dm, problem_);
   for (int n = 0; n < N; n++) {
-    const real_t dt = forward.Time(n + 1) - forward.Time(n);
-    RelaxationSource(n, dt);
-    target_ = n + 1;
-    in_step_ = true;
-    ExponentialTrapezoidStep(dm, t, dt);
-    in_step_ = false;
-    // Complete the state with the relaxation source: the solve of the
-    // step already carried it, so the displacement is consistent with
-    // the completed state.
-    for (int k = 0; k < NumBranches(); k++) {
-      if (has_ditau_[k]) {
-        Vector mk = Branch(dm, k);
-        mk += s_[k];
-      }
+    if (!Step(dm, t, data, n, n + 1)) {
+      return false;
     }
-    t = forward.Time(n + 1);  // no drift against the forward grid
-    SetTime(t);
-    UpdateCache(dm, t);
     out.Record(t, dm, problem_);
   }
   return true;

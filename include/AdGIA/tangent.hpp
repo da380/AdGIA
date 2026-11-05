@@ -70,6 +70,39 @@ class ModuliBornForce {
 };
 
 /**
+ * @brief The data a tangent step reads: the fields of the trajectory
+ * being linearised at its nodes. ForwardTrajectory serves the forward
+ * run (ForwardTrajectoryData); the second-order adjoint serves the
+ * adjoint's own reversed trajectory, a window of nodes at a time.
+ */
+class TangentData {
+ public:
+  virtual ~TangentData() = default;
+  virtual int Size() const = 0;
+  virtual mfem::real_t Time(int n) const = 0;
+  virtual const mfem::Vector& State(int n) const = 0;
+  virtual const mfem::GridFunction& Displacement(int n) = 0;
+  /** @brief The strain D u of node @p n, full internal layout. */
+  virtual void Strain(int n, mfem::Vector& d) = 0;
+};
+
+/** @brief ForwardTrajectory as TangentData. */
+class ForwardTrajectoryData : public TangentData {
+ public:
+  explicit ForwardTrajectoryData(ForwardTrajectory& f) : f_(f) {}
+  int Size() const override { return f_.Size(); }
+  mfem::real_t Time(int n) const override { return f_.Time(n); }
+  const mfem::Vector& State(int n) const override { return f_.State(n); }
+  const mfem::GridFunction& Displacement(int n) override {
+    return f_.Displacement(n);
+  }
+  void Strain(int n, mfem::Vector& d) override { f_.Strain(n, d); }
+
+ private:
+  ForwardTrajectory& f_;
+};
+
+/**
  * @brief The recorded tangent trajectory: per forward node the tangent
  * internal state, displacement and, on a gravitating twin, the potential
  * and the border unknowns (the uniform potential term of a water load,
@@ -151,15 +184,37 @@ class TangentViscoelasticOperator : public ViscoelasticOperator {
                               const ViscoelasticOperator& forward);
 
   void SetDirection(const TangentDirection& dir);
+  const TangentDirection& Direction() const { return dir_; }
+  /** @brief Nodal delta(1/tau_k) of the direction, branch layout (empty
+   * for a branch the direction leaves alone). */
+  const mfem::Vector& DeltaInverseRelaxationTime(int k) const {
+    return ditau_[k];
+  }
+  bool HasDeltaInverseRelaxationTime(int k) const { return has_ditau_[k]; }
 
   /** @brief March the tangent problem along @p forward's grid and record
    * it in @p out; false if a solve fails. */
   bool Run(ForwardTrajectory& forward, TangentTrajectory& out);
 
+  // --- single steps on any data (the second-order sweep) ------------------
+
+  /** @brief The unrelaxed tangent solve at node @p node of @p data (the
+   * start of a march, or after a jump): the problem's displacement is
+   * then the tangent of the data's displacement at that node for the
+   * state @p dm at time @p t. */
+  bool Start(const mfem::Vector& dm, mfem::real_t t, TangentData& data,
+             int node);
+
+  /** @brief One tangent step of the exponential trapezoid scheme from
+   * node @p n0 to node @p n1 of @p data (dt = their time difference),
+   * completing the state with the relaxation source; @p t is advanced
+   * to Time(n1). */
+  bool Step(mfem::Vector& dm, mfem::real_t& t, TangentData& data, int n0,
+            int n1);
+
  private:
   void Inject(mfem::real_t t);
-  int NodeAt(mfem::real_t t) const;
-  void RelaxationSource(int n, mfem::real_t dt);
+  void RelaxationSource(TangentData& data, int n0, int n1);
 
   void BuildEffectiveBorn();
 
@@ -176,9 +231,9 @@ class TangentViscoelasticOperator : public ViscoelasticOperator {
   std::unique_ptr<mfem::BilinearForm> born_eff_;
   mfem::real_t born_eff_dt_ = -1.0;
   mfem::real_t step_dt_ = 0.0;
-  ForwardTrajectory* fwd_ = nullptr;
+  TangentData* data_ = nullptr;
   bool in_step_ = false;
-  int target_ = 0;
+  int node_ = 0;  ///< the data node the current solve's sources read
   mfem::Vector fbuf_, dn_, dn1_, zbuf_, bbuf_;
 };
 

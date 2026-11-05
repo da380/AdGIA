@@ -196,6 +196,10 @@ struct AdjointPair {
    * potential, uniform term and angular velocity are current for this
    * pairing) — for accumulators reading more than the elastic fields. */
   LinearQuasiStaticProblem* problem = nullptr;
+  /** An optional pointwise factor on the kernel density (the
+   * second-order sweep's explicit parameter terms, e.g. delta(1/tau)/
+   * (1/tau) on the Eta density); null for one. */
+  mfem::Coefficient* scale = nullptr;
 };
 
 /**
@@ -322,6 +326,8 @@ class IsotropicKernel : public KernelAccumulator {
   const mfem::GridFunction& Field() const { return *field_; }
 
   void AddPair(mfem::real_t w, const AdjointPair& p) override;
+  Parameter Param() const { return density_.Param(); }
+  int Branch() const { return branch_; }
 
  private:
   mfem::real_t Integrate(mfem::Coefficient& c) const;

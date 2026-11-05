@@ -310,22 +310,28 @@ void IsotropicKernel::AddPair(real_t w, const AdjointPair& p) {
     return;  // the Eta integrand is bounded: no impulsive or static part
   }
   density_.SetPair(p.u, p.udag, p.d, m, mdag);
+  std::unique_ptr<ProductCoefficient> scaled;
+  Coefficient* density = &density_;
+  if (p.scale) {
+    scaled = std::make_unique<ProductCoefficient>(density_, *p.scale);
+    density = scaled.get();
+  }
   for (std::size_t i = 0; i < directions_.size(); i++) {
-    auto weighted = ProductCoefficient(density_, *directions_[i]);
+    auto weighted = ProductCoefficient(*density, *directions_[i]);
     values_[i] += w * Integrate(weighted);
   }
   if (dual_fes_) {
     auto lf = detail::MakeLinearForm(dual_fes_);
     if (dual_marker_.Size() > 0) {
-      lf->AddDomainIntegrator(new DomainLFIntegrator(density_), dual_marker_);
+      lf->AddDomainIntegrator(new DomainLFIntegrator(*density), dual_marker_);
     } else {
-      lf->AddDomainIntegrator(new DomainLFIntegrator(density_));
+      lf->AddDomainIntegrator(new DomainLFIntegrator(*density));
     }
     lf->Assemble();
     dual_.Add(w, *lf);
   }
   if (field_) {
-    field_step_->ProjectCoefficient(density_);
+    field_step_->ProjectCoefficient(*density);
     field_->Add(w, *field_step_);
   }
 }

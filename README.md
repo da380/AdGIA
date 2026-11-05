@@ -25,8 +25,10 @@ viscoelastic and gravitating, with the water and rotation feedbacks,
 giving kernels for viscosity, ice load and moduli, each checked by
 reciprocity and finite differences (`adjoint.hpp`), and the tangent-linear
 problem along moduli, viscosity and load directions (`tangent.hpp`, gated
-against finite differences and the adjoint). Next are the interface
-(lithospheric-thickness) kernels, the second-order adjoints, checkpointing
+against finite differences and the adjoint), and the second-order adjoint,
+the Hessian-vector product as the derivative of the kernels along a
+direction (`second_order.hpp`, gated against finite differences of the
+kernels). Next are the interface (lithospheric-thickness) kernels, checkpointing
 beyond store-all and a production interface for inversion; the shape stage
 of the equilibrium-figures programme and nonlinear forward models lie
 further out. Benchmarking against independent reference solutions
