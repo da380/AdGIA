@@ -3,7 +3,7 @@
  * @brief The general linearised referential problem: quasi-static
  * elasticity about an arbitrarily pre-stressed equilibrium of a general
  * reference body, with referential self-gravity
- * (doc/gravitating_elasticity.md).
+ * (doc/theory/gravitating_elasticity.md).
  */
 
 #pragma once
@@ -31,7 +31,7 @@ namespace AdGIA {
 /**
  * @brief A prescribed radial vacuum-extension operator @f$E@f$: buffer
  * displacement vdofs from body displacement vdofs
- * (doc/gravitating_elasticity.md, "3.1 The linearised referential
+ * (doc/theory/gravitating_elasticity.md, "3.1 The linearised referential
  * system", option (b)).
  *
  * Buffer dofs shared with the body (the @f$\partial B@f$ trace) copy their
@@ -76,7 +76,7 @@ std::unique_ptr<mfem::HypreParMatrix> NewRadialVacuumExtension(
  * @brief A prescribed radial fluid-extension operator @f$E@f$: fluid
  * displacement vdofs from solid displacement vdofs — the smooth
  * solid-side extension @f$\tilde v@f$ of the gauged gravity treatment
- * for slipping interfaces (doc/slip_interface.tex, "Gravity: single-valued
+ * for slipping interfaces (doc/methods/slip_interface.tex, "Gravity: single-valued
  * zeta, and two vanishing results"), for a fluid CORE inside a solid
  * shell.
  *
@@ -120,7 +120,7 @@ std::unique_ptr<mfem::HypreParMatrix> NewRadialFluidExtension(
 
 /**
  * @brief The symmetrised slip-interface pressure blocks
- * (doc/slip_interface.tex, "The second variation", proposition "The
+ * (doc/methods/slip_interface.tex, "The second variation", proposition "The
  * interface form"): with @f$G@f$ the one-sided
  * kernel of SlipInterfacePressureIntegrator assembled on the solid
  * side, the pairing @f$J@f$, the sum map @f$S = [I, J]@f$ and the jump
@@ -176,7 +176,7 @@ ParSlipInterfaceBlocks NewSlipInterfaceMatrix(
 
 /**
  * @brief The symmetrised broken-@f$\zeta@f$ gravity interface blocks
- * (doc/slip_interface.tex, "Gravity: the broken-zeta organisation",
+ * (doc/methods/slip_interface.tex, "Gravity: the broken-zeta organisation",
  * proposition "The gravity interface form"). With @f$G_A@f$ the one-sided
  * vector kernel of
  * SlipInterfaceGravityIntegrator and @f$M_q@f$ the one-sided
@@ -250,7 +250,7 @@ ParSlipGravityInterfaceBlocks NewSlipGravityInterfaceMatrix(
  * @f$\mathbf{S}_e@f$, and the equilibrium mapping @f$\varphi_e@f$. Its
  * stiffness is the total-Lagrangian split
  * MaterialStiffnessIntegrator + GeometricStiffnessIntegrator
- * (doc/gravitating_elasticity.md §2). No branches: the rheology is
+ * (doc/theory/gravitating_elasticity.md §2). No branches: the rheology is
  * purely elastic and relaxation weights are no-ops.
  *
  * All inputs are non-owning and must outlive the rheology. Remember the
@@ -294,7 +294,7 @@ class ReferentialElasticRheology : public Rheology {
 /**
  * @brief The linearised quasi-static problem of a self-gravitating,
  * arbitrarily pre-stressed elastic body in the fully referential
- * formulation (doc/gravitating_elasticity.md): both the displacement and
+ * formulation (doc/theory/gravitating_elasticity.md): both the displacement and
  * the potential perturbation @f$\zeta^1@f$ are referential fields on the
  * fixed reference body.
  *
@@ -322,10 +322,10 @@ class ReferentialElasticRheology : public Rheology {
  * @f$\phi^1 = \zeta^1 - (Eu)\cdot\nabla\Phi_0@f$ through the prescribed
  * radial extension, the wall terms F2/F3, the follower load at
  * @f$\pi = p^0@f$ and the level border — are the construction steps of
- * doc/dahlen_closure.tex, "Implementation", and Solve() refuses a fluid
+ * doc/theory/dahlen_closure.tex, "Implementation", and Solve() refuses a fluid
  * problem until they are assembled.
  *
- * **Weak form** (doc/gravitating_elasticity.md §3.1, with
+ * **Weak form** (doc/theory/gravitating_elasticity.md §3.1, with
  * @f$a_e = J_e F_e^{-1} F_e^{-T}@f$, @f$\mathbf{g}_0 = \nabla\zeta^0@f$):
  * @f[
  *   \int_B \langle \hat C\,\widehat{\mathrm{sym}(F_e^TDu)},
@@ -348,7 +348,7 @@ class ReferentialElasticRheology : public Rheology {
  * area) loads the potential row alone,
  * @f$\ell_\zeta(\chi) = -\int_{\partial B}\sigma\chi\,dS@f$: the Eulerian
  * form's @f$-\int\sigma\nabla\Phi_0\cdot v@f$ is absorbed by the change of
- * variables (doc/gravitating_elasticity.md §3.1). Further loads via
+ * variables (doc/theory/gravitating_elasticity.md §3.1). Further loads via
  * ExternalLoad() /
  * ExternalPotentialLoad() / AddForce().
  *
@@ -374,7 +374,7 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
    * ball itself ("ball-wide" mode): the displacement carries the gauge
    * vacuum-extension field through the buffer, the constitutive
    * coefficients must vanish there, and SetVacuumExtension() supplies its
-   * regularisation (doc/gravitating_elasticity.md §3.1).
+   * regularisation (doc/theory/gravitating_elasticity.md §3.1).
    * @param fes_zeta Scalar referential-potential space on the parent
    * (Par)Mesh; not owned.
    * @param rheology The constitutive state (C, S_e, phi_e); must outlive
@@ -394,7 +394,7 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
    * SubMesh mode only (no ball-wide displacement). The regions source
    * the background potential; their perturbation terms — F1, F2, the
    * fluid halves of F3, the follower load and the level border
-   * (doc/dahlen_closure.tex, "The referential solid, and the wall
+   * (doc/theory/dahlen_closure.tex, "The referential solid, and the wall
    * seam") — are not yet assembled, and Solve() refuses
    * until they are. Empty for a solid body.
    */
@@ -436,7 +436,7 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
    * @brief The monolithic sea-level solve, referential form: in the
    * referential variables the water feedback collapses to a single
    * boundary mass @f$-\int w\,\zeta'\zeta\,J_\Sigma\,dS@f$ on the
-   * @f$\zeta\zeta@f$ block (doc/quasi_static_models.tex,
+   * @f$\zeta\zeta@f$ block (doc/methods/quasi_static_models.tex,
    * \S the referential sea-level terms), plus the rank-one
    * @f$\Phi_g@f$ border with the mass-conservation row; the border is
    * eliminated by the shared engine (bordered.hpp). 3-D only.
@@ -539,7 +539,7 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
    * here: the buffer carries no physical stiffness, the generalised
    * spectrum of the (operator, penalty) pair degenerates like @f$h^2@f$,
    * and the refinement diverges under mesh and order refinement
-   * (doc/gauge_penalty_iteration.tex, "When it must fail: the spectral
+   * (doc/methods/gauge_penalty_iteration.tex, "When it must fail: the spectral
    * condition"). Use @p refinements = 0 (a single biased solve, with an
    * @f$O(\epsilon)@f$ error in the observables), or the prescribed
    * extension of SetPrescribedVacuumExtension(), which is exact. Call
@@ -561,7 +561,7 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
   /**
    * @brief SubMesh mode: supply the buffer's gravity terms through a
    * *prescribed* extension @f$u_{\mathrm{ext}} = E\,u@f$ on a buffer
-   * displacement space (option (b) of doc/gravitating_elasticity.md
+   * displacement space (option (b) of doc/theory/gravitating_elasticity.md
    * §3.1, the accurate route): the buffer's gravity-gravity block and
    * coupling are assembled on @p fes_buffer and folded through @f$E@f$
    * by sparse products. Exact for any smooth extension (the choice is
@@ -583,7 +583,7 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
 
   /**
    * @brief The eliminated-fluid potential glue — steps (ii) and (iii) of
-   * the referential closure (doc/dahlen_closure.tex, "Implementation",
+   * the referential closure (doc/theory/dahlen_closure.tex, "Implementation",
    * the referential variant): a DISCRETE change of variables. The fluid
    * region's perturbation terms are assembled as the Eulerian forms of
    * the mixed class — the fluid mass term F1, the wall buoyancy term F2
@@ -643,7 +643,7 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
   /**
    * @brief Close the eliminated fluid's degree-0 freedom with the level
    * border (step (iv) of the referential closure;
-   * doc/dahlen_closure.tex, "Implementation"): the shared builder's
+   * doc/theory/dahlen_closure.tex, "Implementation"): the shared builder's
    * border (level_border.hpp) with its @f$
 u@f$ columns CONJUGATED
    * through the potential glue — in the referential variables a mixed
@@ -798,7 +798,7 @@ u@f$ columns CONJUGATED
   // eliminated fluid regions (constructor): geometry and background
   // sources; the perturbation terms come through the potential glue
   // (SetFluidPotentialGlue), the level border is still to come
-  // (doc/dahlen_closure.tex, "Implementation").
+  // (doc/theory/dahlen_closure.tex, "Implementation").
   std::vector<FluidRegion> fluids_;
   std::list<mfem::Array<int>> fluid_markers_;  ///< parent-attribute markers
 
@@ -983,12 +983,12 @@ u@f$ columns CONJUGATED
 /**
  * @brief The linearised quasi-static problem with a genuinely *slipping*
  * fluid–solid interface in the referential formulation
- * (doc/slip_interface.tex): the broken displacement pair
+ * (doc/methods/slip_interface.tex): the broken displacement pair
  * @f$(u_s, u_f)@f$ on solid and fluid SubMeshes of the ball and the
  * single-valued referential potential @f$\zeta^1@f$ on the ball — the
- * three-block system of doc/slip_interface.tex, "The collected operator".
+ * three-block system of doc/methods/slip_interface.tex, "The collected operator".
  * EnableBrokenZeta() switches to the four-block broken-@f$\zeta@f$
- * organisation (doc/slip_interface.tex, "Gravity: the broken-zeta
+ * organisation (doc/methods/slip_interface.tex, "Gravity: the broken-zeta
  * organisation").
  *
  * **Blocks.**
@@ -1138,7 +1138,7 @@ class LinearQuasiStaticReferentialSelfGravitatingSlipProblem
    * the gauge refinements (no multiplier updates); SetConstraint()'s
    * iteration count sets the number of those refinement solves, all of
    * which run. Single-valued organisation only (EnableBrokenZeta() and
-   * EnableKKT() are mutually exclusive). See doc/slip_interface.tex,
+   * EnableKKT() are mutually exclusive). See doc/methods/slip_interface.tex,
    * "Constraint enforcement", "KKT enforcement".
    *
    * @param fes_scalar_solid Scalar space on the solid SubMesh; the
@@ -1149,7 +1149,7 @@ class LinearQuasiStaticReferentialSelfGravitatingSlipProblem
    * the recommended setting in 3-D, but not robust everywhere — with
    * quadratic displacements in 2-D it can make the gauge refinements
    * diverge. With a lower-order multiplier, check that
-   * NormalJumpHistory() decreases (doc/slip_interface.tex, "The
+   * NormalJumpHistory() decreases (doc/methods/slip_interface.tex, "The
    * multiplier space"). Not owned.
    */
   void EnableKKT(mfem::FiniteElementSpace* fes_scalar_solid);
@@ -1167,9 +1167,9 @@ class LinearQuasiStaticReferentialSelfGravitatingSlipProblem
    * KKT path's gauge refinements): the inner tolerance of the early
    * sweeps is relaxed to @p loose_rel and tightens geometrically to the
    * solver's relative tolerance, the final sweep always running at full
-   * tolerance (doc/slip_interface.tex, "The sweep schedule"). Roughly
+   * tolerance (doc/methods/slip_interface.tex, "The sweep schedule"). Roughly
    * halves the cost on the 3-D benchmarks at a solver-endpoint shift an
-   * order below the mesh error (doc/benchmarks.tex, "Solver settings:
+   * order below the mesh error (doc/benchmarks/benchmarks.tex, "Solver settings:
    * measured behaviour"). The default @p loose_rel = 0 keeps every sweep
    * at full tolerance — the reproducible-endpoint mode that strict
    * comparisons and finite-difference studies must use.
@@ -1180,7 +1180,7 @@ class LinearQuasiStaticReferentialSelfGravitatingSlipProblem
 
   /**
    * @brief Switch to the broken-@f$\zeta@f$ organisation
-   * (doc/slip_interface.tex, "Gravity: the broken-zeta organisation"):
+   * (doc/methods/slip_interface.tex, "Gravity: the broken-zeta organisation"):
    * the potential is composed
    * region-wise, @f$(\zeta_o, \zeta_f)@f$ on the outer (solid + buffer)
    * and fluid regions, the gravity sources are exact — the fluid

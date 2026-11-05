@@ -2,7 +2,7 @@
 
 Derivatives of the response with respect to the model, checked against
 the radial solver on perturbed models. The method, its assumptions and
-the measured results are in `doc/benchmarks.tex` (section "The
+the measured results are in `doc/benchmarks/benchmarks.tex` (section "The
 perturbation family").
 
 ## The degree-0 interface shift
@@ -87,4 +87,4 @@ are not verified (they are several times further off than the
 referential ones on the same mesh). On `fluid_core` the degree-2 numbers
 carry an absolute offset against pyslfp at every eps, for both methods:
 the O(N²) mismatch of the compressible methods on its non-neutral core.
-The numbers are in `doc/benchmarks.tex`.
+The numbers are in `doc/benchmarks/benchmarks.tex`.

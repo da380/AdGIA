@@ -1,7 +1,7 @@
 /*
   Sea-level reciprocity theorems of
-  Al-Attar, Syvret, Crawford, Mitrovica & Lloyd (2024,
-  doc/Elasticity/ggad434.pdf) as certificates on the water-loaded mixed
+  Al-Attar, Syvret, Crawford, Mitrovica & Lloyd (2024, GJI 236,
+  362-378) as certificates on the water-loaded mixed
   solve — the elastic fingerprint problem that SetWaterLoad implements
   (condensed sea-level equation, frozen shoreline; here all-ocean).
 

@@ -323,7 +323,7 @@ practical notes:
   the percent level, while below $10^{-2}$ the cost of the solves grows
   several-fold per decade of $\eps$ and by $\eps = 10^{-4}$ the solution
   is semi-convergently polluted although each solver reports
-  convergence (\texttt{doc/benchmarks.tex}). The contraction-rate
+  convergence (\texttt{doc/benchmarks/benchmarks.tex}). The contraction-rate
   tripwire of \S\ref{sec:algorithm} detects both ends.
 \end{itemize}
 
@@ -419,7 +419,7 @@ assembles the deviatoric penalty of \S2 --- without a map as
 \emph{covariantly} as \texttt{ElasticTensorIntegrator(C, map)}, $C$ the
 isotropic tensor with $\lambda = -2\eps\mu_g/d$, $\mu = \eps\mu_g$, pulled
 back through the map, so that the penalty of a relabelled problem is the
-exact pull-back of the unmapped one (\texttt{doc/mappings.md}).
+exact pull-back of the unmapped one (\texttt{doc/methods/mappings.md}).
 \texttt{GaugePenalty::Harmonic} assembles the harmonic penalty as
 \texttt{VectorDiffusionIntegrator} and refuses a non-identity map (it is
 gauge data, shared rather than mapped). Further:
@@ -443,7 +443,7 @@ observables), \texttt{TestMixedProblemGauged} (contraction rates, the
 rigid-tidal semi-convergence guard), \texttt{TestReferentialProblem}
 (the ball-wide vacuum extension, run in the biased single-solve regime).
 The external check is the \texttt{gauged} method of the Love-number
-benchmark against \texttt{pyslfp} (\texttt{doc/benchmarks.tex}),
+benchmark against \texttt{pyslfp} (\texttt{doc/benchmarks/benchmarks.tex}),
 including the degree-0 Love numbers that the Dahlen treatment cannot
 reproduce.
 

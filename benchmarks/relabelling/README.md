@@ -1,12 +1,12 @@
 # Relabelling
 
-The aspherical verification (`doc/mappings.md`): the same spherical
+The aspherical verification (`doc/methods/mappings.md`): the same spherical
 physical problem described from laterally relabelled coordinates, so the
 pyslfp reference stays exact while every mapped code path acts. The
 interior relabelling (`common/relabelling.hpp`) is the identity, with
 identity gradient, on every interface and on and outside the surface, and
 genuinely three-dimensional in between. The maps, the tests and the
-measured results are in `doc/benchmarks.tex` (section "The relabelling
+measured results are in `doc/benchmarks/benchmarks.tex` (section "The relabelling
 family"). Three legs:
 
 ```

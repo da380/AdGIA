@@ -254,7 +254,7 @@ if (DOXYGEN_FOUND)
     set(DOXYGEN_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/doc")
 
     # The MathJax configuration is copied next to the HTML output.
-    set(MATHJAX_CONFIG_JS_SRC "${CMAKE_SOURCE_DIR}/doc/mathjax_config.js")
+    set(MATHJAX_CONFIG_JS_SRC "${CMAKE_SOURCE_DIR}/doc/doxygen/mathjax_config.js")
     set(MATHJAX_CONFIG_JS_DST "${DOXYGEN_OUTPUT_DIRECTORY}/mathjax_config.js")
 
     add_custom_command(
@@ -275,7 +275,7 @@ if (DOXYGEN_FOUND)
     endif()
 
     configure_file(
-        "${CMAKE_SOURCE_DIR}/doc/Doxyfile.in"
+        "${CMAKE_SOURCE_DIR}/doc/doxygen/Doxyfile.in"
         "${CMAKE_BINARY_DIR}/Doxyfile"
         @ONLY
     )

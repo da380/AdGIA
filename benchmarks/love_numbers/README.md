@@ -4,7 +4,7 @@ Load and tidal Love numbers of the spherically layered models, against
 the radial solver of pyslfp, across formulations, solvers and CMB
 treatments, with the response compared as fields as well. What is
 compared and how, the models, and the measured results are in
-`doc/benchmarks.tex` (section "The Love-number family"); this README says
+`doc/benchmarks/benchmarks.tex` (section "The Love-number family"); this README says
 how to run it.
 
 ```
@@ -77,13 +77,13 @@ counts compared in `timing.png` and in the summary:
 
 | method | formulation |
 |---|---|
-| `dahlen` | Eulerian, fluid eliminated (`doc/self_gravitation.md`); `--cmb` picks its fluid-interface treatment |
-| `dahlen` + `-level-border <n>` (love_benchmark directly) | the same with the level border of `doc/dahlen_closure.tex`: the degree-0 hole closed on an n-node grid in Phi_0 per fluid region; 16 is right for h 0.3 to 0.2 |
+| `dahlen` | Eulerian, fluid eliminated (`doc/methods/self_gravitation.md`); `--cmb` picks its fluid-interface treatment |
+| `dahlen` + `-level-border <n>` (love_benchmark directly) | the same with the level border of `doc/theory/dahlen_closure.tex`: the degree-0 hole closed on an n-node grid in Phi_0 per fluid region; 16 is right for h 0.3 to 0.2 |
 | `referential` + `-level-border <n>` (love_benchmark directly) | the referential closure: the fluid eliminated through the potential glue with the wall seam and closed by the level border (identity mapping only; no tidal leg). On `fluid_core` h 0.2/o2: h'_0 0.47%, h'_1 0.06% against pyslfp; h'_2 is order-limited by the wall kernels' facet geometry (0.94% at o2, 0.007% at o3) |
-| `gauged` | Eulerian, the fluid in the displacement space with a gauge shear penalty (`doc/gauged_fluid.md`) |
-| `referential` | the welded gauged referential formulation (`doc/gravitating_elasticity.md`): bare moduli from the exported hydrostatic pressure `p0`, equilibrium stress `-p0 I` |
-| `maxwell` | the referential formulation with the fluid by Maxwell relaxation (`SetFluid`'s default treatment, the general method): the core an artificial Maxwell solid relaxed to the secular static state (`doc/static_fluid_core.tex`); `-mxbeta` sets the physical-phase dt/tau |
-| `slip` | the slipping fluid–solid interface, single-valued potential (`doc/slip_interface.tex`): broken displacement pair, normal-jump constraint by penalty and augmented Lagrangian, or by a KKT multiplier (`-kkt`) |
+| `gauged` | Eulerian, the fluid in the displacement space with a gauge shear penalty (`doc/methods/gauged_fluid.md`) |
+| `referential` | the welded gauged referential formulation (`doc/theory/gravitating_elasticity.md`): bare moduli from the exported hydrostatic pressure `p0`, equilibrium stress `-p0 I` |
+| `maxwell` | the referential formulation with the fluid by Maxwell relaxation (`SetFluid`'s default treatment, the general method): the core an artificial Maxwell solid relaxed to the secular static state (`doc/theory/static_fluid_core.tex`); `-mxbeta` sets the physical-phase dt/tau |
+| `slip` | the slipping fluid–solid interface, single-valued potential (`doc/methods/slip_interface.tex`): broken displacement pair, normal-jump constraint by penalty and augmented Lagrangian, or by a KKT multiplier (`-kkt`) |
 | `slip_broken` | the same with the potential broken per region as well |
 
 `--solver 1 0` runs the Eulerian methods under both of their linear
@@ -96,15 +96,15 @@ need a case with the `p0` field; the slipping methods accept one fluid core insi
 one solid shell, so no model with an inner core. The driver options of
 the formulations (`-geps`, `-gref`, `-gauge-kkt`, `-theta`, `-al`,
 `-sweep-tol`, `-kkt`, `-kkt-order`) and their defaults are in
-`doc/benchmarks.tex` ("The formulations compared").
+`doc/benchmarks/benchmarks.tex` ("The formulations compared").
 
 On a fluid core that is not neutrally stratified (`fluid_core`'s uniform
 core) the compressible methods differ from the Dahlen/pyslfp response by
 O(N²) at every degree, so converged cross-method ladders split there; at
-h ~ 0.3 the split is below the mesh error (`doc/gauged_fluid.md`). The
+h ~ 0.3 the split is below the mesh error (`doc/methods/gauged_fluid.md`). The
 Maxwell relaxation resolves the secular limit there; the gauge-penalty
 methods are defined only to the stratification band at N² ≠ 0
-(`doc/static_fluid_core.tex`).
+(`doc/theory/static_fluid_core.tex`).
 
 `--map A` runs the referential methods from relabelled coordinates — the
 relabelling family's benchmark, described in `../relabelling/README.md`.
@@ -114,7 +114,7 @@ relabelling family's benchmark, described in `../relabelling/README.md`.
 `--cmb full nomass uniform winkler` runs the Dahlen path under each
 fluid-interface treatment, from the full stratified-fluid conditions to
 the standard unmeshed-core condition of the GIA codes (`uniform`) and
-buoyancy alone (`winkler`); `doc/benchmarks.tex` ("The CMB treatments")
+buoyancy alone (`winkler`); `doc/benchmarks/benchmarks.tex` ("The CMB treatments")
 states each with its published source. `cmb_report.py` collates their
 cost against their accuracy — setup and solve time, iterations and
 potential unknowns, against the error relative to the reference and to
@@ -155,7 +155,7 @@ not change and the gain is solver-side only.
 | `prem_6` | the same on six: the transition zone and the crust are layers of their own |
 | `homogeneous_lithosphere` | `homogeneous` cut at 5700 km, so that the outer shell can stay elastic (viscoelastic family) |
 
-The values are in `doc/benchmarks.tex` ("The models"). A new model is a
+The values are in `doc/benchmarks/benchmarks.tex` ("The models"). A new model is a
 function in `common/models.py` and an entry in `MODELS`; every one is
 planetmodel's `LayeredIsotropicElastic`, whose layers take a constant or
 polynomial coefficients in the radius. The PREM models keep the named
@@ -183,7 +183,7 @@ the solid, phi over body and buffer). Its outputs give the maps
 With a fluid layer and the naked Dahlen reduction the summed load
 starts at degree 1 by default; `field_benchmark -lmin 0` (run by hand)
 includes degree zero for either method and shows the naked Dahlen's
-degree-zero difference from the reference (`doc/dahlen_closure.tex`).
+degree-zero difference from the reference (`doc/theory/dahlen_closure.tex`).
 Closed by the level border (`-level-border <n>`, the `run` script's
 default on the fluid models) degree zero is included like any other.
 The Love-number plots show the naked Dahlen's degree-zero point for the
@@ -210,7 +210,7 @@ degree l leaks into the responses of the other degrees, which the solves
 by degree discard and the combined solve adds to each degree's number. On
 `fluid_core` at h = 0.3, order 2, the difference is 2e-5 to 4.5e-3
 relative, below the error against the reference in all entries but one;
-`doc/benchmarks.tex` ("Combined solves") has the numbers and the cost.
+`doc/benchmarks/benchmarks.tex` ("Combined solves") has the numbers and the cost.
 The naked Dahlen fluid leaves degree zero out of the combined load,
 since its degree-zero response differs from the reference by design (it
 does not represent the fluid's compressibility there); closed by the

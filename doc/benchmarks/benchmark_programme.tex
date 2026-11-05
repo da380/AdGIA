@@ -13,12 +13,12 @@
 \urlstyle{tt}
 \makeatletter\g@addto@macro\UrlBreaks{\do\_\do\-}\makeatother
 
-\input{macros.inc}
+\input{../macros.inc}
 
 \numberwithin{equation}{section}
 \sloppy
 \setlength{\emergencystretch}{3em}
-\graphicspath{{figures/benchmarks/}}
+\graphicspath{{figures/}}
 
 % --- notation (follows quasi_static_models.tex and benchmarks.tex) ----------
 \newcommand{\R}{\mathbb{R}}
@@ -68,7 +68,7 @@ legs, the results). The internal benchmark families
 of \path{benchmarks/} --- benchmarks of a different kind, against exact or
 independent references --- are placed where they belong in the hierarchy,
 with their conclusions summarised; their detailed measurements stay in
-\code{doc/benchmarks.tex}, which this note cites and does not repeat. The
+\code{doc/benchmarks/benchmarks.tex}, which this note cites and does not repeat. The
 first tier, E1 (non-gravitating elastic, solid
 spherical models), has its exact reference and both spectral legs in place
 and gated, and its finite-element leg, \code{AdGIA}'s own, measured;
@@ -188,7 +188,7 @@ what no cross-code tier can --- the aspherical machinery, the
 formulation-against-formulation questions, the time integrators in
 isolation --- and they stay. Parts~\ref{part:elastic}--\ref{part:sea} place
 each family at the rung where it belongs and state what it has
-established; \code{doc/benchmarks.tex} holds their
+established; \code{doc/benchmarks/benchmarks.tex} holds their
 measurements, problems and figures.
 
 \section{The tiers}
@@ -243,7 +243,7 @@ each benchmark is in the READMEs of \path{benchmarks/}.
 The models are the spherical ladder of \path{benchmarks/common/models.py}:
 planetmodel \code{LayeredIsotropicElastic} models in SI, each layer
 constant or polynomial in radius for $\rho$, $v_P$ and $v_S$, fluid layers
-with $v_S=0$. The values are listed in \code{doc/benchmarks.tex} (``The
+with $v_S=0$. The values are listed in \code{doc/benchmarks/benchmarks.tex} (``The
 models''). The rungs used or planned by the tiers:
 \begin{center}
 \small
@@ -440,7 +440,7 @@ non-gravitating tiers exclude the degree and write \code{nan}
 compared in the frame of the centre of mass of the body and its load, in
 which the external potential has no degree-one part; \code{AdGIA}'s
 Love-number driver shifts its solution into that frame
-(\code{doc/benchmarks.tex}, ``Degree one: the centre-of-mass frame''), and
+(\code{doc/benchmarks/benchmarks.tex}, ``Degree one: the centre-of-mass frame''), and
 E2 gives the first cross-code check of the conventions: on
 \code{two\_solid} and \code{fluid\_core} the degree-1 numbers agree with
 \code{pyslfp}'s at the discretisation level, with $k'_1=-1$ to rounding in
@@ -698,7 +698,7 @@ The four solutions of degree $l\ge2$ have $U\propto r^{l-1}$, $r^{l+1}$
 are independent for every admissible pair of moduli. These powers are the
 eigenvalues, $l-1$, $l+1$, $-l-2$, $-l$, of the Euler-type radial system
 that the viscoelastic sphere sub-family derives independently
-(\code{doc/benchmarks.tex}, ``Sphere benchmarks: problems and exact
+(\code{doc/benchmarks/benchmarks.tex}, ``Sphere benchmarks: problems and exact
 references''), which is the basis of the cross-check below. The Navier
 equation, the four tractions \eqref{eq:familyA}, \eqref{eq:familyB} and the
 degree-0 pair below were checked symbolically in Cartesian coordinates
@@ -1301,7 +1301,7 @@ $N^2\neq0$ returns the welded point of the elastic-static band rather than
 the secular closure (\code{doc/static\_fluid\_core.tex}, ``The band, the
 secular state, and the Maxwell route''). Its degree-1 relaxation also stops
 at an increment of about $10^{-2}$, the soft core--shell translation
-(\code{doc/benchmarks.tex}, ``The degree-1 adjudication''), but that is a
+(\code{doc/benchmarks/benchmarks.tex}, ``The degree-1 adjudication''), but that is a
 diagnostic of the stop, not the offset. The neutral \code{aw\_core} is the
 model on which the methods are expected to coincide.
 
@@ -1388,7 +1388,7 @@ and Poisson's equation in the fluid becomes
   \label{eq:dahlen-poisson}
 \end{equation}
 The term in $\Phi_1$ is the stratification term of the Dahlen weak form
-(the term (F1) of \code{doc/benchmarks.tex}, ``The CMB treatments''); the
+(the term (F1) of \code{doc/benchmarks/benchmarks.tex}, ``The CMB treatments''); the
 terms in $f$ are an arbitrary one-function family. The fluid's displacement
 appears nowhere: the reduction has eliminated it, and with it the fluid's
 bulk constitutive law --- $\kappa$ appears nowhere either.
@@ -1464,13 +1464,13 @@ treatment is the reference at degree 0.
 
 These families test \code{AdGIA} alone, against \code{pyslfp} as an
 independent radial reference or against exact identities. Their problems,
-settings and full measurements are in \code{doc/benchmarks.tex}; what they
+settings and full measurements are in \code{doc/benchmarks/benchmarks.tex}; what they
 have established, in brief:
 
 \paragraph{Love numbers (\code{love\_numbers/}).} Load and tidal Love
 numbers of layered, self-gravitating elastic bodies, every formulation
 against \code{pyslfp}, with the response also compared as fields under a cap
-load (\code{doc/benchmarks.tex}, ``The Love-number family''). Every
+load (\code{doc/benchmarks/benchmarks.tex}, ``The Love-number family''). Every
 formulation agrees with \code{pyslfp} at the discretisation level on its
 domain of validity: at $h=0.2$ the median relative error over degrees 1--5
 is $5\times10^{-3}$--$1.4\times10^{-2}$ at order 2 and
@@ -1494,7 +1494,7 @@ frame against \code{pyslfp} is confirmed cross-code in E2.)
 \paragraph{Relabelling (\code{relabelling/}).} The mapped (aspherical)
 machinery, tested with the spherical physics unchanged by describing the
 same problem in relabelled coordinates \cite{AlAttarCrawford2016}
-(\code{doc/benchmarks.tex}, ``The relabelling family''). The discrete
+(\code{doc/benchmarks/benchmarks.tex}, ``The relabelling family''). The discrete
 change-of-variables identity holds for the welded classes to
 $\sim10^{-7}$ ($A=0.02$, $h=0.3$, order 2), and on the sea-level legs to
 $5\times10^{-7}$ and below; the mapped Love numbers agree with the unmapped
@@ -1506,7 +1506,7 @@ not certified.
 \paragraph{Perturbation (\code{perturbation/}).} Derivatives of the response
 with respect to an interface radius, the mapped assembly under a
 discontinuous deformation gradient against central differences of
-\code{pyslfp} solves (\code{doc/benchmarks.tex}, ``The perturbation
+\code{pyslfp} solves (\code{doc/benchmarks/benchmarks.tex}, ``The perturbation
 family''). On \code{fluid\_core} the degree-0 derivative agrees to
 $0.8\,\%$ at order 2 and $3\times10^{-3}\,\%$ at order 3; at degrees 2 and 3
 the discrepancies of 1--16\,\% are of the order of the errors of the
@@ -1515,7 +1515,7 @@ consistency check at this resolution rather than a sharp verification.
 
 \paragraph{The disc (\code{disc/}).} The two-dimensional laboratory of the
 fluid treatments (\path{benchmarks/disc/README.md}; it has no section in
-\code{doc/benchmarks.tex}). Without gravity a fluid disc in a solid annulus
+\code{doc/benchmarks/benchmarks.tex}). Without gravity a fluid disc in a solid annulus
 has closed-form solutions and every tangential slip is removable, so
 welded and slipping solves must coincide exactly, which tests the constraint
 machinery alone. With gravity, a per-degree radial reference with welded,
@@ -1523,13 +1523,13 @@ free-slip and Dahlen switches measures what can be separated: on the
 Adams--Williamson disc core the three agree to about $10^{-10}$; on a
 uniform, non-neutral disc core the welded and free-slip solves drift within
 an envelope of about $0.3\,\%$ under refinement
-(\code{doc/benchmarks.tex}, ``The formulations compared'').
+(\code{doc/benchmarks/benchmarks.tex}, ``The formulations compared'').
 
 %-----------------------------------------------------------------------------
 \subsection{Manufactured solutions (\code{elastic/manufactured/})}
 \label{sec:manufactured}
 
-This family has no section in \code{doc/benchmarks.tex}, so it is written
+This family has no section in \code{doc/benchmarks/benchmarks.tex}, so it is written
 out here; how to run it is in
 \path{benchmarks/elastic/manufactured/README.md}, and the test
 \path{tests/TestManufactured.cpp} gates it on canned meshes.
@@ -1736,6 +1736,78 @@ quoted in this note, in V1 (\S\ref{sec:v1}) and in the Love-number family
 (\S\ref{sec:internal-elastic}), were obtained with the interpolant; results
 at the discretisation level move with the default.
 
+\paragraph{The fluid-core family.} \path{manufacture_fluid.py} writes
+\path{fields_fluid.hpp}: exact fields of a two-layer ball whose stably
+stratified fluid core ($\rho=\rho_c(1-\beta r^2)$, $\kappa_f=10$, $N^2>0$)
+is closed by the level border (\code{doc/theory/dahlen\_closure.tex},
+``Implementation''), and the loads of every row of the bordered weak form:
+the shell's body force and tractions (the CMB traction with the buoyancy,
+the potential stress and the wall pressure $-\lambda(\mathbf{m}\cdot\hat{\mathbf
+g})\mathbf{m}$), the potential's volume sources in core and shell and its
+flux sources on the surface and the CMB, and data on the border's own rows
+in $U$, $s$, $\nu$ and the wall multiplier $\lambda$ (densities against
+$\mathrm{d}c$, integrated against the border's hat functions in $r$). The
+driver \code{manufactured\_fluid\_benchmark} and the test
+\path{tests/TestManufacturedFluid.cpp} share \path{fluid_case.hpp}, which
+applies them (\code{AddForce}, \code{AddPotentialForce} on the parent mesh,
+\code{AddLevelBorderForce}) with the facets' own normals oriented as the
+solid's outward normal, and measures modulo the rigid modes as above; the
+border's unknowns are compared with $U^*$, $s^*$, $\nu^*$, $\lambda^*$ at
+the grid's nodes. Every source is in place: the potential falls steeply
+with the order and with $h$ (canned mesh, 16 levels: $1.9\times10^{-2}$,
+$1.0\times10^{-3}$, $8.1\times10^{-5}$ at orders 1, 2, 3; rates 4.4 to 4.6
+from $h=0.3$ to $0.2$), and dropping the border data or the CMB traction
+leaves an $O(1)$ residual. The shell's displacement, however, is set by the
+border: its relative error is $0.086$ to $0.091$ times that of $\lambda$ in
+every order-3 run (0.070 to 0.089 at order 2), so the level-mean wall
+pressure sets it. $\lambda$ comes out of the one-dimensional grid, whose own
+error falls like $n^{-1.5}$ in the level count $n$
+(\code{manufacture\_fluid --galerkin}: the border rows with exact level
+integrals); but the class's level integrals are sums over the fluid
+quadrature points binned by level, which scatter once the bins are thinner
+than the points' spacing (element volumes off by 1.3, 6.3, 40 and 53\,\% at
+4, 8, 16 and 32 levels on the canned mesh at order 2), and past that every
+border-coupled error grows; on the $h=0.3$ mesh the class refuses more than
+6 levels at order 2 (12 at order 3). The best level count is the largest the
+bins resolve, and the displacement stays near $10^{-3}$ on every laptop mesh
+(Table~\ref{tab:manufactured-fluid}); with $n\propto1/h$ it does not
+converge in $h$ at the elements' rate ($h=0.3\to0.2$ with 6 and 9 levels:
+$2.7\to3.2\times10^{-3}$ at order 2, $3.0\to2.1\times10^{-3}$ at order 3)
+while the potential does. The lift $s$ and its multiplier $\nu$, set through
+the binned volume blocks and amplified by the $\nu$ row, are resolved at a
+few levels only (canned mesh, order 2: $6.4\times10^{-2}$ and $0.12$ at 4
+levels, $3.6$ and $0.88$ at 16); $\nu$'s nodal error next to the centre,
+where the weight $A$ vanishes like $\sqrt{c-c_{\min}}$, is the grid's own
+(0.10 to 0.12 for 4 to 64 levels with exact integrals). The projected and
+the exact levels agree to 0.3\,\% at order 2, and the exact Hessian changes
+the displacement by 4\,\% (the border dominates). The ladders and the
+server's run sheet are in \path{benchmarks/elastic/manufactured/README.md}.
+\begin{table}[tp]
+\centering
+\small
+\begin{tabular}{@{}rcr rrrr@{}}
+\toprule
+interface $h$ & order & levels & $\vu$ & $\lambda$ & $\phi$ & volumes \\
+\midrule
+0.3   & 2 & 6  & $2.7\times10^{-3}$ & $3.5\times10^{-2}$ & $1.4\times10^{-2}$ & 0.90 \\
+0.3   & 3 & 8  & $8.9\times10^{-4}$ & $9.8\times10^{-3}$ & $1.3\times10^{-3}$ & 0.58 \\
+0.2   & 2 & 12 & $2.7\times10^{-3}$ & $3.3\times10^{-2}$ & $2.1\times10^{-3}$ & 0.49 \\
+0.2   & 3 & 12 & $9.3\times10^{-4}$ & $1.1\times10^{-2}$ & $1.6\times10^{-4}$ & 0.35 \\
+0.135 & 2 & 16 & $1.0\times10^{-3}$ & $1.2\times10^{-2}$ & $1.0\times10^{-3}$ & 0.40 \\
+0.135 & 3 & 16 & $6.5\times10^{-4}$ & $7.6\times10^{-3}$ & $8.1\times10^{-5}$ & 0.09 \\
+\bottomrule
+\end{tabular}
+\caption[Manufactured solutions with a fluid core]{Manufactured solutions
+with a fluid core closed by the level border: relative errors of the
+shell's displacement ($L^2$), the wall multiplier and the potential ($L^2$
+over the ball) at the best level count of each mesh and order (the
+count minimising the displacement error over the levels ladders;
+0.135 is the canned mesh, where only 16 levels were run at order 3), and
+the largest deviation of the border's element volumes from the analytic
+shells.}
+\label{tab:manufactured-fluid}
+\end{table}
+
 %=============================================================================
 \part{Viscoelastic loading}
 \label{part:visco}
@@ -1816,7 +1888,7 @@ and time, tolerance tier (i); \code{AdGIA}'s difference from either is its
 finite-element discretisation, tier (iii). The sub-family's Laplace-domain
 reference (\path{laplace_reference.py}: the correspondence principle on
 \code{pyslfp}'s elastic solves, Gaver--Stehfest inversion;
-\code{doc/benchmarks.tex}, ``The Laplace-domain reference'') takes no
+\code{doc/benchmarks/benchmarks.tex}, ``The Laplace-domain reference'') takes no
 steps, and is the secondary check of the stepping the three legs share.
 
 \paragraph{The legs.}
@@ -2053,7 +2125,7 @@ own comparer skips a channel that the reference leaves identically zero
 \label{sec:internal-visco}
 
 \code{AdGIA}'s viscoelastic family (\path{viscoelastic/},
-\code{doc/benchmarks.tex}, ``The viscoelastic family'') has four
+\code{doc/benchmarks/benchmarks.tex}, ``The viscoelastic family'') has four
 sub-families. The box and sphere sub-families are non-gravitating and
 solid-only, with references exact to about $10^{-10}$, so any mismatch is
 the code's: on them every integrator reaches its design order on every body
@@ -2073,7 +2145,7 @@ errors spatial, not temporal. The same sub-family is the home of V1
 (\S\ref{sec:v1}), its cross-code form: the histories stepped in the time
 domain by all three codes under one stepping rule, with the Laplace
 reference as the secondary check. The choice of integrator these support is
-described in \code{doc/viscoelasticity.md}.
+described in \code{doc/methods/viscoelasticity.md}.
 
 %=============================================================================
 \part{Sea level}
@@ -2103,7 +2175,7 @@ reformulation.
 \code{pyslfp}'s pseudo-spectral solution of the same problem, with
 rotation, shoreline-migration and timing legs and a real-geography variant
 on coastline-refined meshes (\path{benchmarks/sea_level/README.md}; the
-family has no section in \code{doc/benchmarks.tex}). At toy resolution
+family has no section in \code{doc/benchmarks/benchmarks.tex}). At toy resolution
 (\code{homogeneous}, $h=0.4$, order 2, $l_{\max}=16$) the ocean-RMS
 relative difference is $1.1\,\%$ on the Dahlen path and $1.2\,\%$ on the
 welded referential class, the floor of two discretisations at this

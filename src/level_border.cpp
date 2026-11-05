@@ -162,7 +162,7 @@ real_t LevelBorder::FluidBlockMinEigenvalue(Vector* eigenvalues) const {
   // Restricted to the interior nodes: the wall values of U are fixed by
   // the solid through the constraint rows, and it is on that set that
   // the closure's form is coercive (the boundary terms of the
-  // null-Lagrangian identity vanish there; doc/dahlen_closure.tex,
+  // null-Lagrangian identity vanish there; doc/theory/dahlen_closure.tex,
   // "Existence, uniqueness and stability").
   std::vector<int> free;
   for (int i = 0; i < nU; i++) {
@@ -218,7 +218,27 @@ std::vector<LevelBorder> BuildLevelBorders(
     root = pfes_pot->GetMyRank() == 0;
   }
 #endif
-  BoundaryNormalDotCoefficient m_dot_g(*ctx.grad_pot0_shadow);
+  // The background potential and its gradient as the builder reads them:
+  // the exact-levels coefficients where set, the projected fields
+  // otherwise. Everything below reads the background through these.
+  MFEM_VERIFY(!ctx.pot0_coef == !ctx.grad_pot0_coef,
+              "BuildLevelBorders: exact levels need both the background "
+              "potential and its gradient as coefficients.");
+  auto pot_parent = [&](ElementTransformation& T,
+                        const IntegrationPoint& ip) -> real_t {
+    return ctx.pot0_coef ? ctx.pot0_coef->Eval(T, ip)
+                         : ctx.pot0->GetValue(T, ip);
+  };
+  auto pot_shadow = [&](ElementTransformation& T,
+                        const IntegrationPoint& ip) -> real_t {
+    return ctx.pot0_coef ? ctx.pot0_coef->Eval(T, ip)
+                         : ctx.pot0_shadow->GetValue(T, ip);
+  };
+  VectorCoefficient& grad_parent =
+      ctx.grad_pot0_coef ? *ctx.grad_pot0_coef : *ctx.grad_pot0;
+  VectorCoefficient& grad_shadow =
+      ctx.grad_pot0_coef ? *ctx.grad_pot0_coef : *ctx.grad_pot0_shadow;
+  BoundaryNormalDotCoefficient m_dot_g(grad_shadow);
   auto marker = fluid_markers.begin();
   for (size_t r = 0; r < fluids.size(); r++, ++marker) {
     const FluidRegion& f = fluids[r];
@@ -244,7 +264,7 @@ std::vector<LevelBorder> BuildLevelBorders(
         const IntegrationPoint& ip = ir.IntPoint(q);
         T->SetIntPoint(&ip);
         const real_t w = ip.weight * T->Weight();
-        const real_t c = ctx.pot0_shadow->GetValue(*T, ip);
+        const real_t c = pot_shadow(*T, ip);
         w_area[a - 1] += w;
         w_phi[a - 1] += w * c;
         w_mg[a - 1] += w * m_dot_g.Eval(*T, ip);
@@ -311,10 +331,10 @@ std::vector<LevelBorder> BuildLevelBorders(
         };
     for_each_fluid_point([&](ElementTransformation& T,
                              const IntegrationPoint& ip, real_t) {
-      const real_t c = ctx.pot0->GetValue(T, ip);
+      const real_t c = pot_parent(T, ip);
       cmin = std::min(cmin, c);
       cmax = std::max(cmax, c);
-      ctx.grad_pot0->Eval(gv, T, ip);
+      grad_parent.Eval(gv, T, ip);
       gmax = std::max(gmax, gv.Norml2());
     });
     allreduce(&cmin, 1, MPI_MIN);
@@ -327,7 +347,7 @@ std::vector<LevelBorder> BuildLevelBorders(
     const real_t range = c_top - c_bot;
     // The level-wall check: each wall is taken at the area mean of Phi0
     // and must be a level surface of it to the tolerance (transverse
-    // walls, doc/dahlen_closure.tex "Transverse walls" and "Disconnected
+    // walls, doc/theory/dahlen_closure.tex "Transverse walls" and "Disconnected
     // levels: the closure on the tree", are not built); on a shell the
     // two walls' bands of levels must not overlap ("The level structure
     // of the potential": the region's Reeb graph is then a single edge).
@@ -339,7 +359,7 @@ std::vector<LevelBorder> BuildLevelBorders(
                     << top_max - top_min << " against the level range "
                     << range << ", tolerance " << ctx.wall_level_tol
                     << "); transverse walls are not built "
-                       "(doc/dahlen_closure.tex).");
+                       "(doc/theory/dahlen_closure.tex).");
     if (!L.centre) {
       L.wall_level_min.push_back(bot_min);
       L.wall_level_max.push_back(bot_max);
@@ -349,13 +369,13 @@ std::vector<LevelBorder> BuildLevelBorders(
                       << bot_max - bot_min << " against the level range "
                       << range << ", tolerance " << ctx.wall_level_tol
                       << "); transverse walls are not built "
-                         "(doc/dahlen_closure.tex).");
+                         "(doc/theory/dahlen_closure.tex).");
       MFEM_VERIFY(bot_max < top_min,
                   "SetLevelBorder: the inner and outer walls of region "
                       << r << " span overlapping bands of Phi0 (inner up to "
                       << bot_max << ", outer from " << top_min
                       << "); the fluid's level structure is not a single "
-                         "edge (doc/dahlen_closure.tex).");
+                         "edge (doc/theory/dahlen_closure.tex).");
     }
     if (root) {
       std::cout << "Level border, region " << r << ": outer wall Phi0 spread "
@@ -369,11 +389,11 @@ std::vector<LevelBorder> BuildLevelBorders(
     }
     for_each_fluid_point([&](ElementTransformation& T,
                              const IntegrationPoint& ip, real_t) {
-      const real_t c = ctx.pot0->GetValue(T, ip);
+      const real_t c = pot_parent(T, ip);
       if (L.centre && c - c_bot < 0.05 * range) {
         return;  // near the centre g -> 0 legitimately
       }
-      ctx.grad_pot0->Eval(gv, T, ip);
+      grad_parent.Eval(gv, T, ip);
       gmin_away = std::min(gmin_away, gv.Norml2());
     });
     allreduce(&gmin_away, 1, MPI_MIN);
@@ -405,7 +425,7 @@ std::vector<LevelBorder> BuildLevelBorders(
                              const IntegrationPoint& ip, real_t w) {
       int e;
       real_t N0, N1;
-      LocateLevel(L.c, ctx.pot0->GetValue(T, ip), e, N0, N1);
+      LocateLevel(L.c, pot_parent(T, ip), e, N0, N1);
       const real_t rho = f.density->Eval(T, ip);
       const real_t rp = rp_coef->Eval(T, ip);
       const real_t kap = f.bulk_modulus->Eval(T, ip);
@@ -458,7 +478,7 @@ std::vector<LevelBorder> BuildLevelBorders(
           fe->CalcShape(ip, shape);
           int e1;
           real_t N0, N1;
-          LocateLevel(L.c, ctx.pot0->GetValue(*T, ip), e1, N0, N1);
+          LocateLevel(L.c, pot_parent(*T, ip), e1, N0, N1);
           for (int j = 0; j < vdofs.Size(); j++) {
             const int d = vdofs[j];
             const int dof = d >= 0 ? d : -1 - d;
@@ -477,7 +497,7 @@ std::vector<LevelBorder> BuildLevelBorders(
     // 6. The wall columns, -int (m . grad Phi0 / |grad Phi0|) (m . v) dS per
     // wall, outer first; the constrained node is n for the outer wall and 0
     // for the inner one.
-    auto sign = std::make_unique<MinusWallSignCoefficient>(*ctx.grad_pot0_shadow);
+    auto sign = std::make_unique<MinusWallSignCoefficient>(grad_shadow);
     auto add_wall = [&](const Array<int>& wm, int node) {
       auto lf = detail::MakeLinearForm(ctx.fes_u);
       lf->AddBoundaryIntegrator(new VectorBoundaryFluxLFIntegrator(*sign),

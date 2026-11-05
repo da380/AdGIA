@@ -13,12 +13,12 @@
 \urlstyle{tt}
 \makeatletter\g@addto@macro\UrlBreaks{\do\_\do\-}\makeatother
 
-\input{macros.inc}
+\input{../macros.inc}
 
 \numberwithin{equation}{section}
 \sloppy
 \setlength{\emergencystretch}{3em}
-\graphicspath{{figures/benchmarks/}}
+\graphicspath{{figures/}}
 
 % --- notation (follows quasi_static_models.tex) -----------------------------
 \newcommand{\R}{\mathbb{R}}
@@ -436,7 +436,7 @@ summary.
 \subsection{Reproducing the figures}
 \label{sec:reproduce}
 
-The figures of this note are copies, in \code{doc/figures/benchmarks/}, of
+The figures of this note are copies, in \code{doc/benchmarks/figures/}, of
 the figures the family scripts and \code{benchmarks/talk\_figures.py} write
 into the build tree; the copies carry a prefix (\code{fc\_} for
 \code{fluid\_core}, \code{pert\_}, \code{box\_}, \code{sphere\_},
@@ -1281,7 +1281,7 @@ topography enter. The relabelling family checks this machinery
 relabelled coordinates \cite{AlAttarCrawford2016}. pyslfp then stays an
 exact reference while every mapped code path is exercised. With
 $F=\partial\xi/\partial\vx$ and $J=\det F$, the pulled-back forms
-(\code{doc/mappings.md}, ``The pulled-back forms'') are
+(\code{doc/methods/mappings.md}, ``The pulled-back forms'') are
 \begin{equation}
   \int\tilde\nabla\tilde\phi\cdot\tilde\nabla\tilde\phi' \,\mathrm{d}\xi
      = \int J\,C^{-1}\nabla\phi\cdot\nabla\phi'\dV,\quad C=F^TF,
@@ -1348,7 +1348,7 @@ identity of leg B through the slipping interface.
 the map, the mapped assembly on the reference mesh and the standard
 assembly on the \emph{image} mesh (nodes moved to $\xi_h$, the same $L^2$
 data transplanted) are the same linear system, element by element, when
-the same quadrature rules are used (\code{doc/mappings.md}, ``The discrete
+the same quadrature rules are used (\code{doc/methods/mappings.md}, ``The discrete
 change-of-variables identity''). The driver solves the full coupled
 problem both ways (side A: reference mesh with the interpolated map; side
 B: mapped mesh with the identity map), from the same serial partition so
@@ -1721,7 +1721,7 @@ cheaply: every forcing against every scheme, step ladders, mesh ladders,
 and contrasts of eight decades. The Love-number histories remain the
 integrated test of the self-gravitating machinery. The library's
 integrators, and the choice between them that these benchmarks support,
-are described in \code{doc/viscoelasticity.md}, section ``Time stepping''
+are described in \code{doc/methods/viscoelasticity.md}, section ``Time stepping''
 (subsection ``Choosing a scheme'').
 
 \subsection{The time integrators}
@@ -2240,7 +2240,7 @@ The first-order schemes are never competitive beyond $10^{-3}$. Solves are
 not the whole cost: the adaptive trapezoid reassembles at every accepted
 step (assemblies equal solves in these runs), a fixed-step implicit scheme
 once per step size, RK4 never. These results are the basis of the
-recommendations in \code{doc/viscoelasticity.md}, ``Choosing a scheme''.
+recommendations in \code{doc/methods/viscoelasticity.md}, ``Choosing a scheme''.
 
 \begin{figure}[H]
 \centering

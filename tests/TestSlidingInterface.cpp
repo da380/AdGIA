@@ -2,7 +2,7 @@
 
 /*
   Tests for the sliding fluid-solid interface built from the SubMesh dof
-  pairing J = Pi_s^T Pi_f (NewSubMeshPairingMatrix; doc/slip_interface.tex,
+  pairing J = Pi_s^T Pi_f (NewSubMeshPairingMatrix; doc/methods/slip_interface.tex,
   "Discretisation of the slipping interface"):
   two displacement fields on the solid and fluid SubMeshes of one parent,
   coupled by a penalty on the normal jump assembled from ONE

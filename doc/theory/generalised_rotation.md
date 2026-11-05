@@ -11,13 +11,11 @@ Tisserand gauge), `SetRotation(Omega, moments)` with
 `SetTisserandGauge(true)` the input-inertia one; the demonstration
 example is `examples/generalised_rotation.cpp`, and the measurements
 are under "Verification" below.
-Sources: Yu, Al-Attar, Syvret & Lloyd (2025, "the paper",
-`doc/Elasticity/ggae388.pdf`) §2.3–2.4 for the traditional theory and
-its diagnosis; Maitra & Al-Attar (2024, "M&A",
-`doc/Elasticity/ggae092.pdf`) §2.4–2.5, §3.7–3.8 for the resolution;
-Mitrovica & Wahr (review,
-`doc/Elasticity/annurev-earth-040610-133404.pdf`) for the viscoelastic
-plastering this supersedes.*
+Sources: Yu, Al-Attar, Syvret & Lloyd (2025, "the paper", GJI 240,
+329–348) §2.3–2.4 for the traditional theory and its diagnosis; Maitra
+& Al-Attar (2024, "M&A", GJI 237, 1301–1338) §2.4–2.5, §3.7–3.8 for
+the resolution; Mitrovica & Wahr (2011, Annu. Rev. Earth Planet. Sci.
+39, 577–616) for the viscoelastic plastering this supersedes.*
 
 ## The traditional theory, and its two defects
 
@@ -230,7 +228,7 @@ assumed:
   self-consistent configuration and only *reported* on the
   input-inertia one.
 - The resolution is a model whose own figure is realistic —
-  the equilibrium figures of `doc/equilibrium_figures.tex` — after
+  the equilibrium figures of `doc/theory/equilibrium_figures.tex` — after
   which nothing is imposed.
 
 ## The fluid-core frame choice (G8c)
@@ -305,11 +303,10 @@ time-stepping layer (with the Mitrovica & Wahr comparison as a
 numerical check, not a theory input), and whether the translations'
 momentum condition ever needs the mantle-frame treatment.
 
-**See:** `doc/quasi_static_models.tex` (the referential class's
+**See:** `doc/methods/quasi_static_models.tex` (the referential class's
 sea-level and rotation section);
 `include/AdGIA/null_space.hpp` (`SetGauge`);
 `include/AdGIA/quasi_static_problem.hpp` (`SetMassWeightedGauge`);
 `examples/generalised_rotation.cpp`;
 `tests/TestGeneralisedRotation.cpp`;
-`doc/Elasticity/ggae388.pdf` §2.4; `doc/Elasticity/ggae092.pdf`
-eqs. 88, 100, 222, 224.
+Yu et al. (2025) §2.4; Maitra & Al-Attar (2024) eqs. 88, 100, 222, 224.

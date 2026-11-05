@@ -4,7 +4,7 @@
  * v of the first-order kernels (the action of the objective's Hessian on
  * v), by the tangent of the adjoint sweep — the forward-mode twin of the
  * first-order adjoint applied to the adjoint itself. sl3dpp's continuous
- * second-order sweep is the model; the method is in doc/adjoints.md.
+ * second-order sweep is the model; the method is in doc/methods/adjoints.md.
  */
 #pragma once
 #include <memory>

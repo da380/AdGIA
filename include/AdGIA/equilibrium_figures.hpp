@@ -16,7 +16,7 @@ class DensityFeasibility;
  * certificate: without it, the functional never asks whether the
  * component's force and torque balance — six conditions a connected
  * solid satisfies automatically but a floating one does not
- * (doc/equilibrium_figures.tex §2) — and J = 0 is optimistic. The
+ * (doc/theory/equilibrium_figures.tex §2) — and J = 0 is optimistic. The
  * component's boundary joins the Stokes saddle as a rigid boundary
  * group, and its own weight and torque, @f$\int \rho\,\nabla\Phi\cdot
  * \mathbf{r}_k@f$ over its region, enter the border right-hand side.
@@ -64,7 +64,7 @@ class DensityFeasibilityProblem {
 
 /**
  * @brief The density feasibility functional of the equilibrium-figures
- * programme (doc/equilibrium_figures.tex): does the model possess a
+ * programme (doc/theory/equilibrium_figures.tex): does the model possess a
  * valid static state, and how should its fluid density move towards
  * one?
  *
@@ -117,7 +117,7 @@ class DensityFeasibilityProblem {
  * same field (an analytic coefficient may simply be passed twice).
  *
  * In two dimensions the exterior problem carries the logarithmic
- * infrared structure of doc/self_gravitation.md §5: the constant
+ * infrared structure of doc/methods/self_gravitation.md §5: the constant
  * potential is null for the Laplace–DtN operator, so the Poisson loads
  * are made compatible by subtracting a uniform flux through the outer
  * boundary (exactly the monopole's flux — the interior gradient is
@@ -219,7 +219,7 @@ class DensityFeasibility {
    * @brief The same derivative assembled against a space on the
    * PARENT mesh, restricted to the Stokes region's attributes — the
    * extended-domain form the Sobolev metrics consume
-   * (doc/equilibrium_figures.tex §6: the parameter lives on the whole
+   * (doc/theory/equilibrium_figures.tex §6: the parameter lives on the whole
    * mesh, the model reads its restriction, and the dual of the
    * restriction is this marker-restricted assembly).
    */
@@ -228,7 +228,7 @@ class DensityFeasibility {
 
   /**
    * @brief The Hessian action @f$H\,\delta\rho@f$ as a dual against
-   * @p fes_rho (doc/equilibrium_figures.tex §8). The product splits as
+   * @p fes_rho (doc/theory/equilibrium_figures.tex §8). The product splits as
    * Gauss–Newton plus residual,
    * @f[
    *   H[\cdot,\delta] = \delta u^T\!A\,\delta u_1

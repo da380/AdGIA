@@ -93,7 +93,7 @@ void ExponentialTrapezoidWeights(mfem::real_t h, mfem::real_t& e,
  * (the effective modulus is @f$C_\infty + \sum_k \beta_k C_k@f$ with nodal
  * weights @f$\beta_k@f$); the operator switches the problem between its
  * unrelaxed and effective operators lazily, so mixing schemes is allowed
- * but costs a reassembly at each switch. doc/viscoelasticity.md, "Time
+ * but costs a reassembly at each switch. doc/methods/viscoelasticity.md, "Time
  * stepping" and "Choosing a scheme", tabulates the schemes and when to use
  * each.
  *

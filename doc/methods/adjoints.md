@@ -7,7 +7,7 @@ first- and second-order adjoints (`discrete_adjoint.hpp`,
 `discrete_second_order.hpp`). The first-order theory is that of Yu,
 Al-Attar, Syvret & Lloyd (2025, §3–4; "the paper" below); the forward
 scheme that every sweep differentiates or transposes is the exponential
-trapezoid of `doc/viscoelasticity.md`. This note is the account of what
+trapezoid of `doc/methods/viscoelasticity.md`. This note is the account of what
 the code does and what its gates measure.
 
 ## 1. What is differentiated
@@ -17,7 +17,7 @@ the code does and what its gates measure.
 unrelaxed start. With h_k = dt/τ_k, the weights e_k = e^{−h_k},
 a_k = (1 − e^{−h_k})/h_k − e^{−h_k}, b_k = 1 − (1 − e^{−h_k})/h_k, and
 dⁿ = D uⁿ the strain at the internal nodes (D = P B the Galerkin map,
-P = G⁻¹ ⊗ M⁻¹ symmetric; `doc/viscoelasticity.md` §4), a step and the start
+P = G⁻¹ ⊗ M⁻¹ symmetric; `doc/methods/viscoelasticity.md` §4), a step and the start
 are, in effective-solve form,
 
 ```
@@ -50,7 +50,7 @@ with its grid's trapezoid weights, and that sampled sum is what the tangent
 and the discrete adjoints differentiate exactly.
 
 **The parameters.** The isotropic generalised Maxwell body
-(`doc/viscoelasticity.md` §1) is parameterised as (κ, μ_∞, {μ_k, η_k}),
+(`doc/methods/viscoelasticity.md` §1) is parameterised as (κ, μ_∞, {μ_k, η_k}),
 τ_k = η_k/μ_k — the library's (κ, μ, η) convention, not the paper's, which
 holds μ fixed when it perturbs η = μτ. κ and μ_∞ enter the stiffness alone
 (on an elastic rheology the shear modulus is μ_∞); a branch modulus μ_k is
@@ -651,9 +651,8 @@ transpose (the gates use fixed steps).
 
 - Al-Attar, D., Syvret, F., Crawford, O., Mitrovica, J. X. and Lloyd, A. J.
   (2024). Reciprocity and sensitivity kernels for sea level fingerprints.
-  *Geophysical Journal International*, 236, 362–378
-  (`doc/Elasticity/ggad434.pdf`).
+  *Geophysical Journal International*, 236, 362–378.
 - Yu, Z., Al-Attar, D., Syvret, F. and Lloyd, A. J. (2025). Application of
   first- and second-order adjoint methods to glacial isostatic adjustment
   incorporating rotational feedbacks. *Geophysical Journal International*,
-  240, 329–348 (`doc/Elasticity/ggae388.pdf`).
+  240, 329–348.

@@ -6,7 +6,7 @@ exact references for radial models, and against a much smaller step on
 the same mesh for laterally varying viscosity. The companion of the box
 sub-family (`../box`), whose histories, comparison and AAA/Talbot
 machinery it reuses. The problem, the models, the Euler-type radial
-reference and the measured results are in `doc/benchmarks.tex` (the
+reference and the measured results are in `doc/benchmarks/benchmarks.tex` (the
 sphere subsections of "The viscoelastic family").
 
 | file | what it is |

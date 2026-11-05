@@ -8,7 +8,7 @@
 // analysis of its solution on the interfaces of the solid, the translation
 // that takes a solution to the centre-of-mass frame, and the writing of
 // numbers as JSON. The formulations and the cases are described in
-// doc/benchmarks.tex, "The Love-number family".
+// doc/benchmarks/benchmarks.tex, "The Love-number family".
 //
 // A case is what make_case.py writes: the mesh of the body and its buffer
 // shell, the density and the bulk and shear moduli as L2 GridFunctions on
@@ -360,7 +360,7 @@ struct CaseOptions {
                    "coupling F3: buoyancy alone).");
     args.AddOption(&level_border, "-level-border", "--level-border",
                    "Methods dahlen and referential: close the reduction's free function with "
-                   "the level border of doc/dahlen_closure.tex on a grid of "
+                   "the level border of doc/theory/dahlen_closure.tex on a grid of "
                    "this many nodes in Phi_0 per fluid region (0: off). "
                    "Turns degree 0 into the compressible fluid problem and "
                    "leaves the sphere's l >= 1 untouched.");
@@ -530,7 +530,7 @@ class Case {
     const bool slip_method = method == "slip" || method == "slip_broken";
     // -level-border with -method referential: the eliminated fluid
     // through the potential glue and the border (the referential
-    // closure, doc/dahlen_closure.tex "Implementation"); the gauged
+    // closure, doc/theory/dahlen_closure.tex "Implementation"); the gauged
     // fluid is not configured.
     const bool ref_eliminated =
         method == "referential" && options.level_border > 0;
@@ -1264,7 +1264,7 @@ class Case {
                ? std::string(",\n  \"cmb_keep_inner\": ") +
                      (options_.cmb_keep_inner ? "true" : "false")
                : std::string())
-       // The level border (doc/dahlen_closure.tex): the node count of the
+       // The level border (doc/theory/dahlen_closure.tex): the node count of the
        // closure on the dahlen and referential routes, 0 when the fluid
        // is left to the naked reduction; the converters read it.
        << (method == "dahlen" || method == "referential"

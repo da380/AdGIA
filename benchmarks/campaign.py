@@ -68,7 +68,7 @@ viscoelastic_sphere, those of viscoelastic/sphere/study.py.
 Method-model compatibility is encoded here: the slipping methods take a
 single fluid core, the mapped stages the referential family, and the
 solver-level identity the solid models and the gauged fluid core, where
-it is strict. Mind doc/gauged_fluid.md, "Equivalence and the
+it is strict. Mind doc/methods/gauged_fluid.md, "Equivalence and the
 Adams–Williamson condition", when reading converged cross-method
 ladders on models whose core is not neutrally stratified.
 """
@@ -319,7 +319,7 @@ def main() -> None:
             if model in SLIP_MODELS:
                 methods += ["slip", "slip_broken"]
             # The Dahlen method runs closed by the level border (the
-            # default static route, doc/dahlen_closure.tex) AND as the
+            # default static route, doc/theory/dahlen_closure.tex) AND as the
             # naked reduction, whose degree 0 is the exhibited defect;
             # run.py applies the axis to the fluid models only.
             stage(f"methods:{model}", run_py(

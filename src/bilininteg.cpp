@@ -1370,7 +1370,7 @@ namespace {
 /// (nu . jump = 0) but is not invariant under face-fixing shears of F off
 /// it; the projected form is, which preserves the discrete
 /// change-of-variables identity through the slipping interface
-/// (doc/slip_interface.tex). Unmapped kernels are unchanged: there nu = n
+/// (doc/methods/slip_interface.tex). Unmapped kernels are unchanged: there nu = n
 /// and the extra projector is contained in P_T.
 void SlipDirection(const mfem::DenseMatrix& PT, const mfem::DenseMatrix& Fi,
                    const mfem::Vector& nu, bool mapped,

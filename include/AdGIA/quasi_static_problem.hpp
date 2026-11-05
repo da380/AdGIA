@@ -129,7 +129,7 @@ struct MaxwellRelaxationOptions {
  * interfaces with the solid. Consumed by
  * LinearQuasiStaticMixedSelfGravitatingProblem (the full treatment ladder
  * below) and by LinearQuasiStaticReferentialSelfGravitatingProblem
- * (Treatment::Full only; doc/dahlen_closure.tex, "A general pre-stressed
+ * (Treatment::Full only; doc/theory/dahlen_closure.tex, "A general pre-stressed
  * solid").
  *
  * - @p attributes: the parent-mesh attributes of the fluid (not part of the
@@ -156,8 +156,8 @@ struct MaxwellRelaxationOptions {
  *   and the fluid presses on the solid through the buoyancy term alone
  *   (a "Winkler foundation").
  * - @p treatment: a named rung of the CMB-approximation ladder
- *   (doc/quasi_static_models.tex, "Fluid regions and the ladder of CMB
- *   approximations"; doc/self_gravitation.md, "The CMB approximations of
+ *   (doc/methods/quasi_static_models.tex, "Fluid regions and the ladder of CMB
+ *   approximations"; doc/methods/self_gravitation.md, "The CMB approximations of
  *   the GIA literature"; the benchmark option `-cmb` is this enum). A
  *   non-Full treatment owns its degradations: it refuses a user-supplied
  *   @p density_gradient, UniformCore and Winkler refuse a user-supplied
@@ -229,8 +229,8 @@ struct GaugePenaltyOptions {
  * relabelling-gauge penalty of the gauge treatment,
  * and the per-step effective shear
  * @f$\gamma\hat Q@f$ of the Maxwell step at
- * @f$\epsilon = 1/(1+\beta)@f$. Reference: doc/gauged_fluid.md
- * (gauge treatment), doc/static_fluid_core.tex (Maxwell relaxation).
+ * @f$\epsilon = 1/(1+\beta)@f$. Reference: doc/methods/gauged_fluid.md
+ * (gauge treatment), doc/theory/static_fluid_core.tex (Maxwell relaxation).
  *
  * Owns the attribute marker, the scaled coefficients, the penalty
  * integrator (borrowed, not owned, by the problem's combined solver
@@ -711,7 +711,7 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
    * near incompressibility, and effective shear moduli collapsed by
    * @f$\Delta t \gg \tau@f$ viscosity contrasts — move into the Schur
    * block, where a weighted mass matrix absorbs them (see
-   * doc/pressure_split.tex).
+   * doc/methods/pressure_split.tex).
    *
    * Scope (the box-contrast prototype): the plain clamped solid only —
    * requires an isotropic(-split) rheology, displacement order >= 2 and no

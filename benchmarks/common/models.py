@@ -234,7 +234,7 @@ def stable_core(drho: float = 8000.0, vp_core: float = 14000.0,
     static problem of this core has a well-defined secular limit with no
     Rayleigh-Taylor growth: the model on which the Maxwell-core route's
     degree-1 offset from the secular closure is a clean measurement
-    (doc/static_fluid_core.tex)."""
+    (doc/theory/static_fluid_core.tex)."""
     return LayeredIsotropicElastic(
         [0.0, CMB, RADIUS], rho=[(rho0, -drho), 4500.0],
         vp=[vp_core, 11000.0], vs=[0.0, 6000.0], scale=RADIUS,

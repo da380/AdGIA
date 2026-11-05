@@ -1132,7 +1132,7 @@ The penalty $\theta$ also conditions the solve: it regularises the
 otherwise near-null relative normal motion at the interface, so too
 small a $\theta$ degrades the solves as well. Below $\theta \approx 100$
 the block solves degrade markedly, above it the cost is flat
-(\texttt{doc/benchmarks.tex}, ``Solver settings: measured behaviour'');
+(\texttt{doc/benchmarks/benchmarks.tex}, ``Solver settings: measured behaviour'');
 $\theta = 100$ with eight sweeps is the default
 (\texttt{SetConstraint(theta, sweeps)}), a compromise between the
 contraction per sweep and the conditioning of each sweep.
@@ -1391,7 +1391,7 @@ mode on \texttt{-map-shift} runs.
 
 Both paths are kept and solve the same discrete problem: they agree
 within discretisation error (at degree 0 to solver tolerance;
-\S\ref{sec:verif}; the Love-number benchmark, \texttt{doc/benchmarks.tex},
+\S\ref{sec:verif}; the Love-number benchmark, \texttt{doc/benchmarks/benchmarks.tex},
 section ``The Love-number family''), and endpoint differences between
 sweep counts and paths sit below the mesh error. At benchmark
 resolution their costs are comparable: the AL path with few sweeps is
@@ -1418,7 +1418,7 @@ MINRES does not converge algebraically under block-diagonal
 preconditioning (Gauss--Seidel or algebraic multigrid) nor under the
 Murphy--Golub--Wathen composite on the multiplier slot
 \cite{MurphyGolubWathen2000}, at a cost far above the penalty path
-(\texttt{doc/benchmarks.tex}). The structural reason: the
+(\texttt{doc/benchmarks/benchmarks.tex}). The structural reason: the
 ``constraint'' operator is square and only approximately singular, so
 saddle-point preconditioning theory --- which assumes a full-rank
 rectangular constraint --- does not apply, and the near-kernel
@@ -1531,7 +1531,7 @@ paired with $\bnu$, not $\pi$ (\S\ref{sec:first}).
 (the null pairs under the assembled operator),
 \texttt{FluidDisplacement()}, \texttt{OuterPotential()} and
 \texttt{FluidPotential()} (broken mode), and, for the change-of-variables
-identity of \texttt{doc/mappings.md}, per-block and per-kernel probes of
+identity of \texttt{doc/methods/mappings.md}, per-block and per-kernel probes of
 the broken operator (\texttt{ApplyBrokenBlock()},
 \texttt{ApplyBrokenKernel()}).
 
@@ -1618,7 +1618,7 @@ orders 1, 2) & \texttt{\seqsplit{TestReferentialProblemPar}} & $10^{-5}$ \\
 
 \medskip
 The mapped broken check is the slipping-interface instance of the
-discrete change-of-variables identity of \texttt{doc/mappings.md}
+discrete change-of-variables identity of \texttt{doc/methods/mappings.md}
 (section ``The discrete change-of-variables identity''): every mapped
 piece (per-region $a$-forms and Poisson blocks, couplings, $B_\Sigma$,
 $G_\Sigma$, $\mathbf{b}$, the jump constraint) is load-bearing in it.
@@ -1628,7 +1628,7 @@ condition on the other), and reduction (a) shares no interface
 machinery with the Dahlen formulation, so these are two-sided checks.
 Externally, the \texttt{slip} and \texttt{slip\_broken} methods of the
 Love-number benchmark are compared with \texttt{pyslfp} and with the
-welded methods (\texttt{doc/benchmarks.tex}), which also records the
+welded methods (\texttt{doc/benchmarks/benchmarks.tex}), which also records the
 measured cost of the AL and KKT paths.
 
 \appendix

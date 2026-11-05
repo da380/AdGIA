@@ -9,7 +9,7 @@ and `--timings` times the solve across the feature axis instead of
 comparing.
 
 `--method referential` runs the same comparison on the welded
-referential class (the ζζ collapse, `doc/quasi_static_models.tex`,
+referential class (the ζζ collapse, `doc/methods/quasi_static_models.tex`,
 "The sea-level terms"), outputs tagged `_ref`
 beside the Eulerian ones. Measured at the toy resolution (homogeneous,
 h 0.4, order 2, lmax 16): ocean-RMS relative difference 1.2 % against

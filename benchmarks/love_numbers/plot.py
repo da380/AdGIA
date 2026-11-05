@@ -28,7 +28,7 @@ body and its buffer (phi).
 At degree one the numbers are those of the centre-of-mass frame, in which
 k' is minus one in both solutions and is not plotted. With a fluid layer
 Dahlen's degree-zero numbers differ from the reference by design (see
-doc/gauged_fluid.md, "Degree 0") and are plotted to show it.
+doc/methods/gauged_fluid.md, "Degree 0") and are plotted to show it.
 
     python plot.py runs/homogeneous   one model, and runs/homogeneous/summary.md
     python plot.py runs          every model, and the summary runs/summary.md
@@ -181,7 +181,7 @@ def read_run(path: Path) -> Run:
                 # k' and l' vanish at degree zero: nothing to be relative to
                 continue
             # The naked Dahlen fluid differs from the reference at degree
-            # zero by design (doc/dahlen_closure.tex): its degree-zero
+            # zero by design (doc/theory/dahlen_closure.tex): its degree-zero
             # point is kept, to show the difference; closed by the level
             # border it is benchmarked like every other degree, as are the
             # welded and slipping treatments, which describe the fluid

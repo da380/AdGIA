@@ -12,6 +12,7 @@
 */
 
 #include <cmath>
+#include <limits>
 #include <memory>
 #include <string>
 
@@ -92,7 +93,7 @@ inline double L2Norm(const GridFunction& u) {
 // Non-dimensional densities: inner core 1.3, fluid from 1.2 (ICB) to 1.1
 // (CMB), mantle 1.0; with G = 0.05 the fluid mass term is comfortably
 // inside the positivity margin of the potential block (k R_CMB ~ 0.7
-// against pi/2; see doc/self_gravitation.md, "Solvers", the paragraph
+// against pi/2; see doc/methods/self_gravitation.md, "Solvers", the paragraph
 // "Definiteness of the potential block").
 
 constexpr double kRIcb = 0.1931;
@@ -152,6 +153,125 @@ inline FluidRegion OuterCore(Mesh& solid, Coefficient& rho_f,
   f.interface_marker[1] = 1;  // CMB
   return f;
 }
+
+// --- the three-layer model's background potential, analytically -----------
+//
+// Phi0 of the density SolidDensity / FluidDensity (inner core 1.3, the
+// linear fluid, mantle 1.0, nothing outside r = 1) on the spherical layers
+// of the canned meshes (their radii, data/earth_innercore_*.json), with
+// lap Phi0 = 4 pi G rho as the class assembles it: Phi0 = -G M / r outside
+// in 3-D, 2 G M log r in 2-D (in 2-D the class gauges the constant away).
+// Per layer the enclosed mass m(r) (in 2-D per unit length) is
+// c0 + cp r^p + cq r^(p+1), p = dim, so dPhi0/dr = G m / r^2 (3-D) or
+// 2 G m / r (2-D) integrates in closed form.
+
+constexpr double kMeshRIcb = 0.19306231360853868;
+constexpr double kMeshRCmb = 0.5466959660963742;
+
+struct ThreeLayerBackground {
+  int dim;
+  // Layer k on [r[k], r[k+1]]: enclosed mass c0 + cp r^p + cq r^q.
+  double r[5];
+  double c0[4], cp[4], cq[4];
+  double phi_top[4];  // Phi0 at r[k+1]
+
+  explicit ThreeLayerBackground(int dim_) : dim(dim_) {
+    r[0] = 0.0;
+    r[1] = kMeshRIcb;
+    r[2] = kMeshRCmb;
+    r[3] = 1.0;
+    r[4] = std::numeric_limits<double>::infinity();
+    // The fluid density alpha + beta r (FluidDensity).
+    const double beta = -0.1 / (kRCmb - kRIcb);
+    const double alpha = 1.2 - beta * kRIcb;
+    const double rho[4] = {1.3, 0.0, 1.0, 0.0};
+    // 3-D: m(r) = int 4 pi s^2 rho ds; 2-D: m(r) = int 2 pi s rho ds.
+    const double w = dim == 3 ? 4.0 * M_PI : 2.0 * M_PI;
+    const int p = dim == 3 ? 3 : 2;
+    double m_below = 0.0;
+    for (int k = 0; k < 4; k++) {
+      const double a = r[k];
+      if (k == 1) {
+        cp[k] = w * alpha / p;
+        cq[k] = w * beta / (p + 1);
+      } else {
+        cp[k] = w * rho[k] / p;
+        cq[k] = 0.0;
+      }
+      c0[k] = m_below - cp[k] * std::pow(a, p) - cq[k] * std::pow(a, p + 1);
+      if (k < 3) {
+        m_below = Mass(k, r[k + 1]);
+      }
+    }
+    // Phi0 at the top of each layer, from the outside in.
+    phi_top[3] = 0.0;  // unused (r = infinity)
+    phi_top[2] = Outside(1.0);
+    for (int k = 2; k > 0; k--) {
+      phi_top[k - 1] = phi_top[k] - (F(k, r[k + 1]) - F(k, r[k]));
+    }
+  }
+
+  double Mass(int k, double s) const {
+    const int p = dim == 3 ? 3 : 2;
+    return c0[k] + cp[k] * std::pow(s, p) + cq[k] * std::pow(s, p + 1);
+  }
+
+  // Phi0 outside the body (the mass M of layer 3's c0).
+  double Outside(double s) const {
+    return dim == 3 ? -kG * c0[3] / s : 2.0 * kG * c0[3] * std::log(s);
+  }
+
+  // The antiderivative of dPhi0/dr in layer k.
+  double F(int k, double s) const {
+    if (dim == 3) {  // G (c0 / s^2 + cp s + cq s^2)
+      return kG * (-c0[k] / s + cp[k] * s * s / 2.0 + cq[k] * s * s * s / 3.0);
+    }
+    // 2 G (c0 / s + cp s + cq s^2)
+    return 2.0 * kG *
+           (c0[k] * std::log(s) + cp[k] * s * s / 2.0 + cq[k] * s * s * s / 3.0);
+  }
+
+  int Layer(double s) const {
+    int k = 0;
+    while (k < 3 && s >= r[k + 1]) {
+      k++;
+    }
+    return k;
+  }
+
+  double Phi0(double s) const {
+    const int k = Layer(s);
+    if (k == 3) {
+      return Outside(s);
+    }
+    if (k == 0) {  // F's c0/s term vanishes in the centre layer (c0 = 0)
+      const double scale = dim == 3 ? kG : 2.0 * kG;
+      return phi_top[0] - scale * cp[0] * (r[1] * r[1] - s * s) / 2.0;
+    }
+    return phi_top[k] - (F(k, r[k + 1]) - F(k, s));
+  }
+
+  // dPhi0/dr.
+  double Gravity(double s) const {
+    if (s == 0.0) {
+      return 0.0;
+    }
+    const double m = Mass(Layer(s), s);
+    return dim == 3 ? kG * m / (s * s) : 2.0 * kG * m / s;
+  }
+
+  double operator()(const Vector& x) const { return Phi0(x.Norml2()); }
+
+  void Grad(const Vector& x, Vector& g) const {
+    const double s = x.Norml2();
+    g.SetSize(x.Size());
+    g = 0.0;
+    if (s > 0.0) {
+      g = x;
+      g *= Gravity(s) / s;
+    }
+  }
+};
 
 // --- gauged-fluid model on the three-layer meshes ---------------------------
 //

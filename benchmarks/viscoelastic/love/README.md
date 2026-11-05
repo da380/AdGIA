@@ -7,7 +7,7 @@ correspondence principle (`laplace_reference.py`), compared by
 (`laplace_reference`, `compare`, `make_case`). The method of the
 reference (correspondence principle, Gaver–Stehfest inversion, its
 accuracy and the instability horizon), the comparison metrics and the
-measured results are in `doc/benchmarks.tex` ("The Laplace-domain
+measured results are in `doc/benchmarks/benchmarks.tex` ("The Laplace-domain
 reference" and "The finite-element histories").
 
 `references/` holds committed reference histories (`fluid_core` with
@@ -103,7 +103,7 @@ forcing as well.
 The `-method gauged` histories are clean only for a neutrally stratified
 fluid core: at N² ≠ 0 (`fluid_core`'s uniform core) the gauge penalty is
 defined only to the stratification band, and the comparison with the
-Laplace reference there carries that band (`doc/static_fluid_core.tex`).
+Laplace reference there carries that band (`doc/theory/static_fluid_core.tex`).
 
 ```
 mpiexec -np 8 <build>/benchmarks/bin/viscoelastic_love \
@@ -112,7 +112,7 @@ mpiexec -np 8 <build>/benchmarks/bin/viscoelastic_love \
 ```
 
 On a model with a fluid layer `-level-border <n>` closes the Dahlen
-fluid by the level border of `doc/dahlen_closure.tex` (the default
+fluid by the level border of `doc/theory/dahlen_closure.tex` (the default
 static route; the campaign passes 16), so that the degree-0 history is
 benchmarked; without it the naked reduction's degree 0 is wrong by
 design. The results file records `"level_border"`.
@@ -178,7 +178,7 @@ ranks; degree 0 left out on `fluid_core` (a Dahlen fluid differs
 there by design). Every figure is the worst over the 13 times on the
 exchange comparer's degree scale (above): degree 0 (|hp0| ≈ 0.14–0.17)
 on its own scale, degrees 1–4 on theirs (about 1.3 to 3.6). The
-write-up is tier V1 of `doc/benchmark_programme.tex`.
+write-up is tier V1 of `doc/benchmarks/benchmark_programme.tex`.
 
 - **sl3dpp against pyslfp**: 1.2e-11 (`homogeneous`), 1.3e-11
   (`homogeneous_lithosphere`), 1.1e-11 (`fluid_core`), each in kp0; h'

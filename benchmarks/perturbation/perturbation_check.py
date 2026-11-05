@@ -12,7 +12,7 @@ largely cancels in the finite difference, so
 compares the DERIVATIVE of the response with respect to the interface
 radius, through the mapped assembly. The 1-D side is a finite difference
 of pyslfp solves, not an analytic sensitivity kernel
-(doc/benchmarks.tex, "The perturbation family").
+(doc/benchmarks/benchmarks.tex, "The perturbation family").
 
 The case must exist (love_numbers/run.py); its unmapped run of each
 method, beside the case, is the eps = 0 point, run here if missing.

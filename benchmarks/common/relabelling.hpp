@@ -1,8 +1,8 @@
 // ============================================================================
 // relabelling.hpp
 //
-// The relabelled (mapped) 3-D benchmark's local pieces (doc/mappings.md;
-// doc/benchmarks.tex, "The relabelling family" and "The perturbation
+// The relabelled (mapped) 3-D benchmark's local pieces (doc/methods/mappings.md;
+// doc/benchmarks/benchmarks.tex, "The relabelling family" and "The perturbation
 // family"):
 //
 //  - RadialProfiles: the model's exact radial fields, read from the

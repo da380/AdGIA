@@ -10,7 +10,7 @@ source term is differentiated from the chosen fields, so the fields can be
 changed here and the header regenerated. The driver manufactured_benchmark
 reads the header; nothing of the physics is typed by hand on the C++ side.
 
-The weak form (doc/self_gravitation.md, a solid body M inside the
+The weak form (doc/methods/self_gravitation.md, a solid body M inside the
 computational ball B, test functions v, chi):
 
   A(u,phi | v,chi) = int_M kappa div u div v + 2 mu d(u):d(v)

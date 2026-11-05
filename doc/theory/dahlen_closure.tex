@@ -45,7 +45,7 @@
 \newcommand{\nuho}{\hat{\boldsymbol{\nu}}_\Omega}
 \newcommand{\Se}{\mathbf{S}_e}
 \newcommand{\status}[1]{\noindent\emph{Status: #1}\par\smallskip}
-\input{macros.inc}
+\input{../macros.inc}
 
 \title{Dahlen's fluid closure and its generalisation:\\
        hydrostatic fluid regions in a static\\
@@ -3726,7 +3726,7 @@ $+\int\rho_1\chi$. Here $\nuhs$ is the solid's outward normal on
 $\Sigma$ (the code comments' $\mathbf m$, the SubMesh's
 \code{CalcOrtho} normal). The fluid contributes three terms, named
 F1--F3 in this library (\code{mixed\_problem.hpp};
-\code{doc/quasi\_static\_models.tex}; \code{doc/benchmarks.tex}, ``The
+\code{doc/quasi\_static\_models.tex}; \code{doc/benchmarks/benchmarks.tex}, ``The
 CMB treatments''):
 \begin{align}
   \text{(F1)}&\quad \int_F\rho'\,\phi\,\chi\dV ,
@@ -5240,6 +5240,43 @@ over $(s, \nu)$ at zero potential, restricted to the interior $U$ nodes
 $\delta\Vol = 0$ with Dirichlet ends, the check of
 \S\ref{sec:uniqueness}.
 
+\paragraph{Sources and exact levels (built).}
+\code{AddLevelBorderForce} adds data to the border's own rows: per
+region the $(U, s, \nu)$ rows of its grid and its wall rows, so that
+the rows read $(B^T x + D_b y)_i = r_i$, as \code{AddBorderForce} does
+for the uniform-term and angular-velocity rows. The data are nodal: the
+caller integrates its continuum sources against the hat functions,
+$r_i = \int N_i\,r\dc$, on the grid that \code{LevelBorderGrid}
+returns; at a centre the $U_0$ datum is dropped with $U_0$. The data
+accumulate, are cleared by \code{AssembleForce}, and enter the
+elimination and the monolithic routes alike. The bordered system being
+symmetric, a source on any row and a load on the fields are reciprocal,
+$\langle x(f), g\rangle = \langle x(g), f\rangle$. Measured on the
+canned three-dimensional balls (the shell between the inner core and
+the mantle, and the core with a centre), for a source on each row kind
+against a potential load, a traction on the solid side of the
+core--mantle boundary or another border row: asymmetries below
+$10^{-14}$ relative in serial and $2\times10^{-12}$ on one to four
+ranks. In two dimensions the compatibility relocation pairs the
+potential rows and the $\nu$ columns asymmetrically (asymmetry $0.5$ on
+the canned annulus), as for the monolithic route.
+\code{SetLevelBorder(levels, true, grad)} builds the border from an
+analytic background: $\Phi_0$ from the coefficient the class was
+constructed with and $\nabla\Phi_0$ from \code{grad}, at the fluid
+quadrature points and on the walls, in place of the projected field;
+the histogram, the element means, the wall classification and the
+checks are otherwise unchanged, and the rest of the operator keeps the
+projected $\Phi_0$. Measured on the canned three-layer ball built on its
+analytic $\Phi_0$ (order one, twelve levels): the element volumes sum to
+the fluid volume either way; the cumulative histogram moves by $7\,\%$
+of the fluid volume, toward the analytic one ($2.1\,\%$ from it,
+against $6.2\,\%$ for the projection), while single elements move by up
+to $100\,\%$, each fluid quadrature point carrying a sizable fraction
+of an element at this level count; the degree-0 solution changes by
+$1.3\times10^{-4}$ in the potential and $3.8\times10^{-3}$ in the
+displacement ($8\times10^{-6}$ on the canned annulus at order two), and
+its agreement with the gauged fluid is unchanged.
+
 \paragraph{The referential variant (built at the natural state;
 gate 1 passed).} In the referential class
 (\S\ref{sec:solid}) the closure is realised by a \emph{discrete} change
@@ -5573,8 +5610,7 @@ not the choice between the relaxed and the thermal-wind state of
 \section{The method against the older literature}
 \label{sec:literature}
 
-\emph{Status: cited (the papers; collected in
-\code{doc/FluidCorePapers}); argued (the comparisons, and
+\emph{Status: cited (the papers); argued (the comparisons, and
 \S\ref{sec:rotating-limit}).}
 
 The static deformation of a body with a fluid core has a literature of

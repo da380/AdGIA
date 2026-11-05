@@ -113,7 +113,7 @@ LinearQuasiStaticMixedSelfGravitatingProblem::
         "bdr_attributes.Max().");
     // The CMB-approximation ladder: a non-Full treatment owns its
     // degradations, so the fields it prescribes must be left at their
-    // defaults (the ladder is defined in doc/quasi_static_models.tex,
+    // defaults (the ladder is defined in doc/methods/quasi_static_models.tex,
     // "Fluid regions and the ladder of CMB approximations").
     if (f.treatment == FluidRegion::Treatment::Full) {
       MFEM_VERIFY(f.uniform_density == 0.0,
@@ -212,6 +212,7 @@ LinearQuasiStaticMixedSelfGravitatingProblem::
   }
 
   SetupPotentialOperators();
+  phi0_coef_ = background_potential;
   ComputeBackgroundPotential(background_potential);
   SetupFluidMass();
   SetupCoupling();
@@ -949,7 +950,7 @@ real_t LinearQuasiStaticMixedSelfGravitatingProblem::SurfaceIntegralOnMarker(
 
 DenseMatrix LinearQuasiStaticMixedSelfGravitatingProblem::ModelInertiaTensor() {
   MFEM_VERIFY(dim_ == 3, "ModelInertiaTensor: 3-D only.");
-  // Whole-body (G9 of doc/dahlen_closure.tex): the solid over the
+  // Whole-body (G9 of doc/theory/dahlen_closure.tex): the solid over the
   // displacement SubMesh, every fluid region's hydrostatic density over
   // the parent's fluid elements. phi_e = id on this class.
   DenseMatrix I(3);
@@ -1130,6 +1131,7 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::AssembleForce(real_t t) {
   if (border_rot_add_.Size() > 0) {
     border_rot_add_ = 0.0;
   }
+  level_add_.clear();
   b_phi_->Assemble();
   Vector bL(fes_phi_->GetVSize());
   injection_->Mult(*b_phi_, bL);
@@ -1214,6 +1216,7 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetInnerPrintLevel(
 
 void LinearQuasiStaticMixedSelfGravitatingProblem::SetBackgroundPotential(
     Coefficient& phi0) {
+  phi0_coef_ = &phi0;
   ComputeBackgroundPotential(&phi0);
   if (!fluids_.empty()) {
     // The fluid mass term may depend on grad Phi0. SetupFluidMass
@@ -1763,7 +1766,7 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveLinearSystem(
       // the SAME pairing as the potential — the discrete
       // int N_i(Phi0) psi_k dV, the nu column against the psi
       // interpolant — and the omega rows gain the transposes by the
-      // symmetry of the functional (doc/dahlen_closure.tex,
+      // symmetry of the functional (doc/theory/dahlen_closure.tex,
       // "Rotation"). This is the -f' part of the fluid's inertia
       // perturbation that the reduction alone lacks.
       rot_level_nu_.clear();
@@ -1833,6 +1836,14 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveLinearSystem(
       for (int i = 0; i < L.size; i++) {
         for (int j = 0; j < L.size; j++) {
           Db(off + i, off + j) = L.Db(i, j);
+        }
+      }
+      // The border's own rows' data (AddLevelBorderForce), in its local
+      // ordering.
+      if (lr < static_cast<int>(level_add_.size()) &&
+          level_add_[lr].Size() == L.size) {
+        for (int j = 0; j < L.size; j++) {
+          r[off + j] += level_add_[lr][j];
         }
       }
       if (rot_enabled_) {
@@ -2467,6 +2478,18 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveBorderedMonolithic(
   for (int k = 0; k < omega_.Size(); k++) {
     omega_[k] = y[ns + k];
   }
+  if (level_enabled_) {
+    // The level borders' unknowns follow the water and rotation scalars,
+    // as in the elimination (LevelBorderSolution reads them).
+    int off = ns + (rot_enabled_ ? static_cast<int>(rot_psi_.size()) : 0);
+    for (auto& L : level_) {
+      L.y.SetSize(L.size);
+      for (int j = 0; j < L.size; j++) {
+        L.y[j] = y[off + j];
+      }
+      off += L.size;
+    }
+  }
   if (rot_enabled_) {
     static_cast<CentrifugalPotential*>(rot_psi_total_.get())
         ->SetAmplitudes(omega_);
@@ -2574,7 +2597,7 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveUnbordered(
 
 
 // ---------------------------------------------------------------------------
-// The level border (SetLevelBorder): doc/dahlen_closure.tex, "The closure in
+// The level border (SetLevelBorder): doc/theory/dahlen_closure.tex, "The closure in
 // the cumulative-volume variable" and "Implementation".
 
 namespace {
@@ -2583,7 +2606,21 @@ namespace {
 }  // namespace
 
 void LinearQuasiStaticMixedSelfGravitatingProblem::SetLevelBorder(int levels) {
+  SetLevelBorder(levels, false, nullptr);
+}
+
+void LinearQuasiStaticMixedSelfGravitatingProblem::SetLevelBorder(
+    int levels, bool exact_levels, VectorCoefficient* grad_phi0) {
   MFEM_VERIFY(levels >= 3, "SetLevelBorder: at least three levels.");
+  MFEM_VERIFY(exact_levels || !grad_phi0,
+              "SetLevelBorder: a gradient is read only with exact levels.");
+  MFEM_VERIFY(!exact_levels || phi0_coef_,
+              "SetLevelBorder: exact levels need the background potential "
+              "as a coefficient (the constructor's background_potential or "
+              "SetBackgroundPotential()); this problem solved for it.");
+  MFEM_VERIFY(!exact_levels || grad_phi0,
+              "SetLevelBorder: exact levels need the gradient of the "
+              "background potential (grad_phi0).");
   MFEM_VERIFY(!fluids_.empty(), "SetLevelBorder: no fluid regions.");
   for (const auto& f : fluids_) {
     MFEM_VERIFY(f.treatment == FluidRegion::Treatment::Full,
@@ -2599,7 +2636,10 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetLevelBorder(int levels) {
               "SetLevelBorder: the fluid mass term is not set up.");
   level_n_ = levels - 1;
   level_enabled_ = true;
+  level_grad_phi0_ = exact_levels ? grad_phi0 : nullptr;
   BuildLevelBorders();
+  // The gradient is read by the builder only.
+  level_grad_phi0_ = nullptr;
   rot_cache_version_ = -1;  // the centrifugal cross-block is border data
   if (border_elim_) {
     border_elim_->InvalidateCache();
@@ -2617,6 +2657,11 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::BuildLevelBorders() {
   ctx.pot0_shadow = phi0_shadow_.get();
   ctx.grad_pot0 = grad_phi0_.get();
   ctx.grad_pot0_shadow = grad_phi0_shadow_.get();
+  if (level_grad_phi0_) {
+    // Exact levels: the analytic background in place of the projection.
+    ctx.pot0_coef = phi0_coef_;
+    ctx.grad_pot0_coef = level_grad_phi0_;
+  }
   ctx.n = level_n_;
   level_ = AdGIA::BuildLevelBorders(ctx, fluids_, fluid_markers_,
                                     fluid_rho_prime_, level_coefs_);
@@ -2731,6 +2776,65 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::LevelBorderSolution(
                   region < static_cast<int>(level_.size()),
               "LevelBorderSolution: no such level border.");
   level_[region].Solution(c, U, s, nu, lambda);
+}
+
+const LevelBorder& LinearQuasiStaticMixedSelfGravitatingProblem::
+    LevelBorderData(int region) const {
+  MFEM_VERIFY(level_enabled_ && region >= 0 &&
+                  region < static_cast<int>(level_.size()),
+              "LevelBorderData: no such level border.");
+  return level_[region];
+}
+
+void LinearQuasiStaticMixedSelfGravitatingProblem::LevelBorderGrid(
+    int region, Vector& c, bool& centre, std::vector<int>& wall_node) const {
+  const LevelBorder& L = LevelBorderData(region);
+  c = L.c;
+  centre = L.centre;
+  wall_node = L.wall_node;
+}
+
+void LinearQuasiStaticMixedSelfGravitatingProblem::AddLevelBorderForce(
+    int region, const Vector& rU, const Vector& rs, const Vector& rnu,
+    const Vector& rlambda) {
+  MFEM_VERIFY(level_enabled_ && region >= 0 &&
+                  region < static_cast<int>(level_.size()),
+              "AddLevelBorderForce: no such level border.");
+  const LevelBorder& L = level_[region];
+  const int m = L.n + 1;
+  const int nwalls = static_cast<int>(L.wall_u.size());
+  MFEM_VERIFY(rU.Size() == 0 || rU.Size() == m,
+              "AddLevelBorderForce: U data sized to the grid's n+1 nodes.");
+  MFEM_VERIFY(rs.Size() == 0 || rs.Size() == m,
+              "AddLevelBorderForce: s data sized to the grid's n+1 nodes.");
+  MFEM_VERIFY(rnu.Size() == 0 || rnu.Size() == m,
+              "AddLevelBorderForce: nu data sized to the grid's n+1 nodes.");
+  MFEM_VERIFY(rlambda.Size() == 0 || rlambda.Size() == nwalls,
+              "AddLevelBorderForce: one datum per wall.");
+  if (static_cast<int>(level_add_.size()) != static_cast<int>(level_.size())) {
+    level_add_.resize(level_.size());
+  }
+  Vector& add = level_add_[region];
+  if (add.Size() != L.size) {
+    add.SetSize(L.size);
+    add = 0.0;
+  }
+  // The local ordering U | s | nu | lambda; at a centre U_0 is removed
+  // and its datum dropped.
+  for (int k = 0; k < m; k++) {
+    if (rU.Size() > 0 && !(L.centre && k == 0)) {
+      add[L.oU + L.UIndex(k)] += rU[k];
+    }
+    if (rs.Size() > 0) {
+      add[L.os + k] += rs[k];
+    }
+    if (rnu.Size() > 0) {
+      add[L.onu + k] += rnu[k];
+    }
+  }
+  for (int w = 0; w < rlambda.Size(); w++) {
+    add[L.ol + w] += rlambda[w];
+  }
 }
 
 }  // namespace AdGIA

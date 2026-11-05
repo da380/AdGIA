@@ -1262,7 +1262,7 @@ LinearQuasiStaticReferentialSelfGravitatingProblem::LinearQuasiStaticReferential
   Zeta_true_ = 0.0;
 
   // The DtN operator on the outer boundary: the mapping is the identity
-  // there, so the plain closure applies (doc/gravitating_elasticity.md §3).
+  // there, so the plain closure applies (doc/theory/gravitating_elasticity.md §3).
 #ifdef MFEM_USE_MPI
   if (pfes_zeta_) {
     dtn_ = std::make_unique<PoissonDtNOperator>(pfes_zeta_->GetComm(),
@@ -1570,7 +1570,7 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetupRigidModes() {
   }
 
   // The block projector: displacement modes with zero potential partners
-  // (doc/gravitating_elasticity.md §3.1), plus the constant in 2-D.
+  // (doc/theory/gravitating_elasticity.md §3.1), plus the constant in 2-D.
 #ifdef MFEM_USE_MPI
   if (pfes_) {
     projector_block_ = std::make_unique<NullSpaceProjector>(pfes_->GetComm());
@@ -1610,7 +1610,7 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetSurfaceLoad(
   auto& marker = load_markers_.back();
   auto minus_sigma = std::make_unique<ProductCoefficient>(-1.0, sigma);
   // Potential row only: the u-row load of the Eulerian form is absorbed
-  // by the change of variables (doc/gravitating_elasticity.md §3.1).
+  // by the change of variables (doc/theory/gravitating_elasticity.md §3.1).
   b_zeta_->AddBoundaryIntegrator(new BoundaryLFIntegrator(*minus_sigma),
                                  marker);
   load_coefs_.push_back(std::move(minus_sigma));
@@ -2134,7 +2134,7 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetFluidPotentialGlue(
   }
 
   // The Eulerian fluid blocks, exactly as the mixed class assembles
-  // them (doc/self_gravitation.md): A_F = K_F / 4 pi G + M_F on the
+  // them (doc/methods/self_gravitation.md): A_F = K_F / 4 pi G + M_F on the
   // parent's fluid elements, C_F = -oint rho_F phi (m.v) on the wall.
   Array<int> empty;
   Array<int>& marker = fluid_markers_.front();
@@ -2430,7 +2430,7 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetFluidPotentialGlue(
 
 void LinearQuasiStaticReferentialSelfGravitatingProblem::CheckWallTraction(
     Coefficient& wall_pressure) {
-  // Step (v) of the referential closure (doc/dahlen_closure.tex, "A
+  // Step (v) of the referential closure (doc/theory/dahlen_closure.tex, "A
   // general pre-stressed solid"): the wall seam is derived under
   // S_e n = -p0 n on the wall — the pre-stress carries the fluid's
   // normal traction and no shear there. Measure the relative misfit at
@@ -2484,7 +2484,7 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::CheckWallTraction(
               "the wall pressure (|S_e n + p0 n| / |p0| = "
                   << wall_traction_res_
                   << " on the wall): the wall seam requires S_e n = -p0 n "
-                     "(doc/dahlen_closure.tex, step (v)).");
+                     "(doc/theory/dahlen_closure.tex, step (v)).");
 }
 
 void LinearQuasiStaticReferentialSelfGravitatingProblem::
@@ -2493,7 +2493,7 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::
   // The solid-side wall terms, shared by the serial and parallel glue:
   // the wall buoyancy term F2 (normal-normal) exactly as the mixed
   // class has it, and the integrator half of the hybrid wall seam
-  // (doc/dahlen_closure.tex, "The wall seam"): W1 the normal--surface-
+  // (doc/theory/dahlen_closure.tex, "The wall seam"): W1 the normal--surface-
   // divergence kernel at pi_minus = p0 - |grad zeta0|^2/8piG and W2 the
   // symmetrised one-sided pressure kernel at p0 — together the follower
   // load, -p0 times the second variation of the enclosed volume, with
@@ -2725,7 +2725,7 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::OnFlavorRelease(
 
 void LinearQuasiStaticReferentialSelfGravitatingProblem::SetupSolver(OperatorHandle& A) {
   // A fluid region without the potential glue would silently drop the
-  // fluid's response: refuse (doc/dahlen_closure.tex, "Implementation",
+  // fluid's response: refuse (doc/theory/dahlen_closure.tex, "Implementation",
   // the referential variant).
   MFEM_VERIFY(fluids_.empty() || glue_set_,
               "LinearQuasiStaticReferentialSelfGravitatingProblem: fluid "
@@ -3103,7 +3103,7 @@ namespace {
 /// rho * sym(D g0_h): the discrete grad-grad-zeta0 matrix coefficient of
 /// the mismatch mass term, from the *projected* g0 field so that no
 /// density or second potential derivatives are ever taken
-/// (doc/slip_interface.tex, "The gravity Hessian of the broken motion,
+/// (doc/methods/slip_interface.tex, "The gravity Hessian of the broken motion,
 /// explicitly", discrete realisation). Symmetrised pointwise
 /// so the assembled mass matrix is exactly symmetric.
 class RhoSymJacobianCoefficient : public MatrixCoefficient {
@@ -4384,7 +4384,7 @@ void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::AssembleSlipBlocks(
   c_f.Assemble();
   std::unique_ptr<SparseMatrix> EtCf(mfem::Mult(*Eft, c_f.SpMat()));
 
-  // The mismatch pieces (doc/slip_interface.tex, "The gravity Hessian of
+  // The mismatch pieces (doc/methods/slip_interface.tex, "The gravity Hessian of
   // the broken motion, explicitly", discrete realisation), assembled at
   // phi_e = id: hence the IsIdentity guard above. K_c = int_Bf rho w .
   // grad zeta1.
@@ -4833,11 +4833,11 @@ bool LinearQuasiStaticReferentialSelfGravitatingSlipProblem::SolveLinearSystem(
   }
   // Augmented-Lagrangian iterations for the normal-jump constraint,
   // interleaved with the Tikhonov refinement of the fluid gauge
-  // (doc/slip_interface.tex, "Constraint enforcement", "Penalty and
+  // (doc/methods/slip_interface.tex, "Constraint enforcement", "Penalty and
   // augmented Lagrangian, interleaved with the gauge refinement"):
   //   S U_{k+1} = F - w_k + eps Q u_{f,k},   w_{k+1} = w_k + theta P U.
   //
-  // Inexact sweeps (doc/slip_interface.tex, "The sweep schedule"): an
+  // Inexact sweeps (doc/methods/slip_interface.tex, "The sweep schedule"): an
   // early sweep need only be solved roughly (the next multiplier update
   // perturbs the right-hand side anyway), so the inner tolerance
   // tightens geometrically from `loose` to the full rel_tol_ across the

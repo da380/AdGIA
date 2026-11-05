@@ -23,15 +23,12 @@ benchmarks/**/runs/
 
 # LaTeX build artefacts of the notes in doc/ (the PDFs are built from the
 # .tex sources)
-doc/*.aux
-doc/*.log
-doc/*.out
-doc/*.toc
-doc/*.pdf
-doc/*.fls
-doc/*.fdb_latexmk
-doc/*.synctex.gz
+doc/**/*.aux
+doc/**/*.log
+doc/**/*.out
+doc/**/*.toc
+doc/**/*.pdf
+doc/**/*.fls
+doc/**/*.fdb_latexmk
+doc/**/*.synctex.gz
 
-# The papers collected for reference under doc/ (the PDFs are ignored
-# above; BenchmarkPapers/ also holds a working survey)
-doc/BenchmarkPapers/

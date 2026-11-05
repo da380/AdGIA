@@ -4,7 +4,7 @@
  * exponential-trapezoid scheme (the transpose of tangent.hpp), giving the
  * exact gradient of the discrete objective with respect to the moduli and
  * to the data surface load. The parity with the continuous adjoint of
- * adjoint.hpp that sl3dpp has; the equations are in doc/adjoints.md,
+ * adjoint.hpp that sl3dpp has; the equations are in doc/methods/adjoints.md,
  * section 5.
  */
 #pragma once

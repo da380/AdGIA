@@ -2,7 +2,7 @@
 
 The theta-reduction of the welded gauged referential weak form at
 phi_e = id with the hydrostatic natural state
-(doc/gravitating_elasticity.md, "the linearised system in (u, zeta1)"),
+(doc/theory/gravitating_elasticity.md, "the linearised system in (u, zeta1)"),
 solved by a 1-D hp-FEM:
 
   u-row:    material (bare C) + geometric (S_e = -p0 I)
@@ -140,7 +140,7 @@ def solve_degree(model: DiscGravityModel, l: int, *, p: int = 8,
               interface forms B_Sigma (pi = p0(c)) and G_Sigma in
               their circle amplitudes; l = 0 is welded identically;
       dahlen  the Eulerian mixed-class system transcribed as its own
-              assembly path (doc/quasi_static_models.tex eq. (mixedA)
+              assembly path (doc/methods/quasi_static_models.tex eq. (mixedA)
               + (F1)-(F3)): effective moduli with the deviatoric
               split, the symmetrised rho-advective terms, the
               volume + interface coupling c, Eulerian phi
@@ -455,7 +455,7 @@ def solve_degree(model: DiscGravityModel, l: int, *, p: int = 8,
 
             def pair(i, j):
                 # like-channel contractions of the 2x2 amplitude
-                # matrices (doc/gravitating_elasticity.md a'' at id)
+                # matrices (doc/theory/gravitating_elasticity.md a'' at id)
                 a00, a01, a10, a11 = H00[i], H01[i], H10[i], H11[i]
                 b00, b01, b10, b11 = H00[j], H01[j], H10[j], H11[j]
                 di, dj = d[i], d[j]
@@ -630,7 +630,7 @@ def solve_degree_maxwell(model: DiscGravityModel, l: int, *, p: int = 8,
     mu_core, Maxwell time tau), the dead load is applied as a step,
     and the quasi-static system is relaxed by backward Euler until the
     SOLID region stops moving — the secular route to the static
-    response (doc/static_fluid_core.tex), computed with nothing but
+    response (doc/theory/static_fluid_core.tex), computed with nothing but
     welded solid-elastic solves: no fluid region, no slip machinery,
     no kernel handling beyond the usual, any geometry.
 

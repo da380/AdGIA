@@ -11,7 +11,7 @@ and surface topography, and the relabelled 3-D benchmarks
 every form, derivatives with respect to the shape are analytic.
 
 The construction follows the particle-relabelling picture of Al-Attar &
-Crawford (2016; `doc/BenchmarkPapers/ggw032.pdf`, with a dictionary of
+Crawford (2016, GJI 205, 575–593; with a dictionary of
 conventions at the end of Section 3); every formula below is
 self-contained (chain rule, change of variables, Nanson's relation) so it
 can be checked line by line.
@@ -140,7 +140,7 @@ Saint Venant–Kirchhoff material.
 
 ### Dictionary to Al-Attar & Crawford (2016)
 
-The paper (`doc/BenchmarkPapers/ggw032.pdf`; GJI 205, 575–593) writes the
+The paper (GJI 205, 575–593) writes the
 relabelling ξ : M̃ → M from the *new* reference body to the old, and its
 eq. (71) absorbs the Jacobian into the relabelled material parameters:
 ρ̃ = J_ξ ρ∘ξ, W̃(x̃, F̃) = J_ξ W[ξ, F̃ F_ξ⁻¹]. The forms here keep J
@@ -178,7 +178,7 @@ returning F, a `Jacobian` helper for det F, `MapNormal` (below) and
   the identity outside `r_outer`, `C¹` across both seams, so `F = I` at
   the DtN sphere. The analytic buffer-taper rule for an equilibrium
   mapping that is non-trivial on the physical surface
-  (`doc/gravitating_elasticity.md`, section "Gravity: three formulations").
+  (`doc/theory/gravitating_elasticity.md`, section "Gravity: three formulations").
 - `GridFunctionDiffeomorphism` — ξ = x + h for a displacement grid
   function, `F = I + ∇h` through the element transformation. The
   discrete representative: interpolated mappings and mappings supplied
@@ -292,7 +292,7 @@ unchanged.
 recipe of Section 3: the mapping is a relabelling and the coefficients
 are the physical fields composed with it. The last three take the
 *equilibrium mapping* `φ_e` of the linearised referential problem
-(`doc/gravitating_elasticity.md`, sections "The linearised quasi-static
+(`doc/theory/gravitating_elasticity.md`, sections "The linearised quasi-static
 problem" and "The linearised referential system"); their forms are not plain
 pull-backs, and a relabelling of such a problem composes into `φ_e` and
 transforms the coefficients (`RelabelledBackground`) while leaving these
@@ -306,7 +306,7 @@ surface loads use `NansonAreaCoefficient` likewise. The equilibrium
 stress generators `MinimumNormEquilibriumStress` and
 `MinimumDeviatoricEquilibriumStress` (`background.hpp`) take an optional
 trailing `Diffeomorphism*` and then solve the pulled-back problem
-(`doc/gravitating_elasticity.md`, section "Equilibrium stress in general
+(`doc/theory/gravitating_elasticity.md`, section "Equilibrium stress in general
 models").
 
 ## 5. The discrete change-of-variables identity
@@ -379,7 +379,7 @@ Element and operator level (`tests/`):
   unrelabelled solution under composition).
 
 Solver level: the relabelling benchmark family
-(`benchmarks/relabelling/README.md`; documented in `doc/benchmarks.tex`,
+(`benchmarks/relabelling/README.md`; documented in `doc/benchmarks/benchmarks.tex`,
 section "The relabelling family") describes the same spherical physical
 problem from laterally relabelled coordinates. `love_benchmark -map`
 (exact F) must reproduce the unmapped Love numbers; `relabelled_identity`

@@ -9,7 +9,7 @@ direct potential, geodetic sign) and the geodetic tidal numbers h l k
 code (k'_1 = -1 identically). Degree 0 of AdGIA's Dahlen fluid is
 benchmarked when the run closes the fluid by the level border
 (`love_benchmark -level-border <n>`, the default of the love_numbers
-family's `run` script on the fluid models; `doc/dahlen_closure.tex`);
+family's `run` script on the fluid models; `doc/theory/dahlen_closure.tex`);
 the naked reduction (`-level-border 0`) has a degree 0 that is wrong by
 design, exhibited rather than benchmarked, and `from_results` writes it
 as NaN. The Maxwell-core route also carries degree 0, at a cost.

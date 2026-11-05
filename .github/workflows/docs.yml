@@ -36,12 +36,12 @@ jobs:
           sed -e "s|@CMAKE_SOURCE_DIR@|$GITHUB_WORKSPACE|g" \
               -e "s|@CMAKE_CURRENT_BINARY_DIR@|$GITHUB_WORKSPACE/build|g" \
               -e "s|@DOXYGEN_PREDEFINED_MACROS@|DOXYGEN_SHOULD_PARSE_THIS DOXYGEN_ONLY MFEM_USE_MPI=1|" \
-              doc/Doxyfile.in > build/Doxyfile
+              doc/doxygen/Doxyfile.in > build/Doxyfile
           printf 'GENERATE_LATEX = NO\nGENERATE_XML = NO\n' >> build/Doxyfile
 
       - name: Run Doxygen
         # From the source root, so the relative MATHJAX_CODEFILE
-        # (doc/mathjax_config.js) resolves to the committed file.
+        # (doc/doxygen/mathjax_config.js) resolves to the committed file.
         run: doxygen build/Doxyfile
 
       - name: Upload Pages artifact

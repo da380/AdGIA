@@ -2,7 +2,7 @@
  * @file level_border.hpp
  * @brief The level border of the Dahlen closure: the one-dimensional
  * bordered extension that closes the eliminated hydrostatic fluid's
- * per-level mass budget (doc/dahlen_closure.tex, "The closure equation
+ * per-level mass budget (doc/theory/dahlen_closure.tex, "The closure equation
  * and its end conditions" and "Implementation"). The builder is
  * shared by the mixed class (Eulerian potential) and the referential
  * class (which conjugates the columns through its potential glue); the
@@ -58,7 +58,7 @@ struct LevelBorder {
    * at @f$\delta V = 0@f$ on the interior @f$U@f$ nodes (the wall
    * values are the solid's, fixed). Positive means the
    * closure's quadratic form is coercive: a theorem for @f$D\le 0@f$,
-   * a check for @f$D>0@f$ (doc/dahlen_closure.tex, "Existence,
+   * a check for @f$D>0@f$ (doc/theory/dahlen_closure.tex, "Existence,
    * uniqueness and stability"; a uniform compressible
    * core has @f$D=\rho^2/\kappa>0@f$ and loses coercivity at small
    * enough @f$\kappa@f$). All eigenvalues in @p eigenvalues if given.
@@ -80,6 +80,15 @@ struct LevelBorder {
  * referential class it is @f$\zeta^0@f$, equal to @f$\Phi_0@f$ at the
  * natural reference state the glue requires. Parallelism is read off
  * the spaces.
+ *
+ * The exact-levels option: when @p pot0_coef and @p grad_pot0_coef are
+ * set, the builder evaluates the background potential and its gradient
+ * from them, at the fluid quadrature points (parent mesh) and on the
+ * walls (the solid SubMesh's boundary elements), in place of the
+ * projected fields; both must therefore be functions of position
+ * (FunctionCoefficient, VectorFunctionCoefficient or equivalent). The
+ * histogram, the element means, the wall classification and every
+ * check are otherwise unchanged.
  */
 struct LevelBorderContext {
   mfem::FiniteElementSpace* fes_u = nullptr;    ///< solid (SubMesh)
@@ -88,6 +97,12 @@ struct LevelBorderContext {
   mfem::GridFunction* pot0_shadow = nullptr;    ///< on the solid shadow
   mfem::VectorCoefficient* grad_pot0 = nullptr;         ///< parent
   mfem::VectorCoefficient* grad_pot0_shadow = nullptr;  ///< solid shadow
+  /// Exact levels: the background potential as a function of position
+  /// (both meshes), used in place of @p pot0 and @p pot0_shadow when set.
+  mfem::Coefficient* pot0_coef = nullptr;
+  /// Exact levels: its gradient as a function of position, used in place
+  /// of @p grad_pot0 and @p grad_pot0_shadow when set. Set both or none.
+  mfem::VectorCoefficient* grad_pot0_coef = nullptr;
   int n = 15;  ///< 1-D grid elements (nodes n+1)
   /// Largest admissible spread of @f$\Phi_0@f$ over a wall, as a
   /// fraction of the region's level range (the level-wall check).
@@ -101,7 +116,9 @@ struct LevelBorderContext {
  * the grid uniform in the level, the level-mean coefficients and hat
  * blocks on the fluid quadrature points, the @f$\nu@f$ columns on the
  * SAME quadrature points (the discrete mass balance is then an
- * identity), the wall columns, and the dense block.
+ * identity), the wall columns, and the dense block. The background is
+ * read from the context's exact-levels coefficients where set, from the
+ * projected fields otherwise.
  *
  * @param fluids One Treatment::Full region per entry, each with its
  * bulk_modulus; @p fluid_markers its parent-attribute markers,

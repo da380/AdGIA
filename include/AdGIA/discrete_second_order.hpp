@@ -3,7 +3,7 @@
  * @brief The discrete second-order adjoint: the derivative of the
  * discrete gradient (discrete_adjoint.hpp) along a model direction v,
  * i.e. the exact Hessian-vector product of the discrete objective,
- * symmetric to rounding (doc/adjoints.md, section 5).
+ * symmetric to rounding (doc/methods/adjoints.md, section 5).
  */
 #pragma once
 #include <memory>

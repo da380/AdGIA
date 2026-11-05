@@ -4,7 +4,7 @@
 
 /*
   Tests for the building blocks of the generalised (pre-stressed,
-  referential) elasticity implementation (doc/gravitating_elasticity.md):
+  referential) elasticity implementation (doc/theory/gravitating_elasticity.md):
 
   - BareElasticTensorCoefficient: the PREM -> bare conversion reproduces
     lambda - p, mu + p isotropically, and is the identity at p = 0.

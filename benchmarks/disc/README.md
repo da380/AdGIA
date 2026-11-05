@@ -90,7 +90,7 @@ side:
   with the B_Sigma and G_Sigma interface forms) and `dahlen` (the
   Eulerian mixed-class system with F1-F3, fluid displacement
   eliminated; at l = 0 closed by the level-mean border of
-  doc/static_fluid_core.tex Step G7, verified against the welded solve). Degrees
+  doc/theory/static_fluid_core.tex Step G7, verified against the welded solve). Degrees
   l = 0 and l >= 2 (not l = 1).
 - `solve_degree_maxwell(model, l, ...)` — the Maxwell relaxation (the
   default `SetFluid` treatment of the library, here as a 1-D calculation), the secular time-stepping

@@ -34,12 +34,12 @@ stepping and its derivative (`discrete_adjoint.hpp`,
 by symmetry), the method a user option; and the measurement layer, each
 observable yielding its value and its adjoint dual, so a data vector and
 an adjoint force come from one definition (`measurement.hpp`,
-`doc/adjoints.md`). The library is under active development and is not yet
+`doc/methods/adjoints.md`). The library is under active development and is not yet
 user-facing: interfaces move.
 
 **Fluid regions.** For coupled elasto-gravity problems with fluid regions
 on a hydrostatic background, Dahlen's mixed formulation closed by the
-level border (`SetLevelBorder`, `doc/dahlen_closure.tex`) is the static
+level border (`SetLevelBorder`, `doc/theory/dahlen_closure.tex`) is the static
 method, at every degree and on any geometry with level walls. The Maxwell
 relaxation of the fluid (`SetFluid`'s default treatment) is the general
 dissipative route — any geometry, any stratification, any number of
@@ -175,23 +175,23 @@ headers they describe, and longer LaTeX notes (built with
 
 | Note | Subject |
 |---|---|
-| `doc/quasi_static_models.tex` | the quasi-static problem classes: physical models, approximations, discretisation and solvers |
-| `doc/self_gravitation.md` | the mixed self-gravitating problem: equations, interface conditions, assembly, solvers, verification |
-| `doc/gravitating_elasticity.md` | linearised self-gravitating elasticity, the theory of the referential classes |
-| `doc/viscoelasticity.md` | quasi-static problems, rheologies and viscoelastic time stepping |
-| `doc/adjoints.md` | the derivative machinery: the continuous and discrete adjoints, the tangent-linear problem and second order, what each gate checks |
-| `doc/generalised_rotation.md` | the generalised rotational theory as implemented |
-| `doc/dahlen_closure.tex` | Dahlen's fluid closure and its generalisation to fluid regions of any shape |
-| `doc/static_fluid_core.tex` | the static response of a body with a stratified fluid core |
-| `doc/gauged_fluid.md`, `doc/gauge_penalty_iteration.tex` | the gauged treatment of fluid regions and its regularisation machinery |
-| `doc/slip_interface.tex` | the slipping fluid–solid interface in the referential formulation |
-| `doc/pressure_split.tex` | the pressure-split (u, p) solve and its block preconditioner |
-| `doc/equilibrium_figures.tex` | equilibrium states and hydrostatic figures by constrained optimisation |
-| `doc/mappings.md` | mapped (relabelled) forms and the `Diffeomorphism` interface |
-| `doc/elastic_tensors.md`, `doc/null_space.md`, `doc/submesh_coupling.md` | elastic tensors; null spaces, projection and gauge; coupling forms across a mesh and its SubMesh |
-| `doc/mfem_notes.md` | MFEM behaviours the library relies on or works around |
-| `doc/benchmarks.tex` | the benchmark families of `benchmarks/` and their measurements |
-| `doc/benchmark_programme.tex` | the cross-code benchmark hierarchy with sl3dpp and pyslfp |
+| `doc/methods/quasi_static_models.tex` | the quasi-static problem classes: physical models, approximations, discretisation and solvers |
+| `doc/methods/self_gravitation.md` | the mixed self-gravitating problem: equations, interface conditions, assembly, solvers, verification |
+| `doc/theory/gravitating_elasticity.md` | linearised self-gravitating elasticity, the theory of the referential classes |
+| `doc/methods/viscoelasticity.md` | quasi-static problems, rheologies and viscoelastic time stepping |
+| `doc/methods/adjoints.md` | the derivative machinery: the continuous and discrete adjoints, the tangent-linear problem and second order, what each gate checks |
+| `doc/theory/generalised_rotation.md` | the generalised rotational theory as implemented |
+| `doc/theory/dahlen_closure.tex` | Dahlen's fluid closure and its generalisation to fluid regions of any shape |
+| `doc/theory/static_fluid_core.tex` | the static response of a body with a stratified fluid core |
+| `doc/methods/gauged_fluid.md`, `doc/methods/gauge_penalty_iteration.tex` | the gauged treatment of fluid regions and its regularisation machinery |
+| `doc/methods/slip_interface.tex` | the slipping fluid–solid interface in the referential formulation |
+| `doc/methods/pressure_split.tex` | the pressure-split (u, p) solve and its block preconditioner |
+| `doc/theory/equilibrium_figures.tex` | equilibrium states and hydrostatic figures by constrained optimisation |
+| `doc/methods/mappings.md` | mapped (relabelled) forms and the `Diffeomorphism` interface |
+| `doc/theory/elastic_tensors.md`, `doc/methods/null_space.md`, `doc/methods/submesh_coupling.md` | elastic tensors; null spaces, projection and gauge; coupling forms across a mesh and its SubMesh |
+| `doc/methods/mfem_notes.md` | MFEM behaviours the library relies on or works around |
+| `doc/benchmarks/benchmarks.tex` | the benchmark families of `benchmarks/` and their measurements |
+| `doc/benchmarks/benchmark_programme.tex` | the cross-code benchmark hierarchy with sl3dpp and pyslfp |
 
 ## Installation
 

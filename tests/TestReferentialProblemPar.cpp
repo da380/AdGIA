@@ -166,7 +166,7 @@ void RunCase(int order, const std::string& label) {
 }
 
 // Eliminated fluid regions, the construction step of the referential
-// closure (doc/dahlen_closure.tex, "Implementation", the referential
+// closure (doc/theory/dahlen_closure.tex, "Implementation", the referential
 // variant): geometry and the background potential, serial and parallel.
 // At phi_e = id the referential background problem is the mixed class's,
 // so the parallel zeta0 equals the parallel Phi0 directly (same space),
@@ -708,7 +708,7 @@ void RunHarmonicExtensionCase() {
 }
 
 // Serial-vs-parallel agreement of the equilibrium-stress generators of
-// Al-Attar & Woodhouse (2010) (doc/gravitating_elasticity.md, §6) (the auxiliary fields are rigid-projected, so they compare
+// Al-Attar & Woodhouse (2010) (doc/theory/gravitating_elasticity.md, §6) (the auxiliary fields are rigid-projected, so they compare
 // directly).
 void RunEquilibriumStressCase() {
   Mesh smesh("../data/disc_buffer_2d.msh", 1, 1);

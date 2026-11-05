@@ -10,7 +10,7 @@
 
 /*
   Finite-difference verification of the slip-interface second variation
-  (doc/slip_interface.tex): the interface bilinear form
+  (doc/methods/slip_interface.tex): the interface bilinear form
 
       B_Sigma(v, v) = - oint_Sigma pi nu . grad_Sigma(v_s + v_f)[s] dS,
       s = -F_e^{-1} [v],   nu = cof(F_e) N,
@@ -289,7 +289,7 @@ struct Model {
     return E;
   }
 
-  // Predicted volume Hessian (the volume Hessians of doc/slip_interface.tex,
+  // Predicted volume Hessian (the volume Hessians of doc/methods/slip_interface.tex,
   // "The second variation", per region, with each region's own
   // first-order field).
   double SolidHess(const Vec2& x, const Mat2& Dv) const {
@@ -634,7 +634,7 @@ TEST(SlipInterface, DiscreteMatrixMatchesQuadrature) {
 
 
 // ---------------------------------------------------------------------------
-// Gravity for the broken motion (doc/slip_interface.tex, "The gravity
+// Gravity for the broken motion (doc/methods/slip_interface.tex, "The gravity
 // Hessian of the broken motion, explicitly"): with a rigid stress-free
 // solid (rho_s = 0 and the hydrostatic fluid pressure vanishing at the
 // interface, pi(rc) = 0), B_Sigma and the extension terms switch off,
@@ -873,7 +873,7 @@ TEST(SlipInterface, GravityHessianIdentity) {
     }
   }
 
-  // The gravity-slip cross terms vanish (doc/slip_interface.tex, lemma
+  // The gravity-slip cross terms vanish (doc/methods/slip_interface.tex, lemma
   // "Second order: gravity stays volume-only"): the mixed
   // second derivative across (radial, rotation) equals the purely
   // elastic cross term; gravity contributes nothing.
@@ -941,7 +941,7 @@ TEST(SlipInterface, GravityHessianIdentity) {
 }
 
 // ---------------------------------------------------------------------------
-// The broken-zeta organisation (doc/slip_interface.tex, "Gravity: the
+// The broken-zeta organisation (doc/methods/slip_interface.tex, "Gravity: the
 // broken-zeta organisation"): region-wise composition makes both gravity
 // sources exact, the entire mismatch machinery vanishes, and its place is
 // taken by the jump condition [[zeta1]] = b.[[v]] and ONE additional
@@ -1674,7 +1674,7 @@ TEST(SlipInterface, DiscreteGravityInterfaceMatchesQuadrature) {
 // kernels on the reference mesh must reproduce, dof for dof, the
 // UNMAPPED kernels assembled on the mesh whose nodes are displaced by
 // the same interpolant (the isoparametric identity every certified
-// volume integrator satisfies; doc/mappings.md, doc/slip_interface.tex).
+// volume integrator satisfies; doc/methods/mappings.md, doc/methods/slip_interface.tex).
 // The direction slot must be the pullback-consistent
 // P_T F^{-1} (1 - nu nu^T / |nu|^2), the deformed face's own tangential
 // projector pulled back; a bare P_T F^{-1} is not invariant under the

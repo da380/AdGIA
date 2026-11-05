@@ -2,7 +2,7 @@
 
 > **Where this sits.** For coupled elasto-gravity problems with fluid
 > regions on a hydrostatic background, Dahlen's mixed formulation closed by
-> the level border (`doc/dahlen_closure.tex`) is the static method at every
+> the level border (`doc/theory/dahlen_closure.tex`) is the static method at every
 > degree. The Maxwell relaxation of the fluid (`SetFluid`'s default
 > treatment) is the general dissipative route — any geometry, any
 > stratification, any number of regions. The gauge-penalty treatment
@@ -10,7 +10,7 @@
 > its semi-convergence is Rayleigh–Taylor growth, and answers are defined
 > only to the stratification band. The slipping and welded formulations are
 > finite idealisations of the dissipative completion and serve as
-> instruments. The full account is `doc/static_fluid_core.tex`, "The
+> instruments. The full account is `doc/theory/static_fluid_core.tex`, "The
 > status of the formulations".
 
 Method notes for the gauge-penalty option of `LinearQuasiStaticProblemBase`
@@ -22,13 +22,13 @@ uses: the mixed class `LinearQuasiStaticMixedSelfGravitatingProblem`
 (2024, §3.7.3): the fluid keeps its displacement in a fully referential
 description, and the relabelling gauge is fixed by a small shear penalty
 whose bias is removed by iterated Tikhonov refinement. It is the
-alternative to Dahlen's treatment of `doc/self_gravitation.md`, which
+alternative to Dahlen's treatment of `doc/methods/self_gravitation.md`, which
 eliminates the fluid displacement in favour of the potential.
 
-Companion documents: `doc/gauge_penalty_iteration.tex` (the mathematics of
+Companion documents: `doc/methods/gauge_penalty_iteration.tex` (the mathematics of
 the penalty and the refinement: spectral analysis, failure condition,
 semi-convergence, relation to augmented Lagrangians) and
-`doc/slip_interface.tex` (the slipping fluid–solid interface, for which the
+`doc/methods/slip_interface.tex` (the slipping fluid–solid interface, for which the
 welded space of this note is not enough).
 
 ## 1. Formulation
@@ -93,7 +93,7 @@ Love-number benchmarks (`fluid_core`, and PREM structure in `prem_4`):
 `eps = 1e-1` leaves an observable bias at the percent level, while below
 `1e-2` the cost grows several-fold per decade of `eps` and by `eps = 1e-4`
 the solution is semi-convergently polluted although the solver reports
-convergence (the measurements are in `doc/benchmarks.tex`). Every
+convergence (the measurements are in `doc/benchmarks/benchmarks.tex`). Every
 `GaugeRefine()` carries a contraction-rate tripwire
 (`WarnGaugeContraction()`: a warning above 0.9 — the semi-convergence
 signature, `eps` too small for the mesh and model; a note above 0.2 —
@@ -102,7 +102,7 @@ aligned with a near-null mode: a *uniform* tidal gradient (a rigid-mode
 load) leaks ~3% of a comparable physical response into the solid on the
 coarse test mesh at `eps = 1e-2`, k = 3, growing like `k / eps` beyond
 (`TestMixedProblemGauged`); physical (degree-2) loads do not sit on the
-near-kernel. The mathematics is `doc/gauge_penalty_iteration.tex`.
+near-kernel. The mathematics is `doc/methods/gauge_penalty_iteration.tex`.
 
 The window above is the numerical one, and its measurements include the
 non-neutral `fluid_core`; as a *physical* operating window it belongs to
@@ -112,7 +112,7 @@ carry a restoring (or, in an unstably stratified fluid, a destabilising)
 energy, and the semi-convergent growth of the refinement is Rayleigh–Taylor
 growth of the stratification-unstable modes. The answers are then defined
 only to the stratification band, and the window cannot be widened by tuning
-`eps` (`doc/static_fluid_core.tex`).
+`eps` (`doc/theory/static_fluid_core.tex`).
 
 ## 2. Tangential slip and the welded space
 
@@ -146,11 +146,11 @@ used where the slip it suppresses is absent or removable by relabelling —
 as for the spherically symmetric models of the benchmarks, where the welded
 and slipping formulations agree to discretisation level (`TestSlipProblem`
 `TwoLayerBarotropicCrossCheck`; the `gauged` and `slip` columns of the
-Love-number benchmark, `doc/benchmarks.tex`). For aspherical or stratified
+Love-number benchmark, `doc/benchmarks/benchmarks.tex`). For aspherical or stratified
 fluid regions the default is the Maxwell relaxation of `SetFluid`, which
 needs no assumption on the geometry or the stratification
-(`doc/static_fluid_core.tex`). The slipping-interface formulation
-(`doc/slip_interface.tex`) allows a tangential jump and enforces only normal
+(`doc/theory/static_fluid_core.tex`). The slipping-interface formulation
+(`doc/methods/slip_interface.tex`) allows a tangential jump and enforces only normal
 continuity; it is a finite idealisation of the dissipative completion and
 serves as an instrument, in particular for the relabelling decomposition
 (what the welded space costs, and where). The non-linear slip map is a
@@ -175,7 +175,7 @@ the `density` coefficient covers them, and `SetFluid(..., GaugePenaltyOptions)`
 adds the penalty. Nothing else changes, because every operator of the class
 integrates over the whole SubMesh:
 
-| Dahlen (`doc/self_gravitation.md`) | Gauged |
+| Dahlen (`doc/methods/self_gravitation.md`) | Gauged |
 |---|---|
 | displacement on the *solid* SubMesh | displacement on the whole body |
 | fluid mass term (F1), `A_phiphi = (K+DtN)/4piG + M_F`, `M_F <= 0`, near-indefinite for steep cores | no F1: the potential block is the plain Laplace–DtN operator, SPD with margin |
@@ -226,7 +226,7 @@ uses the fluid's bulk modulus at `l = 0`. The gauged fluid carries
 `kappa_f` at every degree, restoring the compressible degree-0 physics;
 `TestMixedProblemGauged.Degree0DiffersFromDahlen2D` pins the difference to
 the fluid treatment, and the degree-0 Love numbers of the benchmark
-(`doc/benchmarks.tex`, the Love-number family) compare the gauged result
+(`doc/benchmarks/benchmarks.tex`, the Love-number family) compare the gauged result
 with pyslfp.
 
 ## 4. Implementation
@@ -245,7 +245,7 @@ The machinery lives in `LinearQuasiStaticProblemBase`
     `ElasticityIntegrator(eps mu_g, -2/dim, 1)`; with a map (the identity
     included) the **covariant** form, `ElasticTensorIntegrator(C, map)`
     with `C` the isotropic tensor of `lambda = -2 eps mu_g / dim`,
-    `mu = eps mu_g` (the rule and its trap: `doc/mappings.md`, Pitfalls).
+    `mu = eps mu_g` (the rule and its trap: `doc/methods/mappings.md`, Pitfalls).
   - `GaugePenalty::Harmonic` (a vacuum-extension field):
     `VectorDiffusionIntegrator(eps mu_g)`; it is gauge data shared between
     descriptions and refuses a non-identity map.
@@ -274,13 +274,13 @@ The machinery lives in `LinearQuasiStaticProblemBase`
   Deviatoric penalty covariantly through the rheology's equilibrium
   mapping when no map is passed, and uses the same machinery with the
   Harmonic penalty for its ball-wide vacuum extension
-  (`SetVacuumExtension`; see `doc/gauge_penalty_iteration.tex` for why
+  (`SetVacuumExtension`; see `doc/methods/gauge_penalty_iteration.tex` for why
   that mode fails to converge under refinement).
 - The slipping-interface class
   `LinearQuasiStaticReferentialSelfGravitatingSlipProblem` keeps the fluid
   on its own space and refuses `SetFluid()`; its fluid gauge is set
   with `SetFluidGauge(mu_gauge, epsilon)` (covariant Deviatoric penalty)
-  and refined inside its constraint loop (`doc/slip_interface.tex`).
+  and refined inside its constraint loop (`doc/methods/slip_interface.tex`).
 - Essential boundary conditions must not touch the gauged attributes
   (the penalty's column elimination is not folded into the loads); the
   geophysical use cases have none.
@@ -300,7 +300,7 @@ deviatoric engine `eps mu Q` as the per-step effective shear of an artificial
 Maxwell solid and relaxes the Heaviside-loaded system to the secular static
 response; the gauge refinement iteration is exactly its
 beta -> infinity limit. It is honest at any stratification, geometry and
-number of fluid regions (`doc/static_fluid_core.tex`).
+number of fluid regions (`doc/theory/static_fluid_core.tex`).
 
 When a genuine tangential discontinuity is wanted (§2), the fluid and solid
 carry separate displacement spaces on two SubMeshes of one parent, paired
@@ -308,7 +308,7 @@ nodally on the interface, with normal continuity enforced weakly by penalty
 plus augmented-Lagrangian iterations or by a KKT multiplier. The
 formulation, the discretisation (the pairing `J`, why the coupling is weak
 rather than nodal), the constraint enforcement and the verification are in
-`doc/slip_interface.tex`, sections "Discretisation of the slipping
+`doc/methods/slip_interface.tex`, sections "Discretisation of the slipping
 interface", "Constraint enforcement" and "Verification". The gravity-free
 version is exercised by `TestSlidingInterface`, `TestSlidingInterfacePar`
 and `examples/sliding_fluid_ellipse.cpp`.
@@ -341,7 +341,7 @@ and `examples/sliding_fluid_ellipse.cpp`.
 - **Welded against slipping**: on the two-layer hydrostatic disc the
   slipping-interface solver reproduces the welded gauged solution to
   discretisation level (`TestSlipProblem` `TwoLayerBarotropicCrossCheck`,
-  `doc/slip_interface.tex`, "Verification").
+  `doc/methods/slip_interface.tex`, "Verification").
 - **Known leakage**: the rigid-tidal worst case of §1 (semi-convergence).
 
 ## References

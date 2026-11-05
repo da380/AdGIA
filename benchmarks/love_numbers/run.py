@@ -21,7 +21,7 @@ map amplitude (_map<A>), the Schur solver (_schur) and, for the
 Love-number results, --combined, in that order.
 
 On the fluid models the Dahlen method closes the fluid by the level
-border of doc/dahlen_closure.tex by default (`--level-border 16`, the
+border of doc/theory/dahlen_closure.tex by default (`--level-border 16`, the
 default static route; results_o<p>_lb16.json), so that its degree 0 is
 benchmarked; `--level-border 0` runs the naked reduction, whose degree 0
 is the exhibited defect, and `--level-border 16 0` both. The referential
@@ -161,14 +161,14 @@ def main() -> None:
                    choices=("full", "nomass", "uniform", "winkler"),
                    default=["full"],
                    help="Dahlen-path fluid-interface treatments to run, "
-                        "one results file each (doc/self_gravitation.md); "
+                        "one results file each (doc/methods/self_gravitation.md); "
                         "non-full results carry the choice as a suffix, "
                         "and cmb_report.py compares their cost and "
                         "accuracy")
     p.add_argument("--level-border", type=int, nargs="+", default=None,
                    metavar="N",
                    help="level-border closures of the Dahlen method on the "
-                        "fluid models (doc/dahlen_closure.tex), one results "
+                        "fluid models (doc/theory/dahlen_closure.tex), one results "
                         "file each: N nodes per fluid region, 0 the naked "
                         "reduction whose degree 0 is the exhibited defect "
                         "(default: 16; the solid models, the other methods "

@@ -7,7 +7,7 @@
  * mfem::VectorCoefficient interface) and its deformation gradient
  * @f$F_{iA} = \partial\xi_i/\partial x_A@f$; everything a pulled-back
  * bilinear or linear form needs follows from the pair @f$(\xi, F)@f$. See
- * doc/mappings.md for the pulled-back forms and the assembly recipe, and
+ * doc/methods/mappings.md for the pulled-back forms and the assembly recipe, and
  * TransformedDiffusionIntegrator for the Poisson instance.
  *
  * Concrete mappings: IdentityDiffeomorphism (exact identity),
@@ -48,7 +48,7 @@ namespace AdGIA {
  * @f]
  * and the Jacobian is @f$J = \det F@f$, required positive.
  *
- * Convention of the layer (see doc/mappings.md): mappings are the identity
+ * Convention of the layer (see doc/methods/mappings.md): mappings are the identity
  * pointwise on and outside the DtN sphere, so that the outer boundary, the
  * DtN map, SurfaceHarmonics and the submesh coupling act on genuine
  * spheres unchanged. This is a precondition of the consumers, asserted in
@@ -211,7 +211,7 @@ class RadialDiffeomorphism : public Diffeomorphism {
 /**
  * @brief The radial blend of a mapping to the identity: the buffer-taper
  * rule for an equilibrium mapping that is non-trivial on the physical
- * surface (doc/gravitating_elasticity.md §3, "Gravity: three
+ * surface (doc/theory/gravitating_elasticity.md §3, "Gravity: three
  * formulations"; NewHarmonicExtensionMapping is the elliptic alternative
  * for a mapping known only on the body).
  *
@@ -371,7 +371,7 @@ class TransformedMatrixFunctionCoefficient : public mfem::MatrixCoefficient {
  * @brief The relabelling (Piola) transformation of a symmetric referential
  * stress: @f$\tilde S = J_\xi F_\xi^{-1} (S\circ\xi) F_\xi^{-T}@f$ — the
  * second Piola–Kirchhoff equilibrium stress seen from a relabelled
- * reference (doc/gravitating_elasticity.md §1). The inner coefficient
+ * reference (doc/theory/gravitating_elasticity.md §1). The inner coefficient
  * must already be the referential expression @f$S\circ\xi@f$. For
  * @f$S = -p\mathbf{1}@f$ this is @f$-p\,J C^{-1}@f$, the pull-back
  * diffusion tensor scaled by the pressure.
@@ -510,7 +510,7 @@ class MappedBoundaryNormalDotCoefficient : public mfem::Coefficient {
  * integrators on `mesh` with the returned mapping reproduces, element
  * matrix by element matrix, the standard integrators on the mapped mesh,
  * provided the same integration rule is used on both. This is the discrete
- * change-of-variables identity (doc/mappings.md, "The discrete
+ * change-of-variables identity (doc/methods/mappings.md, "The discrete
  * change-of-variables identity").
  *
  * The mesh must outlive the returned object.

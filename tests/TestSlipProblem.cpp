@@ -5,7 +5,7 @@
 
 /*
   Tests for LinearQuasiStaticReferentialSelfGravitatingSlipProblem (the three-block
-  slip-interface solver of doc/slip_interface.tex, "The collected
+  slip-interface solver of doc/methods/slip_interface.tex, "The collected
   operator"; the reductions (a)-(d) checked here are listed there and in
   its "Verification" section) on the two-layer disc: fluid core
   (attribute 1), solid mantle (2), buffer shell (3), DtN sphere.
@@ -15,7 +15,7 @@
     (slipping) formulation must reproduce the welded gauged solution of
     the same physical problem. For this spherically symmetric model the
     tangential slip that the weld suppresses is absent or removable by
-    relabelling (doc/gauged_fluid.md, "Tangential slip and the welded
+    relabelling (doc/methods/gauged_fluid.md, "Tangential slip and the welded
     space"; not true in general), so the solid displacement (modulo rigid
     modes) and the potential agree at the two discretisations' common
     accuracy. Unlike the gravity-free TestSlidingInterface,
@@ -437,7 +437,7 @@ TEST(SlipProblem, KKTMatchesAugmentedLagrangian) {
   EXPECT_LT(rel, 1e-3);
 }
 
-// Reduction (a) of doc/slip_interface.tex ("The collected operator"): on
+// Reduction (a) of doc/methods/slip_interface.tex ("The collected operator"): on
 // the spherical hydrostatic two-layer background the slip solver must
 // reproduce the mixed-class Dahlen solution (fluid displacement
 // eliminated, F1-F3 interface terms) under the change of variables
@@ -524,7 +524,7 @@ TEST(SlipProblem, ReducesToDahlenOnSphere) {
   }
 }
 
-// Reduction (c) of doc/slip_interface.tex: with a massless background
+// Reduction (c) of doc/methods/slip_interface.tex: with a massless background
 // (pi = 0, gravity off) the slip solver reduces to the gravity-free sliding interface,
 // whose solid solution has the condensed rank-one cavity form (the
 // TestSlidingInterface reference): the fluid enters only through its
@@ -610,7 +610,7 @@ TEST(SlipProblem, PressureFreeReducesToSlidingCavity) {
 }
 
 // The broken-zeta organisation head to head against the single-valued
-// one (doc/slip_interface.tex, "Gravity: the broken-zeta organisation",
+// one (doc/methods/slip_interface.tex, "Gravity: the broken-zeta organisation",
 // and reduction (d)): the
 // same physical problem, same meshes and spaces, but the two
 // organisations share NO gravity-interface machinery — mismatch volume
@@ -761,7 +761,7 @@ TEST(SlipProblem, RigidPairsNearNull) {
 }
 
 // The broken-zeta solver on a relabelled two-layer background (the
-// relabelled-equilibrium self-benchmark of doc/mappings.md, "Verification",
+// relabelled-equilibrium self-benchmark of doc/methods/mappings.md, "Verification",
 // with a slipping interface; mapped slip problems use broken zeta, the
 // single-valued organisation refuses non-identity maps): xi = f(r) Rot(alpha(r)) x fixes the centre, the
 // interface radius and the surface, with a twist across Sigma, so the
@@ -773,7 +773,7 @@ TEST(SlipProblem, RigidPairsNearNull) {
 // the identity-description broken solution under composition,
 // u~(x) = u(xi(x)), zeta~ = zeta o xi (modulo the 2-D constant), on
 // the solid region, at the fixed mesh's geometric-interpolation floor
-// (the exact-F-versus-interpolated-F effect of doc/mappings.md, "The
+// (the exact-F-versus-interpolated-F effect of doc/methods/mappings.md, "The
 // discrete change-of-variables identity").
 TEST(SlipProblem, BrokenZetaRelabelledEquilibrium) {
   const int order = 2;

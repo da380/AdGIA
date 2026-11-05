@@ -3,7 +3,7 @@
 //
 // The general linearised referential problem
 // (LinearQuasiStaticReferentialSelfGravitatingProblem; method note
-// doc/gravitating_elasticity.md) beside the traditional Eulerian one
+// doc/theory/gravitating_elasticity.md) beside the traditional Eulerian one
 // (LinearQuasiStaticMixedSelfGravitatingProblem), on a
 // uniform self-gravitating body under a degree-2 surface mass load: two
 // mathematically equivalent formalisms solving one physical problem, so

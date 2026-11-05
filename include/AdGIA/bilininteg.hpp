@@ -32,7 +32,7 @@ namespace AdGIA {
  * formed from the product of a scalar nodal space.
  *
  * With a `Diffeomorphism` the integrator assembles the pull-back of the
- * form through the mapping (doc/mappings.md): the volume element gains
+ * form through the mapping (doc/methods/mappings.md): the volume element gains
  * the Jacobian, while coefficients stay referential.
  */
 class DomainVectorScalarIntegrator : public mfem::BilinearFormIntegrator {
@@ -1085,7 +1085,7 @@ class DomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator
  * Manifold elements are not supported; in 2-D the semantics are plane strain.
  *
  * With a `Diffeomorphism` the integrator assembles the pull-back of the
- * form through the mapping (doc/mappings.md): the shape gradients become
+ * form through the mapping (doc/methods/mappings.md): the shape gradients become
  * derivatives with respect to the mapped coordinates
  * (\f$\mathrm{gshape} \to \mathrm{gshape}\,\bvec{F}^{-1}\f$) and the weight
  * gains the Jacobian (\f$w \to J w\f$), after which the assembly is
@@ -1156,7 +1156,7 @@ class ElasticTensorIntegrator : public mfem::BilinearFormIntegrator {
 
 /**
  * @brief The geometric (initial-stress) stiffness of the total-Lagrangian
- * split about an equilibrium (doc/gravitating_elasticity.md §2):
+ * split about an equilibrium (doc/theory/gravitating_elasticity.md §2):
  * @f[
  *   (u, v) \mapsto \int_B S_{AB}\,\partial_A u_k\,\partial_B v_k\,dV,
  * @f]
@@ -1169,7 +1169,7 @@ class ElasticTensorIntegrator : public mfem::BilinearFormIntegrator {
  *
  * The optional trailing Diffeomorphism is the *relabelling* pull-back of
  * the Domain* family (derivatives with respect to the mapped coordinates,
- * Jacobian in the weight; doc/mappings.md) — the equilibrium-mapping role
+ * Jacobian in the weight; doc/methods/mappings.md) — the equilibrium-mapping role
  * belongs to MaterialStiffnessIntegrator, and the geometric term itself
  * carries no @f$F_e@f$.
  */
@@ -1208,7 +1208,7 @@ class GeometricStiffnessIntegrator : public mfem::BilinearFormIntegrator {
 
 /**
  * @brief The material stiffness of the total-Lagrangian split about an
- * equilibrium mapping @f$\varphi_e@f$ (doc/gravitating_elasticity.md §2):
+ * equilibrium mapping @f$\varphi_e@f$ (doc/theory/gravitating_elasticity.md §2):
  * @f[
  *   (u, v) \mapsto \int_B \bigl\langle \hat C\,
  *     \widehat{\mathrm{sym}(F_e^T Du)},\,
@@ -1224,12 +1224,12 @@ class GeometricStiffnessIntegrator : public mfem::BilinearFormIntegrator {
  * interpolated per the object), not the relabelling pull-back of the
  * other mapped integrators: a relabelling composes into the mapping and
  * transforms the coefficients (Al-Attar & Crawford 2018, see
- * doc/gravitating_elasticity.md, eqs. 134–136; done by the
+ * doc/theory/gravitating_elasticity.md, eqs. 134–136; done by the
  * background-state layer), leaving this integrator's form unchanged.
  * Consequently this is the plain pull-back of the elastic form only when
  * @f$\hat C@f$ is the relabelled tensor; the relabelling pull-back of an
  * unrelabelled tensor (e.g. the covariant gauge penalty) is
- * ElasticTensorIntegrator(C, map) (doc/mappings.md, "Pitfalls").
+ * ElasticTensorIntegrator(C, map) (doc/methods/mappings.md, "Pitfalls").
  */
 class MaterialStiffnessIntegrator : public mfem::BilinearFormIntegrator {
  private:
@@ -1275,7 +1275,7 @@ class MaterialStiffnessIntegrator : public mfem::BilinearFormIntegrator {
 
 /**
  * @brief The gravity–gravity displacement block of the linearised
- * referential system (doc/gravitating_elasticity.md §3.1):
+ * referential system (doc/theory/gravitating_elasticity.md §3.1):
  * @f[
  *   (u, v) \mapsto s \int_B \langle a''(u,v)\,\mathbf{g}_0,
  *   \mathbf{g}_0\rangle\,dV,
@@ -1323,7 +1323,7 @@ class ReferentialGravityIntegrator : public mfem::BilinearFormIntegrator {
 
 /**
  * @brief The displacement–potential coupling of the linearised
- * referential system (doc/gravitating_elasticity.md §3.1):
+ * referential system (doc/theory/gravitating_elasticity.md §3.1):
  * @f[
  *   (\zeta, v) \mapsto
  *   s \int_B \langle a'(v)\,\mathbf{g}_0, \nabla\zeta\rangle\,dV,
@@ -1388,7 +1388,7 @@ class ReferentialGravityCouplingIntegrator
  * SlipInterfacePressureIntegrator this is the follower load of a wall
  * held by a hydrostatic fluid: \f$-\pi\f$ times the second variation
  * of the enclosed volume (the eliminated-fluid glue's wall seam;
- * doc/dahlen_closure.tex, "The wall seam"). Identity
+ * doc/theory/dahlen_closure.tex, "The wall seam"). Identity
  * equilibrium mapping only; byNODES vector space.
  */
 class BoundaryNormalSurfaceDivergenceIntegrator
@@ -1442,7 +1442,7 @@ class BoundaryNormalSurfaceDivergenceIntegrator
  * EvalGradient() at each quadrature point — exact for the analytic
  * mappings, the gradient of the interpolant for a
  * GridFunctionDiffeomorphism (the mode of the discrete change-of-variables
- * identity, see doc/mappings.md).
+ * identity, see doc/methods/mappings.md).
  * -# A `mfem::Coefficient` is provided which specifies the scalar part,
  * \f$f\f$, of a radial mapping \f$\boldsymbol{\xi}(\bvec{x}) = f(\bvec{x})
  * \bvec{x}\f$. Then \f$\bvec{F} = f\,\bvec{1} + \bvec{x}\otimes\nabla
@@ -1797,7 +1797,7 @@ class BoundaryNormalNormalIntegrator : public mfem::BilinearFormIntegrator {
       : mfem::BilinearFormIntegrator(ir), Q{&q} {}
 
   /**
-   * @brief Pull-back of the form through a mapping (doc/mappings.md):
+   * @brief Pull-back of the form through a mapping (doc/methods/mappings.md):
    * with \f$\nu = \mathrm{cof}(F)\mathbf{n}\f$, the integrand
    * \f$q\,(\mathbf{m}\cdot\mathbf{u})(\mathbf{m}\cdot\mathbf{u}')\,dS\f$
    * becomes \f$q\,(\nu\cdot\mathbf{u})(\nu\cdot\mathbf{u}')/|\nu|\,dS\f$
@@ -1824,7 +1824,7 @@ class BoundaryNormalNormalIntegrator : public mfem::BilinearFormIntegrator {
 
 /**
  * @brief The one-sided kernel of the slip-interface pressure form
- * (doc/slip_interface.tex, proposition "The interface form"): on boundary
+ * (doc/methods/slip_interface.tex, proposition "The interface form"): on boundary
  * elements of one (solid-side) vector space,
  * \f[
  *   G(\bvec{u}, \bvec{w}) = \oint_\Sigma \pi\;
@@ -1845,7 +1845,7 @@ class BoundaryNormalNormalIntegrator : public mfem::BilinearFormIntegrator {
  * occupies the test (row) slot and \f$\bvec{w}\f$ the trial (column)
  * slot, and the symmetrised two-field interface blocks are built from
  * \f$G\f$ and the pairing by NewSlipInterfaceMatrix
- * (doc/slip_interface.tex, "One-sided assembly of the interface forms").
+ * (doc/methods/slip_interface.tex, "One-sided assembly of the interface forms").
  * \f$\bvec{n}\f$ is the boundary element's unit normal (CalcOrtho), i.e.
  * the outward normal of the solid SubMesh. The space must be a nodal
  * vector space with vdim equal to the space dimension and
@@ -1886,7 +1886,7 @@ class SlipInterfacePressureIntegrator : public mfem::BilinearFormIntegrator {
 
 /**
  * @brief The one-sided vector kernel of the broken-\f$\zeta\f$ gravity
- * interface form (doc/slip_interface.tex, proposition "The gravity
+ * interface form (doc/methods/slip_interface.tex, proposition "The gravity
  * interface form"): on boundary elements of one (solid-side) vector space,
  * \f[
  *   G_A(\bvec{u}, \bvec{w}) = \oint_\Sigma
@@ -2036,7 +2036,7 @@ class BoundaryNormalScalarIntegrator : public mfem::BilinearFormIntegrator {
       : mfem::BilinearFormIntegrator(ir), Q{&q} {}
 
   /**
-   * @brief Pull-back of the form through a mapping (doc/mappings.md):
+   * @brief Pull-back of the form through a mapping (doc/methods/mappings.md):
    * Nanson's relation exactly, \f$q\,p\,(\mathbf{m}\cdot\mathbf{v})\,dS
    * \to q\,p\,(\nu\cdot\mathbf{v})\,dS\f$ with \f$\nu =
    * \mathrm{cof}(F)\mathbf{n}\f$ — the measure and normalisation factors

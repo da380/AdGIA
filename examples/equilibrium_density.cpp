@@ -2,7 +2,7 @@
 // equilibrium_density.cpp
 //
 // Density restoration — the first milestone of the equilibrium-figures
-// programme (doc/equilibrium_figures.tex §8). A layered model starts
+// programme (doc/theory/equilibrium_figures.tex §8). A layered model starts
 // from a fluid density with no static state, and the fluid-only
 // feasibility functional
 //
@@ -939,7 +939,7 @@ int main(int argc, char* argv[]) {
   // The whole-body view (-vis), in TWO EXACT PIECES rather than one
   // weighted approximation (whose finite contrast leaks the solid's
   // deviatoric stress into the fluid — the leakage proposition,
-  // doc/equilibrium_figures.tex §2 — burying the fluid's own share):
+  // doc/theory/equilibrium_figures.tex §2 — burying the fluid's own share):
   //
   //   fluid   the certificate's stress itself;
   //   solid   per CONNECTED component — the mantle, and the inner core

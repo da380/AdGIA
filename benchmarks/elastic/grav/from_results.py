@@ -9,7 +9,7 @@ fluid to the naked reduction (no level border, `"level_border": 0` or
 absent in the JSON): there the method is wrong by design (the exhibited
 values stay in the JSON), and the exchange file carries what is
 benchmarked.  A run closed by the level border (`-level-border <n>`,
-doc/dahlen_closure.tex) keeps its degree 0.  The numbers are
+doc/theory/dahlen_closure.tex) keeps its degree 0.  The numbers are
 copied, not recomputed: love_benchmark's load numbers are the
 conventional primed ones and its tidal numbers the geodetic ones already.
 

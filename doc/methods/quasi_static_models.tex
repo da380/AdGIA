@@ -8,7 +8,7 @@
 \newcolumntype{P}[1]{>{\raggedright\arraybackslash}p{#1}}
 \usepackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
 
-\input{macros.inc}
+\input{../macros.inc}
 
 \numberwithin{equation}{section}
 \sloppy
@@ -85,7 +85,7 @@ that runs on top of the elastic problems. Methods reused across classes
 Dirichlet-to-Neumann (exterior-gravity) boundary condition, projected
 Krylov solvers and rigid-mode handling, the penalty-and-refinement gauge
 fixing, the mapping layer --- are described in detail at first use only.
-Measured accuracies and costs are reported in \code{doc/benchmarks.tex};
+Measured accuracies and costs are reported in \code{doc/benchmarks/benchmarks.tex};
 this document states only the qualitative conclusions a user needs.
 \end{abstract}
 
@@ -1097,7 +1097,7 @@ concentrated near the surface; tidal responses sample the deep interior.
 
 The rungs have been compared with one another and with the independent
 radial code \code{pyslfp} on a PREM-like model with a stratified core
-(\code{doc/benchmarks.tex}, section ``The Love-number family'', subsection
+(\code{doc/benchmarks/benchmarks.tex}, section ``The Love-number family'', subsection
 ``The CMB approximations: results''). The qualitative conclusions are:
 \begin{itemize}
 \item for \emph{loading}, the standard condition (\code{uniform}) is
@@ -1959,7 +1959,7 @@ semi-convergent: the gauge component escapes the refinements and
 pollutes the solution although every solve is nominally converged. The
 window is problem- and resolution-dependent in principle; it has been
 established at PREM structure, where the gauged solution agrees with an
-independent radial code (\code{doc/benchmarks.tex}, section ``The
+independent radial code (\code{doc/benchmarks/benchmarks.tex}, section ``The
 Love-number family'').
 
 \paragraph{Contraction-rate tripwire.} Since the refinement corrections
@@ -2058,7 +2058,7 @@ $2\times10^{-2}$ (the two discretisations' own error) under a zero-mean
 load, the degree-0 difference present; Schur CG and block MINRES agree to
 $10^{-6}$; serial and parallel to $10^{-6}$. Against the independent radial
 code \code{pyslfp} on the PREM-like model \code{prem\_4}, at every degree
-including $l = 0$: \code{doc/benchmarks.tex}, section ``The Love-number
+including $l = 0$: \code{doc/benchmarks/benchmarks.tex}, section ``The Love-number
 family''.
 
 %==========================================================================
@@ -2939,8 +2939,8 @@ invisible at a natural configuration.
 
 This section summarises the layer; its full description (problem
 interface, steppers, internal variables, state-dependent relaxation times,
-composite rheologies) is \code{doc/viscoelasticity.md}, and its benchmarks
-are in \code{doc/benchmarks.tex}, section ``The viscoelastic family''.
+composite rheologies) is \code{doc/methods/viscoelasticity.md}, and its benchmarks
+are in \code{doc/benchmarks/benchmarks.tex}, section ``The viscoelastic family''.
 The layer models generalised Maxwell (Prony-series) bodies, isotropic or
 anisotropic: with strain $\eps$, a relaxed tensor $C_\infty$, and for each
 \emph{branch} $k$ a relaxable tensor $C_k$, a relaxation time $\tau_k$ and a

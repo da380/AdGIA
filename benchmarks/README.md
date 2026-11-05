@@ -11,7 +11,7 @@ the case builder, the case and mapping layers of the drivers), and
 A new family is a directory and a campaign stage.
 
 What each benchmark tests, its mathematics, how its reference is
-obtained, and the measured results are in `doc/benchmarks.tex`; the
+obtained, and the measured results are in `doc/benchmarks/benchmarks.tex`; the
 READMEs here say how to run them.
 
 | family | problem | reference |
@@ -58,7 +58,7 @@ Three conventions carry the programme:
   relative differences; they never need the producing code. Degree 1 is
   compared in the centre-of-mass frame; degree 0 of a Dahlen run is
   compared when the fluid is closed by the level border (the default
-  static route, `doc/dahlen_closure.tex`) and excluded, by design, for
+  static route, `doc/theory/dahlen_closure.tex`) and excluded, by design, for
   the naked reduction.
 - **Tiered tolerances.** Where two codes solve the identical discrete
   problem (pyslfp and sl3dpp on the same deck and mesh rule), near
@@ -181,11 +181,11 @@ read either kind; a combined run's cost is its one load solve for all
 the degrees, shown once and labelled combined, and `cmb_report.py`
 tabulates the combined treatments apart from those by degree.
 
-The campaign does not make every run that `doc/benchmarks.tex` reports:
+The campaign does not make every run that `doc/benchmarks/benchmarks.tex` reports:
 the all-model sweep at h = 0.2, the uncapped `fluid_core` h-ladder, the
 `prem_4` CMB runs and the dense viscoelastic histories are made with the
 family scripts; the commands are in the section "Reproducing the figures"
-of `doc/benchmarks.tex`.
+of `doc/benchmarks/benchmarks.tex`.
 
 ## Bringing server runs home
 
@@ -230,13 +230,13 @@ poetry -P <repo> run python <repo>/benchmarks/talk_figures.py --out talk
 
 `talk_render.py` is a ParaView render of a cap-load solve, run with
 `pvbatch` on the output of `run.py --field --paraview`. The figures of
-`doc/benchmarks.tex` are copies of these and of the family scripts'
-figures in `doc/figures/benchmarks/`, with a prefix naming their source
+`doc/benchmarks/benchmarks.tex` are copies of these and of the family scripts'
+figures in `doc/benchmarks/figures/`, with a prefix naming their source
 (`talk_`, `fc_`, `pert_`, `box_`, `sphere_`, `ve_`).
 
 ## What the benchmarks establish
 
-In brief (the measurements are in `doc/benchmarks.tex`):
+In brief (the measurements are in `doc/benchmarks/benchmarks.tex`):
 
 - Every formulation agrees with the radial reference at the
   discretisation level on its domain of validity, and the cross-method
@@ -244,7 +244,7 @@ In brief (the measurements are in `doc/benchmarks.tex`):
   mapped assembly passes a solver-level change-of-variables identity to
   ~1e-6; the slipping-interface forms under a mapping are not verified.
 - On hydrostatic (spherical) models the Dahlen path closed by the level
-  border (`-level-border <n>`, `doc/dahlen_closure.tex`) is the default
+  border (`-level-border <n>`, `doc/theory/dahlen_closure.tex`) is the default
   static route: the cheapest here, as accurate as anything at l >= 1,
   and with the border its degree zero is right too (the naked reduction
   leaves degree zero to an arbitrary function, exhibited as the defect).

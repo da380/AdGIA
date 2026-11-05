@@ -5,7 +5,7 @@
 // that has one: a purely elastic body with a fluid core under an external
 // surface pressure, with no gravity. A demonstration of the gauged-fluid
 // option of LinearQuasiStaticProblemBase (SetFluid with GaugePenaltyOptions;
-// the method is in doc/gauged_fluid.md).
+// the method is in doc/methods/gauged_fluid.md).
 //
 // The fluid carries a displacement like the solid, with its physical bulk
 // modulus and zero shear. That displacement is determined only up to a

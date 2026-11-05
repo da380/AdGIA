@@ -4,7 +4,7 @@
  * VectorCoefficients, an orthonormal basis of a (near-)null space
  * (NullSpaceProjector, MakeRigidModeProjector()), and the projected operator
  * and solver built on it. The rationale (which inner product projects, which
- * gauges, why the projected system is solved) is in doc/null_space.md.
+ * gauges, why the projected system is solved) is in doc/methods/null_space.md.
  */
 
 #pragma once
@@ -227,7 +227,7 @@ class NullSpaceProjector {
  * @p P must use the communicator of @p fes when the space is parallel. The
  * space must have vdim 2 or 3. On a curved mesh the rotations lie in the
  * discrete space only when the displacement order is at least the geometry
- * order (doc/null_space.md, "Element order on curved meshes").
+ * order (doc/methods/null_space.md, "Element order on curved meshes").
  */
 int AddRigidModes(NullSpaceProjector& P, mfem::FiniteElementSpace& fes,
                   Diffeomorphism* map = nullptr);

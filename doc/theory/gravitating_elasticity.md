@@ -5,21 +5,21 @@ on which the referential problem classes (`referential_problem.hpp`)
 and the background-state module (`background.hpp`) are built: a
 general reference body, non-hydrostatic equilibrium stress, and
 fluid–solid interfaces that may slip. The mixed class of
-`doc/self_gravitation.md` is its hydrostatic, natural specialisation.
+`doc/methods/self_gravitation.md` is its hydrostatic, natural specialisation.
 Only the quasi-static linearised problem is treated. Rotation enters
 through the centrifugal part of the background potential and through the
 `u`-dependent rotational feedback, which the library carries as a border on
 the system (the traditional angular-velocity border and the generalised
-Tisserand door; `doc/quasi_static_models.tex`).
+Tisserand door; `doc/methods/quasi_static_models.tex`).
 
-Sources (the PDFs are in `doc/Elasticity/` where a file name is given):
+Sources:
 
 - **Maitra & Al-Attar (2021)**, On the stress dependence of the elastic
-  tensor, *Geophys. J. Int.* 225, 378–415 (`ggaa591.pdf`): the notation
+  tensor, *Geophys. J. Int.* 225, 378–415: the notation
   adopted here (close to Marsden & Hughes 1983) and the treatment of the
   elastic-tensor/initial-stress relations of §1–§2.
 - **Maitra & Al-Attar (2024)**, On the elastodynamics of rotating
-  planets, *Geophys. J. Int.* 237, 1301–1338 (`ggae092.pdf`): the
+  planets, *Geophys. J. Int.* 237, 1301–1338: the
   equations of motion, the referential gravity (their eq. 21) and the
   exact tangential-slip machinery. Its *linearised* fluid–solid boundary
   integral drops a surface-Jacobian factor (harmless for their static
@@ -27,22 +27,22 @@ Sources (the PDFs are in `doc/Elasticity/` where a file name is given):
   instead.
 - **Al-Attar, Crawford, Valentine & Trampert (2018)**, Hamilton's
   principle and normal mode coupling in an aspherical planet with a
-  fluid core, *Geophys. J. Int.* 214, 485–507 (`ggy141.pdf`, "AC18"):
+  fluid core, *Geophys. J. Int.* 214, 485–507 ("AC18"):
   the linearised equations in weak form about a general equilibrium
   (their eqs. 108–137), including the fluid–solid surface terms and the
   particle-relabelling transformation laws.
 - **Al-Attar & Crawford (2016)**, Particle relabelling transformations
-  in elastodynamics, *Geophys. J. Int.* 205, 575–593
-  (`doc/BenchmarkPapers/ggw032.pdf`): the natural/non-natural and
+  in elastodynamics, *Geophys. J. Int.* 205, 575–593:
+  the natural/non-natural and
   hydrostatic/non-hydrostatic terminology of §7.
 - **Woodhouse & Deuss (2007)**, Theory and observations — Earth's free
   oscillations, *Treatise on Geophysics* vol. 1, Elsevier
-  (`Woodhouse-Deuss.pdf`, "WD"): the mixed (Eulerian-potential)
+  ("WD"): the mixed (Eulerian-potential)
   formulation, and the explicit statement of the pressure-modified
   moduli (their eqs. 59–64).
 - **Al-Attar & Woodhouse (2010)**, On the parametrization of
   equilibrium stress fields in the Earth, *Geophys. J. Int.* 181,
-  567–576 (`181-1-567.pdf`, "AW10"): the parametrisation of equilibrium
+  567–576 ("AW10"): the parametrisation of equilibrium
   stress fields in general models, and the modern rendering of Dahlen's
   hydrostatic-region argument (§6).
 - **Valette (1986)**, About the influence of pre-stress upon adiabatic
@@ -94,7 +94,7 @@ invariant under particle relabellings `ξ`, with
 ```
 
 (AC18 eqs. 83, 134–136), the surface multiplier picking up the
-*surface* Jacobian. The mapping layer (`doc/mappings.md`) implements
+*surface* Jacobian. The mapping layer (`doc/methods/mappings.md`) implements
 these laws; for the second tensor and the equilibrium stress they are
 `RelabelledElasticTensorCoefficient` and `PullbackStressCoefficient`,
 and `RelabelledBackground` owns the whole transformed chain.
@@ -112,7 +112,7 @@ of description. The statement concerns the description of the
 equilibrium only. For *perturbations* about it, with the data held fixed
 on the reference, a tangential slip is in general not removable by
 relabelling (§5), which is why the slipping-interface formulation
-(`doc/slip_interface.tex`) is kept as an instrument.
+(`doc/methods/slip_interface.tex`) is kept as an instrument.
 
 ## 2. The linearised quasi-static problem
 
@@ -343,7 +343,7 @@ Structural remarks:
   the `u`-dependent rotational feedback `ψ′ = −(Ω×x)·(ω×x)` (Maitra &
   Al-Attar 2024) enters as an operator term on the same substrate: the
   traditional angular-velocity border, or the generalised Tisserand door
-  (`doc/quasi_static_models.tex`).
+  (`doc/methods/quasi_static_models.tex`).
   The slipping subclasses refuse the tidal load: their fluid
   displacement row carries no tidal force, and a solid-row-only load
   under-drives a fluid core by tens of percent, so the front door
@@ -378,7 +378,7 @@ Structural remarks:
   vacuum has no physical stiffness (only the zeroth-order gravity terms)
   while the harmonic penalty scales like `1/h²`, so the refinement's
   contraction factor tends to one under mesh or order refinement
-  (`doc/gauge_penalty_iteration.tex`, section "Iterated refinement",
+  (`doc/methods/gauge_penalty_iteration.tex`, section "Iterated refinement",
   subsection "When it must fail: the spectral condition").
   `HydrostaticCrossCheckBallWide2D` exercises this mode.
   (b) a *prescribed* linear extension `u_ext = E(u|_{∂B})` with the
@@ -443,10 +443,10 @@ surface natural.
   terms — WD eq. 23's `π⁰`-terms with tangential surface derivatives —
   and for a hydrostatic equilibrium further to the (F2)-type terms of
   `LinearQuasiStaticMixedSelfGravitatingProblem`
-  (`doc/self_gravitation.md`). The perturbation `ϖ¹` of the multiplier
+  (`doc/methods/self_gravitation.md`). The perturbation `ϖ¹` of the multiplier
   is the Lagrange multiplier of the linearised slip constraint. In the
   referential organisation these terms collapse to a single interface
-  form, derived in `doc/slip_interface.tex` and summarised in §5.2.
+  form, derived in `doc/methods/slip_interface.tex` and summarised in §5.2.
 - **Gravity across interfaces**: `[φ¹] = 0` and `[∇φ¹·n̂ + 4πGρu·n̂] = 0`
   are natural in the mixed weak forms (WD eq. 24); no assembly.
 
@@ -468,7 +468,7 @@ hydrostatic equilibrium). For a materially barotropic fluid
 `div(ρ₀w) = 0` in the fluid and `w·m = 0` on its boundary — the trivial
 displacements of Friedman & Schutz — which is what makes every
 tangential slip removable there. These are the relabelling (gauge)
-directions. `doc/gauged_fluid.md` (gauge penalty, Tikhonov
+directions. `doc/methods/gauged_fluid.md` (gauge penalty, Tikhonov
 refinement, the continuous-space gauge for barotropic fluids) applies
 with the general operators of this note, and its discussion of the
 Adams–Williamson condition identifies when the hydrostatic short-cuts
@@ -480,7 +480,7 @@ into the fluid as a divergence-free field tangent to the level surfaces;
 on a spherical core the rigid rotations are such fields, but a general
 slip is not, and on an interface that is not a level surface the
 construction generally fails. The full argument and the Adams–Williamson
-equivalence are in `doc/gauged_fluid.md` §2–3. Hence:
+equivalence are in `doc/methods/gauged_fluid.md` §2–3. Hence:
 
 - the welded gauged formulation (§5.1) is used where the slip it
   suppresses is absent or removable by relabelling — as for the
@@ -490,7 +490,7 @@ equivalence are in `doc/gauged_fluid.md` §2–3. Hence:
   relaxation of `SetFluid`, which assumes neither; the slipping-interface
   formulation (§5.2) is a finite idealisation of the dissipative completion
   and serves as an instrument, in particular for the relabelling
-  decomposition (`doc/static_fluid_core.tex`, "The status of the
+  decomposition (`doc/theory/static_fluid_core.tex`, "The status of the
   formulations").
 
 Which slips are removable in a general geometry is not characterised.
@@ -504,7 +504,7 @@ tensor with `μ_b = p⁰` via `BareElasticTensorCoefficient`,
 penalty and refinement act on the fluid attributes unchanged; the default
 Maxwell treatment of `SetFluid` runs on the same classes too. On a mapped problem the
 referential class assembles the deviatoric penalty covariantly through
-`ElasticTensorIntegrator(C, map)` (see `doc/mappings.md`, "Pitfalls").
+`ElasticTensorIntegrator(C, map)` (see `doc/methods/mappings.md`, "Pitfalls").
 Two tests in `TestReferentialProblem` verify it:
 
 - **The joint relabelling-invariance identity**
@@ -533,13 +533,13 @@ constrained by `ν·[u] = 0` on `Σ` with the Nanson normal
 `ν = cof(F_e)N`. The complete derivation, discretisation, constraint
 enforcement (penalty with augmented-Lagrangian iterations, or the
 monolithic KKT system of `EnableKKT`), implementation and verification
-are in `doc/slip_interface.tex`; the per-class model summary is
-`doc/quasi_static_models.tex`, section "The slipping-interface problem".
+are in `doc/methods/slip_interface.tex`; the per-class model summary is
+`doc/methods/quasi_static_models.tex`, section "The slipping-interface problem".
 The results the rest of this note relies on:
 
 - Interface integrals pair the Nanson normal with the referential
   measure; mixing the unit physical normal with the referential measure
-  silently loses `|ν|` (the Jacobian warning of `doc/slip_interface.tex`,
+  silently loses `|ν|` (the Jacobian warning of `doc/methods/slip_interface.tex`,
   section "Conventions, and one warning").
 - The constraint multiplier is the referential pressure, `λ = π`
   (`= p⁰∘φ_e`), and the equilibrium must hand the interface a purely
@@ -638,7 +638,7 @@ The minimum-deviatoric field is also the object behind a
 hydrostatic-figure formulation (a body admits a valid static state
 exactly when the minimum-deviatoric field vanishes in its fluid regions);
 the stage-1 density machinery (the feasibility functional and its
-derivative, `equilibrium_figures.hpp`, `doc/equilibrium_figures.tex`)
+derivative, `equilibrium_figures.hpp`, `doc/theory/equilibrium_figures.tex`)
 exists, while the shape stage is not implemented.
 
 ### Dahlen's hydrostatic-region argument, and where it stops
@@ -653,7 +653,7 @@ absorbing them into the spherical reference (their eq. 11), turning
 "function of `r` with zero spherical mean" into zero, so the aspherical
 pressure is slaved, `p̂¹ = −ρ⁰φ¹`; (iii) curl again to slave the fluid
 density pointwise, `ρ¹ = g⁻¹∂_rρ⁰ φ¹` — precisely the `ρ'_F`
-coefficient of the Dahlen loading treatment (`doc/self_gravitation.md`).
+coefficient of the Dahlen loading treatment (`doc/methods/self_gravitation.md`).
 What remains free is one *constant* pressure perturbation per
 connected fluid region (their conclusion (iii)): the degree-0 hole,
 quarantined at `l = 0` because spherical harmonics decouple the Poisson
@@ -661,7 +661,7 @@ equation degree by degree.
 
 **About a general (aspherical) hydrostatic reference the degree-by-degree
 argument does not extend; the closure on the level foliation
-(`doc/dahlen_closure.tex`) replaces it.**
+(`doc/theory/dahlen_closure.tex`) replaces it.**
 Step (i) survives in level-surface form: with `ρ⁰ = ρ(Φ₀)` (forced by
 hydrostatics), crossing with `n̂ = ∇Φ₀/g` still slaves the *tangential*
 structure, `δp + ρ⁰δφ = f(Φ₀)` on each equipotential. But step (ii) has
@@ -678,17 +678,17 @@ ellipticity theory being its perturbative instance for rotation). The
 elimination that defines Dahlen's spherical fluid treatment therefore
 stops being a degree-by-degree elimination, and the underdetermination
 that shows up spherically as the isolated `l = 0` gap is no longer
-quarantined; `doc/dahlen_closure.tex` carries it instead as a bordered
+quarantined; `doc/theory/dahlen_closure.tex` carries it instead as a bordered
 problem on the level foliation, one one-dimensional unknown per fluid
 region, pinned by the mass below each level surface. This is the
 equilibrium-theory counterpart of the loading-problem analysis in
-`doc/gauged_fluid.md`: the gauged and referential formulations, which
+`doc/methods/gauged_fluid.md`: the gauged and referential formulations, which
 keep the fluid's displacement and bulk modulus and never perform the
 elimination, are indifferent to all of this in the sense that there is no
 privileged degree anywhere in them. That statement is about the degree-0
 hole, not about stratification: at N² ≠ 0 the gauge-penalty treatment is
 defined only to the stratification band, and the Maxwell relaxation of
-`SetFluid` is the general dissipative route (`doc/static_fluid_core.tex`).
+`SetFluid` is the general dissipative route (`doc/theory/static_fluid_core.tex`).
 
 A corollary for model building (AW10, below their eq. 39): in a
 hydrostatic model, lateral density variations in the fluid core are
@@ -737,8 +737,8 @@ The problem-class names are built from axis slots —
 | relabelled background (AC18 eqs. 134–136) | `RelabelledBackground`, `RelabelledElasticTensorCoefficient`, `PullbackStressCoefficient` | `RelabelledCoefficientsMatchHandRolled`, `TransformationLawCoefficients`, `RelabelledEquilibrium2D` |
 | general aspherical `S_e` (AW10) | `MinimumNormEquilibriumStress`, `MinimumDeviatoricEquilibriumStress` (or any `MatrixCoefficient`; equilibrium consistency is then the caller's responsibility) | `MinimumNormEquilibriumSatisfiesWeakForm`, `MinimumDeviatoricRecoversHydrostatic`, `MappedGeneratorsMatchTransformedMesh` |
 | buffer taper of `φ_e` | `TaperedDiffeomorphism`, `NewHarmonicExtensionMapping` | `TaperedDiffeomorphismBlends`, `HarmonicExtensionMapping` |
-| gravity, Eulerian (mixed) | `LinearQuasiStaticMixedSelfGravitatingProblem` (`mixed_problem.hpp`) | `doc/self_gravitation.md`, section "Verification" |
-| gravity, referential: mapped Poisson block | `TransformedDiffusionIntegrator` + `PoissonDtNOperator` | `doc/mappings.md`, section "Verification" |
+| gravity, Eulerian (mixed) | `LinearQuasiStaticMixedSelfGravitatingProblem` (`mixed_problem.hpp`) | `doc/methods/self_gravitation.md`, section "Verification" |
+| gravity, referential: mapped Poisson block | `TransformedDiffusionIntegrator` + `PoissonDtNOperator` | `doc/methods/mappings.md`, section "Verification" |
 | gravity, referential: `a″` and `a′` terms | `ReferentialGravityIntegrator`, `ReferentialGravityCouplingIntegrator` | `ReferentialGravityMatchesFiniteDifference` |
 | vacuum extension of `u` | `NewRadialVacuumExtension` + `SetPrescribedVacuumExtension` (option (b)); `SetVacuumExtension` (option (a)) | `HydrostaticCrossCheck2D`, `HydrostaticCrossCheckBallWide2D` |
 | rigid modes | translations, `MappedRotation` | `TranslationsAreExactNullPairs`, `RotationResidualDecreasesWithOrder` |

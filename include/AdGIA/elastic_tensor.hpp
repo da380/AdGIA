@@ -273,7 +273,7 @@ class DeviatoricProjectionElasticTensorCoefficient
 
 /**
  * @brief The relabelling transformation of the second elastic tensor
- * (doc/gravitating_elasticity.md §1; the (C, S_e) form of Al-Attar &
+ * (doc/theory/gravitating_elasticity.md §1; the (C, S_e) form of Al-Attar &
  * Crawford 2018, eq. 136):
  * @f[
  *   \hat{\tilde C}(\tilde x) = J_\xi\, Q_{\xi}^{-T}\,
@@ -313,7 +313,7 @@ class RelabelledElasticTensorCoefficient : public ElasticTensorCoefficient {
  * Tabulated (PREM) moduli are components of @f$C^{\mathrm{eff}}@f$; the
  * general referential form assembles the bare @f$C@f$, and this decorator
  * keeps model files seismological while making the conversion impossible
- * to forget (doc/gravitating_elasticity.md §2, "The elastic tensor
+ * to forget (doc/theory/gravitating_elasticity.md §2, "The elastic tensor
  * dictionary"). Isotropically:
  * @f$\lambda = \lambda^{\mathrm{eff}} - p^0@f$,
  * @f$\mu = \mu^{\mathrm{eff}} + p^0@f$,

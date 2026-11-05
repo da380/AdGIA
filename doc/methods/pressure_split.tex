@@ -7,7 +7,7 @@
 \usepackage{array}
 \usepackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
 
-\input{macros.inc}
+\input{../macros.inc}
 
 \numberwithin{equation}{section}
 \sloppy
@@ -66,9 +66,9 @@ formulation}; in this codebase the word ``mixed'' is reserved for the
 gravity-formulation axis (the \code{Mixed\ldots Problem} classes of
 \code{doc/quasi\_static\_models.tex}), so the method is called \emph{the
 pressure-split $(\vu, p)$ solve} throughout. The time layer whose
-operators it solves is described in \code{doc/viscoelasticity.md}, the
+operators it solves is described in \code{doc/methods/viscoelasticity.md}, the
 problem classes in \code{doc/quasi\_static\_models.tex}, and the
-measurements it rests on in \code{doc/benchmarks.tex} (``Box: viscosity
+measurements it rests on in \code{doc/benchmarks/benchmarks.tex} (``Box: viscosity
 contrasts''). The sibling solver note is
 \code{doc/gauge\_penalty\_iteration.tex}.
 
@@ -91,7 +91,7 @@ $\norm{\cdot}$ are the $L^2(\Omega)$ inner product and norm.
 \subsection{The effective operator of viscoelastic stepping}
 \label{sec:beta}
 
-The isotropic generalised Maxwell body of \code{doc/viscoelasticity.md}
+The isotropic generalised Maxwell body of \code{doc/methods/viscoelasticity.md}
 \S1 has
 \begin{equation}
   \sigma = \kappa\,(\tr\eps)\,\one + 2\mu_\infty\,\mathsf d
@@ -173,7 +173,7 @@ always denotes this \emph{effective} shear modulus of the solve; it
 coincides with the unrelaxed $\mu_U = \mu_\infty + \sum_k\mu_k$ when no
 weights are set. The weights are nodal fields (the $\tau_k$ vary in space)
 and $\mu$ is evaluated as the coefficient chain $\mu_\infty + \sum_k
-\beta_k\mu_k$ at quadrature points (\code{doc/viscoelasticity.md} \S4).
+\beta_k\mu_k$ at quadrature points (\code{doc/methods/viscoelasticity.md} \S4).
 The form \eqref{eq:primal} equals $\lambda(\divg\vu)(\divg\vv) +
 2\mu\,\eps(\vu):\eps(\vv)$ with $\lambda = \kappa - 2\mu/d$, by the
 orthogonal split $|e|^2 = |\dev e|^2 + \frac1d(\tr e)^2$.
@@ -218,7 +218,7 @@ and, secondarily, by the spatial contrast $\max\mu/\min\mu$.
   unbounded in $\Delta t$. The L-stable and exponential schemes are
   designed to stride over fast branches ($\Delta t\gg\tau$) with no loss of
   accuracy; the benchmarks confirm that their time accuracy does not
-  depend on the viscosity contrast (\code{doc/benchmarks.tex}, ``Box:
+  depend on the viscosity contrast (\code{doc/benchmarks/benchmarks.tex}, ``Box:
   viscosity contrasts''). The price of striding is paid here, in the
   conditioning of the solve.
 \item \emph{Multi-branch rheologies collapse in stages.} With several
@@ -278,7 +278,7 @@ iterations if the effective condition number grows like $r$), and on the
 box ladder CG iterations rising from about 55 at contrast $C = 1$ to
 150--340 on the layered cases at $C\ge10^4$ and 500--2500 on the graded
 column at $C\ge10^6$, while the schemes that solve with the unrelaxed
-operator stay at 50--65 (\code{doc/benchmarks.tex}). Supplying the rigid
+operator stay at 50--65 (\code{doc/benchmarks/benchmarks.tex}). Supplying the rigid
 rotations as interpolation vectors does not help, measured on the same
 cases: they enrich the coarse space with
 smooth fields, which it already represents, not with solenoidal ones.
@@ -1224,7 +1224,7 @@ The benchmark driver of the box family exposes the route as \code{-up}.
 %==========================================================================
 
 The \code{contrast} and \code{gradient} models of the viscoelastic box
-family (\code{doc/benchmarks.tex}, ``Box: viscosity contrasts''), on 4
+family (\code{doc/benchmarks/benchmarks.tex}, ``Box: viscosity contrasts''), on 4
 ranks, order 2, exponential trapezoid at $\Delta t = 0.25$, 40 solves per
 run; iterations are per solve, wall times for the whole run.
 \begin{center}

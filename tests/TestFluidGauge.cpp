@@ -6,7 +6,7 @@
   is known independently: a static, gravity-free fluid supports a uniform
   pressure, so its entire response condenses onto the solid as the rank-one
   cavity term (1/K_V) b(u) b(v), b(v) = int_Sigma v.m dS, K_V = V/kappa_f.
-  The method is described in doc/gauged_fluid.md ("Gauge fixing: penalty
+  The method is described in doc/methods/gauged_fluid.md ("Gauge fixing: penalty
   plus iterated refinement", "Verification").
 
   Meshes: the canned two-layer disc (attribute 1 fluid core, 2 mantle) and

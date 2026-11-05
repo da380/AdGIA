@@ -3,7 +3,7 @@
 //
 // The discrete change-of-variables identity at the level of the FULL
 // self-gravitating SOLVE (the relabelled-identity benchmark,
-// doc/benchmarks.tex; doc/mappings.md, "The discrete change-of-variables
+// doc/benchmarks/benchmarks.tex; doc/methods/mappings.md, "The discrete change-of-variables
 // identity"): the same problem class solves
 //
 //   side A  the REFERENCE mesh, phi_e = the nodal interpolant of the
@@ -54,7 +54,7 @@
 //    operator-action probes and the per-attribute breakdown; for
 //    slip_broken it prints, after the solves, the sixteen broken blocks
 //    and the stored constraint kernels of both sides, which locate the
-//    differing terms (doc/benchmarks.tex gives the measured
+//    differing terms (doc/benchmarks/benchmarks.tex gives the measured
 //    pattern). (The single-valued slip organisation refuses non-identity
 //    maps outright, so it cannot be run here.)
 //

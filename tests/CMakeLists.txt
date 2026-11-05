@@ -394,6 +394,12 @@ target_include_directories(TestManufactured PRIVATE
     "${CMAKE_SOURCE_DIR}/benchmarks/elastic/manufactured")
 gtest_discover_tests(TestManufactured)
 
+add_executable(TestManufacturedFluid TestManufacturedFluid.cpp)
+target_link_libraries(TestManufacturedFluid PRIVATE AdGIA gtest_main)
+target_include_directories(TestManufacturedFluid PRIVATE
+    "${CMAKE_SOURCE_DIR}/benchmarks/elastic/manufactured")
+gtest_discover_tests(TestManufacturedFluid)
+
 add_executable(TestMixedProblemFluid TestMixedProblemFluid.cpp)
 target_link_libraries(TestMixedProblemFluid PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestMixedProblemFluid)
@@ -475,3 +481,7 @@ gtest_discover_tests(TestSlidingInterface)
 add_executable(TestMixedProblemGauged TestMixedProblemGauged.cpp)
 target_link_libraries(TestMixedProblemGauged PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestMixedProblemGauged)
+
+add_executable(TestLevelBorderSources TestLevelBorderSources.cpp)
+target_link_libraries(TestLevelBorderSources PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestLevelBorderSources)

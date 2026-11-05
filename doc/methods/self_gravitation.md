@@ -11,16 +11,16 @@ for hydrostatic (spherical) models. The class also treats fluid regions
 through `SetFluid`, in which the fluid keeps its displacement and the
 interface and fluid mass terms below never arise: by the gauge penalty
 (`SetFluid(..., GaugePenaltyOptions)`, or its exact-gauge variant
-`EnableGaugeKKT`), described in `doc/gauged_fluid.md`, or by the default
+`EnableGaugeKKT`), described in `doc/methods/gauged_fluid.md`, or by the default
 Maxwell relaxation, the general method for any geometry and stratification
-(`doc/static_fluid_core.tex`, "The status of the formulations"). Everything in this note is the hydrostatic,
+(`doc/theory/static_fluid_core.tex`, "The status of the formulations"). Everything in this note is the hydrostatic,
 natural specialisation of the general linearised theory of
-`doc/gravitating_elasticity.md` — including the fact that the moduli fed
+`doc/theory/gravitating_elasticity.md` — including the fact that the moduli fed
 to this class are correctly the seismological (PREM) ones, which ceases
 to hold for the general initial-stress form described there (the
 referential classes take the bare tensor through
 `BareElasticTensorCoefficient`). The per-class model summary is
-`doc/quasi_static_models.tex`, section "The mixed self-gravitating
+`doc/methods/quasi_static_models.tex`, section "The mixed self-gravitating
 problem (Dahlen organisation)".
 
 ## 1. Continuous problem
@@ -119,7 +119,7 @@ The linearised static balance in the fluid, −∇p¹ = ρ∇φ + ρ¹∇Φ₀ (
 the Eulerian pressure and density perturbations), is processed as in
 Al-Attar & Woodhouse (2010, *Geophys. J. Int.* 181, 567–576, §2.2–2.3;
 the modern rendering of Dahlen's argument, summarised in
-`doc/gravitating_elasticity.md`, section "Dahlen's hydrostatic-region
+`doc/theory/gravitating_elasticity.md`, section "Dahlen's hydrostatic-region
 argument, and where it stops"): its tangential part makes p¹ + ρφ
 constant on each level surface; for a spherical reference, absorbing the
 degree-0 parts into the reference leaves the Eulerian pressure slaved,
@@ -131,7 +131,7 @@ condition; the gravitational conditions are those of Poisson's equation
 with the displaced density. The elimination leaves one constant pressure
 perturbation per connected fluid region undetermined (degree 0); the
 conditions above take it as zero, so the treatment does not represent
-the fluid's compression at degree 0 (see `doc/gauged_fluid.md`,
+the fluid's compression at degree 0 (see `doc/methods/gauged_fluid.md`,
 "Degree 0", for the formulation that does). About an aspherical
 reference the free data become a function on the level surfaces rather
 than a constant, and the elimination is no longer exact. The
@@ -160,9 +160,9 @@ condition — and `winkler` (F2) alone. In every rung the core's
 approximated.
 
 The published statements, the translation into (F1)–(F3), the definition
-of the ladder and its accuracy are in `doc/quasi_static_models.tex`,
+of the ladder and its accuracy are in `doc/methods/quasi_static_models.tex`,
 section "Fluid regions and the ladder of CMB approximations"; the
-measurements are in `doc/benchmarks.tex`, sections "The CMB treatments"
+measurements are in `doc/benchmarks/benchmarks.tex`, sections "The CMB treatments"
 and "The CMB approximations: results".
 
 ### Rows of the system

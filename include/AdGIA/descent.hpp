@@ -12,7 +12,7 @@ namespace AdGIA {
 /**
  * @file descent.hpp
  * @brief The descent toolkit of the equilibrium-figures programme
- * (doc/equilibrium_figures.tex §6, §8): a constrained metric — Riesz
+ * (doc/theory/equilibrium_figures.tex §6, §8): a constrained metric — Riesz
  * identification, one linear constraint held by metric-orthogonal
  * projection, an optional quadratic prior — and two loops over it,
  * nonlinear conjugate gradients and Levenberg–Marquardt Gauss–Newton.
