@@ -165,6 +165,7 @@ documentation is practical:
 | `meshes/README.md` | mesh generation, the files written and the attribute conventions |
 | `benchmarks/README.md` | the benchmark families: comparisons with independent reference solutions |
 | `earth_data/README.md` | the earth-data tools: real-Earth datasets in, maps out (maps, NetCDF, ice-ng sampling, topography grids) |
+| `doc/adjoints.md` | the derivative machinery: the continuous and discrete adjoints, the tangent-linear problem and second order, what each gate checks (a method note in the working tree, not tracked for now) |
 
 ## Installation
 

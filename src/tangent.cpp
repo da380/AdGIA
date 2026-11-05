@@ -101,14 +101,8 @@ void TangentTrajectory::Record(real_t t, const Vector& m,
 
 // --- TangentViscoelasticOperator -----------------------------------------
 
-namespace {
+namespace detail {
 
-int InternalOrder(const ViscoelasticOperator& op) {
-  return const_cast<ViscoelasticOperator&>(op).InternalScalarSpace().FEColl()
-      ->GetOrder();
-}
-
-// d/dh of the exponential-trapezoid weights (e, alpha, beta) at h.
 void TrapezoidWeightDerivatives(real_t h, real_t& de, real_t& dalpha,
                                 real_t& dbeta) {
   const real_t e = std::exp(-h);
@@ -121,6 +115,30 @@ void TrapezoidWeightDerivatives(real_t h, real_t& de, real_t& dalpha,
   de = -e;
   dalpha = dphi1 + e;
   dbeta = -dphi1;
+}
+
+void TrapezoidWeightSecondDerivatives(real_t h, real_t& d2e, real_t& d2alpha,
+                                      real_t& d2beta) {
+  const real_t e = std::exp(-h);
+  real_t d2phi1;  // d^2/dh^2 (1 - e^{-h}) / h = (2 - e^{-h}(2 + 2h + h^2)) / h^3
+  if (h < 1e-2) {
+    d2phi1 = 1.0 / 3.0 - h / 4.0 + h * h / 10.0 - h * h * h / 36.0 +
+             h * h * h * h / 168.0;
+  } else {
+    d2phi1 = (2.0 - e * (2.0 + 2.0 * h + h * h)) / (h * h * h);
+  }
+  d2e = e;
+  d2alpha = d2phi1 - e;
+  d2beta = -d2phi1;
+}
+
+}  // namespace detail
+
+namespace {
+
+int InternalOrder(const ViscoelasticOperator& op) {
+  return const_cast<ViscoelasticOperator&>(op).InternalScalarSpace().FEColl()
+      ->GetOrder();
 }
 
 }  // namespace
@@ -332,7 +350,7 @@ void TangentViscoelasticOperator::RelaxationSource(TangentData& data, int n0,
       const real_t h = dt * itau0_[k][q];
       real_t e, alpha, beta, de, da, db;
       detail::ExponentialTrapezoidWeights(h, e, alpha, beta);
-      TrapezoidWeightDerivatives(h, de, da, db);
+      detail::TrapezoidWeightDerivatives(h, de, da, db);
       const real_t dh = has_ditau_[k] ? dt * ditau_[k][q] : 0.0;
       const int p = nodes[q];
       if (has_ditau_[k] && new_dt) {

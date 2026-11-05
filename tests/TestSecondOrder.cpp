@@ -7,9 +7,10 @@
   mu and eta directions and kernels. The sweep is the exact derivative of
   the first-order kernels as computed, so the agreement is at the FD
   level whatever the first-order sweep's own distance from the discrete
-  gradient. The symmetry defect <H v, w> − <H w, v> is reported: it is
-  O(dt²) for the continuous first-order adjoint, zero only for an exact
-  discrete transpose.
+  gradient. The symmetry defect <H v, w> − <H w, v> of this flavour is
+  O(dt²) (the continuous first-order adjoint is not an exact transpose);
+  it is not checked here — TestDiscreteSecondOrder gates it at rounding
+  for the discrete flavour.
 */
 
 #include <gtest/gtest.h>

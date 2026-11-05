@@ -20,6 +20,17 @@
 
 namespace AdGIA {
 
+namespace detail {
+/** @brief d/dh of the exponential-trapezoid weights (e, alpha, beta) at
+ * h = dt/tau (series for small h, as ExponentialTrapezoidWeights). */
+void TrapezoidWeightDerivatives(mfem::real_t h, mfem::real_t& de,
+                                mfem::real_t& dalpha, mfem::real_t& dbeta);
+/** @brief d^2/dh^2 of the exponential-trapezoid weights at h. */
+void TrapezoidWeightSecondDerivatives(mfem::real_t h, mfem::real_t& d2e,
+                                      mfem::real_t& d2alpha,
+                                      mfem::real_t& d2beta);
+}  // namespace detail
+
 /**
  * @brief A direction in the isotropic generalised Maxwell model
  * (kappa, mu_inf, {mu_k, eta_k}) of the library's parameter convention
@@ -191,6 +202,13 @@ class TangentViscoelasticOperator : public ViscoelasticOperator {
     return ditau_[k];
   }
   bool HasDeltaInverseRelaxationTime(int k) const { return has_ditau_[k]; }
+  /** @brief Nodal delta mu_k of the direction (branch layout; zero
+   * when the direction leaves the branch's modulus alone). */
+  const mfem::Vector& DeltaBranchModulus(int k) const { return dmu_[k]; }
+  bool HasDeltaBranchModulus(int k) const { return has_dmu_[k]; }
+  /** @brief The nodal delta beta_k of the step prepared last
+   * (PrepareStep), on the internal scalar space. */
+  const mfem::GridFunction& DeltaBeta(int k) const { return *dbeta_[k]; }
 
   /** @brief March the tangent problem along @p forward's grid and record
    * it in @p out; false if a solve fails. */

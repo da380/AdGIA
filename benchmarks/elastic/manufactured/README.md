@@ -156,4 +156,5 @@ L2-like rate of 3 rather than 4. Results at the discretisation level
 move with the new default (see the E2 rerun noted below).
 
 Tables of every run: `runs_facet/d2_g2*/table.txt`, `d3_g2*/table.txt`
-in the build tree, copied to `~/dev/planning/runsheets/manufactured-2026-11-05/`.
+in the build tree (the ladder script writes `table.txt` beside each
+set's results).

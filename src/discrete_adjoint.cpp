@@ -57,6 +57,14 @@ void DiscreteAdjointOperator::Coupling(const GridFunction& lambda,
   B_->Mult(lambda, zeta);
 }
 
+void DiscreteAdjointOperator::EngageStep(real_t dt) {
+  if (dt > 0.0) {
+    SetEffectiveModulus(dt, Scheme::ExponentialTrapezoid);
+  } else {
+    UseUnrelaxedOperator();
+  }
+}
+
 void DiscreteAdjointOperator::NodeDual(ForwardTrajectory& forward,
                                        const AdjointForce& force, int n,
                                        real_t w, Vector& g) {
@@ -177,68 +185,349 @@ bool DiscreteAdjointOperator::Run(ForwardTrajectory& forward,
 // --- DiscreteAdjointSolver ------------------------------------------------
 
 DiscreteAdjointSolver::DiscreteAdjointSolver(
+    LinearQuasiStaticProblem& twin, const GridFunction& forward_displacement)
+    : twin_(&twin), u_forward_(&forward_displacement) {}
+
+DiscreteAdjointSolver::DiscreteAdjointSolver(
     LinearQuasiStaticProblem& twin, LinearQuasiStaticProblem& source_twin,
     ForwardTrajectory& forward)
-    : forward_(forward), source_twin_(source_twin) {
+    : forward_(&forward) {
   op_ = std::make_unique<DiscreteAdjointOperator>(twin, forward.Op());
   src_ = std::make_unique<TangentViscoelasticOperator>(source_twin,
                                                        forward.Op());
 }
 
-bool DiscreteAdjointSolver::Run() {
-  MFEM_VERIFY(force_, "DiscreteAdjointSolver: no force set.");
-  return op_->Run(forward_, *force_);
+DiscreteAdjointOperator& DiscreteAdjointSolver::Operator() {
+  MFEM_VERIFY(op_, "DiscreteAdjointSolver: the static configuration has no "
+                   "transposed sweep.");
+  return *op_;
 }
 
-real_t DiscreteAdjointSolver::Dot(const Vector& a, const Vector& b,
-                                  FiniteElementSpace* fes) const {
-  real_t v = a * b;
+bool DiscreteAdjointSolver::Run() {
+  MFEM_VERIFY(force_, "DiscreteAdjointSolver: no force set.");
+  return op_ ? op_->Run(*forward_, *force_) : RunStatic();
+}
+
+bool DiscreteAdjointSolver::RunStatic() {
+  // One solve of the twin per point observation, its duals on the slots
+  // as AdjointSolver::ApplyObservation applies them: the twin's operator
+  // is symmetric, so the solution is the transpose of the static tangent
+  // solve applied to the observation.
+  MFEM_VERIFY(!force_->HasContinuous() && !force_->HasContinuousPotential(),
+              "DiscreteAdjointSolver: a static adjoint takes point terms "
+              "only.");
+  auto* phi_slot = dynamic_cast<PotentialForceSlot*>(twin_);
+  auto* border_slot = dynamic_cast<BorderForceSlot*>(twin_);
+  lambda_.clear();
+  for (int i = 0; i < force_->NumObservations(); i++) {
+    twin_->AssembleForce(force_->ObservationTime(i));
+    const Vector& du = force_->ObservationDualU(i);
+    if (du.Size() > 0) {
+      twin_->AddForce(du);
+    }
+    if (force_->ObservationOnPotential(i)) {
+      MFEM_VERIFY(phi_slot,
+                  "DiscreteAdjointSolver: the force carries potential-row "
+                  "terms but the problem exposes no PotentialForceSlot.");
+      phi_slot->AddPotentialForce(force_->ObservationDualPhi(i));
+    }
+    if (force_->ObservationOnBorder(i)) {
+      MFEM_VERIFY(border_slot,
+                  "DiscreteAdjointSolver: the force carries border-row "
+                  "terms but the problem exposes no BorderForceSlot.");
+      const Vector& om = force_->ObservationOmega(i);
+      border_slot->AddBorderForce(force_->ObservationUniform(i),
+                                  om.Size() > 0 ? &om : nullptr);
+    }
+    if (!twin_->Solve()) {
+      return false;
+    }
+    lambda_.push_back(detail::MakeGridFunction(&twin_->DisplacementSpace()));
+    *lambda_.back() = twin_->Displacement();
+  }
+  return true;
+}
+
+real_t DiscreteAdjointSolver::Dot(const Vector& dual, const GridFunction& u,
+                                  FiniteElementSpace& fes) const {
+  // The dual is the rank's partial sums (an unassembled L-vector, as
+  // AddForce takes it): restrict it to true dofs through the transpose
+  // of the prolongation, which assembles the shared dofs once, and pair
+  // it with u's true dofs (TangentLinearSolver::Dot).
 #ifdef MFEM_USE_MPI
-  if (auto* pfes = dynamic_cast<ParFiniteElementSpace*>(fes)) {
-    MPI_Allreduce(MPI_IN_PLACE, &v, 1, MPITypeMap<real_t>::mpi_type, MPI_SUM,
-                  pfes->GetComm());
+  if (auto* pfes = dynamic_cast<ParFiniteElementSpace*>(&fes)) {
+    Vector dt(pfes->GetTrueVSize()), ut(pfes->GetTrueVSize());
+    pfes->GetProlongationMatrix()->MultTranspose(dual, dt);
+    u.GetTrueDofs(ut);
+    return InnerProduct(pfes->GetComm(), dt, ut);
   }
 #endif
-  return v;
+  return dual * u;
+}
+
+real_t DiscreteAdjointSolver::SumOverRanks(real_t local,
+                                           FiniteElementSpace& fes) const {
+  // The internal space is discontinuous: its dofs are element-local and
+  // never shared, so the ranks' local pairings add up to the global one.
+#ifdef MFEM_USE_MPI
+  if (auto* pfes = dynamic_cast<ParFiniteElementSpace*>(&fes)) {
+    MPI_Allreduce(MPI_IN_PLACE, &local, 1, MPITypeMap<real_t>::mpi_type,
+                  MPI_SUM, pfes->GetComm());
+  }
+#else
+  (void)fes;
+#endif
+  return local;
 }
 
 real_t DiscreteAdjointSolver::Directional(const TangentDirection& dir) {
+  return op_ ? DirectionalEvolution(dir) : DirectionalStatic(dir);
+}
+
+real_t DiscreteAdjointSolver::DirectionalStatic(const TangentDirection& dir) {
+  MFEM_VERIFY(force_ && static_cast<int>(lambda_.size()) ==
+                            force_->NumObservations(),
+              "DiscreteAdjointSolver: Run() first.");
+  // The source of the static tangent solve: the Born force -dK u of the
+  // direction on the forward displacement (TangentLinearSolver::Run).
+  FiniteElementSpace& fes = twin_->DisplacementSpace();
+  ModuliBornForce born(fes, dir, twin_->Rheology().NumBranches());
+  if (born.Empty()) {
+    return 0.0;
+  }
+  Vector f(fes.GetVSize());
+  f = 0.0;
+  born.AddTo(*u_forward_, f);
+  real_t dJ = 0.0;
+  for (const auto& lambda : lambda_) {
+    dJ += Dot(f, *lambda, fes);
+  }
+  return dJ;
+}
+
+real_t DiscreteAdjointSolver::DirectionalEvolution(
+    const TangentDirection& dir) {
   MFEM_VERIFY(op_->Size() > 0, "DiscreteAdjointSolver: Run() first.");
   src_->SetDirection(dir);
-  ForwardTrajectoryData data(forward_);
-  const int N = forward_.Size() - 1;
+  ForwardTrajectoryData data(*forward_);
+  const int N = forward_->Size() - 1;
   const int K = op_->NumBranches();
+  FiniteElementSpace& fes_u = op_->Problem().DisplacementSpace();
   Vector f_u, cb;
   std::vector<Vector> zeta;
-  real_t dJ = 0.0;
-  // The dot products of L-vectors against duals: lambda and the
-  // sources are both L-vectors of one space; in parallel the
-  // displacement pairing <lambda, f> needs the true-dof reduction of
-  // an L-vector force against a consistent lambda, which the
-  // GridFunction/LinearForm pairing gives per rank (shared dofs
-  // counted once by assembly of f). Serial here; parallel pending.
+  // The displacement-row sources are L-vectors of partial sums against
+  // the consistent lambda (Dot, global); the branch and state sources
+  // live on the internal space's element-local dofs, so their pairings
+  // are local sums, reduced once at the end.
+  real_t dJ = 0.0, internal = 0.0;
   // The unrelaxed start.
   src_->ComputeSources(data, 0, false, f_u, zeta);
-  dJ += f_u * op_->Lambda(0);
+  dJ += Dot(f_u, op_->Lambda(0), fes_u);
   op_->Coupling(op_->Lambda(0), cb);
   for (int k = 0; k < K; k++) {
-    if (zeta[k].Size() > 0) dJ += zeta[k] * cb;
+    if (zeta[k].Size() > 0) internal += zeta[k] * cb;
   }
   for (int n = 0; n < N; n++) {
     src_->PrepareStep(data, n, n + 1);
     src_->ComputeSources(data, n + 1, true, f_u, zeta);
-    dJ += f_u * op_->Lambda(n + 1);
+    dJ += Dot(f_u, op_->Lambda(n + 1), fes_u);
     op_->Coupling(op_->Lambda(n + 1), cb);
     for (int k = 0; k < K; k++) {
-      if (zeta[k].Size() > 0) dJ += zeta[k] * cb;
+      if (zeta[k].Size() > 0) internal += zeta[k] * cb;
       const Vector& s = src_->StateSource(k);
       if (s.Size() > 0) {
         Vector mu_k = op_->Branch(op_->Mu(n + 1), k);
-        dJ += s * mu_k;
+        internal += s * mu_k;
       }
     }
   }
-  return dJ;
+  return dJ + SumOverRanks(internal, op_->InternalScalarSpace());
+}
+
+// --- the kernels (stage 2) --------------------------------------------------
+
+int DiscreteAdjointSolver::AddKernel(Parameter parameter, int branch) {
+  kernels_.push_back(Kernel{parameter, branch, Vector()});
+  return static_cast<int>(kernels_.size()) - 1;
+}
+
+namespace {
+
+// A kernel density times an optional weight coefficient, for the
+// integration against the L2 basis (int phi_q weight(x) density(x) dV,
+// then scaled per node) with the forward stiffness's own rule.
+class ScaledDensity : public Coefficient {
+ public:
+  ScaledDensity(Coefficient& density, Coefficient* weight)
+      : density_(density), weight_(weight) {}
+  real_t Eval(ElementTransformation& T, const IntegrationPoint& ip) override {
+    real_t v = density_.Eval(T, ip);
+    if (weight_) v *= weight_->Eval(T, ip);
+    return v;
+  }
+
+ private:
+  Coefficient& density_;
+  Coefficient* weight_;
+};
+
+}  // namespace
+
+void DiscreteAdjointSolver::AddElastic(Kernel& kernel, const GridFunction& u,
+                                       const GridFunction& lambda,
+                                       Coefficient* weight,
+                                       const Vector* nodal_scale) {
+  // The elastic density of the parameter (IsotropicKernelDensity's
+  // Kappa: -div u div lambda; MuLongTerm: -2 dev eps(u) : dev eps(lambda)),
+  // times the weight coefficient, against the internal basis.
+  const bool is_kappa = kernel.parameter == Parameter::Kappa;
+  IsotropicKernelDensity density(is_kappa ? Parameter::Kappa
+                                          : Parameter::MuLongTerm);
+  density.SetPair(u, lambda);
+  ScaledDensity scaled(density, weight);
+  FiniteElementSpace& sfes = op_->InternalScalarSpace();
+  auto lf = detail::MakeLinearForm(&sfes);
+  // The forward stiffness's own rule (ElasticityIntegrator: order
+  // 2 OrderGrad of the displacement element), so that the dual paired
+  // with a nodal direction is the derivative of the ASSEMBLED stiffness
+  // along it, to rounding; a uniform mesh is assumed for the one rule.
+  FiniteElementSpace& ufes = *const_cast<FiniteElementSpace*>(u.FESpace());
+  ElementTransformation& T0 = *ufes.GetElementTransformation(0);
+  const int order = 2 * T0.OrderGrad(ufes.GetFE(0));
+  auto* integ = new DomainLFIntegrator(scaled);
+  integ->SetIntRule(&IntRules.Get(sfes.GetMesh()->GetElementGeometry(0), order));
+  lf->AddDomainIntegrator(integ);
+  lf->Assemble();
+  if (nodal_scale) {
+    for (int q = 0; q < lf->Size(); q++) {
+      kernel.dual[q] += (*lf)[q] * (*nodal_scale)[q];
+    }
+  } else {
+    kernel.dual += *lf;
+  }
+}
+
+void DiscreteAdjointSolver::AssembleKernels() {
+  MFEM_VERIFY(op_->Size() > 0, "DiscreteAdjointSolver: Run() first.");
+  const int N = forward_->Size() - 1;
+  const int K = op_->NumBranches();
+  const int nd = op_->NumNodes(), nc = op_->NumComponents();
+  const Rheology& rh = op_->Problem().Rheology();
+  for (auto& kernel : kernels_) {
+    kernel.dual.SetSize(nd);
+    kernel.dual = 0.0;
+  }
+  Vector cb, dn, dn1, scale(nd);
+  // Node 0: the unrelaxed solve (beta = 1, no weight derivative) and the
+  // branch term <B lambda^0, 2 delta mu_k m_k^0>.
+  op_->EngageStep(0.0);
+  op_->Coupling(op_->Lambda(0), cb);
+  for (auto& kernel : kernels_) {
+    const int k = kernel.branch;
+    switch (kernel.parameter) {
+      case Parameter::Kappa:
+      case Parameter::MuLongTerm:
+        AddElastic(kernel, forward_->Displacement(0), op_->Lambda(0), nullptr,
+                   nullptr);
+        break;
+      case Parameter::Mu: {
+        AddElastic(kernel, forward_->Displacement(0), op_->Lambda(0), nullptr,
+                   nullptr);
+        Vector m0 = op_->Branch(forward_->State(0), k);
+        for (int q = 0; q < nd; q++) {
+          real_t v = 0.0;
+          for (int c = 0; c < nc; c++) v += cb[c * nd + q] * 2.0 * m0[c * nd + q];
+          kernel.dual[q] += v;
+        }
+        break;
+      }
+      case Parameter::Eta:
+        break;
+    }
+  }
+  // The steps n -> n+1: the effective solve at n+1 (its elastic
+  // densities with the weights beta_k and the weights' derivative), the
+  // branch sources paired with B lambda^{n+1}, the state source with
+  // mu^{n+1}.
+  for (int n = 0; n < N; n++) {
+    const real_t dt = forward_->Time(n + 1) - forward_->Time(n);
+    op_->EngageStep(dt);
+    const GridFunction& u1 = forward_->Displacement(n + 1);
+    const GridFunction& lam = op_->Lambda(n + 1);
+    forward_->Strain(n, dn);
+    forward_->Strain(n + 1, dn1);
+    op_->Coupling(lam, cb);
+    for (auto& kernel : kernels_) {
+      const int k = kernel.branch;
+      if (kernel.parameter == Parameter::Kappa ||
+          kernel.parameter == Parameter::MuLongTerm) {
+        AddElastic(kernel, u1, lam, nullptr, nullptr);
+        continue;
+      }
+      const Vector& two_mu = op_->NodalBranchModulus(k);
+      const Vector& itau = op_->NodalInverseRelaxationTime(k);
+      Vector mn = op_->Branch(forward_->State(n), k);
+      Vector mu1 = op_->Branch(op_->Mu(n + 1), k);
+      const bool is_mu = kernel.parameter == Parameter::Mu;
+      // d(1/tau_q)/d(param_q): itau/mu for mu (fixed eta), -itau/eta for eta,
+      // with eta = mu / itau.
+      for (int q = 0; q < nd; q++) {
+        const real_t mu = 0.5 * two_mu[q];
+        scale[q] = is_mu ? itau[q] / mu : -itau[q] * itau[q] / mu;
+      }
+      if (is_mu) {
+        // The branch modulus in the effective stiffness: beta_k times the
+        // elastic density.
+        AddElastic(kernel, u1, lam, &op_->BetaCoefficient(k), nullptr);
+      }
+      // The weights' derivative in the stiffness: delta beta_k =
+      // -b' dt delta(1/tau): -2 mu_k dev:dev density, nodally scaled.
+      Vector dbeta_scale(nd);
+      for (int q = 0; q < nd; q++) {
+        const real_t h = dt * itau[q];
+        real_t de, da, db;
+        detail::TrapezoidWeightDerivatives(h, de, da, db);
+        dbeta_scale[q] = -db * dt * scale[q];
+      }
+      {
+        Kernel tmp{Parameter::MuLongTerm, k, Vector(nd)};
+        tmp.dual = 0.0;
+        AddElastic(tmp, u1, lam, &rh.BranchShearModulus(k), &dbeta_scale);
+        kernel.dual += tmp.dual;
+      }
+      // The nodal terms: the known-part branch source paired with
+      // B lambda, the state source with mu.
+      for (int q = 0; q < nd; q++) {
+        const real_t h = dt * itau[q];
+        real_t e, alpha, beta, de, da, db;
+        detail::ExponentialTrapezoidWeights(h, e, alpha, beta);
+        detail::TrapezoidWeightDerivatives(h, de, da, db);
+        real_t v = 0.0;
+        for (int c = 0; c < nc; c++) {
+          const int i = c * nd + q;
+          const real_t rel = de * mn[i] + da * dn[i];
+          const real_t st = rel + db * dn1[i];
+          // zeta: 2 delta mu (e m + a d) [mu only] + 2 mu dt dh' rel
+          if (is_mu) v += cb[i] * 2.0 * (e * mn[i] + alpha * dn[i]);
+          v += cb[i] * two_mu[q] * dt * scale[q] * rel;
+          // s: dt dh' (de m + da d + db d1)
+          v += mu1[i] * dt * scale[q] * st;
+        }
+        kernel.dual[q] += v;
+      }
+    }
+  }
+  op_->EngageStep(0.0);
+}
+
+real_t DiscreteAdjointSolver::Pair(int i, const GridFunction& delta) const {
+  const Vector& d = kernels_[i].dual;
+  MFEM_VERIFY(d.Size() == delta.Size(),
+              "DiscreteAdjointSolver::Pair: the direction must live on the "
+              "internal scalar space.");
+  // The internal space is discontinuous: a local pairing, reduced.
+  return SumOverRanks(d * delta,
+                      *const_cast<FiniteElementSpace*>(delta.FESpace()));
 }
 
 }  // namespace AdGIA

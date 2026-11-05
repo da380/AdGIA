@@ -134,6 +134,8 @@ if(USE_MPI)
     target_link_libraries(TestAdjointPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestTangentPar TestTangentPar.cpp)
     target_link_libraries(TestTangentPar PRIVATE AdGIA MPI::MPI_CXX)
+    add_executable(TestDiscreteAdjointPar TestDiscreteAdjointPar.cpp)
+    target_link_libraries(TestDiscreteAdjointPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestAdjointFingerprintPar TestAdjointFingerprintPar.cpp)
     target_link_libraries(TestAdjointFingerprintPar PRIVATE AdGIA MPI::MPI_CXX)
     foreach(np 1 2 4)
@@ -165,6 +167,9 @@ if(USE_MPI)
         add_test(NAME TestTangentPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestTangentPar>)
+        add_test(NAME TestDiscreteAdjointPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestDiscreteAdjointPar>)
         add_test(NAME TestAdjointFingerprintPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestAdjointFingerprintPar>)
@@ -251,6 +256,7 @@ if(USE_MPI)
         set_tests_properties(
             TestAdjointPar_np${np}
             TestTangentPar_np${np}
+            TestDiscreteAdjointPar_np${np}
             TestFluidGaugePar_np${np}
             TestBoundaryNormalIntegratorsPar_np${np}
             TestMixedProblemFluidPar_np${np}
@@ -356,6 +362,10 @@ gtest_discover_tests(TestTransformedDiffusionIntegrator)
 add_executable(TestMixedProblem TestMixedProblem.cpp)
 target_link_libraries(TestMixedProblem PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestMixedProblem)
+
+add_executable(TestDiscreteSecondOrder TestDiscreteSecondOrder.cpp)
+target_link_libraries(TestDiscreteSecondOrder PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestDiscreteSecondOrder)
 
 add_executable(TestDiscreteAdjoint TestDiscreteAdjoint.cpp)
 target_link_libraries(TestDiscreteAdjoint PRIVATE AdGIA gtest_main)
