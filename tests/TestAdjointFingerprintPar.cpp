@@ -1,7 +1,7 @@
 /*
   Parallel twin of TestAdjointFingerprint (gate GA1b): the sea-level
-  reciprocity certificates of Al-Attar et al. (2024,
-  doc/Elasticity/ggad434.pdf) on the water-loaded mixed solve — the
+  reciprocity certificates of Al-Attar et al. (2024, GJI 236, 362-378)
+  on the water-loaded mixed solve — the
   spherical, 3-D-lateral-structure and rotation+structure legs on the
   canned 3-D two-layer ball, at 1, 2 and 4 ranks. A standalone MPI
   program exiting non-zero on failure; the identity is

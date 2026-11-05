@@ -81,7 +81,7 @@ std::unique_ptr<VectorFunctionCoefficient> CoreMotion(
 // In two dimensions the operator is singular — the 2-D DtN has no
 // degree-zero term, so the constant potential is null — and a load with
 // net mass is inconsistent (the exterior monopole grows
-// logarithmically). As in the mixed problem (doc/self_gravitation.md
+// logarithmically). As in the mixed problem (doc/methods/self_gravitation.md
 // §5), the load is made compatible by subtracting its mass as a uniform
 // flux through the outer boundary — exactly the monopole's flux, so the
 // interior gradient is unaffected — and the solve runs with the
@@ -388,7 +388,7 @@ void DensityFeasibility::Solve(Coefficient& rho_parent,
   Vector W;
   if (s.rigid) {
     // The enclosed components' loads on the border (+W: the sign the
-    // force-balance derivation fixes; doc/equilibrium_figures.tex §2).
+    // force-balance derivation fixes; doc/theory/equilibrium_figures.tex §2).
     W = s.ComponentLoads(rho_parent, *phi_);
   }
   stress_ = std::make_unique<MinimumDeviatoricEquilibriumStress>(
@@ -464,7 +464,7 @@ void DensityFeasibility::Derivative(FiniteElementSpace& fes_rho,
   const real_t four_pi_G = 4.0 * std::numbers::pi * s.G;
 
   // dJ[drho] = int drho ( -u . grad Phi + 4 pi G w ) over the Stokes
-  // mesh (doc/equilibrium_figures.tex, the envelope-theorem derivative).
+  // mesh (doc/theory/equilibrium_figures.tex, the envelope-theorem derivative).
   VectorGridFunctionCoefficient u_coeff(&stress_->Auxiliary());
   GradientGridFunctionCoefficient grad_phi(phi_sub_.get());
   InnerProductCoefficient advective(u_coeff, grad_phi);

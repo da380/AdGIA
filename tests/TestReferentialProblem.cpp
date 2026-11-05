@@ -3,7 +3,7 @@
 
 /*
   Tests for LinearQuasiStaticReferentialSelfGravitatingProblem, the general linearised
-  referential problem (doc/gravitating_elasticity.md, §3.1 "The linearised
+  referential problem (doc/theory/gravitating_elasticity.md, §3.1 "The linearised
   referential system"), on the canned uniform-body and two-layer meshes.
 
   - Translation null pairs (t, 0) are EXACT discrete null vectors of the
@@ -415,7 +415,7 @@ class BodyOnlyTensor : public MatrixCoefficient {
 
 }  // namespace
 
-// Ball-wide mode (option (a) of doc/gravitating_elasticity.md §3.1): the
+// Ball-wide mode (option (a) of doc/theory/gravitating_elasticity.md §3.1): the
 // displacement carries the gauge vacuum extension through the buffer under
 // a small harmonic stiffness (no refinement sweeps), and the gravity terms
 // extend to the DtN sphere. The mode is accurate only in its biased O(eps)
@@ -524,7 +524,7 @@ TEST(ReferentialProblem, HydrostaticCrossCheckBallWide2D) {
     }
   }
   // The ball-wide vacuum extension works only in the biased O(eps) regime
-  // (doc/gravitating_elasticity.md §3.1; doc/gauge_penalty_iteration.tex,
+  // (doc/theory/gravitating_elasticity.md §3.1; doc/methods/gauge_penalty_iteration.tex,
   // "When it must fail: the spectral condition"). Iterated Tikhonov
   // cannot remove the bias here: the physical operator has no buffer
   // stiffness to compare with (only the zeroth-order gravity terms),
@@ -661,7 +661,7 @@ TEST(ReferentialProblem, TransformationLawCoefficients) {
 }
 
 // Eliminated fluid regions, the construction step of the referential
-// closure (doc/dahlen_closure.tex, "Implementation", the referential
+// closure (doc/theory/dahlen_closure.tex, "Implementation", the referential
 // variant): geometry and the background potential. At phi_e = id on the
 // two-layer fluid-core mesh the referential background problem is the
 // mixed class's — the same density forms against the same Laplace-DtN
@@ -781,9 +781,7 @@ TEST(ReferentialProblem, FluidCoreGlueCrossCheck2D) {
     // Zero-mean degree-2 load: with an eliminated fluid the potential
     // constant is not a null direction, and the two classes gauge it on
     // different variables (phi vs zeta), so a load with a mean picks
-    // different degree-0 members however good the wall seam
-    // (doc/planning/hybrid_wall_seam.md, "Reconciliation with the
-    // gate").
+    // different degree-0 members however good the wall seam.
     FunctionCoefficient sigma([](const Vector& x) {
       const double r2 = x * x;
       return r2 == 0.0 ? 0.0 : 0.03 * (x[0] * x[0] - x[1] * x[1]) / r2;
@@ -1427,7 +1425,7 @@ TEST(ReferentialProblem, RelabelledEquilibrium2D) {
   // not fall with the FIELD order because the mesh geometry is fixed at
   // order 2 and the exact analytic map carries the geometric
   // interpolation error (the exact-F-versus-interpolated-F effect of
-  // doc/mappings.md, "The discrete change-of-variables identity"): the
+  // doc/methods/mappings.md, "The discrete change-of-variables identity"): the
   // floor is the mesh's, not the fields'.
   EXPECT_LT(u_err[0], 1.5e-2);
   EXPECT_LT(u_err[1], 1.5e-2);

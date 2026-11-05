@@ -7,7 +7,7 @@ correspondence principle (`laplace_reference.py`), compared by
 (`laplace_reference`, `compare`, `make_case`). The method of the
 reference (correspondence principle, Gaver–Stehfest inversion, its
 accuracy and the instability horizon), the comparison metrics and the
-measured results are in `doc/benchmarks.tex` ("The Laplace-domain
+measured results are in `doc/benchmarks/benchmarks.tex` ("The Laplace-domain
 reference" and "The finite-element histories").
 
 `references/` holds committed reference histories (`fluid_core` with
@@ -103,13 +103,19 @@ forcing as well.
 The `-method gauged` histories are clean only for a neutrally stratified
 fluid core: at N² ≠ 0 (`fluid_core`'s uniform core) the gauge penalty is
 defined only to the stratification band, and the comparison with the
-Laplace reference there carries that band (`doc/static_fluid_core.tex`).
+Laplace reference there carries that band (`doc/theory/static_fluid_core.tex`).
 
 ```
 mpiexec -np 8 <build>/benchmarks/bin/viscoelastic_love \
-    -c case.json -o 2 -lmax 4 -tau 1 -out results.json
+    -c case.json -o 2 -lmax 4 -tau 1 -level-border 16 -out results.json
 ./compare results.json --reference laplace_fluid_core_tauf_1.json
 ```
+
+On a model with a fluid layer `-level-border <n>` closes the Dahlen
+fluid by the level border of `doc/theory/dahlen_closure.tex` (the default
+static route; the campaign passes 16), so that the degree-0 history is
+benchmarked; without it the naked reduction's degree 0 is wrong by
+design. The results file records `"level_border"`.
 
 The case can be any Love-number case (`./make_case <model> --h 0.3
 --out <dir>` makes one). `compare.py` prints and writes, per degree and
@@ -162,17 +168,17 @@ library's `viscoelastic_love` isolate the spatial discretisation.
   every channel of the degree), so each degree's history is judged on one
   scale.
 
-### Measured (21 October 2026)
+### Measured
 
 `homogeneous` (tau 1e11 s), `homogeneous_lithosphere` (interior 1e11 s,
 lithosphere elastic) and `fluid_core` (mantle 1e11 s), lmax 4, degrees
 0–4. AdGIA: Dahlen method, degree 1 in the centre-of-mass frame, h = 0.3
-(1903 / 3110 / 3733 elements in the body), orders 2 and 3, 8 MPI ranks
-on a laptop; degree 0 left out on `fluid_core` (a Dahlen fluid differs
+(1903 / 3110 / 3733 elements in the body), orders 2 and 3, 8 MPI
+ranks; degree 0 left out on `fluid_core` (a Dahlen fluid differs
 there by design). Every figure is the worst over the 13 times on the
 exchange comparer's degree scale (above): degree 0 (|hp0| ≈ 0.14–0.17)
 on its own scale, degrees 1–4 on theirs (about 1.3 to 3.6). The
-write-up is tier V1 of `doc/benchmark_programme.tex`.
+write-up is tier V1 of `doc/benchmarks/benchmark_programme.tex`.
 
 - **sl3dpp against pyslfp**: 1.2e-11 (`homogeneous`), 1.3e-11
   (`homogeneous_lithosphere`), 1.1e-11 (`fluid_core`), each in kp0; h'
@@ -182,15 +188,14 @@ write-up is tier V1 of `doc/benchmark_programme.tex`.
   (hp3) on `homogeneous`, 1.6e-4 (hp4) on `homogeneous_lithosphere`,
   1.5e-4 (hp4) on `fluid_core`; hp2 1.0–1.5e-4, l' and k' at most 9e-5,
   degrees 0–1 at most 8e-5 (lp1 on `fluid_core`), kp1 2.5e-11. The
-  family's earlier stepping refinement (40 steps per interval, dt <=
-  0.025 tau_min, on `homogeneous`) brought it down to the reference's
-  own Gaver–Stehfest floor, about 3e-5 (measured then on a different
+  family's own stepping refinement (40 steps per interval, dt <=
+  0.025 tau_min, on `homogeneous`) brings it down to the reference's
+  own Gaver–Stehfest floor, about 3e-5 (measured on a different
   scale): the stepping error the three legs share is about 1e-4 at the
   default rule, and it largely cancels between AdGIA and pyslfp, which
   take the same steps with the same weights. That floor and the
   instability horizon are the limits of the Gaver–Stehfest inversion,
-  not information about the codes: the programme's position (21 October
-  2026) is that the Laplace route confirms the shared stepping at the
+  not information about the codes: the programme's position is that the Laplace route confirms the shared stepping at the
   1e-4 level and no better, and that the spectral pair (1e-11 on the
   identical discrete problem) is the reference for the time-domain
   problem, semi-analytical references staying secondary.
@@ -241,7 +246,7 @@ MPICH), for `homogeneous` at order 2:
 
 ```
 <adgia python> <repo>/benchmarks/common/decks.py homogeneous --out runs   # sl3dpp's deck
-(cd ~/dev/pyslfp && poetry run python \
+(cd <pyslfp checkout> && poetry run python \
     <repo>/benchmarks/viscoelastic/love/pyslfp_histories.py homogeneous \
     --tau 1e11 --out <build>/benchmarks/viscoelastic/love/runs)
 <sl3dpp build>/benchmarks/love_histories runs/homogeneous.elastic.deck 4 \

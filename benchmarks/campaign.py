@@ -68,7 +68,7 @@ viscoelastic_sphere, those of viscoelastic/sphere/study.py.
 Method-model compatibility is encoded here: the slipping methods take a
 single fluid core, the mapped stages the referential family, and the
 solver-level identity the solid models and the gauged fluid core, where
-it is strict. Mind doc/gauged_fluid.md, "Equivalence and the
+it is strict. Mind doc/methods/gauged_fluid.md, "Equivalence and the
 Adams–Williamson condition", when reading converged cross-method
 ladders on models whose core is not neutrally stratified.
 """
@@ -86,6 +86,13 @@ sys.path.insert(0, str(HERE / "common"))
 from costs import load_cost  # noqa: E402
 from drivers import find_programs, run  # noqa: E402
 from outputs import REPOSITORY, outside_source  # noqa: E402
+import models  # noqa: E402
+from planetmodel import is_fluid  # noqa: E402
+
+
+def has_fluid_layer(model: str) -> bool:
+    """Whether the named model has a fluid layer (the level border applies)."""
+    return any(is_fluid(layer) for layer in models.model(model).layers)
 
 #: Which methods and stages run on which models, beyond the Eulerian
 #: pair, which run on everything.
@@ -311,10 +318,14 @@ def main() -> None:
                 methods += ["referential", "maxwell"]
             if model in SLIP_MODELS:
                 methods += ["slip", "slip_broken"]
+            # The Dahlen method runs closed by the level border (the
+            # default static route, doc/theory/dahlen_closure.tex) AND as the
+            # naked reduction, whose degree 0 is the exhibited defect;
+            # run.py applies the axis to the fluid models only.
             stage(f"methods:{model}", run_py(
                 "love_numbers", "run", model, *common,
                 "--method", *methods, "--solver", *prof["solvers"],
-                *combined))
+                "--level-border", 16, 0, *combined))
 
     # 2. The approximate CMB conditions (Dahlen path, fluid models):
     # cost against accuracy, collated by cmb_report.py in the plot stage.
@@ -322,9 +333,11 @@ def main() -> None:
         for model in prof["models"]:
             if model in SOLID_MODELS:
                 continue  # no fluid layer, nothing to approximate
+            # The treatments are compared among themselves against the
+            # naked full treatment (cmb_report.py's baseline): no border.
             stage(f"cmb:{model}", run_py(
                 "love_numbers", "run", model, *common,
-                "--cmb", *prof["cmb"], *combined))
+                "--cmb", *prof["cmb"], "--level-border", 0, *combined))
 
     # 3. The field benchmark (Eulerian pair); runs when the profile's
     # field flag is set (both profiles set it) or the stage is named
@@ -468,10 +481,15 @@ def main() -> None:
             case = loves / model / f"h{ve['h']:g}" / "case.json"
             ok = True
             ve_ref = {"model": model, "taus": taus, "lmax": ve["lmax"]}
+            # The Dahlen fluid closed by the level border (the default
+            # static route) on the fluid models, so that the degree-0
+            # history is benchmarked; solid models take no border.
+            level_border = 16 if has_fluid_layer(model) else 0
             ve_res = {"model": model, "taus": taus, "lmax": ve["lmax"],
                       "h": ve["h"], "order": ve["order"],
                       "scheme": ve["scheme"],
-                      "dtn_degree": max(prof["dtn_degree"], ve["lmax"])}
+                      "dtn_degree": max(prof["dtn_degree"], ve["lmax"]),
+                      "level_border": level_border}
             if ref.exists():
                 check_json(ref, ve_ref)
             if res.exists():
@@ -494,6 +512,8 @@ def main() -> None:
                          "-o", ve["order"], "-lmax", ve["lmax"],
                          "-deg", max(prof["dtn_degree"], ve["lmax"]),
                          "-tau", ",".join(taus), "-scheme", ve["scheme"],
+                         *(["-level-border", level_border]
+                           if level_border > 0 else []),
                          "-out", res], log_file=res.with_suffix(".txt"))
                 if ok and not args.dry_run:
                     stamp_json(res, ve_res)

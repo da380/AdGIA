@@ -6,7 +6,7 @@ against an exact reference. They test the time integrators and the
 viscoelastic discretisation without gravity, fluids or spherical
 geometry, which the quasi-static elastic benchmarks test separately.
 The problems, the models, the derivation of the references and the
-measured results are in `doc/benchmarks.tex` (the box subsections of
+measured results are in `doc/benchmarks/benchmarks.tex` (the box subsections of
 "The viscoelastic family").
 
 | file | what it is |

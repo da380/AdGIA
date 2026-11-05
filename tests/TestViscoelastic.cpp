@@ -3,7 +3,7 @@
 
 /*
   Tests for ViscoelasticOperator, against analytic creep and relaxation
-  solutions and ODE references (see doc/viscoelasticity.md).
+  solutions and ODE references (see doc/methods/viscoelasticity.md).
 
   - Strain maps: Galerkin and interpolation maps both reproduce the exact
     deviatoric strain of a polynomial displacement at the internal nodes.

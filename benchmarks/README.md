@@ -11,7 +11,7 @@ the case builder, the case and mapping layers of the drivers), and
 A new family is a directory and a campaign stage.
 
 What each benchmark tests, its mathematics, how its reference is
-obtained, and the measured results are in `doc/benchmarks.tex`; the
+obtained, and the measured results are in `doc/benchmarks/benchmarks.tex`; the
 READMEs here say how to run them.
 
 | family | problem | reference |
@@ -23,6 +23,7 @@ READMEs here say how to run them.
 | `viscoelastic/` | the viscoelastic time stepping, in four sub-families: non-gravitating box and sphere problems, the stepper survey, Maxwell Love-number histories | exact modal/Talbot references; RK4 at a small step; pyslfp through the correspondence principle |
 | `sea_level/` | the monolithic sea-level solve (`SetWaterLoad`): elastic fingerprints, with rotation, shoreline-migration and timing legs, and `--earth` — the same comparison on the real ICE-7G geography and the coastline-refined mesh, melting Greenland or West Antarctica; not a campaign stage, run through its launchers | pyslfp's pseudo-spectral solution of the same problem |
 | `elastic/nongrav/` | E1 of the cross-code hierarchy: traction numbers of solid spherical models with gravity off, compared across pyslfp, sl3dpp and this library's traction problem (`traction_benchmark`) | the exact piecewise-homogeneous propagator (`common/analytic.py`) |
+| `elastic/manufactured/` | the method of manufactured solutions for the static self-gravitating elastic problem on a solid body: an exact pair (u*, φ*) with the loads derived symbolically from the class's weak form, so the discretisation is measured against a closed form, with the convergence rates in h and order (`manufactured_benchmark`, `run`) | the exact fields of `fields.hpp` (`manufacture.py`) |
 | `elastic/grav/` | E2: conventional Love numbers (load primed, geodetic tidal) of solid and fluid–solid spherical models, across the three codes — `love_benchmark` results converted by `from_results` | pyslfp's radial solver (itself checked against closed forms and an independent code) |
 
 ## The cross-code hierarchy
@@ -48,15 +49,17 @@ Three conventions carry the programme:
   is the model set. pyslfp consumes the planetmodel objects directly;
   sl3dpp reads the same models as full-precision elastic decks written
   by `common/decks.py` (for the polynomial layers the deck *is* the
-  model to rounding); the FE side meshes the objects as the families do
-  now.
+  model to rounding); the FE side meshes the objects as the families
+  do.
 - **One exchange format.** Each code reduces its answer to a small text
   file of named scalars and one table — SI, `%.17g`, provenance lines
   first — written and read by `common/exchange.py` and reproduced by
   hand in the C++ drivers. Comparisons read two such files and report
   relative differences; they never need the producing code. Degree 1 is
-  compared in the centre-of-mass frame; degree 0 of the Dahlen family
-  is excluded by design (`doc/benchmarks.tex`).
+  compared in the centre-of-mass frame; degree 0 of a Dahlen run is
+  compared when the fluid is closed by the level border (the default
+  static route, `doc/theory/dahlen_closure.tex`) and excluded, by design, for
+  the naked reduction.
 - **Tiered tolerances.** Where two codes solve the identical discrete
   problem (pyslfp and sl3dpp on the same deck and mesh rule), near
   machine precision. Across discretisations (FEM against spectral),
@@ -178,11 +181,11 @@ read either kind; a combined run's cost is its one load solve for all
 the degrees, shown once and labelled combined, and `cmb_report.py`
 tabulates the combined treatments apart from those by degree.
 
-The campaign does not make every run that `doc/benchmarks.tex` reports:
+The campaign does not make every run that `doc/benchmarks/benchmarks.tex` reports:
 the all-model sweep at h = 0.2, the uncapped `fluid_core` h-ladder, the
 `prem_4` CMB runs and the dense viscoelastic histories are made with the
 family scripts; the commands are in the section "Reproducing the figures"
-of `doc/benchmarks.tex`.
+of `doc/benchmarks/benchmarks.tex`.
 
 ## Bringing server runs home
 
@@ -227,41 +230,44 @@ poetry -P <repo> run python <repo>/benchmarks/talk_figures.py --out talk
 
 `talk_render.py` is a ParaView render of a cap-load solve, run with
 `pvbatch` on the output of `run.py --field --paraview`. The figures of
-`doc/benchmarks.tex` are copies of these and of the family scripts'
-figures in `doc/figures/benchmarks/`, with a prefix naming their source
+`doc/benchmarks/benchmarks.tex` are copies of these and of the family scripts'
+figures in `doc/benchmarks/figures/`, with a prefix naming their source
 (`talk_`, `fc_`, `pert_`, `box_`, `sphere_`, `ve_`).
 
 ## What the benchmarks establish
 
-In brief (the measurements are in `doc/benchmarks.tex`):
+In brief (the measurements are in `doc/benchmarks/benchmarks.tex`):
 
 - Every formulation agrees with the radial reference at the
   discretisation level on its domain of validity, and the cross-method
   spread at coarse resolution is mesh error, not physics. The welded
   mapped assembly passes a solver-level change-of-variables identity to
   ~1e-6; the slipping-interface forms under a mapping are not verified.
-- For loading at l >= 1 on hydrostatic (spherical) models the Dahlen path
-  is the cheapest and as accurate as anything here: the practical
-  workhorse. The dearer formulations buy physics it cannot represent: the
-  compressible fluid at degree zero, the slipping interface, and the
-  referential family's mapped machinery. They do **not** buy non-neutral
-  core stratification: at N² ≠ 0 the gauged and referential
-  (gauge-penalty) methods are band-limited, their answers defined only to
-  the stratification band, and their semi-convergence there is
-  Rayleigh–Taylor growth. The general fluid method is the Maxwell
-  relaxation (`SetFluid`'s default treatment, method `maxwell`): any
-  geometry, any stratification, any number of fluid regions. The slipping
-  and welded formulations are finite idealisations of the dissipative
-  completion and serve as instruments (`doc/static_fluid_core.tex`, "The
-  status of the formulations"). The gauged and referential methods cost
+- On hydrostatic (spherical) models the Dahlen path closed by the level
+  border (`-level-border <n>`, `doc/theory/dahlen_closure.tex`) is the default
+  static route: the cheapest here, as accurate as anything at l >= 1,
+  and with the border its degree zero is right too (the naked reduction
+  leaves degree zero to an arbitrary function, exhibited as the defect).
+  The dearer formulations buy the slipping interface and the referential
+  family's mapped machinery. None buys non-neutral core stratification:
+  at N² ≠ 0 the gauged and referential (gauge-penalty) methods are
+  band-limited, their answers defined only to the stratification band,
+  and their semi-convergence there is Rayleigh–Taylor growth; the
+  Maxwell relaxation (method `maxwell`) is physically right for any
+  geometry and stratification but cannot resolve the displacement of a
+  stratified fluid, which collapses to zero length scale at the
+  boundary, so it is not the reference either. The slipping and welded
+  formulations are finite idealisations of the dissipative completion
+  and serve as instruments. The gauged and referential methods cost
   several times the Dahlen path per load solve, the slipping methods one
   to two orders of magnitude more.
 - The standard unmeshed-core CMB condition (`uniform`) is safe for
   loading at l >= 2 (h' within 0.1 %, l'_2 and k'_2 ~0.3 %), about ten
   times worse on tides and so on the rotational feedback, which runs
   through the degree-2 tidal response; buoyancy alone (`winkler`) is safe
-  for neither. At degree zero every Dahlen-family treatment is wrong and
-  the gauged one is right.
+  for neither. At degree zero every naked Dahlen-family treatment is
+  wrong; the level border (full treatment only) and the gauged method
+  are right.
 
 ## The shared pieces (`common/`)
 

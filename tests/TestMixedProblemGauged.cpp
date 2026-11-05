@@ -10,11 +10,11 @@
   layers, the outer core has its bulk modulus and no shear, and
   SetFluid's gauge treatment supplies the penalty and the Tikhonov refinement;
   no FluidRegions, so the interface terms (F2)-(F3) and the fluid mass term
-  never enter (doc/gauged_fluid.md).
+  never enter (doc/methods/gauged_fluid.md).
 
   The reference is the Dahlen path of TestMixedProblemFluid. The two
   formulations describe the same physics when the fluid is materially
-  barotropic (doc/gauged_fluid.md, "Equivalence and the Adams-Williamson
+  barotropic (doc/methods/gauged_fluid.md, "Equivalence and the Adams-Williamson
   condition"), so
   the fluid's bulk modulus is built from the Adams-Williamson condition
   kappa = rho^2 |grad Phi0| / |drho/dr| on the problem's own discrete
@@ -34,7 +34,7 @@
   - A uniform tidal gradient psi = a.x loads exactly a rigid mode of the
     whole body, fluid included, so the response in the solid must stay
     small: a sign check on the fluid's gravity and coupling terms. This is
-    the worst case for the gauged fluid (doc/gauged_fluid.md, "Gauge
+    the worst case for the gauged fluid (doc/methods/gauged_fluid.md, "Gauge
     fixing: penalty plus iterated refinement"): the leakage is ~3% of a
     comparable surface-load response, bounded here by 5%, not the
     rigid-residual level the Dahlen path reaches.
@@ -139,7 +139,7 @@ double RelDiff(const GridFunction& a, const GridFunction& b) {
 // The Dahlen path closed by the level border (SetLevelBorder) under the
 // uniform load: the outer core carries the same Adams-Williamson bulk
 // modulus as the gauged body, so at degree 0 the two must now agree
-// (doc/dahlen_closure.tex, "The closure in the cumulative-volume
+// (doc/theory/dahlen_closure.tex, "The closure in the cumulative-volume
 // variable": at l = 0 the bordered system is the welded compressible
 // fluid in a different assembly).
 struct DahlenBorderCase {
@@ -149,6 +149,9 @@ struct DahlenBorderCase {
   std::unique_ptr<FiniteElementSpace> fes_u, fes_phi;
   ConstantCoefficient kappa{kKappa}, mu{kMu};
   AWBulkModulus kappa_f;
+  // The core's bulk modulus scaled (1: Adams-Williamson, D = 0; a < 1
+  // softens it, D = (rho^2/kappa_AW)(1/a - 1) > 0).
+  std::unique_ptr<ProductCoefficient> kappa_scaled;
   FunctionCoefficient rho_s{SolidDensity}, rho_f{FluidDensity};
   std::unique_ptr<IsotropicElasticRheology> rheology;
   FunctionCoefficient sigma{SurfaceLoad};
@@ -158,8 +161,15 @@ struct DahlenBorderCase {
   // The background gravity on the PARENT mesh, where the border evaluates
   // the fluid's bulk modulus (BackgroundGravity() lives on the body).
   std::unique_ptr<GradientGridFunctionCoefficient> g_parent;
+  // The analytic background (ThreeLayerBackground) when the case is
+  // built on it instead of solving for Phi0, and its gradient for the
+  // exact-levels border.
+  std::unique_ptr<ThreeLayerBackground> bg;
+  std::unique_ptr<FunctionCoefficient> phi0;
+  std::unique_ptr<VectorFunctionCoefficient> grad_phi0;
 
-  DahlenBorderCase(int dim, int order, int levels) {
+  DahlenBorderCase(int dim, int order, int levels, double kappa_scale = 1.0,
+                   bool analytic = false, bool exact_levels = false) {
     parent = std::make_unique<Mesh>(ThreeLayerMeshFile(dim).c_str(), 1, 1);
     Array<int> attrs({1, 3});
     solid =
@@ -170,25 +180,37 @@ struct DahlenBorderCase {
     rheology = std::make_unique<IsotropicElasticRheology>(dim, kappa, mu);
     surface = SurfaceMarker(*solid);
     fluids.push_back(OuterCore(*solid, rho_f));
-    fluids.back().bulk_modulus = &kappa_f;
+    kappa_scaled = std::make_unique<ProductCoefficient>(kappa_scale, kappa_f);
+    fluids.back().bulk_modulus = kappa_scaled.get();
+    if (analytic) {
+      bg = std::make_unique<ThreeLayerBackground>(dim);
+      phi0 = std::make_unique<FunctionCoefficient>(
+          [this](const Vector& x) { return (*bg)(x); });
+      grad_phi0 = std::make_unique<VectorFunctionCoefficient>(
+          dim, [this](const Vector& x, Vector& g) { bg->Grad(x, g); });
+    }
     problem = std::make_unique<LinearQuasiStaticMixedSelfGravitatingProblem>(
-        fes_u.get(), fes_phi.get(), *rheology, rho_s, kG, kDtNDegree, nullptr,
-        fluids);
+        fes_u.get(), fes_phi.get(), *rheology, rho_s, kG, kDtNDegree,
+        phi0.get(), fluids);
     g_parent = std::make_unique<GradientGridFunctionCoefficient>(
         &problem->BackgroundPotential());
     kappa_f.g = g_parent.get();
     problem->SetSurfaceLoad(sigma, surface);
     problem->AddRegionRotations(Array<int>({1}));
     problem->SetRelTol(1e-11);
-    problem->SetLevelBorder(levels);
+    if (exact_levels) {
+      problem->SetLevelBorder(levels, true, grad_phi0.get());
+    } else {
+      problem->SetLevelBorder(levels);
+    }
   }
 };
 
-void ExpectDegree0Agreement(int dim, int order, int levels, double tol) {
-  GaugedCase g(dim, order);
-  DahlenBorderCase d(dim, order, levels);
-  g.problem->AssembleForce(0.0);
-  EXPECT_TRUE(g.problem->Solve());
+// The degree-0 differences (potential, displacement) between a solved
+// gauged body and a bordered Dahlen case, solved here.
+std::pair<double, double> Degree0Differences(GaugedCase& g,
+                                             DahlenBorderCase& d) {
+  const int dim = g.parent->Dimension();
   d.problem->AssembleForce(0.0);
   EXPECT_TRUE(d.problem->Solve());
   const double dphi = RelDiff(g.problem->Potential(), d.problem->Potential());
@@ -198,7 +220,15 @@ void ExpectDegree0Agreement(int dim, int order, int levels, double tol) {
   SubMesh::Transfer(g.problem->Displacement(), on_parent);
   GridFunction u_g(d.fes_u.get());
   SubMesh::Transfer(on_parent, u_g);
-  const double du = RelDiff(u_g, d.problem->Displacement());
+  return {dphi, RelDiff(u_g, d.problem->Displacement())};
+}
+
+void ExpectDegree0Agreement(int dim, int order, int levels, double tol) {
+  GaugedCase g(dim, order);
+  DahlenBorderCase d(dim, order, levels);
+  g.problem->AssembleForce(0.0);
+  EXPECT_TRUE(g.problem->Solve());
+  const auto [dphi, du] = Degree0Differences(g, d);
   if (std::getenv("ADGIA_TEST_VERBOSE")) {
     Vector c, U, s, nu, lambda;
     d.problem->LevelBorderSolution(0, c, U, s, nu, lambda);
@@ -232,12 +262,96 @@ TEST(MixedProblemGauged, Degree0MatchesDahlenWithLevelBorder2D) {
   ExpectDegree0Agreement(2, 2, 16, 1.5e-1);
 }
 
+// The fluid block's energy (doc/theory/dahlen_closure.tex, "Existence,
+// uniqueness and stability"): the closure's quadratic form J[V] at zero
+// potential is coercive for D <= 0 — a theorem — and only a check for
+// D > 0. The canned outer core is Adams-Williamson at scale 1 (D = 0),
+// where the smallest eigenvalue of the border's fluid block must be
+// non-negative; softening the bulk modulus by a < 1 makes
+// D = (rho^2/kappa_AW)(1/a - 1) > 0 and the eigenvalue must fall with a,
+// crossing zero at a small enough a (the loss of coercivity the note
+// predicts for a uniform compressible core at low kappa). Measured on
+// the canned 2-D annulus: the spectrum scales with kappa to a
+// kappa-independent part of about -3.5e-4 in the softest mode against
+// 0.52 at scale 1, so the crossing sits near a = 7e-4 — the margin by
+// which the closure is coercive here. The scan is recorded; the gate is
+// the D = 0 sign, the monotone fall and the existence of the crossing.
+TEST(MixedProblemGauged, LevelBorderFluidBlockEnergy2D) {
+  const double scales[] = {1.0, 0.1, 1e-2, 1e-3, 5e-4, 2e-4, 1e-4};
+  double prev = std::numeric_limits<double>::infinity();
+  double emax1 = 0.0;
+  bool crossed = false;
+  for (double a : scales) {
+    DahlenBorderCase d(2, 2, 16, a);
+    Vector ev;
+    const double emin = d.problem->LevelBorderFluidBlockMinEigenvalue(0, &ev);
+    const double emax = ev.Max();
+    if (a == 1.0) {
+      emax1 = emax;
+      EXPECT_GE(emin, -1e-10 * emax) << "D = 0: J not coercive";
+    }
+    std::cout << "  kappa scale " << a << ": fluid-block eigenvalues min "
+              << emin << ", max " << emax << "\n";
+    EXPECT_LE(emin, prev + 1e-10 * emax1) << "the energy must fall as D grows";
+    prev = emin;
+    crossed = crossed || emin < 0.0;
+  }
+  EXPECT_TRUE(crossed) << "no loss of coercivity down to kappa scale 0.02";
+}
+
 TEST(MixedProblemGauged, Degree0MatchesDahlenWithLevelBorder3D) {
   ExpectDegree0Agreement(3, 1, 12, 1.5e-1);
 }
 
 TEST(MixedProblemGauged, Degree0MatchesDahlenWithLevelBorder3DOrder2) {
   ExpectDegree0Agreement(3, 2, 16, 5.0e-2);
+}
+
+// The exact-levels switch (SetLevelBorder(levels, true, grad Phi0)): the
+// Dahlen case built on the analytic background of the three-layer model
+// (ThreeLayerBackground) instead of solving for it, its border reading
+// the projected Phi0 or the analytic one. The degree-0 agreement with the
+// gauged body holds with the switch on, at the projected route's gate;
+// the three variants are printed. Measured (potential, displacement
+// against the gauged body): 2-D order 2, 16 levels: 0.092, 0.014 for all
+// three, the switch moving the solution by 8e-6; 3-D order 1, 12 levels:
+// 3.3e-4, 0.096 (solved Phi0), 1.07e-3, 0.087 (analytic, projected
+// levels), 1.17e-3, 0.088 (exact levels), the switch moving the solution
+// by 1.3e-4 in the potential and 3.8e-3 in the displacement.
+void ExpectDegree0AgreementExactLevels(int dim, int order, int levels,
+                                       double tol) {
+  GaugedCase g(dim, order);
+  g.problem->AssembleForce(0.0);
+  EXPECT_TRUE(g.problem->Solve());
+  DahlenBorderCase solved(dim, order, levels);
+  DahlenBorderCase projected(dim, order, levels, 1.0, true, false);
+  DahlenBorderCase exact(dim, order, levels, 1.0, true, true);
+  const auto [phi_s, u_s] = Degree0Differences(g, solved);
+  const auto [phi_p, u_p] = Degree0Differences(g, projected);
+  const auto [phi_e, u_e] = Degree0Differences(g, exact);
+  if (std::getenv("ADGIA_TEST_VERBOSE")) {
+    std::cout << "degree-0 border vs gauged, dim " << dim << " order "
+              << order << " (potential, displacement): solved Phi0 " << phi_s
+              << ", " << u_s << "; analytic Phi0, projected levels " << phi_p
+              << ", " << u_p << "; analytic Phi0, exact levels " << phi_e
+              << ", " << u_e << "\n  the switch changes the solution by "
+              << RelDiff(exact.problem->Potential(),
+                         projected.problem->Potential())
+              << " (potential), "
+              << RelDiff(exact.problem->Displacement(),
+                         projected.problem->Displacement())
+              << " (displacement)\n";
+  }
+  EXPECT_LT(phi_e, tol);
+  EXPECT_LT(u_e, tol);
+}
+
+TEST(MixedProblemGauged, Degree0MatchesDahlenWithExactLevels2D) {
+  ExpectDegree0AgreementExactLevels(2, 2, 16, 1.5e-1);
+}
+
+TEST(MixedProblemGauged, Degree0MatchesDahlenWithExactLevels3D) {
+  ExpectDegree0AgreementExactLevels(3, 1, 12, 1.5e-1);
 }
 
 TEST(MixedProblemGauged, MatchesDahlenZeroMeanLoad2D) {

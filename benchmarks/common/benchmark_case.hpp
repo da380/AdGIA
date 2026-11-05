@@ -8,7 +8,7 @@
 // analysis of its solution on the interfaces of the solid, the translation
 // that takes a solution to the centre-of-mass frame, and the writing of
 // numbers as JSON. The formulations and the cases are described in
-// doc/benchmarks.tex, "The Love-number family".
+// doc/benchmarks/benchmarks.tex, "The Love-number family".
 //
 // A case is what make_case.py writes: the mesh of the body and its buffer
 // shell, the density and the bulk and shear moduli as L2 GridFunctions on
@@ -230,6 +230,7 @@ struct CaseOptions {
   const char* manifest = "case.json";
   bool model_fields = false;
   int order = 2;
+  int order_phi = 0;  // the potential space's order; 0: the displacement's
   int dtn_degree = 16;
   int lmax = 6;
   int solver = 1;
@@ -359,7 +360,7 @@ struct CaseOptions {
                    "coupling F3: buoyancy alone).");
     args.AddOption(&level_border, "-level-border", "--level-border",
                    "Methods dahlen and referential: close the reduction's free function with "
-                   "the level border of doc/dahlen_closure.tex on a grid of "
+                   "the level border of doc/theory/dahlen_closure.tex on a grid of "
                    "this many nodes in Phi_0 per fluid region (0: off). "
                    "Turns degree 0 into the compressible fluid problem and "
                    "leaves the sphere's l >= 1 untouched.");
@@ -415,6 +416,13 @@ struct CaseOptions {
                    "(dahlen, gauged); the .gf fields still carry the "
                    "partitioning.");
     args.AddOption(&order, "-o", "--order", "Finite element order.");
+    args.AddOption(&order_phi, "-ophi", "--order-phi",
+                   "Order of the potential space (0: the displacement's). "
+                   "One order higher restores the displacement's optimal "
+                   "L2 rate, which the gradient of the projected background "
+                   "potential otherwise holds one order down "
+                   "(benchmarks/elastic/manufactured); about twice the "
+                   "cost.");
     args.AddOption(&dtn_degree, "-deg", "--dtn-degree",
                    "DtN expansion degree.");
     args.AddOption(&lmax, "-lmax", "--max-degree", "Highest harmonic degree.");
@@ -522,7 +530,7 @@ class Case {
     const bool slip_method = method == "slip" || method == "slip_broken";
     // -level-border with -method referential: the eliminated fluid
     // through the potential glue and the border (the referential
-    // closure, doc/dahlen_closure.tex "Implementation"); the gauged
+    // closure, doc/theory/dahlen_closure.tex "Implementation"); the gauged
     // fluid is not configured.
     const bool ref_eliminated =
         method == "referential" && options.level_border > 0;
@@ -667,10 +675,12 @@ class Case {
     gravity = G * mass / (radius * radius);
 
     fec_ = std::make_unique<H1_FECollection>(options.order, dim);
+    fec_phi_ = std::make_unique<H1_FECollection>(
+        options.order_phi > 0 ? options.order_phi : options.order, dim);
     fes_u = std::make_unique<ParFiniteElementSpace>(solid.get(), fec_.get(),
                                                     dim);
     fes_phi = std::make_unique<ParFiniteElementSpace>(parent.get(),
-                                                      fec_.get());
+                                                      fec_phi_.get());
     displacement_unknowns = fes_u->GlobalTrueVSize();
     potential_unknowns = fes_phi->GlobalTrueVSize();
     if (root) {
@@ -1253,6 +1263,17 @@ class Case {
        << (std::string(options_.cmb) != "full"
                ? std::string(",\n  \"cmb_keep_inner\": ") +
                      (options_.cmb_keep_inner ? "true" : "false")
+               : std::string())
+       // The level border (doc/theory/dahlen_closure.tex): the node count of the
+       // closure on the dahlen and referential routes, 0 when the fluid
+       // is left to the naked reduction; the converters read it.
+       << (method == "dahlen" || method == "referential"
+               ? ",\n  \"level_border\": " +
+                     std::to_string(options_.level_border) +
+                     (options_.level_border > 0
+                          ? std::string(",\n  \"level_monolithic\": ") +
+                                (options_.level_monolithic ? "true" : "false")
+                          : std::string())
                : std::string())
        << (options_.map_amplitude != 0.0
                ? ",\n  \"map_amplitude\": " + Num(options_.map_amplitude) +
@@ -1837,7 +1858,7 @@ class Case {
   Array<int> gauge_marker_;
   std::unique_ptr<PWConstCoefficient> rho_interface_c_;
   ConstantCoefficient zero_{0.0};
-  std::unique_ptr<H1_FECollection> fec_;
+  std::unique_ptr<H1_FECollection> fec_, fec_phi_;
   std::unique_ptr<IsotropicElasticRheology> rheology_;
 
   // The referential family (BuildReferential).

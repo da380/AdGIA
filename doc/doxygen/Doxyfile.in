@@ -12,7 +12,7 @@ HTML_OUTPUT            = html
 
 USE_MATHJAX            = YES
 MATHJAX_EXTENSIONS     = mathjax/extensions/TeX/AMSmath.js, mathjax/extensions/TeX/AMSsymbols.js
-MATHJAX_CODEFILE       = doc/mathjax_config.js
+MATHJAX_CODEFILE       = doc/doxygen/mathjax_config.js
 MATHJAX_RELPATH        =
 # The formula macros (\dd, \bvec, \grad, \jump, ...) are defined for MathJax
 # in mathjax_config.js; doc/macros.inc defines the same macros for the LaTeX
@@ -22,7 +22,7 @@ HAVE_MAINPAGE = YES
 
 # Input settings
 INPUT                  = "@CMAKE_SOURCE_DIR@/include/AdGIA" \
-                         "@CMAKE_SOURCE_DIR@/doc/mainpage.dox" \
+                         "@CMAKE_SOURCE_DIR@/doc/doxygen/mainpage.dox" \
                          "@CMAKE_SOURCE_DIR@/src" 
 
 FILE_PATTERNS          = *.h \

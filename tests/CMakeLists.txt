@@ -132,6 +132,12 @@ if(USE_MPI)
     target_link_libraries(TestDescentPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestAdjointPar TestAdjointPar.cpp)
     target_link_libraries(TestAdjointPar PRIVATE AdGIA MPI::MPI_CXX)
+    add_executable(TestTangentPar TestTangentPar.cpp)
+    target_link_libraries(TestTangentPar PRIVATE AdGIA MPI::MPI_CXX)
+    add_executable(TestDiscreteAdjointPar TestDiscreteAdjointPar.cpp)
+    target_link_libraries(TestDiscreteAdjointPar PRIVATE AdGIA MPI::MPI_CXX)
+    add_executable(TestDiscreteSecondOrderPar TestDiscreteSecondOrderPar.cpp)
+    target_link_libraries(TestDiscreteSecondOrderPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestAdjointFingerprintPar TestAdjointFingerprintPar.cpp)
     target_link_libraries(TestAdjointFingerprintPar PRIVATE AdGIA MPI::MPI_CXX)
     foreach(np 1 2 4)
@@ -160,6 +166,15 @@ if(USE_MPI)
         add_test(NAME TestAdjointPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestAdjointPar>)
+        add_test(NAME TestTangentPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestTangentPar>)
+        add_test(NAME TestDiscreteAdjointPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestDiscreteAdjointPar>)
+        add_test(NAME TestDiscreteSecondOrderPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestDiscreteSecondOrderPar>)
         add_test(NAME TestAdjointFingerprintPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestAdjointFingerprintPar>)
@@ -245,6 +260,9 @@ if(USE_MPI)
     foreach(np 2 4)
         set_tests_properties(
             TestAdjointPar_np${np}
+            TestTangentPar_np${np}
+            TestDiscreteAdjointPar_np${np}
+            TestDiscreteSecondOrderPar_np${np}
             TestFluidGaugePar_np${np}
             TestBoundaryNormalIntegratorsPar_np${np}
             TestMixedProblemFluidPar_np${np}
@@ -351,6 +369,37 @@ add_executable(TestMixedProblem TestMixedProblem.cpp)
 target_link_libraries(TestMixedProblem PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestMixedProblem)
 
+add_executable(TestDiscreteSecondOrder TestDiscreteSecondOrder.cpp)
+target_link_libraries(TestDiscreteSecondOrder PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestDiscreteSecondOrder)
+add_executable(TestMeasurement TestMeasurement.cpp)
+target_link_libraries(TestMeasurement PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestMeasurement)
+
+add_executable(TestDiscreteAdjoint TestDiscreteAdjoint.cpp)
+target_link_libraries(TestDiscreteAdjoint PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestDiscreteAdjoint)
+
+add_executable(TestSecondOrder TestSecondOrder.cpp)
+target_link_libraries(TestSecondOrder PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestSecondOrder)
+
+add_executable(TestTangent TestTangent.cpp)
+target_link_libraries(TestTangent PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestTangent)
+
+add_executable(TestManufactured TestManufactured.cpp)
+target_link_libraries(TestManufactured PRIVATE AdGIA gtest_main)
+target_include_directories(TestManufactured PRIVATE
+    "${CMAKE_SOURCE_DIR}/benchmarks/elastic/manufactured")
+gtest_discover_tests(TestManufactured)
+
+add_executable(TestManufacturedFluid TestManufacturedFluid.cpp)
+target_link_libraries(TestManufacturedFluid PRIVATE AdGIA gtest_main)
+target_include_directories(TestManufacturedFluid PRIVATE
+    "${CMAKE_SOURCE_DIR}/benchmarks/elastic/manufactured")
+gtest_discover_tests(TestManufacturedFluid)
+
 add_executable(TestMixedProblemFluid TestMixedProblemFluid.cpp)
 target_link_libraries(TestMixedProblemFluid PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestMixedProblemFluid)
@@ -432,3 +481,7 @@ gtest_discover_tests(TestSlidingInterface)
 add_executable(TestMixedProblemGauged TestMixedProblemGauged.cpp)
 target_link_libraries(TestMixedProblemGauged PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestMixedProblemGauged)
+
+add_executable(TestLevelBorderSources TestLevelBorderSources.cpp)
+target_link_libraries(TestLevelBorderSources PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestLevelBorderSources)

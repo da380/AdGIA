@@ -6,7 +6,7 @@
 // with no gravity and no pre-stress: a demonstration of the discretisation
 // and of the constraint enforcement, not a physical Earth model.
 // Companion to gauged_fluid_cavity.cpp, which welds the interface (one
-// continuous displacement space). The method is in doc/slip_interface.tex,
+// continuous displacement space). The method is in doc/methods/slip_interface.tex,
 // "Discretisation of the slipping interface" and "Constraint enforcement".
 //
 // Two displacement fields live on the solid and fluid SubMeshes of one

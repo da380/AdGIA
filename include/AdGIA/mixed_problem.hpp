@@ -32,6 +32,8 @@
 
 namespace AdGIA {
 
+class DomainVectorGradVectorIntegrator;
+
 
 /**
  * @brief Self-gravitating linear quasi-static problem in the mixed
@@ -150,7 +152,7 @@ namespace AdGIA {
  * interface term is reassembled with it, harmlessly); the potential block,
  * the coupling and the DtN are built once.
  *
- * **The level border** (SetLevelBorder(); doc/dahlen_closure.tex). The
+ * **The level border** (SetLevelBorder(); doc/theory/dahlen_closure.tex). The
  * reduction above leaves one free function of @f$\Phi_0@f$ per fluid
  * region --- the degree-0 hole on a sphere, every degree off it --- and
  * the border closes it: per region, nodal unknowns on a grid in
@@ -160,10 +162,12 @@ namespace AdGIA {
  * solid through each wall's level-mean normal flux, eliminated by the
  * shared bordered engine. Requires each region's @p bulk_modulus. Gated
  * on @c fluid_core against pyslfp at degree 0 and inert at every degree
- * @f$\ell \ge 1@f$ on a sphere.
+ * @f$\ell \ge 1@f$ on a sphere. Data on the border's own rows enter
+ * through AddLevelBorderForce(), and the border can read its levels off
+ * an analytic background (SetLevelBorder(levels, true, grad_phi0)).
  *
  * **Gauged fluid regions** (the alternative to Dahlen's treatment above;
- * see doc/gauged_fluid.md). Instead of FluidRegions, the fluid attributes
+ * see doc/methods/gauged_fluid.md). Instead of FluidRegions, the fluid attributes
  * join the displacement SubMesh: the rheology gives them their bulk modulus
  * with zero shear, @p density covers them, and SetFluid() adds the
  * gauge shear penalty and the Tikhonov refinement of
@@ -212,7 +216,7 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
    * refused under SchurCG. Not the production path: under the available
    * block-diagonal preconditioners MINRES reaches mesh-level physics but
    * does not converge algebraically at acceptable cost (see
-   * doc/quasi_static_models.tex, "The exact-gauge KKT alternative").
+   * doc/methods/quasi_static_models.tex, "The exact-gauge KKT alternative").
    *
    * @param fluid_marker Element attributes of the fluid (as for
    * SetFluid()).
@@ -315,6 +319,8 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   /** @brief Release the tidal-potential slot (e.g. before SetRotation()
    * on a problem whose construction wired a tidal expansion). */
   void ClearTidalPotential() { psi_ = nullptr; }
+  /** @brief Whether a tidal potential is applied (SetTidalPotential()). */
+  bool HasTidalPotential() const { return psi_ != nullptr; }
 
   /**
    * @brief The symmetric tidal pairing of @p psi with the problem's
@@ -338,7 +344,7 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   /**
    * @brief Gravitationally self-consistent water load with a frozen
    * shoreline — the condensed sea-level equation
-   * (derivation: doc/quasi_static_models.tex, "The sea-level equation,
+   * (derivation: doc/methods/quasi_static_models.tex, "The sea-level equation,
    * rotation, and shoreline migration").
    *
    * With the ocean weight @f$w = \rho_w C_0/g@f$ and the surface trace
@@ -385,7 +391,7 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   mfem::real_t UniformPotentialTerm() const { return phi_g_; }
 
   /**
-   * @brief Rotational feedback inside the solve (see doc/quasi_static_models.tex,
+   * @brief Rotational feedback inside the solve (see doc/methods/quasi_static_models.tex,
    * "The sea-level equation, rotation, and shoreline migration"): the angular-velocity border of the
    * traditional theory, solved jointly with the water load's
    * @f$\Phi_g@f$ border by a small block elimination.
@@ -411,6 +417,8 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   /** @brief @f$\omega@f$ of the last Solve() (zero before; empty
    * without SetRotation()). */
   const mfem::Vector& AngularVelocity() const { return omega_; }
+  /** @brief The rotation rate of SetRotation() (0 without rotation). */
+  mfem::real_t RotationRate() const { return rot_Omega_; }
 
   /** @brief Solve the bordered system monolithically — one MINRES on
    * @f$[K\ B; B^T D_b]@f$ with a block-diagonal preconditioner whose
@@ -479,7 +487,7 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
 
   /**
    * @brief The level border: Dahlen's closure completed on the level
-   * foliation of @f$\Phi_0@f$ (doc/dahlen_closure.tex, "The closure in
+   * foliation of @f$\Phi_0@f$ (doc/theory/dahlen_closure.tex, "The closure in
    * the cumulative-volume variable" and "Implementation"). The
    * reduction alone leaves one free function of @f$\Phi_0@f$ per fluid
    * region and so returns an arbitrary member of a family at degree 0
@@ -502,12 +510,101 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
    * region classified by the sign of @f$\mathbf m\cdot\nabla\Phi_0@f$
    * as the region's outer or inner wall); the level foliation regular
    * (asserted: @f$|\nabla\Phi_0|@f$ away from zero on the fluid except
-   * near a centre). Incompatible with SetPicardBorder(),
-   * SetMonolithicBorder() and, for now, SetRotation() (the border's
-   * centrifugal columns are not wired). Call once, after construction
-   * and before the first Solve().
+   * near a centre). Incompatible with SetPicardBorder() and
+   * SetMonolithicBorder(). Composes with SetRotation(): the border's
+   * centrifugal columns are wired on this class (the level means of
+   * the centrifugal potential pair with the @f$\nu@f$ rows;
+   * TestRotation's LevelBorderCentrifugalCoupling). Call once, after
+   * construction and before the first Solve().
    */
   void SetLevelBorder(int levels = 16);
+
+  /**
+   * @brief SetLevelBorder() with the level structure taken from an
+   * analytic background. With @p exact_levels false this is
+   * SetLevelBorder(@p levels) and @p grad_phi0 must be null. With
+   * @p exact_levels true the builder evaluates @f$\Phi_0@f$ from the
+   * coefficient the class was constructed with (the
+   * @p background_potential argument, or the last
+   * SetBackgroundPotential(); it must still be alive at this call) and
+   * @f$\nabla\Phi_0@f$ from
+   * @p grad_phi0, at the fluid quadrature points and on the walls, in
+   * place of the projected GridFunction and its gradient: the grid's
+   * end levels, the histogram element volumes and means, the hat
+   * blocks, the @f$\nu@f$ columns, the wall classification and the
+   * wall columns' normal factor
+   * @f$-\mathbf m\cdot\nabla\Phi_0/|\nabla\Phi_0|@f$ all read the
+   * analytic field, and the foliation and level-wall checks run on it
+   * with their criteria unchanged. The rest of the operator
+   * (the gravity terms, the fluid mass term) keeps the projected
+   * @f$\Phi_0@f$. Refused when the class solved for @f$\Phi_0@f$
+   * itself or @p grad_phi0 is null. Both coefficients are evaluated on
+   * the parent mesh and on the solid SubMesh, so they must be functions
+   * of position (FunctionCoefficient, VectorFunctionCoefficient or
+   * equivalent); they are read during this call only.
+   *
+   * @param levels Nodes of each region's grid (at least three).
+   * @param exact_levels Read the background from the coefficients.
+   * @param grad_phi0 @f$\nabla\Phi_0@f$, the gradient of the
+   * construction coefficient; required with @p exact_levels.
+   */
+  void SetLevelBorder(int levels, bool exact_levels,
+                      mfem::VectorCoefficient* grad_phi0 = nullptr);
+
+  /**
+   * @brief Superpose data on the level border's own rows: the
+   * (U, s, nu) rows of region @p region's grid and its wall
+   * (lambda) rows, ADDED to the border's right-hand side as
+   * AddBorderForce() adds to the uniform-term and angular-velocity
+   * rows. The rows then read, with @f$B^T@f$ the coupling columns and
+   * @f$D_b@f$ the 1-D block, @f$(B^T x + D_b y)_i = r_i@f$.
+   * Accumulates; cleared by AssembleForce(); applies to the
+   * elimination and the monolithic routes alike.
+   *
+   * The data are NODAL VALUES OF INTEGRATED SOURCES: the caller has
+   * already integrated its continuum sources against the hat functions
+   * @f$N_i(c)@f$ of the border's own grid (LevelBorderGrid()), so that
+   * @p rU[i] = @f$\int N_i\,r_U\,dc@f$ and likewise for @p rs and
+   * @p rnu; nothing is integrated here. (By the coarea formula a
+   * source held as a density per unit volume of the fluid, @f$q@f$,
+   * gives @f$\int N_i\,\bar q A\,dc = \int_F N_i(\Phi_0)\,q\,dV@f$,
+   * the pairing in which the @f$s@f$ and @f$\nu@f$ rows' volume terms
+   * are assembled.)
+   *
+   * @param region The fluid region (0 <= region < NumLevelBorderRegions()).
+   * @param rU Data on the U rows, sized n+1 in node order; at a centre,
+   * where U_0 = 0 is removed, the entry @p rU[0] is ignored.
+   * @param rs Data on the s rows, sized n+1 in node order.
+   * @param rnu Data on the nu rows, sized n+1 in node order.
+   * @param rlambda Data on the wall rows, one per wall in wall order
+   * (outer first, as LevelBorderSolution()'s lambda).
+   * Any argument may be empty (Size() 0) for no data on those rows.
+   * The data are global: pass the same values on every rank.
+   */
+  void AddLevelBorderForce(int region, const mfem::Vector& rU,
+                           const mfem::Vector& rs, const mfem::Vector& rnu,
+                           const mfem::Vector& rlambda);
+
+  /** @brief Number of level-border regions (zero before
+   * SetLevelBorder()), in the order of the FluidRegion list. */
+  int NumLevelBorderRegions() const {
+    return level_enabled_ ? static_cast<int>(level_.size()) : 0;
+  }
+
+  /** @brief The grid of region @p region's level border, for
+   * integrating sources against its hat functions (AddLevelBorderForce()):
+   * the node levels @p c (n+1 of them, increasing; the hats are linear
+   * in @f$c@f$), whether the region contains a centre (@p centre, where
+   * U_0 = 0 is removed), and the node of each wall in wall order
+   * (@p wall_node: n for the outer wall, 0 for an inner one). Available
+   * from SetLevelBorder(), before any solve. */
+  void LevelBorderGrid(int region, mfem::Vector& c, bool& centre,
+                       std::vector<int>& wall_node) const;
+
+  /** @brief The whole of region @p region's level border (grid, element
+   * volumes and means, the dense block, the columns; level_border.hpp),
+   * read-only. Available from SetLevelBorder(). */
+  const LevelBorder& LevelBorderData(int region) const;
 
   /** @brief Whether SetLevelBorder() is on. */
   bool HasLevelBorder() const { return level_enabled_; }
@@ -531,9 +628,21 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
    * (U, flux), then (bulk, wall mass). */
   mfem::Vector LevelBorderDiagnostics(int region) const;
 
+  /** @brief The level border's fluid-block energy of @p region: the
+   * smallest eigenvalue of the closure's quadratic form @f$J[V]@f$ at
+   * zero potential on the border's own grid (LevelBorder::
+   * FluidBlockMinEigenvalue). Positive = coercive; a theorem for
+   * @f$D\le 0@f$, a check for @f$D>0@f$. Needs no solve. */
+  mfem::real_t LevelBorderFluidBlockMinEigenvalue(
+      int region, mfem::Vector* eigenvalues = nullptr) const;
+
   /** @brief @f$\psi(\omega)@f$ of the last Solve() as a coefficient
    * (requires SetRotation()); amplitudes follow each solve. */
   mfem::Coefficient& SolutionCentrifugalPotential();
+  /** @brief The unit centrifugal potential @f$\psi_k@f$ of the rotation
+   * border (the potential of a unit @f$\omega_k@f$; requires
+   * SetRotation()). */
+  mfem::Coefficient& UnitCentrifugalPotential(int k);
 
   // --- solver controls ------------------------------------------------------
 
@@ -596,6 +705,32 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   void SetBackgroundPotential(mfem::Coefficient& phi0);
 
   /**
+   * @brief Assemble the gravity term @f$\tfrac12\rho\,v\cdot\grad(u\cdot
+   * \grad\Phi_0)@f$ (and its transpose) by the product rule with this
+   * Hessian of the background potential, @f$H_{kl} = \partial_k\partial_l
+   * \Phi_0@f$ (an analytic one, say), instead of the default below.
+   * Differentiating the nodal interpolant of @f$u\cdot\grad\Phi_0@f$
+   * (DomainVectorGradVectorIntegrator's own default) limits the
+   * energy-norm accuracy of a gravitating solve to second order whatever
+   * the element order (benchmarks/elastic/manufactured); with a Hessian
+   * the rates are optimal. Call before the first assembly
+   * (AssembleForce()); not owned; nullptr selects the interpolant.
+   */
+  void SetBackgroundHessian(mfem::MatrixCoefficient* hessian);
+
+  /** @brief THE DEFAULT: SetBackgroundHessian() with
+   * the Hessian of the discrete background potential itself
+   * (HessianGridFunctionCoefficient on its shadow), accurate to one
+   * order below the potential space. With the potential space at the
+   * displacement's order the stress converges at the optimal rate and
+   * the displacement one order below it (held by the gradient of the
+   * projected @f$\Phi_0@f$); one order above, both are optimal, at about
+   * twice the cost (the potential unknowns triple). The Hessian itself
+   * costs 10-15 % of a solve. SetBackgroundHessian(nullptr) restores
+   * the interpolant. */
+  void UseDiscreteBackgroundHessian();
+
+  /**
    * @brief Project out the rigid rotations of the solid region(s) with the
    * given SubMesh attributes (a solid inner core enclosed by fluid), which
    * are near-null vectors when density and background potential are
@@ -649,6 +784,17 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   /** @brief The potential load @f$\ell_\phi@f$ of the last AssembleForce()
    * on true dofs (tidal part and 2-D compatibility included). */
   const mfem::Vector& PotentialLoad() const { return B_phi_; }
+  /** @brief The uniform-term (mass) row datum of the last AssembleForce():
+   * @f$\int\sigma_{data}\,dS@f$ of the water load's data (0 without
+   * SetWaterLoad()); global in parallel, AddBorderForce() increments
+   * excluded. */
+  mfem::real_t UniformRowLoad() const { return sea_Sd_; }
+  /** @brief The angular-velocity row data of the last AssembleForce():
+   * @f$-\int\sigma\,\Pi\psi_k\,dS@f$ over every registered surface
+   * load, @f$\Pi\psi_k@f$ the interpolant of UnitCentrifugalPotential(k)
+   * on the potential space (empty without SetRotation()); global in
+   * parallel, AddBorderForce() increments excluded. */
+  const mfem::Vector& AngularVelocityRowLoad() const { return rot_r_; }
   const SubMeshDofInjection& Injection() const { return *injection_; }
   mfem::real_t GravitationalConstant() const { return G_; }
   mfem::Coefficient& Density() const { return *rho_; }
@@ -958,6 +1104,8 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   mfem::Array<int> offsets_;
   std::unique_ptr<mfem::BlockOperator> block_op_;
   std::unique_ptr<mfem::BlockDiagonalPreconditioner> block_prec_;
+  DomainVectorGradVectorIntegrator* grav_g1_ = nullptr;  // owned by the form
+  std::unique_ptr<mfem::MatrixCoefficient> hess_phi0_shadow_;
   std::unique_ptr<ProjectedSolver> projected_prec_;  ///< P M P, both solvers
   std::unique_ptr<mfem::IterativeSolver> minres_;  ///< MINRES or block CG
 
@@ -967,6 +1115,16 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   bool level_enabled_ = false;
   int level_n_ = 0;
   std::vector<LevelBorder> level_;
+  /// The background coefficient of the constructor or of the last
+  /// SetBackgroundPotential() (null when the class solved for Phi0):
+  /// the exact-levels border's Phi0.
+  mfem::Coefficient* phi0_coef_ = nullptr;
+  /// The exact-levels gradient (SetLevelBorder(levels, true, grad)).
+  mfem::VectorCoefficient* level_grad_phi0_ = nullptr;
+  /// AddLevelBorderForce data per region, in the border's local
+  /// ordering (U | s | nu | lambda); empty when none since the last
+  /// AssembleForce().
+  std::vector<mfem::Vector> level_add_;
   std::vector<mfem::Coefficient*> fluid_rho_prime_;  ///< per region
   std::vector<std::unique_ptr<mfem::Coefficient>> level_coefs_;
   void BuildLevelBorders();

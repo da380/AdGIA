@@ -195,11 +195,11 @@
  * writer, the interchange form the Python reads back and draws.
  *
  * @section docs Documentation index
- * Paths are relative to the source tree. The method, theory and planning
- * notes live under `doc/` in the working tree but are not tracked in the
- * repository for now. The tracked documentation is practical:
+ * Paths are relative to the source tree. The practical documentation is
  * `INSTALL.md`, `examples/README.md`, `meshes/README.md`,
- * `benchmarks/README.md`, `earth_data/README.md`.
+ * `benchmarks/README.md`, `earth_data/README.md`. The method and theory
+ * notes are in `doc/` (Markdown notes and LaTeX notes); `README.md`
+ * lists them.
  *
  * @section install Installation
  * MFEM must be built first, serial or parallel. Configuration is with CMake;

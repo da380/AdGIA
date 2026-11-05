@@ -231,7 +231,7 @@ def identity_figure(campaign: Path, out: Path) -> None:
             bars.append((label, measured(path), GOOD, False))
     # The slipping interface: read the campaign's slip identity log when
     # it exists; the fallback constant is the measurement of
-    # doc/benchmarks.tex, "Leg B" (fluid_core, A = 0.02, h = 0.3), and is
+    # doc/benchmarks/benchmarks.tex, "Leg B" (fluid_core, A = 0.02, h = 0.3), and is
     # hatched and labelled so it cannot pass for a measurement of this
     # tree. The slipping-interface forms are not certified covariant, so
     # this bar is informational.
@@ -241,7 +241,7 @@ def identity_figure(campaign: Path, out: Path) -> None:
                      WARN, False))
     else:
         bars.append(("fluid core (slip interface)\nnot rerun: the number "
-                     "of doc/benchmarks.tex", 1.2e-2, WARN, True))
+                     "of doc/benchmarks/benchmarks.tex", 1.2e-2, WARN, True))
     fig, ax = plt.subplots(figsize=(9.2, 4.2))
     y = range(len(bars))[::-1]
     ax.barh(y, [b[1] for b in bars], color=[b[2] for b in bars],

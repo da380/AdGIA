@@ -305,6 +305,47 @@ void DomainVectorGradVectorIntegrator::AssembleElementMatrix2(
 #endif
 
   qv.SetSize(space_dim);
+
+  if (grad_w_) {
+    // The product rule at the quadrature points:
+    //   int q v_k [ (d_k w_l) u_l + w_l d_k u_l ],
+    // rows (k, i) = test_dof k + i, columns (l, j) = trial_dof l + j.
+    MFEM_VERIFY(!map_, "DomainVectorGradVectorIntegrator: the exact "
+                       "product rule is not available with a mapping.");
+    Vector trial_shape(trial_dof);
+    DenseMatrix G(space_dim);
+    trial_dshape.SetSize(trial_dof, space_dim);
+    test_shape.SetSize(test_dof);
+    const auto* ir = IntRule ? IntRule : &GetRule(trial_fe, test_fe, Trans);
+    for (auto p = 0; p < ir->GetNPoints(); p++) {
+      const auto& ip = ir->IntPoint(p);
+      Trans.SetIntPoint(&ip);
+      auto w = Trans.Weight() * ip.weight;
+      if (Q) {
+        w *= Q->Eval(Trans, ip);
+      }
+      QV->Eval(qv, Trans, ip);
+      grad_w_->Eval(G, Trans, ip);
+      trial_fe.CalcPhysDShape(Trans, trial_dshape);
+      trial_fe.CalcShape(ip, trial_shape);
+      test_fe.CalcShape(ip, test_shape);
+      for (auto k = 0; k < space_dim; k++) {
+        for (auto i = 0; i < test_dof; i++) {
+          const auto row = test_dof * k + i;
+          const auto wv = w * test_shape(i);
+          for (auto l = 0; l < space_dim; l++) {
+            for (auto j = 0; j < trial_dof; j++) {
+              elmat(row, trial_dof * l + j) +=
+                  wv * (G(k, l) * trial_shape(j) +
+                        qv(l) * trial_dshape(j, k));
+            }
+          }
+        }
+      }
+    }
+    return;
+  }
+
   right_elmat_trans.SetSize(space_dim * trial_dof, trial_dof);
   right_elmat_trans = 0.;
 
@@ -1329,7 +1370,7 @@ namespace {
 /// (nu . jump = 0) but is not invariant under face-fixing shears of F off
 /// it; the projected form is, which preserves the discrete
 /// change-of-variables identity through the slipping interface
-/// (doc/slip_interface.tex). Unmapped kernels are unchanged: there nu = n
+/// (doc/methods/slip_interface.tex). Unmapped kernels are unchanged: there nu = n
 /// and the extra projector is contained in P_T.
 void SlipDirection(const mfem::DenseMatrix& PT, const mfem::DenseMatrix& Fi,
                    const mfem::Vector& nu, bool mapped,

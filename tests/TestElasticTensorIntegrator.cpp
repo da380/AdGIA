@@ -289,7 +289,7 @@ TEST(ElasticTensorPlaneStrain, SlabEnergy) {
   EXPECT_NEAR(e3 / h, e2, 1e-12 * std::abs(e2));
 }
 
-// Pull-back identity (doc/mappings.md, "The discrete change-of-variables
+// Pull-back identity (doc/methods/mappings.md, "The discrete change-of-variables
 // identity"): with the mapping
 // interpolated on the mesh's geometric space and one integration rule on
 // both sides, the mapped integrator on the reference mesh — referential

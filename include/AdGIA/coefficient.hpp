@@ -175,4 +175,50 @@ class MatrixDeltaCoefficient : public mfem::MatrixCoefficient {
   mfem::DeltaCoefficient d_;
 };
 
+/**
+ * @brief The Hessian @f$\partial_i\partial_j f@f$ of a scalar grid
+ * function as a matrix coefficient, from the element's physical second
+ * derivatives (FiniteElement::CalcPhysHessian, which accounts for a
+ * curved element map). For the nodal interpolant of a smooth field of
+ * order p the Hessian is accurate to @f$O(h^{p-1})@f$. Serves the exact
+ * product rule of DomainVectorGradVectorIntegrator with the gradient of
+ * the discrete background potential (the mixed class's
+ * UseDiscreteBackgroundHessian()).
+ */
+class HessianGridFunctionCoefficient : public mfem::MatrixCoefficient {
+ public:
+  explicit HessianGridFunctionCoefficient(const mfem::GridFunction* f)
+      : mfem::MatrixCoefficient(f->FESpace()->GetMesh()->SpaceDimension()),
+        f_(f) {}
+
+  void Eval(mfem::DenseMatrix& H, mfem::ElementTransformation& T,
+            const mfem::IntegrationPoint& ip) override {
+    const mfem::FiniteElementSpace& fes = *f_->FESpace();
+    const int e = T.ElementNo;
+    const mfem::FiniteElement* fe = fes.GetFE(e);
+    const int dim = fe->GetDim(), size = dim * (dim + 1) / 2;
+    fes.GetElementDofs(e, dofs_);
+    f_->GetSubVector(dofs_, loc_);
+    T.SetIntPoint(&ip);
+    dof_hess_.SetSize(fe->GetDof(), size);  // CalcPhysHessian does not size
+    fe->CalcPhysHessian(T, dof_hess_);      // dof x packed symmetric
+    packed_.SetSize(size);
+    dof_hess_.MultTranspose(loc_, packed_);
+    H.SetSize(dim);
+    // MFEM's packing: 2-D (xx, xy, yy); 3-D (xx, xy, xz, yy, yz, zz).
+    int k = 0;
+    for (int i = 0; i < dim; i++) {
+      for (int j = i; j < dim; j++) {
+        H(i, j) = H(j, i) = packed_[k++];
+      }
+    }
+  }
+
+ private:
+  const mfem::GridFunction* f_;
+  mfem::Array<int> dofs_;
+  mfem::Vector loc_, packed_;
+  mfem::DenseMatrix dof_hess_;
+};
+
 }  // namespace AdGIA

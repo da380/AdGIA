@@ -576,7 +576,7 @@ def main() -> None:
     ice_g = pyshtools.SHGrid.from_array(ice * to_ps_len, grid=em.grid)
     load_g = pyshtools.SHGrid.from_array(melt_load * to_ps_sigma,
                                          grid=em.grid)
-    state = pyslfp.EarthState(ice_g, sl0_g, em, exclude_caspian=False)
+    state = pyslfp.EarthState(ice_g, sl0_g, em)
     lin = pyslfp.LinearSeaLevelEquation(state)
     sl_ps, _, _, omega_ps = lin.solve_sea_level_equation(
         load_g, rotational_feedbacks=args.rot)

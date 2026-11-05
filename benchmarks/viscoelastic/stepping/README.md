@@ -38,7 +38,7 @@ period). By default the example is taken from the first `build*` directory of
 the repository that has it; `--program` names another binary.
 `--dry-run` prints the commands.
 
-The results are in `doc/benchmarks.tex` ("The stepping survey"), and the
-conclusions for choosing a scheme in `doc/viscoelasticity.md` ("Choosing
+The results are in `doc/benchmarks/benchmarks.tex` ("The stepping survey"), and the
+conclusions for choosing a scheme in `doc/methods/viscoelasticity.md` ("Choosing
 a scheme"). The example also has a power-law branch (`-gamma`) and a
 long-term modulus (`-mu-inf`), which the survey does not sweep.

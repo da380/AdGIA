@@ -8,7 +8,8 @@ fixtures:
 
   - leading `#` lines: provenance, free text.  By convention the first
     says what the file holds, and one says `# code <name> commit <sha>
-    date <iso-date>`; `provenance_line` builds it.
+    date <iso-date>` (`version <v>` in place of the commit for an
+    installed release); `provenance_line` builds it.
   - bare `name value...` lines: named scalars (one or more floats).
   - a `columns <name>...` line, then the table, one row per line, every
     value `%.17g`, SI throughout.
@@ -41,8 +42,19 @@ def code_commit(anywhere: Path) -> str:
 
 def provenance_line(code: str, anywhere: Path) -> str:
     """The conventional provenance line for `code`, dated today, with
-    the commit of the repository containing `anywhere`."""
-    return (f"code {code} commit {code_commit(anywhere)} "
+    the commit of the repository containing `anywhere` — or, when
+    `anywhere` is not in a repository (an installed release, which is
+    what the exchange files are meant to cite), the installed version of
+    the package named `code`."""
+    commit = code_commit(anywhere)
+    if commit == "unknown":
+        try:
+            from importlib.metadata import version
+            return (f"code {code} version {version(code)} "
+                    f"date {datetime.date.today().isoformat()}")
+        except Exception:  # not an installed package either
+            pass
+    return (f"code {code} commit {commit} "
             f"date {datetime.date.today().isoformat()}")
 
 

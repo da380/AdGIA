@@ -134,7 +134,7 @@
 // periodic pull the adaptive trapezoid at best matches the cheapest
 // fixed-step scheme (on the stiff body) and otherwise falls behind it: its
 // conservative error estimate keeps its steps small. These are the cases
-// of doc/viscoelasticity.md, "Choosing a scheme".
+// of doc/methods/viscoelasticity.md, "Choosing a scheme".
 //
 // One source serves the serial and the parallel build; the genuine
 // differences are the mesh partitioning and the global reductions on the

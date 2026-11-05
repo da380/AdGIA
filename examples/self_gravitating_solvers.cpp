@@ -6,7 +6,7 @@
 // under a degree-2 surface mass load, solved through
 //
 //   1. dahlen / Schur CG        the Eulerian formulation with the fluid
-//                               eliminated (doc/quasi_static_models.tex,
+//                               eliminated (doc/methods/quasi_static_models.tex,
 //                               "Fluid regions and the ladder of CMB
 //                               approximations"): the potential block is
 //                               eliminated and CG runs on the symmetric
@@ -39,7 +39,7 @@
 //                               stagnation — no gauge refinements, no
 //                               slip machinery, works on any geometry;
 //   6. slip                     the slipping fluid-solid interface
-//                               (doc/slip_interface.tex): broken
+//                               (doc/methods/slip_interface.tex): broken
 //                               displacement pair, single-valued zeta,
 //                               the normal-jump constraint by penalty +
 //                               augmented Lagrangian — every AL iteration

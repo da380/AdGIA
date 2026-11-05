@@ -48,7 +48,7 @@
 //
 // Self-gravitating relabelled runs, where the potential joins the game,
 // live in the relabelled benchmark (benchmarks/relabelling,
-// doc/benchmarks.tex "The relabelling family"); this example keeps gravity
+// doc/benchmarks/benchmarks.tex "The relabelling family"); this example keeps gravity
 // off so the symmetry itself is the whole story.
 //
 // Mesh requirements: 2-D only. The default is

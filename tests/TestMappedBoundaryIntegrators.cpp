@@ -1,10 +1,10 @@
-// Pull-back identity tests (doc/mappings.md, "The discrete
+// Pull-back identity tests (doc/methods/mappings.md, "The discrete
 // change-of-variables identity") for the boundary (Nanson) machinery: for a smooth non-polynomial mapping interpolated on
 // the mesh's geometric space, referential coefficients and one
 // integration rule on both sides, each mapped boundary term assembled on
 // the reference mesh must equal its standard counterpart on the mapped
 // mesh to round-off. (F2) and (F3) are the fluid-interface terms of
-// doc/self_gravitation.md, "Bilinear form". Covered:
+// doc/methods/self_gravitation.md, "Bilinear form". Covered:
 //  - BoundaryNormalScalarIntegrator (the (F3) coupling): m dS -> nu dS
 //    exactly;
 //  - BoundaryNormalNormalIntegrator with the full (F2) composition

@@ -3,8 +3,7 @@
 
 /*
   Tests for the pressure-split (u, p) solve of the clamped quasi-static
-  problem (SetPressureSplitSolver; see doc/planning/solvers.md,
-  "Near-incompressible and high-contrast effective operators").
+  problem (SetPressureSplitSolver; see doc/methods/pressure_split.tex).
 
   - Constant strain: with u = A x prescribed on the whole boundary the
     Taylor-Hood pair represents the state exactly, so the split solve

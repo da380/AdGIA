@@ -14,8 +14,8 @@
 // unit coefficient of the orthonormal harmonic). The core displacement u_f
 // and the mantle displacement u_s are separate fields that share only
 // their normal component on the core boundary Sigma, nu . [[u]] = 0: the
-// fluid slips along Sigma (doc/slip_interface.tex, "Kinematics of the
-// slip"; doc/quasi_static_models.tex, "The slipping-interface problem").
+// fluid slips along Sigma (doc/methods/slip_interface.tex, "Kinematics of the
+// slip"; doc/methods/quasi_static_models.tex, "The slipping-interface problem").
 //
 // The reference body. On a spherical mesh the reference body is the
 // physical body and the equilibrium mapping phi_e is the identity. On an
@@ -34,7 +34,7 @@
 // assembly is covariant: every observable must be that of the spherical
 // model, and any response at other degrees is discretisation error.
 //
-// Organisations and enforcement (doc/slip_interface.tex, "Constraint
+// Organisations and enforcement (doc/methods/slip_interface.tex, "Constraint
 // enforcement" and "Implementation"):
 //   -zeta single   one potential zeta^1 on the ball, the fluid's gravity
 //                  through a prescribed extension of u_s into the core;
@@ -51,7 +51,7 @@
 //                  the multiplier order: one below the displacement order
 //                  can make the gauge refinements diverge on these 2-D
 //                  meshes, so watch the printed normal-jump history
-//                  (doc/slip_interface.tex, "The multiplier space").
+//                  (doc/methods/slip_interface.tex, "The multiplier space").
 // The fluid displacement is determined only up to linearised
 // relabellings; the gauge penalty eps Q (-geps) fixes it, with the
 // Tikhonov refinements removing its bias.
@@ -93,7 +93,7 @@
 // Sigma (drawn on the mantle, zero off Sigma; the computed slip depends
 // on the fluid's gauge, which the penalty fixes, so it is not an
 // observable here and differs between organisations — which slips a
-// relabelling can remove is discussed in doc/gauged_fluid.md, "Tangential
+// relabelling can remove is discussed in doc/methods/gauged_fluid.md, "Tangential
 // slip and the welded space"), and zeta^1
 // (both sides for the broken organisation).
 //
@@ -1173,7 +1173,7 @@ int main(int argc, char* argv[]) try {
     // background: the fluid welded to the mantle, its gauge fixed by the
     // covariant penalty. On this spherically symmetric model it agrees
     // with the slipping solution to discretisation level
-    // (doc/gauged_fluid.md, "Tangential slip and the welded space").
+    // (doc/methods/gauged_fluid.md, "Tangential slip and the welded space").
     {
       SpaceType fes_body(model.body.get(), &fec, dim);
       LinearQuasiStaticReferentialSelfGravitatingProblem welded(

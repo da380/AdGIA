@@ -440,9 +440,9 @@ TEST_P(MixedProblemFluidTest, LoadPotentialIgnoresTheFluidMass) {
 }
 
 // The approximate CMB conditions of the GIA literature are degenerate
-// cases of the FluidRegion machinery (doc/self_gravitation.md, "The CMB
+// cases of the FluidRegion machinery (doc/methods/self_gravitation.md, "The CMB
 // approximations of the GIA literature"; the ladder is defined in
-// doc/quasi_static_models.tex, "Fluid regions and the ladder of CMB
+// doc/methods/quasi_static_models.tex, "Fluid regions and the ladder of CMB
 // approximations"): 'uniform' = constant interface density with the fluid
 // mass term dropped, 'winkler' = uniform without the interface potential
 // coupling. Both stay symmetric (the two solvers agree), and both

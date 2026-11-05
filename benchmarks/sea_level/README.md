@@ -9,8 +9,8 @@ and `--timings` times the solve across the feature axis instead of
 comparing.
 
 `--method referential` runs the same comparison on the welded
-referential class (the ζζ collapse,
-`doc/planning/referential_sea_level_plan.md`), outputs tagged `_ref`
+referential class (the ζζ collapse, `doc/methods/quasi_static_models.tex`,
+"The sea-level terms"), outputs tagged `_ref`
 beside the Eulerian ones. Measured at the toy resolution (homogeneous,
 h 0.4, order 2, lmax 16): ocean-RMS relative difference 1.2 % against
 pyslfp, next to the Dahlen leg's 1.1 % at the same settings — the same
@@ -29,7 +29,7 @@ the committed grid of `meshes/`). The state and the melt are built
 once on pyslfp's grid and sampled at the driver's surface nodes
 (`-state/-ice/-dice`), so both sides see one problem; the report and
 figure are the simple leg's, side by side in `h<h>_earth/`. Linear,
-frozen shorelines only for now.
+frozen shorelines only.
 
 One spherically layered model (homogeneous by default), one smooth
 analytical state (polar continent, ice cap, melt), defined once in
@@ -41,10 +41,9 @@ under MPI, runs pyslfp, converts both fingerprints to metres, grids the
 FE nodes onto pyslfp's grid and writes `report_o<p>.json`: ocean-RMS
 difference and per-degree amplitudes.
 
-Caveats recorded with the machinery: low-resolution runs need not agree
-closely (the resolved comparison belongs to the server campaign), and
-the degree-1 reference-frame convention between the two sides is not
-yet reconciled — the report prints that row with a flag.
+Caveats: low-resolution runs need not agree closely, and the degree-1
+reference-frame convention between the two sides is not reconciled —
+the report prints that row with a flag.
 
 The `--nonlinear` leg solves the frozen/linear pair too and reports the
 migration effect delta = SL(migrating) − SL(frozen) on each side — the

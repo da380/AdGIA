@@ -24,6 +24,8 @@
   - Tangential component: u = grad_1 Y_i gives e_i, whatever radial part
     and rotation are added, and nothing at degree zero.
   - LoadVector against a BoundaryLFIntegrator of the same expansion.
+  - The analysis of a field on the space is the transpose of LoadVector,
+    R^{d-1} Coefficients(f)_i = <LoadVector(e_i), f>, to rounding.
   - Interior harmonic continuation carries the factor (r/R)^l.
 */
 
@@ -435,6 +437,80 @@ TEST_P(SphericalHarmonicsTest, LoadVectorMatchesLinearForm) {
   bhc.Coefficients(g, cg);
   EXPECT_NEAR(g * b, std::pow(bhc.Radius(), s.dim - 1) * (c * cg),
               1e-12 * std::abs(g * b));
+}
+
+// The analysis of a field on the space is the transpose of LoadVector:
+// R^{d-1} Coefficients(f)_i = <LoadVector(e_i), f> for every f, R the
+// radius the operator measures (the area-weighted mean over the boundary
+// quadrature points, not the nominal 1). On the ball of the adjoint and
+// measurement tests (order 2), Scalar on the scalar space and Radial on the
+// vector space, maximum degrees 1 to 3, for random dof values and for the
+// interpolant of a smooth field. Measured (ADGIA_TEST_VERBOSE=1): largest
+// mismatch 2.6e-15 of max_i |<LoadVector(e_i), f>|; R - 1 = -2.45e-4, so
+// omitting R^{d-1} = R^2 leaves 4.9e-4.
+TEST(SphericalHarmonicsDuality, AnalysisIsTheTransposeOfLoadVector) {
+  using BHC = BoundaryHarmonicCoefficients;
+  HarmonicCase s(3);
+  FunctionCoefficient smooth([](const Vector& x) {
+    return std::exp(0.5 * x[0]) * (1.0 + 0.3 * x[1]) + 0.7 * x[2] * x[0];
+  });
+  VectorFunctionCoefficient smooth_u(3, [](const Vector& x, Vector& v) {
+    v = x;
+    v *= std::cos(x[0]) + 0.2 * x[1] + 0.4 * x[2] * x[2];
+    v[0] += 0.3 * x[1];
+  });
+  double worst = 0.0;
+  for (const auto component :
+       {BHC::Component::Scalar, BHC::Component::Radial}) {
+    const bool scalar = component == BHC::Component::Scalar;
+    FiniteElementSpace& fes = scalar ? *s.scalar : *s.vector;
+    for (int L = 1; L <= 3; L++) {
+      BHC bhc(fes, s.surface, L, component);
+      const int n = bhc.Size();
+      const double Rd = std::pow(bhc.Radius(), s.dim - 1);
+      std::vector<Vector> b(n);
+      for (int i = 0; i < n; i++) {
+        bhc.LoadVector(Unit(n, i), b[i]);
+      }
+      for (int field = 0; field < 3; field++) {
+        GridFunction f(&fes);
+        if (field == 2) {
+          if (scalar) {
+            f.ProjectCoefficient(smooth);
+          } else {
+            f.ProjectCoefficient(smooth_u);
+          }
+        } else {
+          f.Randomize(17 + field);
+          f -= 0.5;
+        }
+        Vector c;
+        bhc.Coefficients(f, c);
+        Vector pair(n);
+        for (int i = 0; i < n; i++) {
+          pair[i] = b[i] * f;
+        }
+        Vector d(c), d_unscaled(c);
+        d *= Rd;
+        d -= pair;
+        d_unscaled -= pair;
+        const double err = d.Normlinf() / pair.Normlinf();
+        worst = std::max(worst, err);
+        if (std::getenv("ADGIA_TEST_VERBOSE")) {
+          std::cout << (scalar ? "Scalar" : "Radial") << " L = " << L
+                    << " field " << field << ": R - 1 = " << bhc.Radius() - 1.0
+                    << ", |R^2 c - <b, f>| / |<b, f>| = " << err
+                    << " (without R^2: "
+                    << d_unscaled.Normlinf() / pair.Normlinf() << ")\n";
+        }
+        EXPECT_LT(err, 1e-13) << (scalar ? "Scalar" : "Radial") << ", L = " << L
+                              << ", field " << field;
+      }
+    }
+  }
+  if (std::getenv("ADGIA_TEST_VERBOSE")) {
+    std::cout << "largest relative mismatch " << worst << "\n";
+  }
 }
 
 TEST_P(SphericalHarmonicsTest, InteriorHarmonic) {

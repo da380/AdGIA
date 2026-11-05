@@ -186,7 +186,7 @@ table of cost and agreement: Dahlen (Schur CG and block MINRES), the gauged
 and welded referential gauge-penalty treatments, and the Maxwell
 architecture (the referential problem with the core an artificial Maxwell
 solid relaxed to the secular static state through `SetFluid`; the general
-fluid treatment, `doc/static_fluid_core.tex`), plus the slipping-interface
+fluid treatment, `doc/theory/static_fluid_core.tex`), plus the slipping-interface
 solvers (the KKT enforcement of the slipping
 interface is exercised by `slipping_interface -enforce kkt`). Shows: the solution, and the difference field
 of the architecture that agrees least (rigid modes removed). Add `-no-slip`
@@ -535,7 +535,7 @@ hydrostatic equilibrium. Shows: the minimum-deviatoric pressure, and
 `-e 0`.
 
 **`equilibrium_density`**: density restoration, the first milestone of
-the equilibrium-figures programme (`doc/equilibrium_figures.tex`): a
+the equilibrium-figures programme (`doc/theory/equilibrium_figures.tex`): a
 layered model starts without a static state, and the fluid-only
 feasibility functional is driven to its floor — by default the study's
 measured recipe, Levenberg–Marquardt Gauss–Newton with a roughness

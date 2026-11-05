@@ -10,7 +10,7 @@
 //     (order >= 2). The comparison is sensitive to the index order in the
 //     scalar-path Jacobian F(j,k) = x_j d_k f.
 //
-//  2. The discrete change-of-variables identity (doc/mappings.md, "The
+//  2. The discrete change-of-variables identity (doc/methods/mappings.md, "The
 //     discrete change-of-variables identity"):
 //     for an affine map the transformed form on the reference mesh equals the
 //     ordinary DiffusionIntegrator on the mapped mesh outright; for a smooth

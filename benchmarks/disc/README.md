@@ -5,8 +5,8 @@ exact references, at a cost that allows resolution ladders as a matter of
 course. Three sub-families, in order of physics: the gravity-free disc and
 its interface-shift leg and uniform-pre-pressure leg (finite-element
 driver and checker), and the gravitating per-degree radial reference
-(Python: reference modules and the `explore` tool; a finite-element
-driver for the gravitating problem is not yet in this directory).
+(Python: reference modules and the `explore` tool; there is no
+finite-element driver for the gravitating problem here).
 
 ## No gravity, no pre-stress
 
@@ -64,20 +64,17 @@ F, the slip run adds the mapped constraint row on top.
 (uniform surface pressure, no gravity): bare moduli
 (lam - P0, mu + P0), the geometric stiffness everywhere, mu_b = P0 in
 the fluid, and B_Sigma with pi = P0 on the slip side
-(NewSlipInterfaceMatrix) — the first exact test of B_Sigma. The
+(NewSlipInterfaceMatrix) — an exact test of B_Sigma. The
 reference collapses in effective variables: the
 volume operator and interface conditions are the gravity-free ones, only
 the loaded-surface rows change to the dead-traction amplitudes of
 delta P . N. `check --P0 0.3` runs the ladder. Not combined with
-`-shift` yet.
-
-Not yet here: the shift x P0 combination, and a gravitating FE driver
-(the radial reference below exists).
+`-shift`.
 
 ## Gravity: the per-degree radial reference
 
-Two Python modules and an exploration tool, with no finite-element side
-yet:
+Two Python modules and an exploration tool, with no finite-element
+side:
 
 - `disc_models.py` — the gravitating twins in benchmark units (G = 1,
   radius 1): `fluid_core_2d` (uniform fluid core, N^2 < 0) and
@@ -93,8 +90,8 @@ yet:
   with the B_Sigma and G_Sigma interface forms) and `dahlen` (the
   Eulerian mixed-class system with F1-F3, fluid displacement
   eliminated; at l = 0 closed by the level-mean border of
-  doc/static_fluid_core.tex Step G7, verified against the welded solve). Degrees
-  l = 0 and l >= 2; l = 1 is pending.
+  doc/theory/static_fluid_core.tex Step G7, verified against the welded solve). Degrees
+  l = 0 and l >= 2 (not l = 1).
 - `solve_degree_maxwell(model, l, ...)` — the Maxwell relaxation (the
   default `SetFluid` treatment of the library, here as a 1-D calculation), the secular time-stepping
   route: the core as an artificial Maxwell solid under a Heaviside

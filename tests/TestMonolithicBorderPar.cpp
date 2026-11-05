@@ -242,11 +242,157 @@ void RunLevelBorderCase(const std::string& label) {
         label + ": potential");
 }
 
+// The level border's own-row sources (AddLevelBorderForce), parallel, on
+// the same two-layer ball without a surface load: (1) reciprocity of the
+// symmetric bordered system, <x(f), g> = <x(g), f>, pairing a nu-row
+// source and the wall row with a potential load and a U-row source with
+// a CMB traction (serial gate TestLevelBorderSources.Reciprocity) --- the
+// border data are global, the field pairings reduced over the ranks; (2)
+// a source on every row kind through the elimination and the monolithic
+// routes, which must agree at solver grade. Measured on 1, 2 and 4
+// ranks at solver tolerance 1e-12: reciprocity asymmetries 3e-14 to
+// 1.8e-12 (gate 1e-10); route differences 2.5e-11 in the displacement,
+// 3e-12 in the potential and the border unknowns (gate 1e-7, as for the
+// unloaded border above).
+void RunLevelBorderSourcesCase(const std::string& label) {
+  Mesh smesh("../data/earth_fluidcore_3d.msh", 1, 1);
+  ParMesh pmesh(MPI_COMM_WORLD, smesh);
+  Array<int> solid_attr({2});
+  ParSubMesh body(ParSubMesh::CreateFromDomain(pmesh, solid_attr));
+  H1_FECollection fec(1, 3);
+  ParFiniteElementSpace fes_u(&body, &fec, 3), fes_phi(&pmesh, &fec);
+  ConstantCoefficient kappa(kKappa), mu(kMu), rho(kRho), kappa_f(kKappa);
+  IsotropicElasticRheology rheology(3, kappa, mu);
+  FunctionCoefficient rho_f([](const Vector& x) {
+    const double r = x.Norml2();
+    return 1.2 - 0.1 * r;
+  });
+  FluidRegion core;
+  core.attributes = Array<int>({1});
+  core.density = &rho_f;
+  core.interface_marker.SetSize(body.bdr_attributes.Max());
+  core.interface_marker = 0;
+  core.interface_marker[0] = 1;  // the CMB
+  core.bulk_modulus = &kappa_f;
+  std::vector<FluidRegion> fluids{core};
+
+  auto make = [&](bool monolithic) {
+    auto p = std::make_unique<LinearQuasiStaticMixedSelfGravitatingProblem>(
+        &fes_u, &fes_phi, rheology, rho, kG, kDtNDegree, nullptr, fluids);
+    p->SetSolverType(
+        LinearQuasiStaticMixedSelfGravitatingProblem::SolverType::
+            BlockMINRES);
+    p->SetRelTol(1e-12);
+    p->SetLevelBorder(12);
+    if (monolithic) {
+      p->SetMonolithicBorder();
+    }
+    return p;
+  };
+  auto pe = make(false);
+  Vector c;
+  bool centre;
+  std::vector<int> wall_node;
+  pe->LevelBorderGrid(0, c, centre, wall_node);
+  const int m = c.Size();
+  // Nodal data of smooth functions of the level (the hat integrals are
+  // not needed for the algebraic identities checked here).
+  Vector r_nu(m), r_U(m), r_s(m), r_l(1);
+  for (int k = 0; k < m; k++) {
+    const double t = static_cast<double>(k) / (m - 1);
+    r_nu[k] = 1e-3 * (1.0 + t - 0.5 * t * t);
+    r_U[k] = 1e-3 * (0.3 + t * (1.0 - t));
+    r_s[k] = 1e-3 * (1.0 - t * t);
+  }
+  r_l[0] = 1e-2;
+  Array<int> fluid_marker(pmesh.attributes.Max()), cmb(body.bdr_attributes.Max());
+  fluid_marker = 0;
+  fluid_marker[0] = 1;
+  cmb = 0;
+  cmb[0] = 1;
+  FunctionCoefficient q_phi([](const Vector& x) {
+    return 1.0 + x[2] * x[2] + 0.3 * x[0];
+  });
+  ParLinearForm ell(&fes_phi);
+  ell.AddDomainIntegrator(new DomainLFIntegrator(q_phi), fluid_marker);
+  ell.Assemble();
+  VectorFunctionCoefficient q_t(3, [](const Vector& x, Vector& t) {
+    const double r = x.Norml2();
+    t = x;
+    t *= 0.1 * (1.0 + 0.5 * x[2] / r) / r;
+    t[0] += 0.02;
+  });
+  ParLinearForm trac(&fes_u);
+  trac.AddBoundaryIntegrator(new VectorBoundaryLFIntegrator(q_t), cmb);
+  trac.Assemble();
+  Vector ell_t(fes_phi.GetTrueVSize()), trac_t(fes_u.GetTrueVSize());
+  ell.ParallelAssemble(ell_t);
+  trac.ParallelAssemble(trac_t);
+  const Vector none;
+
+  struct Out {
+    double phi_ell, u_trac;  // field pairings, global
+    Vector U, s, nu, lambda;
+  };
+  auto solve = [&](LinearQuasiStaticMixedSelfGravitatingProblem& p,
+                   const Vector& rU, const Vector& rs, const Vector& rnu,
+                   const Vector& rl, bool with_ell, bool with_trac) {
+    p.AssembleForce(0.0);
+    p.AddLevelBorderForce(0, rU, rs, rnu, rl);
+    if (with_ell) {
+      p.AddPotentialForce(ell);
+    }
+    if (with_trac) {
+      p.AddForce(trac);
+    }
+    Check(p.Solve() ? 0.0 : 1.0, 0.0, label + ": solve");
+    Out o;
+    Vector phi_t, u_t;
+    p.Potential().GetTrueDofs(phi_t);
+    p.Displacement().GetTrueDofs(u_t);
+    o.phi_ell = InnerProduct(MPI_COMM_WORLD, phi_t, ell_t);
+    o.u_trac = InnerProduct(MPI_COMM_WORLD, u_t, trac_t);
+    Vector cc;
+    p.LevelBorderSolution(0, cc, o.U, o.s, o.nu, o.lambda);
+    return o;
+  };
+  auto rel = [](double a, double b) {
+    return std::abs(a - b) / std::max(std::abs(a), std::abs(b));
+  };
+  const Out x_nu = solve(*pe, none, none, r_nu, none, false, false);
+  const Out x_ell = solve(*pe, none, none, none, none, true, false);
+  const Out x_U = solve(*pe, r_U, none, none, none, false, false);
+  const Out x_t = solve(*pe, none, none, none, none, false, true);
+  const Out x_l = solve(*pe, none, none, none, r_l, false, false);
+  Check(rel(x_nu.phi_ell, r_nu * x_ell.nu), 1e-10,
+        label + ": nu row / potential load reciprocity");
+  Check(rel(x_l.phi_ell, r_l * x_ell.lambda), 1e-10,
+        label + ": wall row / potential load reciprocity");
+  Check(rel(x_U.u_trac, r_U * x_t.U), 1e-10,
+        label + ": U row / CMB traction reciprocity");
+
+  // Every row kind at once, through both routes.
+  auto pm = make(true);
+  const Out ye = solve(*pe, r_U, r_s, r_nu, r_l, false, false);
+  const Out ym = solve(*pm, r_U, r_s, r_nu, r_l, false, false);
+  Check(RelDiff(pm->Displacement(), pe->Displacement()), 1e-7,
+        label + ": sources, monolithic vs elimination displacement");
+  Check(RelDiff(pm->Potential(), pe->Potential()), 1e-7,
+        label + ": sources, monolithic vs elimination potential");
+  Vector dnu(ye.nu);
+  dnu -= ym.nu;
+  Check(dnu.Normlinf() / ye.nu.Normlinf(), 1e-7,
+        label + ": sources, monolithic vs elimination nu");
+  Check(rel(ye.lambda[0], ym.lambda[0]), 1e-7,
+        label + ": sources, monolithic vs elimination wall multiplier");
+}
+
 int main(int argc, char* argv[]) {
   Mpi::Init(argc, argv);
   Hypre::Init();
   RunCase(1, "order 1");
     RunLevelBorderCase("level border");
+  RunLevelBorderSourcesCase("level border sources");
 
   if (Mpi::Root()) {
     std::cout << num_checks << " checks, " << num_failures

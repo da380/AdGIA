@@ -6,7 +6,7 @@
 /*
   Tests of the coupled water load (SetWaterLoad: the condensed water
   system with frozen shoreline; the derivation is in
-  doc/quasi_static_models.tex, the mixed class's sea-level section) on the
+  doc/methods/quasi_static_models.tex, the mixed class's sea-level section) on the
   canned two-layer meshes, all-ocean
   (C0 = 1) with a small water density.
 

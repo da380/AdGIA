@@ -1,7 +1,7 @@
 // ============================================================================
 // aspherical_reference.cpp
 //
-// The aspherical-reference benchmark (doc/benchmarks.tex; doc/mappings.md):
+// The aspherical-reference benchmark (doc/benchmarks/benchmarks.tex; doc/methods/mappings.md):
 // the SAME spherical
 // physical problem, described from an ASPHERICAL reference body whose
 // mesh comes from its own generator (meshes/aspherical_body.py), not

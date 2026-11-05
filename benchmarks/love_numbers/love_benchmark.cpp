@@ -5,7 +5,7 @@
 // with a radial reference solution. The body is a case written by
 // make_case.py (benchmark_case.hpp); nothing about the model is set here.
 // The formulation is chosen by -method (benchmark_case.hpp lists them;
-// doc/benchmarks.tex, "The Love-number family", compares them).
+// doc/benchmarks/benchmarks.tex, "The Love-number family", compares them).
 //
 // For each degree l (order 0) the surface load is set to sigma = Y_l0 and,
 // separately for l >= 2, the tidal potential to psi = (r/a)^l Y_l0, with a

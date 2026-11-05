@@ -18,9 +18,9 @@ spherical geometry), which the quasi-static elastic benchmarks
 ~1e-10, so that a mismatch is the code's. The Love-number histories
 remain the integrated test of the whole self-gravitating machinery.
 
-`doc/benchmarks.tex` (section "The viscoelastic family") describes all
+`doc/benchmarks/benchmarks.tex` (section "The viscoelastic family") describes all
 four — problems, references, the mathematics of the comparisons — with
-the measured results; `doc/viscoelasticity.md` ("Time stepping") describes
+the measured results; `doc/methods/viscoelasticity.md` ("Time stepping") describes
 the integrators and how to choose between them. The campaign runs the box,
 sphere and Love-number sub-families as its opt-in stages
 `viscoelastic_box`, `viscoelastic_sphere` and `viscoelastic`. Every script

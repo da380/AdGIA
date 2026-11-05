@@ -4,7 +4,7 @@
 
 /*
   Tests for the boundary integrators and coefficients used by the fluid–solid
-  interface terms of the self-gravitating problem (doc/self_gravitation.md,
+  interface terms of the self-gravitating problem (doc/methods/self_gravitation.md,
   "Fluid–solid interface conditions"):
 
   - BoundaryNormalNormalIntegrator  (u, v) -> int q (n.u)(n.v) dS

@@ -23,6 +23,11 @@ target_sources(${PROJECT_NAME} PRIVATE null_space.cpp
     mixed_problem.cpp
                                        viscoelastic.cpp
                                        adjoint.cpp
+                                       tangent.cpp
+                                       second_order.cpp
+                                       discrete_adjoint.cpp
+                                       discrete_second_order.cpp
+                                       measurement.cpp
                                        elastic_tensor.cpp
                                        rotation.cpp
                                        sea_level.cpp

@@ -2,7 +2,7 @@
  * @file background.hpp
  * @brief The background-state module: generation of the equilibrium
  * fields @f$(\rho, \hat C, \mathbf{S}_e, \varphi_e)@f$ that the
- * referential problem consumes (doc/gravitating_elasticity.md §1,
+ * referential problem consumes (doc/theory/gravitating_elasticity.md §1,
  * "Notation and kinematics", §2, "The elastic tensor dictionary", and §6,
  * "Equilibrium stress in general models").
  * The moduli conversion and the relabelling transformation laws live
@@ -132,7 +132,7 @@ class RadialHydrostaticBackground {
  *   \tilde S = J_\xi\, F_\xi^{-1} (\mathbf{S}_e\circ\xi)\, F_\xi^{-T},
  *   \qquad \varphi_e = \xi,
  * @f]
- * (doc/gravitating_elasticity.md §1, doc/mappings.md). The solution must
+ * (doc/theory/gravitating_elasticity.md §1, doc/methods/mappings.md). The solution must
  * reproduce the base solution under composition, which makes the pair a
  * self-benchmark of the mapped assembly (RelabelledEquilibrium2D in
  * TestReferentialProblem). Base and @f$\boldsymbol{\xi}@f$ are not owned
@@ -253,7 +253,7 @@ std::function<void(const mfem::Vector&, mfem::Vector&)> RigidMode(int dim,
  * @brief The assembled minimum-deviatoric Stokes saddle, kept alive so
  * that repeated solves pay assembly and preconditioner setup once. No
  * operator here depends on the density — only the load does — so an
- * optimisation loop (doc/equilibrium_figures.tex) holds one of these
+ * optimisation loop (doc/theory/equilibrium_figures.tex) holds one of these
  * for its every value, gradient and Hessian-action solve.
  *
  * The system, null-space handling, optional viscosity field, mapped
@@ -267,7 +267,7 @@ class StokesSaddleSolver {
    * coefficients, map and marker are borrowed and must outlive the
    * solver.
    * @param rigid_bdr Optional rigid boundary groups
-   * (doc/equilibrium_figures.tex §2, the disconnected-solid
+   * (doc/theory/equilibrium_figures.tex §2, the disconnected-solid
    * correction): one boundary-attribute marker per solid component
    * enclosed by the fluid (e.g. the ICB). The velocity space is then
    * clamped there EXCEPT for that boundary's rigid motions — six
@@ -375,7 +375,7 @@ class MinimumDeviatoricEquilibriumStress : public mfem::MatrixCoefficient {
    * @param essential_bdr Optional boundary-attribute marker on which the
    * velocity is clamped, @f$\mathbf{u} = \mathbf{0}@f$, in place of the
    * natural traction condition — the multiplier condition of the
-   * fluid-only feasibility functional (doc/equilibrium_figures.tex),
+   * fluid-only feasibility functional (doc/theory/equilibrium_figures.tex),
    * whose constraint set leaves the interface traction free. The
    * constraint @f$\mathrm{Div}\,\mathbf{T} + \mathbf{f} = \mathbf{0}@f$
    * then holds on the mesh with no condition on @f$\mathbf{T}
@@ -432,14 +432,14 @@ class MinimumDeviatoricEquilibriumStress : public mfem::MatrixCoefficient {
 /**
  * @brief The elliptic buffer-taper rule: extend an equilibrium mapping,
  * given (at least) on the body, to the whole ball by a one-off harmonic
- * solve in the buffer (doc/gravitating_elasticity.md §3, "Gravity: three
+ * solve in the buffer (doc/theory/gravitating_elasticity.md §3, "Gravity: three
  * formulations"); the alternative to the analytic
  * TaperedDiffeomorphism when the mapping is only known on the body,
  * e.g. discrete or planetmodel-supplied.
  *
  * The displacement @f$\mathbf{h} = \boldsymbol{\xi} - \mathrm{id}@f$ is
  * interpolated on the body (nodal, at @p order — the interpolated mode
- * of doc/mappings.md, "The discrete change-of-variables identity"),
+ * of doc/methods/mappings.md, "The discrete change-of-variables identity"),
  * extended into the buffer by the vector Laplace equation with
  * Dirichlet data @f$\mathbf{h}@f$ on the shared
  * body surface and @f$\mathbf{0}@f$ on the outer (DtN) sphere, and

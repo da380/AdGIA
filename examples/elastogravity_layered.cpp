@@ -55,7 +55,7 @@
 //           sense), for experiments [off: the term is kept]. For the
 //           PREM-like core it changes the response by a factor of about
 //           three, because the potential block is not far from losing its
-//           positivity (doc/self_gravitation.md, "3. Solvers",
+//           positivity (doc/methods/self_gravitation.md, "3. Solvers",
 //           "Definiteness of the potential block").
 //   -pv / -no-pv   write ParaView data collections [off]: ParaView/
 //           elastogravity_layered (displacement, on the solid SubMesh) and

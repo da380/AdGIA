@@ -10,7 +10,7 @@ namespace AdGIA {
  * @brief Riesz maps: a derivative (a dual vector, assembled against a
  * space's basis) into a gradient in a chosen inner product. The choice
  * of metric is the implicit preconditioner of a descent loop
- * (doc/equilibrium_figures.tex §6): the raw derivative is a functional,
+ * (doc/theory/equilibrium_figures.tex §6): the raw derivative is a functional,
  * not a direction, and identifying the two smuggles in the L2 metric.
  *
  * The maps act on true-dof vectors of one finite-element space; they

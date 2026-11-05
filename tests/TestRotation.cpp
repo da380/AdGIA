@@ -282,7 +282,7 @@ TEST(RotationFluid, FluidCoreTermsEnterTheBorder) {
 }
 
 // The level border's centrifugal coupling (the closure's omega
-// columns; doc/dahlen_closure.tex, "Rotation"): on the fluid-core ball
+// columns; doc/theory/dahlen_closure.tex, "Rotation"): on the fluid-core ball
 // with Earth-like near-neutral moments, (a) polar wander is pure
 // degree 2 and must be INERT to the border, while (b) the omega_3
 // (length-of-day) response reads the fluid's degree-0 inertia

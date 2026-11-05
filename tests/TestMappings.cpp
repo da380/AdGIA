@@ -6,7 +6,7 @@
 //     gradient F^{-T} v) against closed forms.
 //  2. GridFunctionDiffeomorphism reproduces a polynomial map lying in its
 //     space to round-off.
-//  3. The discrete change-of-variables identity (doc/mappings.md, "The
+//  3. The discrete change-of-variables identity (doc/methods/mappings.md, "The
 //     discrete change-of-variables identity") on which the mapped
 //     integrator tests rest: for a smooth non-polynomial mapping, the
 //     element transformations of MappedMesh(mesh, xi) factor through the

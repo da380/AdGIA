@@ -106,6 +106,17 @@ benchmark_launcher(elastic/grav elastic/grav from_results)
 benchmark_launcher(elastic/nongrav elastic/grav compare)
 # pyslfp_reference.py again runs from the pyslfp checkout.
 
+# --- Elastic, manufactured solutions (exact fields, h/p convergence) --------
+
+benchmark_driver(elastic/manufactured manufactured_benchmark)
+benchmark_driver(elastic/manufactured manufactured_fluid_benchmark)
+benchmark_launcher(elastic/manufactured elastic/manufactured run
+    ${BENCHMARK_LAUNCHER_ARGUMENTS})
+benchmark_launcher(elastic/manufactured elastic/manufactured manufacture)
+benchmark_launcher(elastic/manufactured elastic/manufactured manufacture_fluid)
+benchmark_launcher(elastic/manufactured elastic/manufactured run_fluid
+    ${BENCHMARK_LAUNCHER_ARGUMENTS})
+
 # --- Disc (the 2-D family; rung 0 is gravity-free) --------------------------
 
 benchmark_driver(sea_level sea_level_benchmark)
