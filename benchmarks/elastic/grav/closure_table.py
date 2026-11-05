@@ -1,6 +1,15 @@
 """Collate the closed-E2 sweep: convert every Dahlen results file of the
 fluid-core models (naked and bordered, orders 2/3) to exchange files and
-tabulate degree 0 and the worst l>=1 entry against the pyslfp reference."""
+tabulate degree 0 and the worst l>=1 entry against the pyslfp reference.
+
+    closure_table [model ...]
+
+Degree 0 is reported as the plain relative error of h'_0 (and k'_0 as
+AdGIA's value, the reference being ~0).  The worst l>=1 entry uses the
+degree-scale measure of elastic/nongrav/compare.py: each channel's
+difference relative to the largest reference value of its degree, so a
+tiny channel (lT at l=6, say) is judged on the degree's scale, not its
+own.  hp1, hp2 are plain relative errors of h'_l, the dominant channel."""
 import json, subprocess, sys
 from pathlib import Path
 import numpy as np
@@ -11,10 +20,6 @@ B = Path("/home/david/dev/AdGIA/build_parallel/benchmarks")
 RUNS = B / "elastic/grav/runs"
 sys.path.insert(0, str(SRC / "common"))
 import exchange  # noqa
-
-def read(path):
-    _, _, table = exchange.read_table(path) if hasattr(exchange, "read_table") else exchange.read(path)
-    return table
 
 def load(path):
     rows = [l.split() for l in Path(path).read_text().splitlines()
@@ -49,11 +54,16 @@ for model in models:
             for l in sorted(a):
                 if l < 1 or l not in ref:
                     continue
+                live = [(x, y) for x, y in zip(a[l], ref[l])
+                        if not (np.isnan(x) or np.isnan(y))]
+                scale = max((abs(y) for _, y in live), default=0.0)
+                if scale == 0.0:
+                    continue
                 for j, c in enumerate(cols):
                     x, y = a[l][j], ref[l][j]
-                    if np.isnan(x) or np.isnan(y) or y == 0:
+                    if np.isnan(x) or np.isnan(y):
                         continue
-                    e = abs(x - y) / abs(y)
+                    e = abs(x - y) / scale
                     if e > worst[0]:
                         worst = (e, f"{c}{l}")
             hp = lambda l: abs(a[l][0] - ref[l][0]) / abs(ref[l][0])
