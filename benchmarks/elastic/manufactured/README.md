@@ -85,7 +85,7 @@ mapped (aspherical) machinery (its weak form differs, and an aspherical
 hydrostatic background needs rotation: a separate derivation), and the
 viscoelastic stepping.
 
-## Findings (5 November 2026, laptop)
+## Findings
 
 Meshes from `homogeneous_body.py` (order-2 geometry, buffer to 1.5 radii,
 far size 2h), MINRES to 1e-11, relative L2 errors of u, of the stress
@@ -133,27 +133,27 @@ Order 4 at h 0.025 meets the order-2 geometry's floor (errors ~1e-9).
 In 3-D (h 0.3 to 0.1, order 3, potential order 4): exact Hessian u 4.05,
 stress 3.09 at the last step; interpolant 3.77 and 2.38, the stress error
 1.8 times larger at h 0.1. The 3-D ladder is pre-asymptotic at these
-sizes (laptop); the clean picture needs h 0.075 and 0.05 on the server.
+sizes.
 
 With the discrete Hessian at the SAME order the stress is optimal (order
 3: 3.0) and the displacement is held at p by the gradient (3.0); at
 order 2 nothing changes (second order was already optimal).
 
-**The class default is now the discrete Hessian** (David, 5 November
-2026). Costs on the 3-D h 0.15 mesh (4 ranks, laptop): interpolant 2.1 s
+**The class default is the discrete Hessian.** Costs on the 3-D h 0.15
+mesh (4 ranks): interpolant 2.1 s
 / 10.0 s at orders 2 / 3; discrete Hessian 2.4 s / 10.8 s, same
 iteration counts; with the potential one order up 4.2 s / 18.3 s, the
 potential unknowns tripling. The driver's `-interpolant` (`run
---interpolant`) restores the old route; the potential order is the
+--interpolant`) selects the interpolant; the potential order is the
 drivers' `-ophi`.
 
-**Consequence for the benchmark programme.** Every gravitating solve of
-the mixed class before the default changed, the E2 and V1 order-3 runs
-of 5 November included, was second-order accurate in the energy norm;
-surface observables (Love numbers) gain the duality orders and did
-improve about 20× from order 2 to 3 at h 0.3, consistent with an
-L2-like rate of 3 rather than 4. Results at the discretisation level
-move with the new default (see the E2 rerun noted below).
+**Consequence for the benchmark programme.** With the interpolant every
+gravitating solve of the mixed class is second-order accurate in the
+energy norm; surface observables (Love numbers) gain the duality orders
+(about 20× from order 2 to 3 at h 0.3, consistent with an L2-like rate
+of 3 rather than 4). Results computed with the interpolant move at the
+discretisation level under the default (fluid_core at h 0.3, order 3:
+h'_0 from 2.1e-5 to 1.4e-5; the l ≥ 1 entries, mesh-dominated, unchanged).
 
 Tables of every run: `runs_facet/d2_g2*/table.txt`, `d3_g2*/table.txt`
 in the build tree (the ladder script writes `table.txt` beside each

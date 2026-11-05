@@ -3,8 +3,7 @@
  * @brief The discrete second-order adjoint: the derivative of the
  * discrete gradient (discrete_adjoint.hpp) along a model direction v,
  * i.e. the exact Hessian-vector product of the discrete objective,
- * symmetric to rounding. Design: doc/planning/adjoint_note.md, "The
- * discrete second-order adjoint".
+ * symmetric to rounding (doc/adjoints.md, section 5).
  */
 #pragma once
 #include <memory>
@@ -71,8 +70,7 @@ class DualData : public TangentData {
  * with delta's sources on the forward trajectory, plus the first-order
  * duals paired with delta's sources on v's tangent trajectory, plus the
  * parameter cross terms (the scheme's second derivative in the model).
- * Whole-mesh branches, linear isotropic rheologies; serial pairings
- * (parallel reductions pending, as in DiscreteAdjointSolver).
+ * Whole-mesh branches, linear isotropic rheologies; serial pairings.
  */
 class DiscreteSecondOrderSolver {
  public:

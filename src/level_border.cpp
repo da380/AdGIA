@@ -162,7 +162,8 @@ real_t LevelBorder::FluidBlockMinEigenvalue(Vector* eigenvalues) const {
   // Restricted to the interior nodes: the wall values of U are fixed by
   // the solid through the constraint rows, and it is on that set that
   // the closure's form is coercive (the boundary terms of the
-  // null-Lagrangian identity vanish there; closure_notes_v3 §6.5).
+  // null-Lagrangian identity vanish there; doc/dahlen_closure.tex,
+  // "Existence, uniqueness and stability").
   std::vector<int> free;
   for (int i = 0; i < nU; i++) {
     const int node = centre ? i + 1 : i;
@@ -326,9 +327,10 @@ std::vector<LevelBorder> BuildLevelBorders(
     const real_t range = c_top - c_bot;
     // The level-wall check: each wall is taken at the area mean of Phi0
     // and must be a level surface of it to the tolerance (transverse
-    // walls, closure_notes_v3 §4.5/§7.2, are not built); on a shell the
-    // two walls' bands of levels must not overlap (exact_theory §4: the
-    // region's Reeb graph is then a single edge).
+    // walls, doc/dahlen_closure.tex "Transverse walls" and "Disconnected
+    // levels: the closure on the tree", are not built); on a shell the
+    // two walls' bands of levels must not overlap ("The level structure
+    // of the potential": the region's Reeb graph is then a single edge).
     L.wall_level_min = {top_min};
     L.wall_level_max = {top_max};
     MFEM_VERIFY(top_max - top_min <= ctx.wall_level_tol * range,

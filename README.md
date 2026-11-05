@@ -28,22 +28,24 @@ problem along moduli, viscosity and load directions (`tangent.hpp`, gated
 against finite differences and the adjoint), and the second-order adjoint,
 the Hessian-vector product as the derivative of the kernels along a
 direction (`second_order.hpp`, gated against finite differences of the
-kernels). Next are the interface (lithospheric-thickness) kernels, checkpointing
-beyond store-all and a production interface for inversion; the shape stage
-of the equilibrium-figures programme and nonlinear forward models lie
-further out. Benchmarking against independent reference solutions
-(`benchmarks/`) and solver performance continue. The library is under
-active development and is not yet user-facing: interfaces move.
+kernels); and the discrete flavour of both, the exact transpose of the
+stepping and its derivative (`discrete_adjoint.hpp`,
+`discrete_second_order.hpp`, gated by identities with the tangent and
+by symmetry), the method a user option (`doc/adjoints.md`). The library is under active development and is not yet
+user-facing: interfaces move.
 
-**Fluid regions.** For coupled elasto-gravity problems with fluid regions,
-the Maxwell relaxation of the fluid (`SetFluid`'s default treatment) is the
-general method — any geometry, any stratification, any number of regions.
-The gauge-penalty treatment is clean only for neutrally stratified fluids:
-at N² ≠ 0 its semi-convergence is Rayleigh–Taylor growth, and answers are
-defined only to the stratification band. For hydrostatic (spherical)
-models Dahlen's mixed formulation is the practical workhorse; the slipping
-and welded formulations are finite idealisations of the dissipative
-completion and serve as instruments.
+**Fluid regions.** For coupled elasto-gravity problems with fluid regions
+on a hydrostatic background, Dahlen's mixed formulation closed by the
+level border (`SetLevelBorder`, `doc/dahlen_closure.tex`) is the static
+method, at every degree and on any geometry with level walls. The Maxwell
+relaxation of the fluid (`SetFluid`'s default treatment) is the general
+dissipative route — any geometry, any stratification, any number of
+regions — and the method where the hydrostatic assumption fails. The
+gauge-penalty treatment is clean only for neutrally stratified fluids: at
+N² ≠ 0 its semi-convergence is Rayleigh–Taylor growth, and answers are
+defined only to the stratification band. The slipping and welded
+formulations are finite idealisations of the dissipative completion and
+serve as instruments.
 
 ## Quick start
 
@@ -154,9 +156,7 @@ The API is documented in the headers: the Doxygen pages are hosted at
 [da380.github.io/AdGIA](https://da380.github.io/AdGIA/), rebuilt from `main`
 by CI, and are built locally with `BUILD_DOCS`.
 
-The method, theory and planning notes live under `doc/` in the working
-tree but are not tracked in the repository for now. The tracked
-documentation is practical:
+The practical documentation:
 
 | Document | Subject |
 |---|---|
@@ -165,7 +165,30 @@ documentation is practical:
 | `meshes/README.md` | mesh generation, the files written and the attribute conventions |
 | `benchmarks/README.md` | the benchmark families: comparisons with independent reference solutions |
 | `earth_data/README.md` | the earth-data tools: real-Earth datasets in, maps out (maps, NetCDF, ice-ng sampling, topography grids) |
-| `doc/adjoints.md` | the derivative machinery: the continuous and discrete adjoints, the tangent-linear problem and second order, what each gate checks (a method note in the working tree, not tracked for now) |
+
+The method and theory notes are in `doc/`: Markdown method notes on the
+headers they describe, and longer LaTeX notes (built with
+`latexmk -pdf <note>.tex` in `doc/`).
+
+| Note | Subject |
+|---|---|
+| `doc/quasi_static_models.tex` | the quasi-static problem classes: physical models, approximations, discretisation and solvers |
+| `doc/self_gravitation.md` | the mixed self-gravitating problem: equations, interface conditions, assembly, solvers, verification |
+| `doc/gravitating_elasticity.md` | linearised self-gravitating elasticity, the theory of the referential classes |
+| `doc/viscoelasticity.md` | quasi-static problems, rheologies and viscoelastic time stepping |
+| `doc/adjoints.md` | the derivative machinery: the continuous and discrete adjoints, the tangent-linear problem and second order, what each gate checks |
+| `doc/generalised_rotation.md` | the generalised rotational theory as implemented |
+| `doc/dahlen_closure.tex` | Dahlen's fluid closure and its generalisation to fluid regions of any shape |
+| `doc/static_fluid_core.tex` | the static response of a body with a stratified fluid core |
+| `doc/gauged_fluid.md`, `doc/gauge_penalty_iteration.tex` | the gauged treatment of fluid regions and its regularisation machinery |
+| `doc/slip_interface.tex` | the slipping fluid–solid interface in the referential formulation |
+| `doc/pressure_split.tex` | the pressure-split (u, p) solve and its block preconditioner |
+| `doc/equilibrium_figures.tex` | equilibrium states and hydrostatic figures by constrained optimisation |
+| `doc/mappings.md` | mapped (relabelled) forms and the `Diffeomorphism` interface |
+| `doc/elastic_tensors.md`, `doc/null_space.md`, `doc/submesh_coupling.md` | elastic tensors; null spaces, projection and gauge; coupling forms across a mesh and its SubMesh |
+| `doc/mfem_notes.md` | MFEM behaviours the library relies on or works around |
+| `doc/benchmarks.tex` | the benchmark families of `benchmarks/` and their measurements |
+| `doc/benchmark_programme.tex` | the cross-code benchmark hierarchy with sl3dpp and pyslfp |
 
 ## Installation
 

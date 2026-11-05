@@ -341,7 +341,7 @@ TEST(Manufactured, DiscreteHessianOfQuadraticPotential) {
     EXPECT_LT(worst_straight, 1e-10);
     // Curved elements carry the interpolant's own error (the quadratic
     // composed with the quadratic map is quartic): 7 % on the 2-D disc,
-    // 78 % on the deliberately coarse 3-D ball, measured 5 Nov 2026.
+    // 78 % on the deliberately coarse 3-D ball, measured.
     EXPECT_LT(worst, 1.0);
   }
 }
@@ -355,7 +355,7 @@ TEST(Manufactured, ConvergesWithOrder2D) {
                 << e.back().phi << " rigid " << e.back().rigid << "\n";
     }
   }
-  // Measured 5 Nov 2026 on disc_buffer_2d: u 4.6e-2, 9.0e-5, 5.0e-7;
+  // Measured on disc_buffer_2d: u 4.6e-2, 9.0e-5, 5.0e-7;
   // phi 4.6e-3, 8.8e-5, 1.0e-6.
   EXPECT_LT(e[0].u, 0.1);
   EXPECT_LT(e[1].u, 3e-4);
@@ -370,11 +370,11 @@ TEST(Manufactured, ConvergesWithOrder2D) {
 // The gravity term assembled by the product rule with the Hessian of
 // Phi0 -- the class's default, with the Hessian of the discrete Phi0, and
 // the exact Hessian (SetBackgroundHessian) -- against the nodal
-// interpolant (the default before 5 November 2026), at order 3 with the
+// interpolant (the former default), at order 3 with the
 // potential one order higher (so that the background gravity itself is
 // exact and the discrete Hessian equals the exact one): the interpolant's
 // second-order consistency error shows at order 3, the product rule
-// removes it. Measured 5 Nov 2026 on disc_buffer_2d: u 1.8e-7 vs 8.9e-8,
+// removes it. Measured on disc_buffer_2d: u 1.8e-7 vs 8.9e-8,
 // stress 1.2e-5 vs 3.8e-6.
 TEST(Manufactured, HessianBeatsInterpolant2D) {
   const Errors interp = Solve(2, 3, Gravity::Interpolant, 4);
@@ -400,7 +400,7 @@ TEST(Manufactured, ConvergesWithOrder3D) {
                 << e.back().phi << " rigid " << e.back().rigid << "\n";
     }
   }
-  // Measured 5 Nov 2026 on ball_buffer_coarse_3d: u 1.8e-1, 1.1e-2;
+  // Measured on ball_buffer_coarse_3d: u 1.8e-1, 1.1e-2;
   // phi 1.2e-1, 1.2e-2.
   EXPECT_LT(e[0].u, 0.3);
   EXPECT_LT(e[1].u, 3e-2);

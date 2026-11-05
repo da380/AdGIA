@@ -522,7 +522,7 @@ class DomainDivVectorDivVectorIntegrator : public mfem::BilinearFormIntegrator {
  * the form is also applied to oscillatory test functions (through its
  * transpose in a symmetrised form): on a smooth problem the energy-norm
  * error of a gravitating solve is then O(h^2) at every order
- * (benchmarks/elastic/manufactured, 5 November 2026; the mixed
+ * (benchmarks/elastic/manufactured; the mixed
  * self-gravitating class therefore supplies the Hessian of its discrete
  * background potential by default). With SetGradient() the integrator
  * uses the product rule instead,
@@ -1388,7 +1388,7 @@ class ReferentialGravityCouplingIntegrator
  * SlipInterfacePressureIntegrator this is the follower load of a wall
  * held by a hydrostatic fluid: \f$-\pi\f$ times the second variation
  * of the enclosed volume (the eliminated-fluid glue's wall seam;
- * doc/dahlen_closure.tex, "A general pre-stressed solid"). Identity
+ * doc/dahlen_closure.tex, "The wall seam"). Identity
  * equilibrium mapping only; byNODES vector space.
  */
 class BoundaryNormalSurfaceDivergenceIntegrator

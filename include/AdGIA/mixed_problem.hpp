@@ -621,7 +621,7 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
    */
   void SetBackgroundHessian(mfem::MatrixCoefficient* hessian);
 
-  /** @brief THE DEFAULT (5 November 2026): SetBackgroundHessian() with
+  /** @brief THE DEFAULT: SetBackgroundHessian() with
    * the Hessian of the discrete background potential itself
    * (HessianGridFunctionCoefficient on its shadow), accurate to one
    * order below the potential space. With the potential space at the

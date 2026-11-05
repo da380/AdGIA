@@ -711,8 +711,7 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
    * near incompressibility, and effective shear moduli collapsed by
    * @f$\Delta t \gg \tau@f$ viscosity contrasts — move into the Schur
    * block, where a weighted mass matrix absorbs them (see
-   * doc/planning/solvers.md, "Near-incompressible and high-contrast
-   * effective operators").
+   * doc/pressure_split.tex).
    *
    * Scope (the box-contrast prototype): the plain clamped solid only —
    * requires an isotropic(-split) rheology, displacement order >= 2 and no

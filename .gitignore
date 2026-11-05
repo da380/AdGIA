@@ -21,11 +21,6 @@ data/*.mesh
 benchmarks/**/runs/
 **/__pycache__/
 
-# figures copied into the benchmark note from the build tree (regenerate
-# with the box and sphere studies, benchmarks/viscoelastic/*/README.md)
-doc/figures/benchmarks/box_*.png
-doc/figures/benchmarks/sphere_*.png
-
 # LaTeX build artefacts of the notes in doc/ (the PDFs are built from the
 # .tex sources)
 doc/*.aux
@@ -37,11 +32,6 @@ doc/*.fls
 doc/*.fdb_latexmk
 doc/*.synctex.gz
 
-# The method, theory and planning notes (and the benchmark figures) are
-# kept in the working tree only for now; the Doxygen machinery
-# (Doxyfile.in, mainpage.dox, macros.inc, mathjax_config.js) stays tracked.
-doc/*.tex
-doc/*.md
-doc/planning/
+# The papers collected for reference under doc/ (the PDFs are ignored
+# above; BenchmarkPapers/ also holds a working survey)
 doc/BenchmarkPapers/
-doc/figures/

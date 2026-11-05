@@ -2493,8 +2493,7 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::
   // The solid-side wall terms, shared by the serial and parallel glue:
   // the wall buoyancy term F2 (normal-normal) exactly as the mixed
   // class has it, and the integrator half of the hybrid wall seam
-  // (doc/dahlen_closure.tex, "A general pre-stressed solid"; derivation
-  // in doc/planning/hybrid_wall_seam.md): W1 the normal--surface-
+  // (doc/dahlen_closure.tex, "The wall seam"): W1 the normal--surface-
   // divergence kernel at pi_minus = p0 - |grad zeta0|^2/8piG and W2 the
   // symmetrised one-sided pressure kernel at p0 — together the follower
   // load, -p0 times the second variation of the enclosed volume, with

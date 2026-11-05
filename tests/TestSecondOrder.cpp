@@ -379,7 +379,7 @@ TEST(SecondOrder, Viscoelastic2D) {
       // Each row against FD on the SCALE of the Hessian rows (the mu row
       // along v = eta is two orders below its neighbours, 1.2e-8 against
       // 7e-6, and its plain relative FD error is the noise floor of a
-      // small cross term, 4e-4 measured 5 Nov 2026; every other row
+      // small cross term, 4e-4 measured; every other row
       // agrees to 1e-6).
       const real_t scale = std::max({std::abs(fd_kappa), std::abs(fd_mu),
                                      std::abs(fd_eta)});

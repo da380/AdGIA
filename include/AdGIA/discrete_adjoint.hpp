@@ -3,8 +3,8 @@
  * @brief The discrete first-order adjoint: the exact transpose of the
  * exponential-trapezoid scheme (the transpose of tangent.hpp), giving the
  * exact gradient of the discrete objective. The parity with the continuous
- * adjoint of adjoint.hpp that sl3dpp has; design and equations in
- * doc/planning/adjoint_note.md, "The discrete first-order adjoint".
+ * adjoint of adjoint.hpp that sl3dpp has; the equations are in
+ * doc/adjoints.md, section 5.
  */
 #pragma once
 #include <memory>

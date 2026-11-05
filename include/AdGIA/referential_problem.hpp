@@ -394,8 +394,8 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
    * SubMesh mode only (no ball-wide displacement). The regions source
    * the background potential; their perturbation terms — F1, F2, the
    * fluid halves of F3, the follower load and the level border
-   * (doc/dahlen_closure.tex, "A general pre-stressed solid" and the
-   * implementation plan) — are not yet assembled, and Solve() refuses
+   * (doc/dahlen_closure.tex, "The referential solid, and the wall
+   * seam") — are not yet assembled, and Solve() refuses
    * until they are. Empty for a solid body.
    */
   LinearQuasiStaticReferentialSelfGravitatingProblem(

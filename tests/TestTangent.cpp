@@ -188,7 +188,7 @@ TEST(Tangent, Static2D) {
       std::cout << "static: tangent " << dJ << " fd " << ref << " adjoint "
                 << r.adjoint << "\n";
     }
-    // Measured 5 Nov 2026: FD agreement at the adjoint's level (1e-6),
+    // Measured: FD agreement at the adjoint's level (1e-6),
     // tangent/adjoint agreement to solver tolerance.
     EXPECT_NEAR(dJ / ref, 1.0, 1e-5);
     EXPECT_NEAR(dJ / r.adjoint, 1.0, 1e-8);
@@ -389,7 +389,7 @@ TEST(Tangent, Viscoelastic2D) {
           << names[p] << " cont";
       // Against the adjoint: the point functionals pair to solver
       // tolerance; the continuous one carries the adjoint's O(dt^2)
-      // time-quadrature floor (measured 5 Nov 2026: 3e-6 on kappa and
+      // time-quadrature floor (measured: 3e-6 on kappa and
       // mu, 1e-3 on eta, where TestAdjoint records 9.8e-4), while the
       // tangent's continuous rows sit at the FD level with the others.
       EXPECT_NEAR(tan[p][c].J_end / Ke[p]->Directional(c), 1.0, 1e-6)
@@ -839,7 +839,7 @@ TEST(Tangent, GravitatingViscoelastic2D) {
       // FD on the curved disc: the adjoint test records rows at 1.6e-4
       // and the mu blob rows at 1.3e-3 (the strain-map floor); the
       // tangent is held to the FD level.
-      // Measured 5 Nov 2026: every row within 3e-5 of FD (the eta blob
+      // Measured: every row within 3e-5 of FD (the eta blob
       // rows at 3.0e-5 and 2.7e-5), the curved disc's FD floor.
       EXPECT_NEAR(dJ_u / fd_u, 1.0, 1e-4) << names[p] << " u";
       EXPECT_NEAR(dJ_phi / fd_phi, 1.0, 1e-4) << names[p] << " phi";
@@ -1119,7 +1119,7 @@ TEST(Tangent, WaterLoadFrozen3D) {
 // the strain exactly, so the effective solve and the unrelaxed form
 // differ): the three directions against FD. This is the case that
 // caught the tangent differentiating the unrelaxed form instead of the
-// assembled effective one (5 Nov 2026: mu and eta rows 0.5 % off at 8
+// assembled effective one (mu and eta rows 0.5 % off at 8
 // steps, halving with the step count; exact once the Born force carries
 // the weights and their derivative).
 TEST(Tangent, CurvedElements3D) {

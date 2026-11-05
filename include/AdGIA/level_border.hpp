@@ -2,8 +2,8 @@
  * @file level_border.hpp
  * @brief The level border of the Dahlen closure: the one-dimensional
  * bordered extension that closes the eliminated hydrostatic fluid's
- * per-level mass budget (doc/dahlen_closure.tex, "The closure in the
- * cumulative-volume variable" and "Implementation"). The builder is
+ * per-level mass budget (doc/dahlen_closure.tex, "The closure equation
+ * and its end conditions" and "Implementation"). The builder is
  * shared by the mixed class (Eulerian potential) and the referential
  * class (which conjugates the columns through its potential glue); the
  * bordered algebra itself runs on the shared elimination engine
@@ -58,7 +58,8 @@ struct LevelBorder {
    * at @f$\delta V = 0@f$ on the interior @f$U@f$ nodes (the wall
    * values are the solid's, fixed). Positive means the
    * closure's quadratic form is coercive: a theorem for @f$D\le 0@f$,
-   * a check for @f$D>0@f$ (closure_notes_v3 §6.5; a uniform compressible
+   * a check for @f$D>0@f$ (doc/dahlen_closure.tex, "Existence,
+   * uniqueness and stability"; a uniform compressible
    * core has @f$D=\rho^2/\kappa>0@f$ and loses coercivity at small
    * enough @f$\kappa@f$). All eigenvalues in @p eigenvalues if given.
    * Dense Jacobi iteration (no LAPACK needed); the block is small.

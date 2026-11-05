@@ -243,7 +243,7 @@ TEST(DiscreteAdjoint, Static2D) {
                 << ", discrete/continuous - 1 = " << dJ / cont[p] - 1.0
                 << "\n";
     }
-    // Measured 5 Nov 2026: discrete/tangent - 1 = 4.5e-10 (kappa blob),
+    // Measured: discrete/tangent - 1 = 4.5e-10 (kappa blob),
     // -3.6e-12 (mu all); the kappa-blob row is a round-off floor of the
     // two solves (the pairing cancels 25-fold, and tighter solver
     // tolerances, 1e-13 to 1e-15, leave it between 1e-10 and 5e-10).
@@ -420,7 +420,7 @@ TEST(DiscreteAdjoint, WaterLoadFrozen3D) {
   // Every problem carries the water feedback and the rotation; the twins
   // with a zero data load. The solves run at the class default tolerance
   // 1e-12 (TestTangent's 1e-11 leaves the sea-level row at 1.0e-8): the
-  // identity follows the solver tolerance, measured 5 Nov 2026 at
+  // identity follows the solver tolerance, measured at
   // 9.4e-8 / 8.9e-7 (u / sea level) for 1e-10, 2.3e-9 / 1.0e-8 for 1e-11,
   // 1.0e-9 / 4.1e-9 for 1e-12 and 5.4e-11 / 1.5e-9 for 1e-13.
   auto make_problem = [&](Coefficient& data) {

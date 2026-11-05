@@ -3,9 +3,8 @@
  * @brief The second-order adjoint: the derivative along a model direction
  * v of the first-order kernels (the action of the objective's Hessian on
  * v), by the tangent of the adjoint sweep — the forward-mode twin of the
- * first-order adjoint applied to the adjoint itself. Hessians plan, 5
- * November 2026, item A3; sl3dpp's continuous second-order sweep
- * (docs/dev/adjoints.md §9) is the model.
+ * first-order adjoint applied to the adjoint itself. sl3dpp's continuous
+ * second-order sweep is the model; the method is in doc/adjoints.md.
  */
 #pragma once
 #include <memory>

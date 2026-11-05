@@ -236,8 +236,8 @@ TEST(MixedProblemGauged, Degree0MatchesDahlenWithLevelBorder2D) {
   ExpectDegree0Agreement(2, 2, 16, 1.5e-1);
 }
 
-// The fluid block's energy (closure_notes_v3 §6.5; the consolidated
-// dahlen_closure.tex): the closure's quadratic form J[V] at zero
+// The fluid block's energy (doc/dahlen_closure.tex, "Existence,
+// uniqueness and stability"): the closure's quadratic form J[V] at zero
 // potential is coercive for D <= 0 — a theorem — and only a check for
 // D > 0. The canned outer core is Adams-Williamson at scale 1 (D = 0),
 // where the smallest eigenvalue of the border's fluid block must be

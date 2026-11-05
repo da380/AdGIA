@@ -25,7 +25,7 @@ own tests.
 
 Columns `l hp lp kp hT lT kT`, dimensionless:
 
-- **pyslfp** — from its checkout: `cd ~/dev/pyslfp && poetry run python
+- **pyslfp** — from its checkout: `cd <pyslfp checkout> && poetry run python
   .../benchmarks/elastic/grav/pyslfp_reference.py --out <runs dir>`.
 - **sl3dpp** — its `love_numbers` driver
   (`-DSL3DPP_BUILD_BENCHMARKS=ON`): `love_numbers <deck> <lmax>
@@ -43,7 +43,7 @@ Columns `l hp lp kp hT lT kT`, dimensionless:
   5e-11 over homogeneous, two_solid and fluid_core — both converged.
 - AdGIA (dahlen, h 0.3, order 2, lmax 6) ↔ pyslfp: worst 2e-2 at the
   degree-resolution edge, ~1e-3 in the resolved channels; degree 1
-  agrees at 1.4e-3 with k'_1 = -1 to rounding in both, the first
+  agrees at 1.4e-3 with k'_1 = -1 to rounding in both, a
   cross-code check of the centre-of-mass frame conventions.
 - fluid_core, same resolution: Dahlen agrees with pyslfp at the same
   FEM level for l >= 1 while its degree 0 is wrong by design (h'_0 off
@@ -51,7 +51,7 @@ Columns `l hp lp kp hT lT kT`, dimensionless:
   rather than benchmarked); the Maxwell-core method agrees at every
   degree *including* 0 (h'_0 to 4.5e-3), at several times Dahlen's
   cost per solve.
-- pyslfp ↔ sl3dpp on the fluid-core variants (21 Oct 2026): inner_core
+- pyslfp ↔ sl3dpp on the fluid-core variants: inner_core
   worst 8.6e-12 (k'_0; h' 3.8e-12), stratified_core 8.2e-12 (h'_1; l',
   k' 6e-12), tidal at most 2.1e-12 on both; sl3dpp's reciprocity
   residual 4–8e-16 on all three variants.
@@ -74,16 +74,16 @@ Columns `l hp lp kp hT lT kT`, dimensionless:
   (deck) agree to the deck's own accuracy; write aw_core's deck with more
   knots when degree 0 is at stake, and quote `decks.py`'s round-trip
   error with the comparison.
-- AdGIA on the fluid-core variants (21 Oct 2026; h 0.3, order 2,
+- AdGIA on the fluid-core variants (h 0.3, order 2,
   degrees 0–6, 8 ranks; cases by the love_numbers family's `run` script,
   `make_case <model> --h 0.3 --buffer 0.2 --angular 0.3 --thin 4 --lmax
   10`, solved by `love_benchmark -o 2 -rt 1e-10 -s 1 -method
   dahlen|maxwell -lmin 0 -lmax 6 -deg 16`): the fluid_core pattern
   repeats on every variant. These are NAKED Dahlen runs (no level
-  border, before the closure was built): `from_results` leaves their
+  border): `from_results` leaves their
   degree 0 out (NaN) of the exchange file, so the Dahlen worst is over
   l >= 1; the Dahlen degree-0 values quoted below are from the results
-  JSON. Runs closed by the level border are to follow. The worst entry
+  JSON. The worst entry
   is h'_6 in every run; seconds on 8 ranks:
 
   | model | route | worst | hp2 | hp1, lp1 | hp0 | s |

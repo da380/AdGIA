@@ -6,7 +6,7 @@
  * load, as one more march of the same stepping with source terms built
  * from the stored forward trajectory. The forward-mode counterpart of
  * adjoint.hpp, and the first ingredient of second-order adjoints and of
- * Gauss-Newton (Hessians plan, 5 November 2026, item A2).
+ * Gauss-Newton.
  */
 #pragma once
 #include <functional>

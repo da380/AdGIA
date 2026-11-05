@@ -781,9 +781,7 @@ TEST(ReferentialProblem, FluidCoreGlueCrossCheck2D) {
     // Zero-mean degree-2 load: with an eliminated fluid the potential
     // constant is not a null direction, and the two classes gauge it on
     // different variables (phi vs zeta), so a load with a mean picks
-    // different degree-0 members however good the wall seam
-    // (doc/planning/hybrid_wall_seam.md, "Reconciliation with the
-    // gate").
+    // different degree-0 members however good the wall seam.
     FunctionCoefficient sigma([](const Vector& x) {
       const double r2 = x * x;
       return r2 == 0.0 ? 0.0 : 0.03 * (x[0] * x[0] - x[1] * x[1]) / r2;

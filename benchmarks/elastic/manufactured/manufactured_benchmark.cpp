@@ -274,8 +274,8 @@ int main(int argc, char* argv[]) try {
                  "the class's default, the Hessian of the discrete Phi0.");
   args.AddOption(&interpolant, "-interpolant", "--interpolant",
                  "-hessian", "--hessian",
-                 "The nodal interpolant of u.grad Phi0 (the default before "
-                 "5 November 2026) instead of the product rule.");
+                 "The nodal interpolant of u.grad Phi0 (the former default) "
+                 "instead of the product rule.");
   args.AddOption(&mass_gauge, "-mass-gauge", "--mass-weighted-gauge",
                  "-euclid-gauge", "--euclidean-gauge",
                  "Gauge the rigid modes by zero momentum instead of the "

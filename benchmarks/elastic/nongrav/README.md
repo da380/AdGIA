@@ -26,7 +26,7 @@ Each code reduces its answer to one exchange file per model
 - **analytic** — `reference` (a launcher in this directory's build
   twin): `./reference --lmax 32 --out runs`.
 - **pyslfp** — from the pyslfp checkout, which owns its environment:
-  `cd ~/dev/pyslfp && poetry run python
+  `cd <pyslfp checkout> && poetry run python
   .../benchmarks/elastic/nongrav/pyslfp_reference.py --out <build
   runs dir>` (`--gravitating` writes the full-gravity twin under the
   same forcing, the E2 diagnostic).

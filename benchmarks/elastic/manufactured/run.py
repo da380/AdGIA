@@ -126,7 +126,7 @@ def main(argv=None) -> None:
                         "the Hessian of the discrete Phi0")
     p.add_argument("--interpolant", action="store_true",
                    help="gravity term by the nodal interpolant of "
-                        "u.grad Phi0 (the default before 5 November 2026)")
+                        "u.grad Phi0 (the former default)")
     p.add_argument("--out", type=Path, default=Path("runs"))
     p.add_argument("--programs", default=".",
                    help="directory of the drivers")

@@ -49,8 +49,8 @@ Three conventions carry the programme:
   is the model set. pyslfp consumes the planetmodel objects directly;
   sl3dpp reads the same models as full-precision elastic decks written
   by `common/decks.py` (for the polynomial layers the deck *is* the
-  model to rounding); the FE side meshes the objects as the families do
-  now.
+  model to rounding); the FE side meshes the objects as the families
+  do.
 - **One exchange format.** Each code reduces its answer to a small text
   file of named scalars and one table — SI, `%.17g`, provenance lines
   first — written and read by `common/exchange.py` and reproduced by
