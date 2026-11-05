@@ -202,6 +202,10 @@ void HarmonicCoefficientMeasurement::Assemble(LinearQuasiStaticProblem& problem,
     c = 0.0;
     c[bhc.Basis().Index(l_, m_)] = 1.0;
     bhc.LoadVector(c, dual.u);
+    // LoadVector pairs to R^{d-1} c_i: scale so the value is the
+    // coefficient itself.
+    const int d = problem.DisplacementSpace().GetMesh()->Dimension();
+    dual.u *= std::pow(bhc.Radius(), 1 - d);
   } else {
     auto* slot = dynamic_cast<PotentialForceSlot*>(&problem);
     MFEM_VERIFY(slot, "HarmonicCoefficientMeasurement: the problem has no "
@@ -212,6 +216,8 @@ void HarmonicCoefficientMeasurement::Assemble(LinearQuasiStaticProblem& problem,
     c = 0.0;
     c[bhc.Basis().Index(l_, m_)] = 1.0;
     bhc.LoadVector(c, dual.phi);
+    const int d = slot->PotentialForceSpace().GetMesh()->Dimension();
+    dual.phi *= std::pow(bhc.Radius(), 1 - d);
   }
 }
 

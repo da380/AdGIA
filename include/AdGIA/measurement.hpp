@@ -143,7 +143,11 @@ class SurfacePotentialMeasurement : public Measurement {
  * displacement on the body's spherical surface, or of the potential on
  * the potential space's spherical boundary. The boundary must be a
  * sphere about @p centre (BoundaryHarmonicCoefficients measures and
- * checks the radius). */
+ * checks the radius). The dual is BoundaryHarmonicCoefficients::LoadVector
+ * of the unit coefficient scaled by @f$R^{1-d}@f$, so the value is the
+ * analysis coefficient @f$c_i@f$ of the state to rounding (the analysis
+ * being the transpose of LoadVector), @f$R@f$ the measured radius of the
+ * discrete boundary. */
 class HarmonicCoefficientMeasurement : public Measurement {
  public:
   enum class Field { RadialDisplacement, Potential };

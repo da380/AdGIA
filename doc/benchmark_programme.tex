@@ -1554,18 +1554,29 @@ $\mathbf{g}=\grad\Phi_0$, $\bsig = \kappa(\divg\vu)\mathbf{I} + 2\mu\,
 normal of the body $M$, integration by parts of the class's weak form
 (\code{doc/self\_gravitation.md}) gives the loads of the two rows:
 \begin{align*}
-  \mathbf{f} &= -\divg\bsig + \tfrac12\rho\grad(\vu\cdot\mathbf{g})
-    - \tfrac12\divg(\rho\vu)\,\mathbf{g} + \tfrac12\grad(\rho\,\vu\cdot\mathbf{g})
-    - \tfrac12\rho\,\mathbf{g}\,\divg\vu + \rho\grad\phi
+  \mathbf{f} &= -\divg\bsig + \grad(\rho\,\vu\cdot\mathbf{g})
+    - \divg(\rho\vu)\,\mathbf{g} + \rho\grad\phi
     && \text{in } M,\\
-  \vt &= \bsig\vn + \tfrac12\rho(\vu\cdot\vn)\,\mathbf{g}
-    - \tfrac12\rho(\vu\cdot\mathbf{g})\,\vn && \text{on } \partial M,\\
+  \vt &= \bsig\vn && \text{on } \partial M,\\
   q &= -\frac{\nabla^2\phi}{4\pi G} - \divg(\rho\vu) \ \text{in } M,
   \qquad q = -\frac{\nabla^2\phi}{4\pi G} \ \text{in the buffer},\\
   s &= \frac{\partial_n\phi_{\mathrm{in}} - \partial_n\phi_{\mathrm{out}}}{4\pi G}
     + \rho\,\vu\cdot\vn && \text{on } \partial M.
 \end{align*}
-Three choices keep the test clean. The potential is exactly harmonic in the
+The force is the standard strong form of the pre-stressed problem. The
+class assembles the \emph{symmetrised} weak form, whose Euler--Lagrange
+form carries each gravity term with a half,
+$\tfrac12\rho\grad(\vu\cdot\mathbf{g}) - \tfrac12\divg(\rho\vu)\,\mathbf{g}
++ \tfrac12\grad(\rho\,\vu\cdot\mathbf{g}) - \tfrac12\rho\,\mathbf{g}\,\divg\vu$,
+and the natural traction $\bsig\vn + \tfrac12\rho(\vu\cdot\vn)\mathbf{g}
+- \tfrac12\rho(\vu\cdot\mathbf{g})\vn$; the two differ by
+$\tfrac12(\vu\cdot\mathbf{g})\grad\rho - \tfrac12(\vu\cdot\grad\rho)\,\mathbf{g}$
+in the body and by $\tfrac12\rho[(\vu\cdot\vn)\mathbf{g} -
+(\vu\cdot\mathbf{g})\vn]$ on the surface, both zero on a hydrostatic
+background ($\grad\rho \parallel \mathbf{g}$, and $\mathbf{g} \parallel
+\vn$ on a level surface), and identically here. The derivation works from
+the weak form, so the sources match the assembled equations whatever the
+background. Three choices keep the test clean. The potential is exactly harmonic in the
 buffer, a sum of exterior multipoles about the centre, so the buffer
 carries no source and the DtN condition holds exactly whatever the buffer's
 radius; inside the body it is the interior continuation of the multipoles'

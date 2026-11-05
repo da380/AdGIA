@@ -2,9 +2,10 @@
  * @file discrete_adjoint.hpp
  * @brief The discrete first-order adjoint: the exact transpose of the
  * exponential-trapezoid scheme (the transpose of tangent.hpp), giving the
- * exact gradient of the discrete objective. The parity with the continuous
- * adjoint of adjoint.hpp that sl3dpp has; the equations are in
- * doc/adjoints.md, section 5.
+ * exact gradient of the discrete objective with respect to the moduli and
+ * to the data surface load. The parity with the continuous adjoint of
+ * adjoint.hpp that sl3dpp has; the equations are in doc/adjoints.md,
+ * section 5.
  */
 #pragma once
 #include <memory>
@@ -17,6 +18,19 @@
 
 namespace AdGIA {
 
+namespace detail {
+/** @brief out[q] = int phi_q density dV over the internal scalar space's
+ * basis @p sfes (L2 nodal), with the forward stiffness's own rule
+ * (ElasticityIntegrator: order 2 OrderGrad of the displacement element
+ * of @p ufes), so that a nodal direction paired with @p out equals the
+ * assembled elastic form with that direction's interpolant; the rule is
+ * taken from the first element (a mesh of one element type). */
+void IntegrateAgainstInternalBasis(mfem::Coefficient& density,
+                                   mfem::FiniteElementSpace& ufes,
+                                   mfem::FiniteElementSpace& sfes,
+                                   mfem::Vector& out);
+}  // namespace detail
+
 /**
  * @brief The transposed recursion on the zero-load twin: reversed over
  * the forward grid, the dual of the internal state mu_k^n = e_k (mu_k^{n+1}
@@ -24,7 +38,11 @@ namespace AdGIA {
  * B^T P sum_k [a_k (C_k B_k lambda^{n+1} + mu_k^{n+1}) + b_k mu_k^n] with
  * the step's own effective operator (unrelaxed at n = 0), g_n the
  * observation duals at node n. Whole-mesh branches, linear isotropic
- * rheologies, the Galerkin strain map.
+ * rheologies, the Galerkin strain map. On the mixed gravitating class the
+ * dual solve also returns the duals of the potential, uniform-term and
+ * angular-velocity rows (the twin's Potential(), UniformPotentialTerm()
+ * and AngularVelocity(): the bordered system is symmetric), kept per node
+ * beside lambda^n for the load derivative.
  */
 class DiscreteAdjointOperator : public ViscoelasticOperator {
  public:
@@ -38,6 +56,18 @@ class DiscreteAdjointOperator : public ViscoelasticOperator {
   int Size() const { return static_cast<int>(lambda_.size()); }
   const mfem::GridFunction& Lambda(int n) const { return *lambda_[n]; }
   const mfem::Vector& Mu(int n) const { return mu_[n]; }
+  /** @brief The dual of the potential rows at node @p n (on the parent
+   * mesh's potential space); null unless the twin is the mixed
+   * gravitating class. */
+  const mfem::GridFunction* PotentialDual(int n) const {
+    return phi_dual_[n].get();
+  }
+  /** @brief The dual of the uniform-term row at node @p n (0 without a
+   * water load). */
+  mfem::real_t UniformDual(int n) const { return uniform_dual_[n]; }
+  /** @brief The dual of the angular-velocity rows at node @p n (empty
+   * without rotation). */
+  const mfem::Vector& OmegaDual(int n) const { return omega_dual_[n]; }
 
   /** @brief y = B^T P x (the transpose of the strain map), x in the full
    * internal layout, y the displacement L-vector. */
@@ -69,6 +99,9 @@ class DiscreteAdjointOperator : public ViscoelasticOperator {
 
   std::vector<std::unique_ptr<mfem::GridFunction>> lambda_;
   std::vector<mfem::Vector> mu_;
+  std::vector<std::unique_ptr<mfem::GridFunction>> phi_dual_;
+  std::vector<mfem::real_t> uniform_dual_;
+  std::vector<mfem::Vector> omega_dual_;
   PotentialForceSlot* phi_slot_ = nullptr;
   BorderForceSlot* border_slot_ = nullptr;
   mutable mfem::Vector px_, zb_;
@@ -92,6 +125,24 @@ class DiscreteAdjointOperator : public ViscoelasticOperator {
  *
  * The kernels as dual vectors on the internal space: AddKernel(),
  * AssembleKernels(), Dual(), Pair() (quasi-static configuration).
+ *
+ * The DATA SURFACE LOAD (frozen shoreline; both configurations): the
+ * problem is linear in its load, so dJ along a load direction delta sigma
+ * is the sum over the solves of the dual state paired with the full
+ * assembled load of delta sigma at the solve's time,
+ *
+ *     dJ = sum_n [ <lambda^n, f_u^n> + <phi^n_dual, l_phi^n>
+ *                  + Phi_g^n_dual S^n + omega^n_dual . r^n ],
+ *
+ * every row the load touches (displacement force, potential load, the
+ * uniform-term datum int delta sigma dS, the omega-row data
+ * -int delta sigma Pi psi_k dS) against its dual: DirectionalLoad() reads
+ * them off a load twin, LoadDual() is the transpose of that assembly on
+ * the body's scalar trace space, int psi_j g SL1(dual) dS with
+ * g SL1(dual) = -(lambda . grad Phi0 + phi_dual + psi(omega_dual)
+ * - Phi_g_dual), the discrete counterpart of SeaLevelLoadKernel. Static
+ * configuration: n runs over the point observations, the load at t = 0.
+ * The migrating ocean and the quelled ice kernels are not built here.
  */
 class DiscreteAdjointSolver {
  public:
@@ -117,6 +168,58 @@ class DiscreteAdjointSolver {
    * of the force's observations (static configuration, after Run()). */
   int NumStaticDuals() const { return static_cast<int>(lambda_.size()); }
   const mfem::GridFunction& StaticDual(int i) const { return *lambda_[i]; }
+
+  // --- the data surface load ------------------------------------------------
+
+  /**
+   * @brief dJ along the load of @p load_twin (global in parallel): a twin
+   * of the forward problem whose own load is the direction (on the mixed
+   * class its water-load DATA is delta sigma(x, t), time-aware through
+   * AssembleForce(t) as in the forward), with no moduli direction — the
+   * tangent's load direction. Per solve of the forward (quasi-static: the
+   * unrelaxed start at node 0 and the effective solve of each step,
+   * paired with lambda^n; static: each point observation's dual, the load
+   * at t = 0) the twin's AssembleForce(t_n) is read row by row and paired
+   * with the dual state: the external load with lambda, and on the mixed
+   * class PotentialLoad(), UniformRowLoad() and AngularVelocityRowLoad()
+   * with the potential, uniform-term and omega duals; on a class without
+   * a potential, the external load alone. A tidal potential on the load
+   * twin and the referential class are refused (their rows are not
+   * read); Dirichlet data are not read.
+   */
+  mfem::real_t DirectionalLoad(LinearQuasiStaticProblem& load_twin);
+
+  /**
+   * @brief Assemble the load duals of the mixed gravitating class (after
+   * Run()): per solve, the transpose of the surface-load assembly on the
+   * body boundary marked in @p surface_marker (SubMesh attributes, as
+   * SetWaterLoad takes them) applied to the dual state,
+   * j_n = int psi_j g SL1(dual_n) dS on LoadDualSpace(), each term by the
+   * quadrature rule of the row it transposes (2 p_u for the displacement
+   * rows' VectorBoundaryLFIntegrator, the default BoundaryLFIntegrator
+   * rule of LoadDualSpace() for the potential, mass and omega rows), so
+   * that sum_n PairLoad(LoadDual(n), delta_sigma(t_n)) = DirectionalLoad()
+   * to rounding for a load read as a GridFunctionCoefficient of
+   * LoadDualSpace() fields.
+   */
+  void AssembleLoadDuals(const mfem::Array<int>& surface_marker);
+  int NumLoadDuals() const { return static_cast<int>(load_duals_.size()); }
+  /** @brief The load dual of solve @p n (quasi-static: node n; static:
+   * observation n), in the LinearForm layout of LoadDualSpace() (the
+   * rank's partial sums; pair with PairLoad()). */
+  const mfem::Vector& LoadDual(int n) const { return load_duals_[n]; }
+  /** @brief Sum over the solves of LoadDual(n): the dual for a load
+   * constant in time (the discrete objective samples the load at the
+   * nodes, so the sum carries no time weights). */
+  const mfem::Vector& IntegratedLoadDual() const { return load_dual_sum_; }
+  /** @brief The space of the load duals: the twin's
+   * PotentialSpaceOnBody(), the body's scalar space on which the class
+   * assembles its surface-load forms. */
+  mfem::FiniteElementSpace& LoadDualSpace();
+  /** @brief <dual, delta> for a load dual and a load @p delta on
+   * LoadDualSpace() (global in parallel, shared dofs once). */
+  mfem::real_t PairLoad(const mfem::Vector& dual,
+                        const mfem::GridFunction& delta) const;
 
   // --- the kernels as dual vectors (stage 2) --------------------------------
 
@@ -153,6 +256,19 @@ class DiscreteAdjointSolver {
    * element-local (L2) dofs; the identity in serial. */
   mfem::real_t SumOverRanks(mfem::real_t local,
                             mfem::FiniteElementSpace& fes) const;
+  /** @brief The assembled load of @p load_twin (after its AssembleForce)
+   * paired with one dual state, every row the load touches. */
+  mfem::real_t PairAssembledLoad(LinearQuasiStaticProblem& load_twin,
+                                 const mfem::GridFunction& lambda,
+                                 const mfem::GridFunction* phi,
+                                 mfem::real_t uniform,
+                                 const mfem::Vector& omega) const;
+  /** @brief The dual states of the solves (static or quasi-static). */
+  int NumSolves() const;
+  void DualState(int n, const mfem::GridFunction*& lambda,
+                 const mfem::GridFunction*& phi, mfem::real_t& uniform,
+                 const mfem::Vector*& omega) const;
+  mfem::real_t SolveTime(int n) const;
 
   struct Kernel {
     Parameter parameter;
@@ -167,12 +283,17 @@ class DiscreteAdjointSolver {
   LinearQuasiStaticProblem* twin_ = nullptr;
   const mfem::GridFunction* u_forward_ = nullptr;
   std::vector<std::unique_ptr<mfem::GridFunction>> lambda_;
+  std::vector<std::unique_ptr<mfem::GridFunction>> phi_dual_;
+  std::vector<mfem::real_t> uniform_dual_;
+  std::vector<mfem::Vector> omega_dual_;
   // Quasi-static configuration.
   ForwardTrajectory* forward_ = nullptr;
   std::unique_ptr<DiscreteAdjointOperator> op_;
   std::unique_ptr<TangentViscoelasticOperator> src_;
   const AdjointForce* force_ = nullptr;
   std::vector<Kernel> kernels_;
+  std::vector<mfem::Vector> load_duals_;
+  mfem::Vector load_dual_sum_;
 };
 
 }  // namespace AdGIA

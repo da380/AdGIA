@@ -1058,6 +1058,14 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetRotation(
 }
 
 Coefficient&
+LinearQuasiStaticMixedSelfGravitatingProblem::UnitCentrifugalPotential(int k) {
+  MFEM_VERIFY(rot_enabled_, "UnitCentrifugalPotential: SetRotation first.");
+  MFEM_VERIFY(k >= 0 && k < static_cast<int>(rot_psi_.size()),
+              "UnitCentrifugalPotential: index out of range.");
+  return *rot_psi_[k];
+}
+
+Coefficient&
 LinearQuasiStaticMixedSelfGravitatingProblem::SolutionCentrifugalPotential() {
   MFEM_VERIFY(rot_enabled_,
               "SolutionCentrifugalPotential: SetRotation first.");

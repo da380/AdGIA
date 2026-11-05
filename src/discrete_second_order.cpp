@@ -387,4 +387,254 @@ real_t DiscreteSecondOrderSolver::Directional(
   return H + SumOverRanks(internal, op_->InternalScalarSpace());
 }
 
+// --- the dual vector of H[v, .] -------------------------------------------
+
+int DiscreteSecondOrderSolver::AddKernel(Parameter parameter, int branch) {
+  MFEM_VERIFY(op_,
+              "DiscreteSecondOrderSolver: the kernel duals are built in "
+              "the quasi-static configuration.");
+  kernels_.push_back(Kernel{parameter, branch, Vector()});
+  return static_cast<int>(kernels_.size()) - 1;
+}
+
+void DiscreteSecondOrderSolver::AssembleKernels() {
+  MFEM_VERIFY(op_,
+              "DiscreteSecondOrderSolver: the kernel duals are built in "
+              "the quasi-static configuration.");
+  MFEM_VERIFY(!dlambda_.empty(), "DiscreteSecondOrderSolver: Run() first.");
+  const int N = forward_->Size() - 1;
+  const int K = op_->NumBranches();
+  const int nd = op_->NumNodes(), nc = op_->NumComponents();
+  const Rheology& rh = op_->Problem().Rheology();
+  ViscoelasticOperator& fop = forward_->Op();
+  FiniteElementSpace& ufes = op_->Problem().DisplacementSpace();
+  FiniteElementSpace& sfes = op_->InternalScalarSpace();
+  // Which integrals against the basis the registered kernels need.
+  bool need_kappa = false, need_mu_inf = false, need_shear0 = false;
+  std::vector<bool> need_branch(K, false), need_mu(K, false);
+  for (auto& kernel : kernels_) {
+    kernel.dual.SetSize(nd);
+    kernel.dual = 0.0;
+    switch (kernel.parameter) {
+      case Parameter::Kappa:
+        need_kappa = true;
+        break;
+      case Parameter::MuLongTerm:
+        need_mu_inf = need_shear0 = true;
+        break;
+      case Parameter::Mu:
+        MFEM_VERIFY(kernel.branch >= 0 && kernel.branch < K,
+                    "DiscreteSecondOrderSolver: no such branch.");
+        need_shear0 = true;
+        need_branch[kernel.branch] = need_mu[kernel.branch] = true;
+        break;
+      case Parameter::Eta:
+        MFEM_VERIFY(kernel.branch >= 0 && kernel.branch < K,
+                    "DiscreteSecondOrderSolver: no such branch.");
+        need_branch[kernel.branch] = true;
+        break;
+    }
+  }
+  auto integrate = [&](Coefficient& density, Vector& out) {
+    detail::IntegrateAgainstInternalBasis(density, ufes, sfes, out);
+  };
+  // The elastic densities: (A) the forward field against the derivative
+  // duals, (B) v's tangent field against the first-order duals (summed:
+  // the two source pairings share their weights), (1) the forward field
+  // against the first-order duals (the cross terms).
+  using IKD = IsotropicKernelDensity;
+  IKD kA(Parameter::Kappa), kB(Parameter::Kappa);
+  IKD sA(Parameter::MuLongTerm), sB(Parameter::MuLongTerm),
+      s1(Parameter::MuLongTerm);
+  SumCoefficient kAB(kA, kB), sAB(sA, sB);
+  Vector cb, dcb, dn, dn1, tdn, tdn1;
+  Vector I_kappa, I_shear, I_beta, I_mu, I_mu1, I_dmu1;
+
+  // Node 0, the unrelaxed solve: the Born force (delta mu_U = delta mu_inf
+  // + sum_k delta mu_k) and the branch term 2 delta mu_k m_k^0, on the
+  // forward fields against the derivative duals and on v's tangent
+  // fields against the first-order duals.
+  {
+    const GridFunction& lam = op_->Lambda(0);
+    const GridFunction& dlam = *dlambda_[0];
+    const GridFunction& du = tangent_v_->Displacement(0);
+    const GridFunction& u = forward_->Displacement(0);
+    kA.SetPair(u, dlam);
+    kB.SetPair(du, lam);
+    sA.SetPair(u, dlam);
+    sB.SetPair(du, lam);
+    if (need_kappa) integrate(kAB, I_kappa);
+    if (need_shear0) integrate(sAB, I_shear);
+    op_->Coupling(lam, cb);
+    op_->Coupling(dlam, dcb);
+    for (auto& kernel : kernels_) {
+      const int k = kernel.branch;
+      switch (kernel.parameter) {
+        case Parameter::Kappa:
+          kernel.dual += I_kappa;
+          break;
+        case Parameter::MuLongTerm:
+          kernel.dual += I_shear;
+          break;
+        case Parameter::Mu: {
+          kernel.dual += I_shear;
+          Vector m0 = op_->Branch(forward_->State(0), k);
+          Vector dm0 = op_->Branch(tangent_v_->State(0), k);
+          for (int q = 0; q < nd; q++) {
+            real_t v = 0.0;
+            for (int c = 0; c < nc; c++) {
+              const int i = c * nd + q;
+              v += 2.0 * (dcb[i] * m0[i] + cb[i] * dm0[i]);
+            }
+            kernel.dual[q] += v;
+          }
+          break;
+        }
+        case Parameter::Eta:
+          break;
+      }
+    }
+  }
+
+  // The steps n -> n+1: the effective solve at n+1, the known-part branch
+  // sources and the state source (both source pairings), and the cross
+  // terms with the first-order duals.
+  for (int n = 0; n < N; n++) {
+    const real_t dt = forward_->Time(n + 1) - forward_->Time(n);
+    op_->EngageStep(dt);
+    forward_->Strain(n, dn);
+    forward_->Strain(n + 1, dn1);
+    fop.ComputeStrain(tangent_v_->Displacement(n), tdn);
+    fop.ComputeStrain(tangent_v_->Displacement(n + 1), tdn1);
+    // Read last: in the re-solve policy the reference holds until the
+    // next Displacement() or Strain() call.
+    const GridFunction& u = forward_->Displacement(n + 1);
+    const GridFunction& du = tangent_v_->Displacement(n + 1);
+    const GridFunction& lam = op_->Lambda(n + 1);
+    const GridFunction& dlam = *dlambda_[n + 1];
+    op_->Coupling(lam, cb);
+    op_->Coupling(dlam, dcb);
+    kA.SetPair(u, dlam);
+    kB.SetPair(du, lam);
+    sA.SetPair(u, dlam);
+    sB.SetPair(du, lam);
+    s1.SetPair(u, lam);
+    if (need_kappa) integrate(kAB, I_kappa);
+    if (need_mu_inf) integrate(sAB, I_shear);
+    for (auto& kernel : kernels_) {
+      if (kernel.parameter == Parameter::Kappa) kernel.dual += I_kappa;
+      if (kernel.parameter == Parameter::MuLongTerm) kernel.dual += I_shear;
+    }
+    for (int k = 0; k < K; k++) {
+      if (!need_branch[k]) continue;
+      const Vector& two_mu = op_->NodalBranchModulus(k);
+      const Vector& itau = op_->NodalInverseRelaxationTime(k);
+      const bool hv = src_v_->HasDeltaInverseRelaxationTime(k);
+      const bool hmv = src_v_->HasDeltaBranchModulus(k);
+      Coefficient* vmu = v_.Mu(k);
+      Coefficient& mu_k = rh.BranchShearModulus(k);
+      // int_q mu_k rho_AB (the weights' derivative in both source
+      // pairings); int_q mu_k rho_1 and int_q dmu_v rho_1 (the cross
+      // terms' d2beta mu_k and dbeta_delta dmu_v).
+      ProductCoefficient mu_AB(mu_k, sAB);
+      integrate(mu_AB, I_mu);
+      if (hv) {
+        ProductCoefficient mu_1(mu_k, s1);
+        integrate(mu_1, I_mu1);
+      }
+      if (vmu) {
+        ProductCoefficient dmu_1(*vmu, s1);
+        integrate(dmu_1, I_dmu1);
+      }
+      if (need_mu[k]) {
+        // int_q [beta_k rho_AB + dbeta_v rho_1]: the branch modulus in the
+        // effective stiffness, and the cross term dbeta_v dmu_delta.
+        ProductCoefficient beta_AB(op_->BetaCoefficient(k), sAB);
+        if (hv) {
+          auto dbeta_v = detail::MakeGridFunction(&sfes);
+          for (int q = 0; q < nd; q++) {
+            real_t de, da, db;
+            detail::TrapezoidWeightDerivatives(dt * itau[q], de, da, db);
+            (*dbeta_v)[q] = -db * dt * src_v_->DeltaInverseRelaxationTime(k)[q];
+          }
+          GridFunctionCoefficient dbeta_c(dbeta_v.get());
+          ProductCoefficient dbeta_1(dbeta_c, s1);
+          SumCoefficient total(beta_AB, dbeta_1);
+          integrate(total, I_beta);
+        } else {
+          integrate(beta_AB, I_beta);
+        }
+      }
+      Vector mn = op_->Branch(forward_->State(n), k);
+      Vector tmn = op_->Branch(tangent_v_->State(n), k);
+      Vector mu1 = op_->Branch(op_->Mu(n + 1), k);
+      Vector dmu1 = op_->Branch(dmu_[n + 1], k);
+      for (auto& kernel : kernels_) {
+        if (kernel.branch != k || (kernel.parameter != Parameter::Mu &&
+                                   kernel.parameter != Parameter::Eta)) {
+          continue;
+        }
+        const bool is_mu = kernel.parameter == Parameter::Mu;
+        const real_t chi = is_mu ? 1.0 : 0.0;
+        for (int q = 0; q < nd; q++) {
+          const real_t mu = 0.5 * two_mu[q], eta = mu / itau[q];
+          const real_t h = dt * itau[q];
+          real_t e, alpha, beta, de, da, db, d2e, d2a, d2b;
+          detail::ExponentialTrapezoidWeights(h, e, alpha, beta);
+          detail::TrapezoidWeightDerivatives(h, de, da, db);
+          detail::TrapezoidWeightSecondDerivatives(h, d2e, d2a, d2b);
+          // v's nodal data.
+          const real_t ditau_v =
+              hv ? src_v_->DeltaInverseRelaxationTime(k)[q] : 0.0;
+          const real_t dmu_v = hmv ? src_v_->DeltaBranchModulus(k)[q] : 0.0;
+          const real_t dh_v = dt * ditau_v;
+          const real_t deta_v = eta * (dmu_v / mu - ditau_v / itau[q]);
+          // The nodal factors: c = d(1/tau)/dp, g = d2(1/tau)/dp dv.
+          const real_t cf = is_mu ? itau[q] / mu : -itau[q] / eta;
+          const real_t g =
+              is_mu ? -deta_v / (eta * eta)
+                    : (2.0 * mu * deta_v / eta - dmu_v) / (eta * eta);
+          // The elastic terms.
+          real_t v = -db * dt * cf * I_mu[q];
+          if (is_mu) v += I_beta[q];
+          if (vmu) v += -db * dt * cf * I_dmu1[q];
+          if (hv) v += (-d2b * dt * cf * dh_v - db * dt * g) * I_mu1[q];
+          // The nodal terms.
+          for (int c = 0; c < nc; c++) {
+            const int i = c * nd + q;
+            // The source pairings: the forward data against (dlambda,
+            // dmu), v's tangent data against (lambda, mu).
+            const real_t r1 = de * mn[i] + da * dn[i];
+            const real_t rt = de * tmn[i] + da * tdn[i];
+            v += dcb[i] * (2.0 * chi * (e * mn[i] + alpha * dn[i]) +
+                           two_mu[q] * dt * cf * r1);
+            v += dmu1[i] * dt * cf * (r1 + db * dn1[i]);
+            v += cb[i] * (2.0 * chi * (e * tmn[i] + alpha * tdn[i]) +
+                          two_mu[q] * dt * cf * rt);
+            v += mu1[i] * dt * cf * (rt + db * tdn1[i]);
+            // The cross terms of the branch and state sources.
+            const real_t r2 = d2e * mn[i] + d2a * dn[i];
+            v += cb[i] * (2.0 * chi * dh_v * r1 + 2.0 * dmu_v * dt * cf * r1 +
+                          two_mu[q] * dt * (g * r1 + cf * dh_v * r2));
+            v += mu1[i] * dt *
+                 (g * (r1 + db * dn1[i]) + cf * dh_v * (r2 + d2b * dn1[i]));
+          }
+          kernel.dual[q] += v;
+        }
+      }
+    }
+  }
+  op_->EngageStep(0.0);
+}
+
+real_t DiscreteSecondOrderSolver::Pair(int i, const GridFunction& delta) const {
+  const Vector& d = kernels_[i].dual;
+  MFEM_VERIFY(d.Size() == delta.Size(),
+              "DiscreteSecondOrderSolver::Pair: the direction must live on "
+              "the internal scalar space.");
+  // The internal space is discontinuous: a local pairing, reduced.
+  return SumOverRanks(d * delta,
+                      *const_cast<FiniteElementSpace*>(delta.FESpace()));
+}
+
 }  // namespace AdGIA

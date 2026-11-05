@@ -7,7 +7,12 @@
   and mu, and the Maxwell body along kappa, mu and eta for a final-time
   and a continuous-in-time observation. The tangent's pairing is
   global, so the identity checks that the discrete adjoint's pairings
-  count every shared degree of freedom once on any partition.
+  count every shared degree of freedom once on any partition. The data
+  surface load on the water-loaded, rotating coarse ball (the serial
+  WaterLoadKernel3D, 4 steps): DirectionalLoad against the tangent's
+  load direction for a displacement and a four-slot sea-level
+  observation, and the load duals paired with a nodal load against
+  DirectionalLoad.
 */
 #include <mpi.h>
 
@@ -20,6 +25,7 @@
 #include <vector>
 
 #include "AdGIA.hpp"
+#include "MixedProblemTestCommon.hpp"
 #include "mfem.hpp"
 
 using namespace mfem;
@@ -68,6 +74,23 @@ void Station2D(const Vector& x, Vector& v) {
   v.SetSize(2);
   v[0] = 0.0;
   v[1] = window(x[0], 0.55) - window(x[0], 0.2);
+}
+
+real_t MeltCap(const Vector& x, const Vector& n) {
+  constexpr real_t s2 = 0.08;
+  Vector d(x);
+  d /= x.Norml2();
+  d -= n;
+  return 0.02 * std::exp(-(d * d) / s2);
+}
+
+Vector UnitDir(real_t a, real_t b, real_t c) {
+  Vector n(3);
+  n[0] = a;
+  n[1] = b;
+  n[2] = c;
+  n /= n.Norml2();
+  return n;
 }
 
 void Report(const std::string& what, real_t dJ, real_t dJ_tan) {
@@ -231,6 +254,179 @@ int main(int argc, char* argv[]) {
         Report(what, dJ, dJ_tan[p][f]);
         Check(std::abs(dJ / dJ_tan[p][f] - 1.0), 1e-8, what + " identity");
       }
+    }
+  }
+
+  // --- the data surface load on the water-loaded ball ---------------------
+  {
+    constexpr int kSteps = 4;
+    constexpr real_t kT1 = 1.5, kRhoW = 1.0, kOmega = 0.4;
+    const real_t g0 =
+        4.0 * kPi * self_grav_test::kG * self_grav_test::kRho / 3.0;
+    auto serial_ball = Mesh(self_grav_test::MeshFile(3).c_str(), 1, 1);
+    auto parent = ParMesh(MPI_COMM_WORLD, serial_ball);
+    serial_ball.Clear();
+    auto body = ParSubMesh::CreateFromDomain(
+        parent, self_grav_test::BodyMarker(parent));
+    auto fec3 = H1_FECollection(2, 3);
+    auto fes_u = ParFiniteElementSpace(&body, &fec3, 3);
+    auto fes_phi = ParFiniteElementSpace(&parent, &fec3);
+    auto rho = ConstantCoefficient(self_grav_test::kRho);
+    auto w = ConstantCoefficient(kRhoW / g0);
+    auto kappa = ConstantCoefficient(self_grav_test::kKappa);
+    auto mu = ConstantCoefficient(self_grav_test::kMu);
+    auto eta = ConstantCoefficient(self_grav_test::kMu);
+    auto tau = RatioCoefficient(eta, mu);
+    auto rheology = IsotropicMaxwellRheology::Maxwell(3, kappa, mu, tau);
+    Array<int> surface = self_grav_test::SurfaceMarker(body);
+    Array<int> parent_surface(parent.bdr_attributes.Max());
+    parent_surface = 0;
+    parent_surface[0] = 1;
+    Vector moments(3);
+    moments[0] = 1.2;
+    moments[1] = 1.3;
+    moments[2] = 2.0;
+    // The identity follows the solver tolerance: on the displacement
+    // observation at one rank 1.0e-7, 1.0e-8 and 6.8e-10 for 1e-11, 1e-12
+    // and 1e-13 (the sea level 7e-10, 2.6e-11, 2.5e-11), so the leg runs
+    // at 1e-13. Measured at 1e-13 on 1, 2, 4 ranks: displacement 6.9e-10,
+    // 5.3e-10, 4.5e-10; sea level 2.8e-11, 1.5e-11, 3.0e-11; the load
+    // duals against DirectionalLoad 6.7e-16 and below.
+    auto make_problem = [&](Coefficient& data) {
+      auto p = std::make_unique<LinearQuasiStaticMixedSelfGravitatingProblem>(
+          &fes_u, &fes_phi, rheology, rho, self_grav_test::kG,
+          self_grav_test::kDtNDegree);
+      p->SetWaterLoad(w, data, surface);
+      p->SetRotation(kOmega, moments);
+      p->SetRelTol(1e-13);
+      return p;
+    };
+    auto sigma_data = FunctionCoefficient([](const Vector& x) {
+      const real_t r = x.Norml2(), c = x[2] / r;
+      return 0.02 * (3.0 * c * c - 0.5 + 0.5 * x[0] * x[2] / (r * r));
+    });
+    auto zero_data = ConstantCoefficient(0.0);
+    auto prob_fwd = make_problem(sigma_data);
+    auto visco_fwd = ViscoelasticOperator(*prob_fwd);
+    auto trajectory = ForwardTrajectory(visco_fwd, true);
+    {
+      ExponentialTrapezoidSolver ode;
+      ode.Init(visco_fwd);
+      Vector m(visco_fwd.Height());
+      m = 0.0;
+      real_t t = 0.0, dt_step = kT1 / kSteps;
+      trajectory.Record(m, t);
+      for (int n = 1; n <= kSteps; n++) {
+        ode.Step(m, t, dt_step);
+        trajectory.Record(m, t);
+      }
+    }
+    const real_t t1 = trajectory.Time(kSteps);
+
+    // The radial displacement cap at n1 and the strict sea level at the
+    // cap n3 through all four slots (the scalar data summed over ranks).
+    const Vector n1 = UnitDir(0.3, 0.5, 0.81), n3 = UnitDir(0.1, -0.6, 0.79);
+    auto h_u = VectorFunctionCoefficient(3, [n1](const Vector& x, Vector& v) {
+      v = x;
+      v *= MeltCap(x, n1) / x.Norml2();
+    });
+    auto g_u = ParLinearForm(&fes_u);
+    g_u.AddBoundaryIntegrator(new VectorBoundaryLFIntegrator(h_u), surface);
+    g_u.Assemble();
+    auto h_sl =
+        FunctionCoefficient([n3](const Vector& x) { return MeltCap(x, n3); });
+    auto h_sl_u =
+        VectorFunctionCoefficient(3, [n3](const Vector& x, Vector& v) {
+          v = x;
+          v *= -MeltCap(x, n3);
+        });
+    auto g_sl_u = ParLinearForm(&fes_u);
+    g_sl_u.AddBoundaryIntegrator(new VectorBoundaryLFIntegrator(h_sl_u),
+                                 surface);
+    g_sl_u.Assemble();
+    auto h_sl_phi = ProductCoefficient(-1.0 / g0, h_sl);
+    auto g_sl_phi = ParLinearForm(&fes_phi);
+    g_sl_phi.AddBoundaryIntegrator(new BoundaryLFIntegrator(h_sl_phi),
+                                   parent_surface);
+    g_sl_phi.Assemble();
+    Vector sl_omega(3);
+    for (int k = 0; k < 3; k++) {
+      CentrifugalPotential psi_k(3, kOmega);
+      psi_k.SetUnit(k);
+      ProductCoefficient hpsi(h_sl, psi_k);
+      ParLinearForm lf(&fes_phi);
+      lf.AddBoundaryIntegrator(new BoundaryLFIntegrator(hpsi), parent_surface);
+      lf.Assemble();
+      sl_omega[k] = -GlobalSum(lf.Sum()) / g0;
+    }
+    AdjointForce force_u, force_sl;
+    force_u.AddObservation(t1, g_u);
+    AdjointLoad sl;
+    sl.u = &g_sl_u;
+    sl.phi = &g_sl_phi;
+    sl.uniform = -GlobalSum(g_sl_phi.Sum());
+    sl.omega = &sl_omega;
+    force_sl.AddObservation(t1, sl);
+    const AdjointForce* forces[] = {&force_u, &force_sl};
+    const char* fnames[] = {"displacement", "sea level"};
+
+    auto twin = make_problem(zero_data);
+    auto source_twin = make_problem(zero_data);
+    auto discrete = DiscreteAdjointSolver(*twin, *source_twin, trajectory);
+
+    // The directions: a melt cap times a ramp in t (0.5 at the start),
+    // and a nodal cap on the load duals' space times the ramp.
+    const Vector n_ice = UnitDir(0.5, -0.3, 0.8);
+    auto ramp = [t1](real_t t) { return 0.5 + t / t1; };
+    auto cap = FunctionCoefficient(
+        [n_ice](const Vector& x) { return MeltCap(x, n_ice); });
+    auto cap_ramp =
+        FunctionCoefficient([n_ice, ramp](const Vector& x, real_t t) {
+          return MeltCap(x, n_ice) * ramp(t);
+        });
+    auto ramp_c = FunctionCoefficient(
+        [ramp](const Vector&, real_t t) { return ramp(t); });
+    auto cap_gf = ParGridFunction(
+        &dynamic_cast<ParFiniteElementSpace&>(discrete.LoadDualSpace()));
+    cap_gf.ProjectCoefficient(cap);
+    auto cap_gf_c = GridFunctionCoefficient(&cap_gf);
+    auto cap_gf_ramp = ProductCoefficient(ramp_c, cap_gf_c);
+    Coefficient* directions[] = {&cap_ramp, &cap_gf_ramp};
+    const char* dnames[] = {"cap x ramp", "nodal cap x ramp"};
+    std::vector<std::unique_ptr<LinearQuasiStaticMixedSelfGravitatingProblem>>
+        load_twins;
+    real_t dJ_tan[2][2];
+    for (int d = 0; d < 2; d++) {
+      load_twins.push_back(make_problem(*directions[d]));
+      TangentLinearSolver tangent(*load_twins[d], trajectory);
+      tangent.SetDirection(TangentDirection{});
+      if (!tangent.Run()) Check(1.0, 0.0, "load tangent run");
+      for (int f = 0; f < 2; f++) dJ_tan[d][f] = tangent.Pair(*forces[f]);
+    }
+    for (int f = 0; f < 2; f++) {
+      discrete.SetForce(*forces[f]);
+      if (!discrete.Run()) Check(1.0, 0.0, "water discrete run");
+      real_t dJ[2];
+      for (int d = 0; d < 2; d++) {
+        dJ[d] = discrete.DirectionalLoad(*load_twins[d]);
+        const std::string what =
+            std::string("water load, ") + dnames[d] + ", " + fnames[f];
+        Report(what, dJ[d], dJ_tan[d][f]);
+        Check(std::abs(dJ[d] / dJ_tan[d][f] - 1.0), 1e-8, what + " identity");
+      }
+      discrete.AssembleLoadDuals(surface);
+      real_t paired = 0.0;
+      for (int n = 0; n <= kSteps; n++) {
+        paired += ramp(trajectory.Time(n)) *
+                  discrete.PairLoad(discrete.LoadDual(n), cap_gf);
+      }
+      if (Mpi::Root() && std::getenv("ADGIA_TEST_VERBOSE")) {
+        std::cout << "load duals, " << fnames[f] << ": " << paired
+                  << " | /DirectionalLoad - 1 = " << paired / dJ[1] - 1.0
+                  << "\n";
+      }
+      Check(std::abs(paired / dJ[1] - 1.0), 1e-9,
+            std::string("load duals, ") + fnames[f]);
     }
   }
 

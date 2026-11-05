@@ -317,6 +317,8 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   /** @brief Release the tidal-potential slot (e.g. before SetRotation()
    * on a problem whose construction wired a tidal expansion). */
   void ClearTidalPotential() { psi_ = nullptr; }
+  /** @brief Whether a tidal potential is applied (SetTidalPotential()). */
+  bool HasTidalPotential() const { return psi_ != nullptr; }
 
   /**
    * @brief The symmetric tidal pairing of @p psi with the problem's
@@ -548,6 +550,10 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   /** @brief @f$\psi(\omega)@f$ of the last Solve() as a coefficient
    * (requires SetRotation()); amplitudes follow each solve. */
   mfem::Coefficient& SolutionCentrifugalPotential();
+  /** @brief The unit centrifugal potential @f$\psi_k@f$ of the rotation
+   * border (the potential of a unit @f$\omega_k@f$; requires
+   * SetRotation()). */
+  mfem::Coefficient& UnitCentrifugalPotential(int k);
 
   // --- solver controls ------------------------------------------------------
 
@@ -689,6 +695,17 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   /** @brief The potential load @f$\ell_\phi@f$ of the last AssembleForce()
    * on true dofs (tidal part and 2-D compatibility included). */
   const mfem::Vector& PotentialLoad() const { return B_phi_; }
+  /** @brief The uniform-term (mass) row datum of the last AssembleForce():
+   * @f$\int\sigma_{data}\,dS@f$ of the water load's data (0 without
+   * SetWaterLoad()); global in parallel, AddBorderForce() increments
+   * excluded. */
+  mfem::real_t UniformRowLoad() const { return sea_Sd_; }
+  /** @brief The angular-velocity row data of the last AssembleForce():
+   * @f$-\int\sigma\,\Pi\psi_k\,dS@f$ over every registered surface
+   * load, @f$\Pi\psi_k@f$ the interpolant of UnitCentrifugalPotential(k)
+   * on the potential space (empty without SetRotation()); global in
+   * parallel, AddBorderForce() increments excluded. */
+  const mfem::Vector& AngularVelocityRowLoad() const { return rot_r_; }
   const SubMeshDofInjection& Injection() const { return *injection_; }
   mfem::real_t GravitationalConstant() const { return G_; }
   mfem::Coefficient& Density() const { return *rho_; }

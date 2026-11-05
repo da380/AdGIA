@@ -208,6 +208,7 @@ TEST(Measurement, WaterLoadedBall3D) {
     unit = 0.0;
     unit[radial.Basis().Index(2, 1)] = 1.0;
     radial.LoadVector(unit, b);
+    b /= radial.Radius() * radial.Radius();
     EXPECT_LT(RelDiff(set.Dual(5).u, b), 1e-13) << "harmonic dual";
   }
 
@@ -218,19 +219,33 @@ TEST(Measurement, WaterLoadedBall3D) {
   set.Data(*trajectory, d0);
   {
     // After Data() the problem holds the final state: the harmonic
-    // measurement is the pairing of its dual with it, R^{d-1} c_i of the
-    // analysis (R = 1 here). The class's Coefficients() of the same state
-    // differs from the pairing by 5e-4 on this coarse curved ball (its
-    // own quadrature of the radial component); the measurement is the
-    // pairing, consistent with the tangent and the adjoints.
+    // measurement is the pairing of its dual with it, R^{1-d} times the
+    // LoadVector pairing, which is exactly the analysis coefficient c_i
+    // of the same state (the analysis is the transpose of LoadVector). R
+    // is the radius the operator measures on the discrete boundary (the
+    // area-weighted mean over its quadrature points), R - 1 = -2.45e-4 on
+    // this coarse curved ball, so the unscaled pairing differs from c_i
+    // by 4.9e-4. Measured (ADGIA_TEST_VERBOSE=1): |c_i / value - 1| at
+    // rounding.
     using BHC = BoundaryHarmonicCoefficients;
     BHC radial(fes_u, surface, 2, BHC::Component::Radial);
     Vector unit(radial.Size()), b;
     unit = 0.0;
     unit[radial.Basis().Index(2, 1)] = 1.0;
     radial.LoadVector(unit, b);
-    const real_t by_hand = b * prob_fwd->Displacement();
+    const real_t by_hand =
+        (b * prob_fwd->Displacement()) / (radial.Radius() * radial.Radius());
     EXPECT_NEAR(d0[5], by_hand, 1e-12 * std::abs(by_hand));
+    Vector c;
+    radial.Coefficients(prob_fwd->Displacement(), c);
+    const real_t analysed = c[radial.Basis().Index(2, 1)];
+    if (std::getenv("ADGIA_TEST_VERBOSE")) {
+      std::cout << "harmonic value " << d0[5]
+                << ", R - 1 = " << radial.Radius() - 1.0
+                << ", |c_i / value - 1| = "
+                << std::abs(analysed / d0[5] - 1.0) << "\n";
+    }
+    EXPECT_NEAR(d0[5], analysed, 1e-12 * std::abs(by_hand));
     EXPECT_NEAR(d0[2], prob_fwd->AngularVelocity()[0] / kOmega, 1e-15);
   }
 

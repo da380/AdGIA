@@ -211,6 +211,8 @@ class BoundaryHarmonicCoefficients {
                                mfem::real_t radius_tolerance = 1e-2);
 
   const SurfaceHarmonics& Basis() const { return basis_; }
+  /** @brief The area-weighted mean radius of the marked boundary over its
+   * quadrature points (the discrete sphere's, not the nominal one). */
   mfem::real_t Radius() const { return R_; }
   const mfem::Vector& Centre() const { return x0_; }
   const mfem::Array<int>& Marker() const { return marker_; }
@@ -228,7 +230,11 @@ class BoundaryHarmonicCoefficients {
   void Coefficients(mfem::VectorCoefficient& f, mfem::Vector& c) const;
 
   /** @brief @f$b = R^{d-1} M c@f$: the load vector of the surface field
-   * with coefficients @p c, on the local (v)dofs (Scalar and Radial). */
+   * with coefficients @p c, on the local (v)dofs (Scalar and Radial). The
+   * transpose of Coefficients() of a field on the space:
+   * @f$\langle b, f\rangle = R^{d-1}\,c\cdot\mathrm{Coefficients}(f)@f$
+   * to rounding (summed over the ranks in parallel), with @f$R@f$ = Radius()
+   * the measured radius, not the nominal one. */
   void LoadVector(const mfem::Vector& c, mfem::Vector& b) const;
 
   /** @brief A synthesis coefficient on this sphere with the given

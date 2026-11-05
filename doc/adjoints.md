@@ -60,7 +60,9 @@ through τ_k, the evolution; η_k enters the evolution alone.
 zero) in this convention. The **load** is not in it: the problem is linear in
 its load, so a load direction is the tangent twin's own load, and the
 adjoint's derivative with respect to a data surface load on the mixed
-class is `SeaLevelLoadKernel` (§2). **Not parameters**: the density (its kernel is not
+class is `SeaLevelLoadKernel` (§2) in the continuous flavour and
+`DiscreteAdjointSolver::DirectionalLoad` with the load duals in the
+discrete one (§5). **Not parameters**: the density (its kernel is not
 built), the parameters of
 state-dependent relaxation laws (nonlinear rheologies are refused),
 anisotropic moduli, and a migrating ocean function, whose history the
@@ -156,7 +158,8 @@ sea level through `SeaLevelOperator`: directional values along time-aware
 δσ coefficients and, after `EnableQuelled`, the quelled ice kernels of paper
 eq. 84 — D_I0 = −ρ_i g ∫ (C(t) − C₀) SL₁† dt (live only with a moving ocean)
 and the İ stack, integrated backwards by `Finalize()` into D_İ(x, t_n), the
-impulses kept as exportable atoms.
+impulses kept as exportable atoms. The discrete counterpart (frozen
+shoreline, no quelled kernels) is the load dual of §5.
 
 ## 3. The tangent-linear problem (`tangent.hpp`)
 
@@ -295,6 +298,55 @@ nodal direction is the derivative of the assembled stiffness to rounding; a
 higher rule leaves a 9e-5 mismatch on κ. The rule is taken from the first
 element: a mesh of one element type is assumed.
 
+**The data surface load** (frozen shoreline; both configurations). The
+problem is linear in its load, so the derivative along a load direction
+δσ(x, t) is the sum over the solves of the dual state paired with the
+full assembled load of δσ at the solve's time — the transpose of the
+tangent's load direction, whose twin carries δσ as its water-load data.
+On the mixed class the load touches four rows, each paired with its
+dual:
+
+```
+δJ = Σ_n [ ⟨λⁿ, f_u(δσ(t_n))⟩ + ⟨φ†ⁿ, ℓ_φ(δσ(t_n))⟩ + Φ_g†ⁿ ∫ δσ(t_n) dS + Σ_k ω†ⁿ_k r_k(δσ(t_n)) ]
+f_u(σ) = −∫ σ ∇Φ₀·v dS,   ℓ_φ(σ) = −∫ σ χ dS,   r_k(σ) = −∫ σ Πψ_k dS
+```
+
+with Πψ_k the potential space's interpolant of the unit centrifugal
+potential. φ†ⁿ, Φ_g†ⁿ and ω†ⁿ are the twin's `Potential()`,
+`UniformPotentialTerm()` and `AngularVelocity()` after the dual solve of
+node n (the bordered system is symmetric); `DiscreteAdjointOperator::Run`
+keeps them per node beside λⁿ, the static configuration per
+observation. The sum runs over the unrelaxed start and the effective
+solve (S1) of every step, the structure of the Born-force pairing; in
+the static configuration over the point observations, with the load
+assembled at t = 0 as the static tangent assembles it.
+`DirectionalLoad(load_twin)` calls the load twin's `AssembleForce(t_n)`
+and reads the rows off it (`ExternalLoad()`, `PotentialLoad()`,
+`UniformRowLoad()`, `AngularVelocityRowLoad()`); on a class without a
+potential only the displacement rows enter. A tidal potential on the load
+twin and the referential class are refused; Dirichlet data are not read.
+
+The **load duals** (`AssembleLoadDuals(marker)`, `LoadDual(n)`) are the
+transpose of that assembly applied to the dual state, on the body's scalar
+trace space (`LoadDualSpace()`, the class's `PotentialSpaceOnBody()`, on
+which it assembles its surface-load forms):
+
+```
+jⁿ_j = ∫ ψ_j g SL₁(dualⁿ) dS,    g SL₁(dual) = −(λ·∇Φ₀ + φ† + Πψ(ω†) − Φ_g†)
+```
+
+the discrete counterpart of `SeaLevelLoadKernel`'s +g SL₁†, in the same
+sign convention. Each term is integrated with the rule of the row it
+transposes (2 p_u for the displacement rows' `VectorBoundaryLFIntegrator`,
+the default `BoundaryLFIntegrator` rule of the trace space for the
+potential, mass and ω rows), so Σ_n ⟨jⁿ, δσ(t_n)⟩ (`PairLoad`) equals
+`DirectionalLoad` to rounding for a load read as a
+`GridFunctionCoefficient` of trace-space fields. No quadrature weights
+enter: the forward samples the load at the nodes, and
+`IntegratedLoadDual()` = Σ_n jⁿ is the dual of a load constant in time.
+The migrating ocean (the δC terms) and the quelled ice kernels of
+`SeaLevelLoadKernel::EnableQuelled` are not built in the discrete flavour.
+
 **The discrete second order.** `DiscreteSecondOrderSolver` is the derivative
 of the discrete gradient along v, the exact Hessian-vector product. The
 derivative of the transposed recursion is the same recursion with sources
@@ -310,9 +362,46 @@ H[v, δ] = Σ_i ⟨δλ_i, −K(δ) u⟩ + ⟨λ_i, −K(δ) δ_v u⟩. The equa
 derivative recursion and of the cross terms are those of the discrete
 first order differentiated along v.
 
-**Limits.** The kernel duals are quasi-static only. The discrete
-second order returns directional values only (the dual vector of H[v, ·] is
-not built). Both discrete drivers require the Galerkin strain map,
+**The Hessian-vector product as a dual vector** (quasi-static
+configuration). `DiscreteSecondOrderSolver::AddKernel`,
+`AssembleKernels()`, `Dual(i)` and `Pair(i, δ)` give the dual of
+H[v, ·] with respect to a parameter's nodal values p_q on the internal
+scalar space, as the first-order kernels give that of the gradient (κ,
+μ_∞, μ_k at fixed η_k, η_k). Every term of H[v, δ] is linear in δ. The two
+source pairings are the first-order assembly above twice: with the
+derivative duals (δλ, δμ) in place of (λ, μ) on the forward trajectory,
+and with v's tangent trajectory (δ_v u, δ_v m, D δ_v u) in place of the
+forward one against (λ, μ). The cross terms (branch parameters only) are
+the Born cross form, with coefficient
+δ_vβ δμ_δ + δ_δβ δ_vμ + δ²β μ_k, δ²β = −b″ δ_vh δ_δh − b′ dt δ²(1/τ)[v, δ],
+and the derivatives along v of the known-part branch source and of the
+state source; they depend on δ through δμ_δ = χ p, δ_δ(1/τ) = c p and
+δ²(1/τ)[v, δ] = g p (1/τ = μ/η, whose second derivatives are 0 in μμ,
+−1/η² in μη and 2μ/η³ in ηη), so the nodal factors and the per-step cross
+part of the dual are
+
+```
+             χ = ∂μ/∂p     c = ∂(1/τ)/∂p     g = ∂²(1/τ)/∂p ∂v
+μ_k (η_k fixed):   1         (1/τ)/μ           −δ_vη/η²
+η_k:               0        −(1/τ)/η           (2μ δ_vη/η − δ_vμ)/η²
+
+j_q += χ ∫ φ_q δ_vβ ρ₁ − b′ dt c ∫ φ_q δ_vμ ρ₁ + (−b″ dt c δ_vh − b′ dt g) ∫ φ_q μ_k ρ₁
+     + Σ_c (B λⁿ⁺¹)_c [2χ δ_vh r₁ + 2 δ_vμ dt c r₁ + 2μ dt (g r₁ + c δ_vh r₂)]_c
+     + Σ_c (μ_kⁿ⁺¹)_c dt [g (r₁ + b′ dⁿ⁺¹) + c δ_vh (r₂ + b″ dⁿ⁺¹)]_c
+```
+
+at node q, with r₁ = e′ m_kⁿ + a′ dⁿ, r₂ = e″ m_kⁿ + a″ dⁿ,
+ρ₁ = −2 dev ε(uⁿ⁺¹) : dev ε(λⁿ⁺¹), v's nodal data δ_vμ, δ_vh = dt δ_v(1/τ),
+δ_vβ = −b′ δ_vh, δ_vη = η (δ_vμ/μ − τ δ_v(1/τ)), μ, η, τ the nodal branch
+values, and the integrals taken against the L2 basis φ_q with the forward
+stiffness's rule. The header `discrete_second_order.hpp` carries the
+whole dual, source pairings included. Paired with a nodal direction it
+equals `Directional` along that direction read as a
+`GridFunctionCoefficient` to rounding.
+
+**Limits.** The parameter kernel duals, of the gradient and of H[v, ·],
+are quasi-static only (the load duals serve both configurations). Both
+discrete drivers require the Galerkin strain map,
 whole-mesh branches and linear isotropic rheologies; neither plays back a
 migrating shoreline.
 
@@ -329,8 +418,14 @@ with `CapWindowCoefficient` and `RadialVectorCoefficient` for the usual
 weights), `SurfacePotentialMeasurement` (∫ w φ dS on the potential rows),
 `HarmonicCoefficientMeasurement` (one surface-harmonic coefficient of the
 radial displacement or of the potential, the dual being
-`BoundaryHarmonicCoefficients::LoadVector` of the unit coefficient, so the
-value is R^{d−1} times the analysis coefficient), `RotationMeasurement`
+`BoundaryHarmonicCoefficients::LoadVector` of the unit coefficient scaled
+by R^{1−d}; the analysis `Coefficients` of a field on the space is the
+exact transpose of `LoadVector`, so the value is the analysis coefficient
+c_i of the state to rounding, with R the radius the operator measures on
+the discrete boundary, not the nominal one: R − 1 = −2.45·10⁻⁴ on the
+coarse order-2 test ball, where the unscaled pairing differs from c_i by
+4.9·10⁻⁴),
+`RotationMeasurement`
 (ω_k, polar motion ω_k/Ω, the relative length-of-day change −ω_3/Ω) and
 `SeaLevelMeasurement` (∫ h SL₁ dS with all four slots: u = −(h/g)∇Φ₀,
 φ = −h/g, uniform ∫ h/g dS, ω_k = −∫ h ψ_k/g dS, with g the body's
@@ -363,7 +458,7 @@ driver constructed
 | Hessian | exact derivative of the continuous kernels; symmetric to O(dt²) | symmetric to rounding (gated at 1e-9) |
 | solves per sweep | one per reversed step, plus an impulsive solve and a re-solve per observation | one per reversed step |
 | storage | adjoint consumed as produced; kernels accumulated in the sweep | duals kept per node; kernels assembled after |
-| kernels | directional values, duals on any scalar space, fields; the sea-level kernel | duals on the internal scalar space; directional values |
+| kernels | directional values, duals on any scalar space, fields; the sea-level kernel | duals on the internal scalar space (gradient and H[v, ·]); the data-load duals on the body's trace space (frozen shoreline); directional values |
 | playback (time sync) | first order (`SetTimeSync`) | none |
 
 In the static case the two coincide: the same solve paired through the same
@@ -382,12 +477,12 @@ exercises it.
 | | continuous adjoint | tangent | continuous second order | discrete adjoint | discrete second order |
 |---|---|---|---|---|---|
 | static | gated by `Adjoint.StaticKernels2D`, `Adjoint.StaticKernels3D` | gated by `Tangent.Static2D` | gated by `SecondOrder.Static2D` | gated by `DiscreteAdjoint.Static2D` | gated by `DiscreteSecondOrder.Static2D` |
-| viscoelastic | gated by `Adjoint.ViscoelasticKernels` | gated by `Tangent.Viscoelastic2D` | gated by `SecondOrder.Viscoelastic2D` | gated by `DiscreteAdjoint.PairsWithTangent2D`, `DiscreteAdjoint.KernelDualsPairExactly2D` | gated by `DiscreteSecondOrder.SymmetricAndMatchesFD2D` |
+| viscoelastic | gated by `Adjoint.ViscoelasticKernels` | gated by `Tangent.Viscoelastic2D` | gated by `SecondOrder.Viscoelastic2D` | gated by `DiscreteAdjoint.PairsWithTangent2D`, `DiscreteAdjoint.KernelDualsPairExactly2D`; a traction load direction by `DiscreteAdjoint.TractionLoad2D` | gated by `DiscreteSecondOrder.SymmetricAndMatchesFD2D`, `DiscreteSecondOrder.KernelDualsPairExactly2D` |
 | gravitating mixed class | gated by `Adjoint.GravitatingReciprocity`, `Adjoint.GravitatingViscoelasticKernels` | gated by `Tangent.GravitatingStatic2D`, `Tangent.GravitatingViscoelastic2D`, `Tangent.CurvedElements3D` | built, ungated | gated by `DiscreteAdjoint.GravitatingStatic2D`, `DiscreteAdjoint.WaterLoadFrozen3D` | built, ungated |
-| water load, frozen shoreline | gated by `AdjointFingerprint.FullPhysicsKernels`; played-back moving ocean: `AdjointFingerprint.PlaybackKernels`, `AdjointFingerprint.IceKernels` | gated by `Tangent.WaterLoadFrozen3D` | built, ungated (no sea-level kernel derivative) | gated by `DiscreteAdjoint.WaterLoadFrozen3D` | gated by `DiscreteSecondOrder.WaterLoadFrozen3D` |
+| water load, frozen shoreline | gated by `AdjointFingerprint.FullPhysicsKernels`; played-back moving ocean: `AdjointFingerprint.PlaybackKernels`, `AdjointFingerprint.IceKernels` | gated by `Tangent.WaterLoadFrozen3D` | built, ungated (no sea-level kernel derivative) | gated by `DiscreteAdjoint.WaterLoadFrozen3D`; the data-load derivative and its duals by `DiscreteAdjoint.WaterLoadKernel3D`, `DiscreteAdjoint.WaterLoadKernelStatic3D` | gated by `DiscreteSecondOrder.WaterLoadFrozen3D` |
 | rotation | gated, with the water load, by `AdjointFingerprint.FullPhysicsKernels` | gated, with the water load, by `Tangent.WaterLoadFrozen3D` | built, ungated | gated, with the water load, by `DiscreteAdjoint.WaterLoadFrozen3D` | gated, with the water load, by `DiscreteSecondOrder.WaterLoadFrozen3D` |
 | Prony multi-branch | gated by `Adjoint.PronyKernels` | gated by `Tangent.Prony2D` | built, ungated | built, ungated | built, ungated |
-| parallel | gated by `TestAdjointPar` | gated by `TestTangentPar` | built, ungated | gated by `TestDiscreteAdjointPar` (the identity; kernel duals ungated) | gated by `TestDiscreteSecondOrderPar` (the identity against FD of the parallel discrete gradient; symmetry) |
+| parallel | gated by `TestAdjointPar` | gated by `TestTangentPar` | built, ungated | gated by `TestDiscreteAdjointPar` (the identity, the data-load derivative and its duals; the parameter kernel duals ungated) | gated by `TestDiscreteSecondOrderPar` (the identity against FD of the parallel discrete gradient; symmetry; kernel duals ungated) |
 
 ## 8. Verification
 
@@ -472,17 +567,41 @@ final-time and continuous (2e-5), against FD.
 - `GravitatingStatic2D`: the disc, κ and μ blobs (gated 1e-8).
 - `WaterLoadFrozen3D`: water and rotation, η blob, 8 steps, u and four-slot
   sea level: 1.0e-9 and 4.1e-9 at solver tolerance 1e-12.
+- `WaterLoadKernel3D`: the data surface load on the same ball, 8 steps:
+  `DirectionalLoad` against the tangent's load direction for a melt cap,
+  the cap times a ramp in t (0.5 at the start) and nodal caps on the trace
+  space (constant and ramped), for the displacement and the four-slot sea
+  level: 1.6e-10 and 5.3e-12 at solver tolerance 1e-12 (gated 1e-8); every
+  row carries weight (the uniform-term and ω rows 1–6 % of the total). The
+  load duals against `DirectionalLoad`, ramped and integrated: 6.7e-16
+  (gated 1e-9).
+- `WaterLoadKernelStatic3D`: the static configuration, the displacement and
+  sea-level observations at t = 0 (two duals): 2.6e-12 against the static
+  tangent; the load duals 1.3e-15.
+- `TractionLoad2D`: a ramped traction direction on the unit square, 16
+  steps, final-time and continuous observations: `DirectionalLoad` against
+  the tangent's load direction 6.7e-12 and 1.3e-11 (gated 1e-8), the
+  displacement rows alone.
 - `KernelDualsPairExactly2D`: 16 steps; the κ, μ, η duals paired with a
   nodal blob equal `Directional()` to 1e-9.
 
 `TestDiscreteAdjointPar` (1, 2, 4 ranks): the static and viscoelastic
-identities to 1e-8; the static pairing as local sums to 1e-12.
+identities to 1e-8; the static pairing as local sums to 1e-12; the
+data-load leg on the water-loaded ball (4 steps, solver tolerance 1e-13,
+which the identity follows: 1.0e-8 at 1e-12 on one rank): 6.9e-10
+(displacement), 3.0e-11 (sea level) against the tangent's load direction,
+the load duals to 6.7e-16.
 
 `TestDiscreteSecondOrder` (against FD of the discrete gradient):
 
 - `SymmetricAndMatchesFD2D`: 16 steps, v, w, δ among κ, μ, η blobs,
   final-time and continuous: symmetric to 1e-9, within 1e-5 of FD on the
   block's scale; every entry agrees to six digits.
+- `KernelDualsPairExactly2D`: 16 steps, final-time and continuous,
+  v among κ, μ, η blobs: the κ, μ_∞, μ, η duals of H[v, ·] paired with a
+  nodal blob equal `Directional()` to 3.5e-13 at most (gated 1e-9); the
+  μ and η rows along v = μ, η, where the cross terms enter, to 2.3e-14,
+  and off by 8e-2 to 12 without the nodal cross terms.
 - `Static2D`: κ and μ blobs: symmetric to 1e-9, FD to 1e-5 (gated).
 - `WaterLoadFrozen3D`: the ball with water and rotation, 8 steps, η and μ
   blobs, the displacement and the four-slot sea-level functionals: every
@@ -517,11 +636,13 @@ gravitating and Prony legs at 1, 2, 4 ranks), `TestAdjointFingerprintPar`.
 Nonlinear rheologies (the quasi-static drivers refuse them); anisotropic
 branches and moduli; the density and interface (lithospheric-thickness)
 kernels (not built); the δC terms of migrating shorelines, and
-playback beyond the first-order continuous adjoint; region-restricted
+playback beyond the first-order continuous adjoint; the quelled ice
+kernels in the discrete flavour (its data-load derivative is the
+frozen-shoreline one); region-restricted
 branches in the kernels, the second order and the discrete adjoints;
 checkpointing beyond store-all and re-solve; the referential classes (the
-sea-level accumulator reads the mixed class, and the referential
-potential-row slot is open); the ice kernels' Hessian and a symmetry gate of
+sea-level accumulator and the discrete load duals read the mixed class,
+and the referential potential-row slot is open); the ice kernels' Hessian and a symmetry gate of
 the continuous second order; and forward schemes other than the exponential
 trapezoid, which the tangent and discrete adjoints differentiate and
 transpose (the gates use fixed steps).

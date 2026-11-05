@@ -17,8 +17,11 @@ writes `fields.hpp`, the generated C++ header that both the driver and the
 test `tests/TestManufactured.cpp` read. Its docstring states the weak form
 and the sources that follow from it:
 
-- displacement row: the body force f = −div σ + the gravity terms and the
-  traction T = σn + ½ρ(u·n)g − ½ρ(u·g)n on the surface;
+- displacement row: the body force f = −div σ + ∇(ρ u·g) − div(ρu) g + ρ∇φ
+  (the symmetrised weak form's own Euler–Lagrange form carries the gravity
+  terms with halves and the natural traction σn + ½ρ(u·n)g − ½ρ(u·g)n;
+  they coincide with the standard form and with T = σn on a hydrostatic
+  background, and the derivation works from the weak form either way);
 - potential row: the volume source q = −Δφ/4πG − div(ρu) in the body and
   the surface source s = (∂ₙφ_in − ∂ₙφ_out)/4πG + ρu·n on the surface.
 

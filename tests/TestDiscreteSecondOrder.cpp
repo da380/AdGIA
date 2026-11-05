@@ -9,7 +9,8 @@
   and the bordered solves: the frozen-shoreline water load with rotation
   on the coarse 3-D ball (TestDiscreteAdjoint's WaterLoadFrozen3D), for a
   displacement and a strict four-slot sea-level observation, along eta
-  and mu blobs.
+  and mu blobs. The dual vector of H[v, .]: the kernel duals paired with
+  a nodal direction equal the directional values to rounding.
 */
 
 #include <gtest/gtest.h>
@@ -203,6 +204,154 @@ TEST(DiscreteSecondOrder, SymmetricAndMatchesFD2D) {
             << names[p] << " " << names[q];
         EXPECT_LT(std::abs(H[p][q] - H[q][p]) / scale, 1e-9)
             << "symmetry " << names[p] << " " << names[q];
+      }
+    }
+  }
+}
+
+// The dual vector of H[v, .]: on SymmetricAndMatchesFD2D's configuration
+// (16 steps, final-time and continuous observations), v in {kappa blob,
+// mu blob, eta blob}; for kappa, mu_inf, mu (fixed eta) and eta, the
+// kernel dual of AssembleKernels() paired with a nodal blob on the
+// internal scalar space equals Directional() along the same blob read
+// as a coefficient. Measured |Pair - Directional| / |Directional|
+// (ADGIA_TEST_VERBOSE=1): at most 3.5e-13 (v = kappa, kappa kernel, an
+// entry 8e3 times below the block's largest), the mu and eta kernels
+// along v = mu, eta (where the cross terms enter) at most 2.3e-14;
+// without the nodal cross terms those rows are off by 8e-2 to 12.
+// Gated 1e-9.
+TEST(DiscreteSecondOrder, KernelDualsPairExactly2D) {
+  const int n_el = 12, order = 2, n_steps = 16;
+  const real_t t_final = 2.0;
+  Mesh mesh = Mesh::MakeCartesian2D(n_el, n_el, Element::QUADRILATERAL);
+  H1_FECollection fec(order, 2);
+  FiniteElementSpace fes(&mesh, &fec, 2);
+  Array<int> top(mesh.bdr_attributes.Max()), bottom(mesh.bdr_attributes.Max());
+  top = 0;
+  bottom = 0;
+  top[2] = 1;
+  bottom[0] = 1;
+  VectorFunctionCoefficient traction(2, Traction2D), station(2, Station2D);
+  LinearForm g(&fes);
+  g.AddBoundaryIntegrator(new VectorBoundaryLFIntegrator(station), bottom);
+  g.Assemble();
+  Vector zero_vec(2);
+  zero_vec = 0.0;
+  VectorConstantCoefficient zero_traction(zero_vec);
+  ConstantCoefficient kappa0(kKappa0), mu0(kMu0), eta0(kEta0);
+  FunctionCoefficient chi_a([](const Vector& x) {
+    const real_t r2 = (x[0] - 0.4) * (x[0] - 0.4) + (x[1] - 0.6) * (x[1] - 0.6);
+    return std::exp(-r2 / 0.03);
+  });
+  FunctionCoefficient chi_b([](const Vector& x) {
+    const real_t r2 = (x[0] - 0.6) * (x[0] - 0.6) + (x[1] - 0.3) * (x[1] - 0.3);
+    return std::exp(-r2 / 0.03);
+  });
+  // The v directions, as SymmetricAndMatchesFD2D's.
+  ProductCoefficient v_kappa(kappa0, chi_a), v_mu(mu0, chi_b),
+      v_eta(eta0, chi_a);
+  auto make_v = [&](int p) {
+    TangentDirection d;
+    d.mu.assign(1, nullptr);
+    d.eta.assign(1, nullptr);
+    if (p == 0) d.kappa = &v_kappa;
+    if (p == 1) d.mu[0] = &v_mu;
+    if (p == 2) d.eta[0] = &v_eta;
+    return d;
+  };
+  const char* v_names[] = {"kappa", "mu", "eta"};
+  const real_t dt = t_final / n_steps;
+  RatioCoefficient tau0(eta0, mu0);
+  auto rheology0 = IsotropicMaxwellRheology::Maxwell(2, kappa0, mu0, tau0);
+
+  for (int which = 0; which < 2; which++) {
+    const bool continuous = which == 1;
+    LinearQuasiStaticTractionProblem prob_fwd(&fes, rheology0, traction, top);
+    ViscoelasticOperator visco_fwd(prob_fwd);
+    ForwardTrajectory trajectory(visco_fwd, true);
+    {
+      ExponentialTrapezoidSolver ode;
+      ode.Init(visco_fwd);
+      Vector m(visco_fwd.Height());
+      m = 0.0;
+      real_t t = 0.0, dts = dt;
+      trajectory.Record(m, t);
+      for (int n = 1; n <= n_steps; n++) {
+        ode.Step(m, t, dts);
+        trajectory.Record(m, t);
+      }
+    }
+    AdjointForce force;
+    if (continuous) {
+      force.AddContinuous([&](real_t t, Vector& f) { f.Add(t / t_final, g); });
+    } else {
+      force.AddObservation(trajectory.Time(n_steps), g);
+    }
+    LinearQuasiStaticTractionProblem twin(&fes, rheology0, zero_traction, top);
+    LinearQuasiStaticTractionProblem stwin(&fes, rheology0, zero_traction, top);
+    DiscreteAdjointSolver discrete(twin, stwin, trajectory);
+    discrete.SetForce(force);
+    ASSERT_TRUE(discrete.Run());
+
+    // The delta directions: a blob (centred away from v's) interpolated on
+    // the internal scalar space, nodal for Pair(), read back as a
+    // coefficient for Directional().
+    FiniteElementSpace& sfes = discrete.Operator().InternalScalarSpace();
+    FunctionCoefficient blob([](const Vector& x) {
+      const real_t r2 =
+          (x[0] - 0.55) * (x[0] - 0.55) + (x[1] - 0.45) * (x[1] - 0.45);
+      return std::exp(-r2 / 0.04);
+    });
+    GridFunction chi(&sfes);
+    chi.ProjectCoefficient(blob);
+    GridFunctionCoefficient chi_c(&chi);
+    ProductCoefficient d_kappa(kappa0, chi_c), d_mu_inf(mu0, chi_c),
+        d_mu(mu0, chi_c), d_eta(eta0, chi_c);
+    Coefficient* d_coef[] = {&d_kappa, &d_mu_inf, &d_mu, &d_eta};
+    std::vector<GridFunction> nodal(4, GridFunction(&sfes));
+    TangentDirection deltas[4];
+    for (int q = 0; q < 4; q++) {
+      nodal[q].ProjectCoefficient(*d_coef[q]);
+      deltas[q].mu.assign(1, nullptr);
+      deltas[q].eta.assign(1, nullptr);
+    }
+    deltas[0].kappa = &d_kappa;
+    deltas[1].mu_longterm = &d_mu_inf;
+    deltas[2].mu[0] = &d_mu;
+    deltas[3].eta[0] = &d_eta;
+    const char* d_names[] = {"kappa", "mu_inf", "mu", "eta"};
+    using P = DiscreteSecondOrderSolver::Parameter;
+
+    LinearQuasiStaticTractionProblem tan_twin(&fes, rheology0, zero_traction,
+                                              top);
+    for (int p = 0; p < 3; p++) {
+      TangentLinearSolver tangent(tan_twin, trajectory);
+      tangent.SetDirection(make_v(p));
+      ASSERT_TRUE(tangent.Run());
+      LinearQuasiStaticTractionProblem dtwin(&fes, rheology0, zero_traction,
+                                             top);
+      LinearQuasiStaticTractionProblem svtwin(&fes, rheology0, zero_traction,
+                                              top);
+      DiscreteSecondOrderSolver second(discrete, dtwin, svtwin, trajectory,
+                                       tangent.Trajectory(), make_v(p));
+      ASSERT_TRUE(second.Run());
+      const int ids[] = {
+          second.AddKernel(P::Kappa), second.AddKernel(P::MuLongTerm),
+          second.AddKernel(P::Mu, 0), second.AddKernel(P::Eta, 0)};
+      second.AssembleKernels();
+      for (int q = 0; q < 4; q++) {
+        LinearQuasiStaticTractionProblem sdtwin(&fes, rheology0, zero_traction,
+                                                top);
+        const real_t H = second.Directional(deltas[q], sdtwin);
+        const real_t pair = second.Pair(ids[q], nodal[q]);
+        const real_t rel = std::abs(pair - H) / std::abs(H);
+        if (std::getenv("ADGIA_TEST_VERBOSE")) {
+          std::cout << (continuous ? "continuous" : "final-time")
+                    << " v = " << v_names[p] << ", " << d_names[q]
+                    << " kernel: pair " << pair << " directional " << H
+                    << " rel " << rel << "\n";
+        }
+        EXPECT_LT(rel, 1e-9) << v_names[p] << " " << d_names[q];
       }
     }
   }
