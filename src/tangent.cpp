@@ -72,20 +72,31 @@ void TangentTrajectory::Clear() {
   m_.clear();
   u_.clear();
   phi_.clear();
+  uniform_.clear();
+  omega_.clear();
 }
 
-void TangentTrajectory::Record(real_t t, const Vector& m, const GridFunction& u,
-                               const GridFunction* phi) {
+void TangentTrajectory::Record(real_t t, const Vector& m,
+                               LinearQuasiStaticProblem& twin) {
   t_.push_back(t);
   m_.emplace_back(m);
+  const GridFunction& u = twin.Displacement();
   u_.push_back(detail::MakeGridFunction(
       const_cast<FiniteElementSpace*>(u.FESpace())));
   *u_.back() = u;
-  if (phi) {
+  real_t uniform = 0.0;
+  Vector omega;
+  if (auto* g = dynamic_cast<LinearQuasiStaticMixedSelfGravitatingProblem*>(
+          &twin)) {
+    const GridFunction& phi = g->Potential();
     phi_.push_back(detail::MakeGridFunction(
-        const_cast<FiniteElementSpace*>(phi->FESpace())));
-    *phi_.back() = *phi;
+        const_cast<FiniteElementSpace*>(phi.FESpace())));
+    *phi_.back() = phi;
+    uniform = g->UniformPotentialTerm();
+    omega = g->AngularVelocity();
   }
+  uniform_.push_back(uniform);
+  omega_.emplace_back(omega);
 }
 
 // --- TangentViscoelasticOperator -----------------------------------------
@@ -112,13 +123,6 @@ void TrapezoidWeightDerivatives(real_t h, real_t& de, real_t& dalpha,
   dbeta = -dphi1;
 }
 
-const GridFunction* PotentialOf(LinearQuasiStaticProblem& p) {
-  if (auto* g = dynamic_cast<LinearQuasiStaticMixedSelfGravitatingProblem*>(&p)) {
-    return &g->Potential();
-  }
-  return nullptr;
-}
-
 }  // namespace
 
 TangentViscoelasticOperator::TangentViscoelasticOperator(
@@ -137,12 +141,21 @@ TangentViscoelasticOperator::TangentViscoelasticOperator(
 
 void TangentViscoelasticOperator::SetDirection(const TangentDirection& dir) {
   const int K = NumBranches();
+  dir_ = dir;
   born_ = std::make_unique<ModuliBornForce>(problem_.DisplacementSpace(), dir, K);
+  born_eff_.reset();
+  born_eff_dt_ = -1.0;
   dmu_.assign(K, Vector());
   ditau_.assign(K, Vector());
   has_dmu_.assign(K, false);
   has_ditau_.assign(K, false);
   s_.assign(K, Vector());
+  known_.assign(K, Vector());
+  dbeta_.clear();
+  for (int k = 0; k < K; k++) {
+    dbeta_.push_back(detail::MakeGridFunction(sfes_.get()));
+    *dbeta_[k] = 0.0;
+  }
   GridFunction sample(sfes_.get());
   for (int k = 0; k < K; k++) {
     const Array<int>& nodes = nodes_[k];
@@ -190,17 +203,89 @@ int TangentViscoelasticOperator::NodeAt(real_t t) const {
   return best;
 }
 
+void TangentViscoelasticOperator::BuildEffectiveBorn() {
+  // delta mu_eff = delta mu_inf + sum_k [beta_k delta mu_k + delta beta_k mu_k],
+  // with beta_k the operator's own weight coefficients (the ones the
+  // forward's effective stiffness is assembled with).
+  eff_owned_.clear();
+  born_eff_.reset();
+  const int K = NumBranches();
+  const int dim = problem_.DisplacementSpace().GetMesh()->Dimension();
+  Coefficient* dmu = dir_.mu_longterm;
+  auto add = [&](Coefficient* term) {
+    if (!term) return;
+    if (!dmu) {
+      dmu = term;
+    } else {
+      eff_owned_.push_back(std::make_unique<SumCoefficient>(*dmu, *term));
+      dmu = eff_owned_.back().get();
+    }
+  };
+  for (int k = 0; k < K; k++) {
+    if (dir_.Mu(k)) {
+      eff_owned_.push_back(
+          std::make_unique<ProductCoefficient>(*beta_ptrs_[k], *dir_.Mu(k)));
+      add(eff_owned_.back().get());
+    }
+    if (has_ditau_[k]) {
+      eff_owned_.push_back(
+          std::make_unique<GridFunctionCoefficient>(dbeta_[k].get()));
+      Coefficient* dbeta_c = eff_owned_.back().get();
+      eff_owned_.push_back(std::make_unique<ProductCoefficient>(
+          *dbeta_c, problem_.Rheology().BranchShearModulus(k)));
+      add(eff_owned_.back().get());
+    }
+  }
+  if (!dir_.kappa && !dmu) {
+    born_eff_dt_ = step_dt_;
+    return;
+  }
+  born_eff_ = detail::MakeBilinearForm(&problem_.DisplacementSpace());
+  if (dir_.kappa) {
+    born_eff_->AddDomainIntegrator(
+        new ElasticityIntegrator(*dir_.kappa, 1.0, 0.0));
+  }
+  if (dmu) {
+    born_eff_->AddDomainIntegrator(
+        new ElasticityIntegrator(*dmu, -2.0 / dim, 1.0));
+  }
+  born_eff_->Assemble();
+  born_eff_->Finalize();
+  born_eff_dt_ = step_dt_;
+}
+
 void TangentViscoelasticOperator::Inject(real_t t) {
   const int n = in_step_ ? target_ : NodeAt(t);
-  // The Born force of the moduli on the forward displacement.
+  fbuf_.SetSize(problem_.DisplacementSpace().GetVSize());
+  if (in_step_) {
+    // The effective solve: the Born force of the moduli and of the
+    // weights on u^{n+1}, and the step's known-part branch sources.
+    if (born_eff_dt_ != step_dt_) {
+      BuildEffectiveBorn();
+    }
+    if (born_eff_) {
+      const GridFunction& u = fwd_->Displacement(n);
+      bbuf_.SetSize(u.Size());
+      born_eff_->Mult(u, bbuf_);
+      fbuf_ = 0.0;
+      fbuf_.Add(-1.0, bbuf_);
+      problem_.AddForce(fbuf_);
+    }
+    for (int k = 0; k < NumBranches(); k++) {
+      if (known_[k].Size() > 0) {
+        AddCoupledForce(k, known_[k]);
+      }
+    }
+    return;
+  }
+  // An unrelaxed solve: the Born force of the moduli on the forward
+  // displacement and the branch-modulus perturbation on the forward
+  // internal variables at this node.
   if (born_ && !born_->Empty()) {
-    fbuf_.SetSize(problem_.DisplacementSpace().GetVSize());
     fbuf_ = 0.0;
     born_->AddTo(fwd_->Displacement(n), fbuf_);
     problem_.AddForce(fbuf_);
   }
-  // The branch-modulus perturbation on the forward internal variables,
-  // and, inside a step, the relaxation source of the step ending at n.
   for (int k = 0; k < NumBranches(); k++) {
     const int nd = nodes_[k].Size();
     if (has_dmu_[k]) {
@@ -213,36 +298,57 @@ void TangentViscoelasticOperator::Inject(real_t t) {
       }
       AddCoupledForce(k, zbuf_);
     }
-    if (in_step_ && has_ditau_[k]) {
-      ApplyBranchModulus(k, s_[k], zbuf_);
-      AddCoupledForce(k, zbuf_);
-    }
   }
 }
 
 void TangentViscoelasticOperator::RelaxationSource(int n, real_t dt) {
   fwd_->Strain(n, dn_);
   fwd_->Strain(n + 1, dn1_);
+  const bool new_dt = dt != step_dt_ || born_eff_dt_ < 0.0;
+  step_dt_ = dt;
   for (int k = 0; k < NumBranches(); k++) {
     const Array<int>& nodes = nodes_[k];
     const int nd = nodes.Size();
     s_[k].SetSize(nd * nc_);
     s_[k] = 0.0;
-    if (!has_ditau_[k]) {
+    known_[k].SetSize(0);
+    if (!has_ditau_[k] && !has_dmu_[k]) {
       continue;
     }
     Vector mk = Branch(fwd_->State(n), k);
+    // The known part of the step's branch force, 2 dmu (e m^n + a d^n)
+    // + C_k (de m^n + da d^n) dh, and the state source s_k.
+    Vector rel(nd * nc_);
+    rel = 0.0;
+    known_[k].SetSize(nd * nc_);
+    known_[k] = 0.0;
     for (int q = 0; q < nd; q++) {
       const real_t h = dt * itau0_[k][q];
-      real_t de, da, db;
+      real_t e, alpha, beta, de, da, db;
+      detail::ExponentialTrapezoidWeights(h, e, alpha, beta);
       TrapezoidWeightDerivatives(h, de, da, db);
-      const real_t dh = dt * ditau_[k][q];
+      const real_t dh = has_ditau_[k] ? dt * ditau_[k][q] : 0.0;
       const int p = nodes[q];
+      if (has_ditau_[k] && new_dt) {
+        // delta beta_k = -delta b_k = -b_k' delta h_k, nodal.
+        (*dbeta_[k])[p] = -db * dh;
+      }
       for (int c = 0; c < nc_; c++) {
-        s_[k][c * nd + q] = dh * (de * mk[c * nd + q] + da * dn_[c * nd_ + p] +
-                                  db * dn1_[c * nd_ + p]);
+        const int i = c * nd + q, full = c * nd_ + p;
+        s_[k][i] = dh * (de * mk[i] + da * dn_[full] + db * dn1_[full]);
+        rel[i] = dh * (de * mk[i] + da * dn_[full]);
+        if (has_dmu_[k]) {
+          known_[k][i] = 2.0 * dmu_[k][q] * (e * mk[i] + alpha * dn_[full]);
+        }
       }
     }
+    if (has_ditau_[k]) {
+      ApplyBranchModulus(k, rel, zbuf_);
+      known_[k] += zbuf_;
+    }
+  }
+  if (new_dt) {
+    born_eff_dt_ = -1.0;  // rebuild the effective Born form for this dt
   }
 }
 
@@ -262,7 +368,7 @@ bool TangentViscoelasticOperator::Run(ForwardTrajectory& forward,
   if (!SolveElastic(dm, t)) {
     return false;
   }
-  out.Record(t, dm, problem_.Displacement(), PotentialOf(problem_));
+  out.Record(t, dm, problem_);
   for (int n = 0; n < N; n++) {
     const real_t dt = forward.Time(n + 1) - forward.Time(n);
     RelaxationSource(n, dt);
@@ -282,7 +388,7 @@ bool TangentViscoelasticOperator::Run(ForwardTrajectory& forward,
     t = forward.Time(n + 1);  // no drift against the forward grid
     SetTime(t);
     UpdateCache(dm, t);
-    out.Record(t, dm, problem_.Displacement(), PotentialOf(problem_));
+    out.Record(t, dm, problem_);
   }
   return true;
 }
@@ -320,7 +426,7 @@ bool TangentLinearSolver::Run() {
   }
   traj_.Clear();
   Vector none;
-  traj_.Record(0.0, none, twin_.Displacement(), PotentialOf(twin_));
+  traj_.Record(0.0, none, twin_);
   return true;
 }
 
@@ -351,9 +457,6 @@ real_t TangentLinearSolver::Pair(const AdjointForce& force) const {
   auto* phi_slot = dynamic_cast<PotentialForceSlot*>(&twin_);
   real_t dJ = 0.0;
   for (int i = 0; i < force.NumObservations(); i++) {
-    MFEM_VERIFY(!force.ObservationOnBorder(i),
-                "TangentLinearSolver::Pair: border observations (uniform "
-                "term, omega) are not paired yet.");
     const real_t t = force.ObservationTime(i);
     int n = 0;
     for (int k = 1; k <= N; k++) {
@@ -370,6 +473,15 @@ real_t TangentLinearSolver::Pair(const AdjointForce& force) const {
                   "twin without a potential.");
       dJ += Dot(force.ObservationDualPhi(i), *traj_.Potential(n),
                 phi_slot->PotentialForceSpace());
+    }
+    // The border data: scalars replicated on every rank.
+    dJ += force.ObservationUniform(i) * traj_.Uniform(n);
+    const Vector& om = force.ObservationOmega(i);
+    if (om.Size() > 0) {
+      MFEM_VERIFY(traj_.Omega(n).Size() == om.Size(),
+                  "TangentLinearSolver::Pair: an omega observation on a "
+                  "twin without rotation.");
+      dJ += om * traj_.Omega(n);
     }
   }
   if (force.HasContinuous() || force.HasContinuousPotential()) {

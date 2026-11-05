@@ -71,7 +71,9 @@ class ModuliBornForce {
 
 /**
  * @brief The recorded tangent trajectory: per forward node the tangent
- * internal state, displacement and (on a gravitating twin) potential.
+ * internal state, displacement and, on a gravitating twin, the potential
+ * and the border unknowns (the uniform potential term of a water load,
+ * the angular velocity of a rotating solve).
  */
 class TangentTrajectory {
  public:
@@ -84,13 +86,20 @@ class TangentTrajectory {
   const mfem::GridFunction* Potential(int n) const {
     return n < static_cast<int>(phi_.size()) ? phi_[n].get() : nullptr;
   }
+  /** @brief The tangent uniform term (0 without a water load). */
+  mfem::real_t Uniform(int n) const { return uniform_[n]; }
+  /** @brief The tangent angular velocity (empty without rotation). */
+  const mfem::Vector& Omega(int n) const { return omega_[n]; }
   void Clear();
+  /** @brief Record the twin problem's state at @p t (its potential and
+   * border unknowns are read off the problem when it carries them). */
   void Record(mfem::real_t t, const mfem::Vector& m,
-              const mfem::GridFunction& u, const mfem::GridFunction* phi);
+              LinearQuasiStaticProblem& twin);
 
  private:
   std::vector<mfem::real_t> t_;
-  std::vector<mfem::Vector> m_;
+  std::vector<mfem::Vector> m_, omega_;
+  std::vector<mfem::real_t> uniform_;
   std::vector<std::unique_ptr<mfem::GridFunction>> u_, phi_;
 };
 
@@ -101,21 +110,32 @@ class TangentTrajectory {
  * injected at every elastic solve through the force hook and the
  * internal-variable update completed after each step.
  *
- * Differentiating the step @f$m_k^{n+1} = e_k m_k^n + a_k d^n + b_k
- * d^{n+1}@f$ (weights at @f$h_k = dt/\tau_k@f$) and the solve @f$K_U u =
- * f + \sum_k B^T C_k m_k@f$ along a direction gives the same step for
- * @f$(\delta u, \delta m)@f$ with
+ * The forward step is the effective solve @f$K(C_\infty + \sum_k
+ * \beta_k C_k)\,u^{n+1} = f + \sum_k B^T C_k (e_k m_k^n + a_k d^n)@f$
+ * (the weights @f$\beta_k = 1 - b_k@f$ at @f$h_k = dt/\tau_k@f$ as
+ * interpolated nodal coefficients in the assembled stiffness) followed
+ * by the pointwise update @f$m_k^{n+1} = e_k m_k^n + a_k d^n + b_k
+ * d^{n+1}@f$, @f$d = Du@f$. Differentiating THAT (not the unrelaxed
+ * form @f$K_U u = f + \sum B^T C_k m_k@f$, which coincides with it only
+ * when the internal space resolves the strain exactly, and does not on
+ * curved elements) gives the same step for @f$(\delta u, \delta m)@f$
+ * with
  *
- *  - the Born force @f$-\delta K_U\,u@f$ of the moduli perturbation on
- *    the forward displacement (ModuliBornForce),
- *  - the branch force @f$\sum_k B^T (2\delta\mu_k) m_k@f$ of the
- *    forward internal variables,
- *  - the relaxation-time source @f$s_k = \delta h_k\,(-e_k m_k^n + a_k'
- *    d^n + b_k' d^{n+1})@f$, @f$\delta h_k = dt\,\delta(1/\tau_k)@f$,
+ *  - in the effective solve, the Born force @f$-K(\delta\kappa,
+ *    \delta\mu_\infty + \sum_k [\beta_k\delta\mu_k + \delta\beta_k
+ *    \mu_k])\,u^{n+1}@f$ of the moduli AND of the weights'
+ *    dependence on the relaxation times, @f$\delta\beta_k = -b_k'
+ *    \delta h_k@f$, and the branch force @f$\sum_k B^T [2\delta\mu_k
+ *    (e_k m_k^n + a_k d^n) + C_k(\delta e_k m_k^n + \delta a_k d^n)]@f$
+ *    of the step's known part;
+ *  - in an unrelaxed solve (the start, an observation), the Born force
+ *    @f$-\delta K_U\,u@f$ (ModuliBornForce) and @f$\sum_k B^T
+ *    (2\delta\mu_k) m_k@f$;
+ *  - after the step, the state completed by @f$\delta m_k^{n+1}
+ *    \mathrel{+}= s_k@f$, @f$s_k = \delta h_k(-e_k m_k^n + a_k' d^n +
+ *    b_k' d^{n+1})@f$, with @f$\delta h_k = dt\,\delta(1/\tau_k)@f$,
  *    @f$\delta(1/\tau_k) = (1/\tau_k)(\delta\mu_k/\mu_k -
- *    \delta\eta_k/\eta_k)@f$, which enters the effective solve of the
- *    step as @f$\sum_k B^T C_k s_k@f$ and the new state as
- *    @f$\delta m_k^{n+1} \mathrel{+}= s_k@f$.
+ *    \delta\eta_k/\eta_k)@f$.
  *
  * The forward trajectory must come from ExponentialTrapezoidStep on a
  * LINEAR isotropic rheology (the adjoint's assumptions); the twin shares
@@ -141,14 +161,25 @@ class TangentViscoelasticOperator : public ViscoelasticOperator {
   int NodeAt(mfem::real_t t) const;
   void RelaxationSource(int n, mfem::real_t dt);
 
-  std::unique_ptr<ModuliBornForce> born_;
+  void BuildEffectiveBorn();
+
+  TangentDirection dir_;
+  std::unique_ptr<ModuliBornForce> born_;  ///< the unrelaxed Born force
   std::vector<mfem::Vector> dmu_, ditau_;  ///< nodal, branch layout
   std::vector<bool> has_dmu_, has_ditau_;
-  std::vector<mfem::Vector> s_;  ///< the relaxation source per branch
+  std::vector<mfem::Vector> s_;      ///< the state's relaxation source
+  std::vector<mfem::Vector> known_;  ///< the step's known-part source
+  // The effective Born form of the current step size: delta kappa and
+  // delta mu_inf + sum_k [beta_k delta mu_k + delta beta_k mu_k].
+  std::vector<std::unique_ptr<mfem::GridFunction>> dbeta_;
+  std::vector<std::unique_ptr<mfem::Coefficient>> eff_owned_;
+  std::unique_ptr<mfem::BilinearForm> born_eff_;
+  mfem::real_t born_eff_dt_ = -1.0;
+  mfem::real_t step_dt_ = 0.0;
   ForwardTrajectory* fwd_ = nullptr;
   bool in_step_ = false;
   int target_ = 0;
-  mfem::Vector fbuf_, dn_, dn1_, zbuf_;
+  mfem::Vector fbuf_, dn_, dn1_, zbuf_, bbuf_;
 };
 
 /**
@@ -182,7 +213,9 @@ class TangentLinearSolver {
   TangentViscoelasticOperator* Operator() { return op_.get(); }
 
   /** @brief dJ along the direction for the functional @p force describes
-   * (global in parallel). Border terms (uniform, omega) are refused. */
+   * (global in parallel): its point and continuous terms on the
+   * displacement and potential rows, and its border data (uniform term,
+   * omega) on the recorded border unknowns. */
   mfem::real_t Pair(const AdjointForce& force) const;
 
  private:
