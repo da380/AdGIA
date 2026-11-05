@@ -533,6 +533,14 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
    * (U, flux), then (bulk, wall mass). */
   mfem::Vector LevelBorderDiagnostics(int region) const;
 
+  /** @brief The level border's fluid-block energy of @p region: the
+   * smallest eigenvalue of the closure's quadratic form @f$J[V]@f$ at
+   * zero potential on the border's own grid (LevelBorder::
+   * FluidBlockMinEigenvalue). Positive = coercive; a theorem for
+   * @f$D\le 0@f$, a check for @f$D>0@f$. Needs no solve. */
+  mfem::real_t LevelBorderFluidBlockMinEigenvalue(
+      int region, mfem::Vector* eigenvalues = nullptr) const;
+
   /** @brief @f$\psi(\omega)@f$ of the last Solve() as a coefficient
    * (requires SetRotation()); amplitudes follow each solve. */
   mfem::Coefficient& SolutionCentrifugalPotential();

@@ -2596,6 +2596,14 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::BuildLevelBorders() {
                                     fluid_rho_prime_, level_coefs_);
 }
 
+real_t LinearQuasiStaticMixedSelfGravitatingProblem::
+    LevelBorderFluidBlockMinEigenvalue(int region, Vector* eigenvalues) const {
+  MFEM_VERIFY(level_enabled_ && region >= 0 &&
+                  region < static_cast<int>(level_.size()),
+              "LevelBorderFluidBlockMinEigenvalue: no such level border.");
+  return level_[region].FluidBlockMinEigenvalue(eigenvalues);
+}
+
 Vector LinearQuasiStaticMixedSelfGravitatingProblem::LevelBorderDiagnostics(
     int region) const {
   MFEM_VERIFY(level_enabled_ && region >= 0 &&

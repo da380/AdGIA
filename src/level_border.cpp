@@ -84,6 +84,109 @@ void LevelBorder::Solution(Vector& c_out, Vector& U, Vector& s, Vector& nu,
   }
 }
 
+namespace {
+
+// Cyclic Jacobi eigenvalues of a small symmetric matrix (no LAPACK).
+void JacobiEigenvalues(DenseMatrix a, Vector& ev) {
+  const int m = a.Height();
+  for (int sweep = 0; sweep < 200; sweep++) {
+    real_t off = 0.0, diag = 0.0;
+    for (int p = 0; p < m; p++) {
+      diag += a(p, p) * a(p, p);
+      for (int q = p + 1; q < m; q++) {
+        off += a(p, q) * a(p, q);
+      }
+    }
+    if (off <= 1e-32 * std::max(diag, std::numeric_limits<real_t>::min())) {
+      break;
+    }
+    for (int p = 0; p < m; p++) {
+      for (int q = p + 1; q < m; q++) {
+        const real_t apq = a(p, q);
+        if (apq == 0.0) {
+          continue;
+        }
+        const real_t theta = (a(q, q) - a(p, p)) / (2.0 * apq);
+        const real_t t = (theta >= 0.0 ? 1.0 : -1.0) /
+                         (std::abs(theta) + std::sqrt(theta * theta + 1.0));
+        const real_t c = 1.0 / std::sqrt(t * t + 1.0), s = t * c;
+        for (int k = 0; k < m; k++) {  // columns: A J
+          const real_t akp = a(k, p), akq = a(k, q);
+          a(k, p) = c * akp - s * akq;
+          a(k, q) = s * akp + c * akq;
+        }
+        for (int k = 0; k < m; k++) {  // rows: J^T (A J)
+          const real_t apk = a(p, k), aqk = a(q, k);
+          a(p, k) = c * apk - s * aqk;
+          a(q, k) = s * apk + c * aqk;
+        }
+      }
+    }
+  }
+  ev.SetSize(m);
+  for (int p = 0; p < m; p++) {
+    ev[p] = a(p, p);
+  }
+}
+
+}  // namespace
+
+real_t LevelBorder::FluidBlockMinEigenvalue(Vector* eigenvalues) const {
+  MFEM_VERIFY(size > 0, "LevelBorder: not built.");
+  const int m = n + 1;
+  DenseMatrix Kuu(nU), B(nU, 2 * m), C(2 * m);
+  for (int i = 0; i < nU; i++) {
+    for (int j = 0; j < nU; j++) {
+      Kuu(i, j) = Db(oU + i, oU + j);
+    }
+    for (int j = 0; j < m; j++) {
+      B(i, j) = Db(oU + i, os + j);
+      B(i, m + j) = Db(oU + i, onu + j);
+    }
+  }
+  for (int i = 0; i < m; i++) {
+    for (int j = 0; j < m; j++) {
+      C(i, j) = Db(os + i, os + j);
+      C(i, m + j) = Db(os + i, onu + j);
+      C(m + i, j) = Db(onu + i, os + j);
+      C(m + i, m + j) = Db(onu + i, onu + j);
+    }
+  }
+  // S = K_UU - B C^{-1} B^T: the energy in U once s and nu are eliminated
+  // at zero potential (the nu rows then say s A + U = 0).
+  DenseMatrix Bt, X(2 * m, nU), BX(nU);
+  Bt.Transpose(B);
+  DenseMatrixInverse Cinv(C);
+  Cinv.Mult(Bt, X);
+  Mult(B, X, BX);
+  // Restricted to the interior nodes: the wall values of U are fixed by
+  // the solid through the constraint rows, and it is on that set that
+  // the closure's form is coercive (the boundary terms of the
+  // null-Lagrangian identity vanish there; closure_notes_v3 §6.5).
+  std::vector<int> free;
+  for (int i = 0; i < nU; i++) {
+    const int node = centre ? i + 1 : i;
+    if (std::find(wall_node.begin(), wall_node.end(), node) == wall_node.end()) {
+      free.push_back(i);
+    }
+  }
+  const int nf = static_cast<int>(free.size());
+  MFEM_VERIFY(nf > 0, "LevelBorder: no interior node for the energy probe.");
+  DenseMatrix S(nf);
+  for (int a = 0; a < nf; a++) {
+    for (int b = 0; b < nf; b++) {
+      const int i = free[a], j = free[b];
+      S(a, b) = 0.5 * ((Kuu(i, j) - BX(i, j)) + (Kuu(j, i) - BX(j, i)));
+    }
+  }
+  Vector ev;
+  JacobiEigenvalues(S, ev);
+  if (eigenvalues) {
+    *eigenvalues = ev;
+  }
+  return ev.Min();
+}
+
 std::vector<LevelBorder> BuildLevelBorders(
     const LevelBorderContext& ctx, const std::vector<FluidRegion>& fluids,
     const std::list<mfem::Array<int>>& fluid_markers,
@@ -108,6 +211,12 @@ std::vector<LevelBorder> BuildLevelBorders(
   auto allreduce = [](real_t*, int, int) {};
   constexpr int MPI_SUM = 0, MPI_MIN = 1, MPI_MAX = 2;
 #endif
+  bool root = true;
+#ifdef MFEM_USE_MPI
+  if (pfes_pot) {
+    root = pfes_pot->GetMyRank() == 0;
+  }
+#endif
   BoundaryNormalDotCoefficient m_dot_g(*ctx.grad_pot0_shadow);
   auto marker = fluid_markers.begin();
   for (size_t r = 0; r < fluids.size(); r++, ++marker) {
@@ -121,6 +230,8 @@ std::vector<LevelBorder> BuildLevelBorders(
     const int nattr = f.interface_marker.Size();
     std::vector<real_t> w_area(nattr, 0.0), w_phi(nattr, 0.0),
         w_mg(nattr, 0.0);
+    std::vector<real_t> w_min(nattr, std::numeric_limits<real_t>::max()),
+        w_max(nattr, -std::numeric_limits<real_t>::max());
     for (int be = 0; be < ms->GetNBE(); be++) {
       const int a = ms->GetBdrAttribute(be);
       if (a > nattr || !f.interface_marker[a - 1]) {
@@ -132,18 +243,25 @@ std::vector<LevelBorder> BuildLevelBorders(
         const IntegrationPoint& ip = ir.IntPoint(q);
         T->SetIntPoint(&ip);
         const real_t w = ip.weight * T->Weight();
+        const real_t c = ctx.pot0_shadow->GetValue(*T, ip);
         w_area[a - 1] += w;
-        w_phi[a - 1] += w * ctx.pot0_shadow->GetValue(*T, ip);
+        w_phi[a - 1] += w * c;
         w_mg[a - 1] += w * m_dot_g.Eval(*T, ip);
+        w_min[a - 1] = std::min(w_min[a - 1], c);
+        w_max[a - 1] = std::max(w_max[a - 1], c);
       }
     }
     allreduce(w_area.data(), nattr, MPI_SUM);
     allreduce(w_phi.data(), nattr, MPI_SUM);
     allreduce(w_mg.data(), nattr, MPI_SUM);
+    allreduce(w_min.data(), nattr, MPI_MIN);
+    allreduce(w_max.data(), nattr, MPI_MAX);
     Array<int> outer_marker(nattr), inner_marker(nattr);
     outer_marker = 0;
     inner_marker = 0;
     real_t top_area = 0.0, top_phi = 0.0, bot_area = 0.0, bot_phi = 0.0;
+    real_t top_min = std::numeric_limits<real_t>::max(), top_max = -top_min;
+    real_t bot_min = top_min, bot_max = -top_min;
     for (int a = 0; a < nattr; a++) {
       if (!f.interface_marker[a] || w_area[a] <= 0.0) {
         continue;
@@ -152,10 +270,14 @@ std::vector<LevelBorder> BuildLevelBorders(
         outer_marker[a] = 1;
         top_area += w_area[a];
         top_phi += w_phi[a];
+        top_min = std::min(top_min, w_min[a]);
+        top_max = std::max(top_max, w_max[a]);
       } else {
         inner_marker[a] = 1;
         bot_area += w_area[a];
         bot_phi += w_phi[a];
+        bot_min = std::min(bot_min, w_min[a]);
+        bot_max = std::max(bot_max, w_max[a]);
       }
     }
     MFEM_VERIFY(top_area > 0.0,
@@ -202,6 +324,47 @@ std::vector<LevelBorder> BuildLevelBorders(
                 "SetLevelBorder: region " << r << " has no level range.");
     real_t gmin_away = gmax;
     const real_t range = c_top - c_bot;
+    // The level-wall check: each wall is taken at the area mean of Phi0
+    // and must be a level surface of it to the tolerance (transverse
+    // walls, closure_notes_v3 §4.5/§7.2, are not built); on a shell the
+    // two walls' bands of levels must not overlap (exact_theory §4: the
+    // region's Reeb graph is then a single edge).
+    L.wall_level_min = {top_min};
+    L.wall_level_max = {top_max};
+    MFEM_VERIFY(top_max - top_min <= ctx.wall_level_tol * range,
+                "SetLevelBorder: the outer wall of region "
+                    << r << " is not a level surface of Phi0 (spread "
+                    << top_max - top_min << " against the level range "
+                    << range << ", tolerance " << ctx.wall_level_tol
+                    << "); transverse walls are not built "
+                       "(doc/dahlen_closure.tex).");
+    if (!L.centre) {
+      L.wall_level_min.push_back(bot_min);
+      L.wall_level_max.push_back(bot_max);
+      MFEM_VERIFY(bot_max - bot_min <= ctx.wall_level_tol * range,
+                  "SetLevelBorder: the inner wall of region "
+                      << r << " is not a level surface of Phi0 (spread "
+                      << bot_max - bot_min << " against the level range "
+                      << range << ", tolerance " << ctx.wall_level_tol
+                      << "); transverse walls are not built "
+                         "(doc/dahlen_closure.tex).");
+      MFEM_VERIFY(bot_max < top_min,
+                  "SetLevelBorder: the inner and outer walls of region "
+                      << r << " span overlapping bands of Phi0 (inner up to "
+                      << bot_max << ", outer from " << top_min
+                      << "); the fluid's level structure is not a single "
+                         "edge (doc/dahlen_closure.tex).");
+    }
+    if (root) {
+      std::cout << "Level border, region " << r << ": outer wall Phi0 spread "
+                << top_max - top_min << " (" << (top_max - top_min) / range
+                << " of the level range " << range << ")";
+      if (!L.centre) {
+        std::cout << ", inner wall spread " << bot_max - bot_min << " ("
+                  << (bot_max - bot_min) / range << ")";
+      }
+      std::cout << ".\n";
+    }
     for_each_fluid_point([&](ElementTransformation& T,
                              const IntegrationPoint& ip, real_t) {
       const real_t c = ctx.pot0->GetValue(T, ip);

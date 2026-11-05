@@ -665,6 +665,12 @@ u@f$ columns CONJUGATED
                            mfem::Vector& s, mfem::Vector& nu,
                            mfem::Vector& lambda) const;
 
+  /** @brief The border's fluid-block energy of region @p region, as the
+   * mixed class's accessor (LevelBorder::FluidBlockMinEigenvalue; the
+   * glue conjugation leaves the dense block untouched). */
+  mfem::real_t LevelBorderFluidBlockMinEigenvalue(
+      int region, mfem::Vector* eigenvalues = nullptr) const;
+
   /** @brief True when the displacement lives on the ball itself. */
   bool BallWide() const { return ball_wide_; }
 

@@ -149,6 +149,9 @@ struct DahlenBorderCase {
   std::unique_ptr<FiniteElementSpace> fes_u, fes_phi;
   ConstantCoefficient kappa{kKappa}, mu{kMu};
   AWBulkModulus kappa_f;
+  // The core's bulk modulus scaled (1: Adams-Williamson, D = 0; a < 1
+  // softens it, D = (rho^2/kappa_AW)(1/a - 1) > 0).
+  std::unique_ptr<ProductCoefficient> kappa_scaled;
   FunctionCoefficient rho_s{SolidDensity}, rho_f{FluidDensity};
   std::unique_ptr<IsotropicElasticRheology> rheology;
   FunctionCoefficient sigma{SurfaceLoad};
@@ -159,7 +162,7 @@ struct DahlenBorderCase {
   // the fluid's bulk modulus (BackgroundGravity() lives on the body).
   std::unique_ptr<GradientGridFunctionCoefficient> g_parent;
 
-  DahlenBorderCase(int dim, int order, int levels) {
+  DahlenBorderCase(int dim, int order, int levels, double kappa_scale = 1.0) {
     parent = std::make_unique<Mesh>(ThreeLayerMeshFile(dim).c_str(), 1, 1);
     Array<int> attrs({1, 3});
     solid =
@@ -170,7 +173,8 @@ struct DahlenBorderCase {
     rheology = std::make_unique<IsotropicElasticRheology>(dim, kappa, mu);
     surface = SurfaceMarker(*solid);
     fluids.push_back(OuterCore(*solid, rho_f));
-    fluids.back().bulk_modulus = &kappa_f;
+    kappa_scaled = std::make_unique<ProductCoefficient>(kappa_scale, kappa_f);
+    fluids.back().bulk_modulus = kappa_scaled.get();
     problem = std::make_unique<LinearQuasiStaticMixedSelfGravitatingProblem>(
         fes_u.get(), fes_phi.get(), *rheology, rho_s, kG, kDtNDegree, nullptr,
         fluids);
@@ -230,6 +234,43 @@ void ExpectDegree0Agreement(int dim, int order, int levels, double tol) {
 // more.
 TEST(MixedProblemGauged, Degree0MatchesDahlenWithLevelBorder2D) {
   ExpectDegree0Agreement(2, 2, 16, 1.5e-1);
+}
+
+// The fluid block's energy (closure_notes_v3 §6.5; the consolidated
+// dahlen_closure.tex): the closure's quadratic form J[V] at zero
+// potential is coercive for D <= 0 — a theorem — and only a check for
+// D > 0. The canned outer core is Adams-Williamson at scale 1 (D = 0),
+// where the smallest eigenvalue of the border's fluid block must be
+// non-negative; softening the bulk modulus by a < 1 makes
+// D = (rho^2/kappa_AW)(1/a - 1) > 0 and the eigenvalue must fall with a,
+// crossing zero at a small enough a (the loss of coercivity the note
+// predicts for a uniform compressible core at low kappa). Measured on
+// the canned 2-D annulus: the spectrum scales with kappa to a
+// kappa-independent part of about -3.5e-4 in the softest mode against
+// 0.52 at scale 1, so the crossing sits near a = 7e-4 — the margin by
+// which the closure is coercive here. The scan is recorded; the gate is
+// the D = 0 sign, the monotone fall and the existence of the crossing.
+TEST(MixedProblemGauged, LevelBorderFluidBlockEnergy2D) {
+  const double scales[] = {1.0, 0.1, 1e-2, 1e-3, 5e-4, 2e-4, 1e-4};
+  double prev = std::numeric_limits<double>::infinity();
+  double emax1 = 0.0;
+  bool crossed = false;
+  for (double a : scales) {
+    DahlenBorderCase d(2, 2, 16, a);
+    Vector ev;
+    const double emin = d.problem->LevelBorderFluidBlockMinEigenvalue(0, &ev);
+    const double emax = ev.Max();
+    if (a == 1.0) {
+      emax1 = emax;
+      EXPECT_GE(emin, -1e-10 * emax) << "D = 0: J not coercive";
+    }
+    std::cout << "  kappa scale " << a << ": fluid-block eigenvalues min "
+              << emin << ", max " << emax << "\n";
+    EXPECT_LE(emin, prev + 1e-10 * emax1) << "the energy must fall as D grows";
+    prev = emin;
+    crossed = crossed || emin < 0.0;
+  }
+  EXPECT_TRUE(crossed) << "no loss of coercivity down to kappa scale 0.02";
 }
 
 TEST(MixedProblemGauged, Degree0MatchesDahlenWithLevelBorder3D) {

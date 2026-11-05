@@ -2602,6 +2602,14 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::LevelBorderSolution(
   level_[region].Solution(c, U, s, nu, lambda);
 }
 
+real_t LinearQuasiStaticReferentialSelfGravitatingProblem::
+    LevelBorderFluidBlockMinEigenvalue(int region, Vector* eigenvalues) const {
+  MFEM_VERIFY(level_enabled_ && region >= 0 &&
+                  region < static_cast<int>(level_.size()),
+              "LevelBorderFluidBlockMinEigenvalue: no such level border.");
+  return level_[region].FluidBlockMinEigenvalue(eigenvalues);
+}
+
 void LinearQuasiStaticReferentialSelfGravitatingProblem::ConfigureFluidOperator(
     const Array<int>& marker, Coefficient& mu, real_t epsilon,
     GaugePenalty form, Diffeomorphism* map) {
