@@ -141,6 +141,37 @@ void RunCase(int dim, int order, const std::string& label) {
   Check(RelErr(L2Norm(p.Potential()), 3.0 * phi_ref), 1e-8,
         label + " time scaling |phi|");
 
+  // The pressure split on the gravitating solve (order >= 2, Taylor-Hood):
+  // a different discretisation of the same problem, so it agrees with the
+  // primal at discretisation-error level; with a relaxation weight too,
+  // and clearing the weight restores the unrelaxed split solution.
+  if (order >= 2) {
+    LinearQuasiStaticMixedSelfGravitatingProblem s(&fes_u, &fes_phi, rheology,
+                                                   rho, kG, kDtNDegree);
+    s.SetSurfaceLoad(sigma, surface);
+    s.SetRelTol(1e-11);
+    s.SetPressureSplitSolver(1.0);
+    s.AssembleForce(0.0);
+    Check(s.Solve() ? 0.0 : 1.0, 0.0, label + " split solve");
+    const double us = L2Norm(s.Displacement());
+    const double ps = L2Norm(s.Potential());
+    if (Mpi::Root()) {
+      std::cout << label << ": split vs primal |u| " << RelErr(us, u_ref)
+                << ", |phi| " << RelErr(ps, phi_ref) << "\n";
+    }
+    // Homogeneous body (no interface for the continuous pressure to
+    // smear): measured 3.6e-7 / 4.4e-8.
+    Check(RelErr(us, u_ref), 1e-4, label + " split |u|");
+    Check(RelErr(ps, phi_ref), 1e-4, label + " split |phi|");
+    ConstantCoefficient half(0.5);
+    s.SetRelaxationWeights({&half});
+    Check(s.Solve() ? 0.0 : 1.0, 0.0, label + " split soft solve");
+    s.ClearRelaxationWeights();
+    Check(s.Solve() ? 0.0 : 1.0, 0.0, label + " split restored solve");
+    Check(RelErr(L2Norm(s.Displacement()), us), 1e-7,
+          label + " split restored |u|");
+  }
+
   // Relaxation weight, compared with the serial problem.
   ConstantCoefficient softer(0.5);
   ser.problem->SetRelaxationWeights({&softer});
