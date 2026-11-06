@@ -702,14 +702,18 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
    * block, where a weighted mass matrix absorbs them (see
    * doc/methods/pressure_split.tex).
    *
-   * Scope (the box-contrast prototype): the plain clamped solid only —
-   * requires an isotropic(-split) rheology, displacement order >= 2 and no
-   * fluid treatment; classes with their own solver machinery (rigid-mode
-   * projection, gravity blocks) refuse. The modulus-flavour cache is
-   * bypassed: every weight switch reassembles the blocks. Note the
-   * discrete solution is the Taylor–Hood one, which differs from the
-   * primal discretisation at discretisation-error level (and is free of
-   * volumetric locking).
+   * Scope: the clamped solid and the free (traction) solid, whose rigid
+   * modes are projected out of the displacement block (they are
+   * divergence-free, so the pressure rows never see them) — requires an
+   * isotropic(-split) rheology, displacement order >= 2 and no fluid
+   * treatment; classes with gravity blocks or interface constraints
+   * refuse. The modulus-flavour cache is bypassed: every weight switch
+   * reassembles the blocks. Note the discrete solution is the Taylor–Hood
+   * one, which differs from the primal discretisation at
+   * discretisation-error level (and is free of volumetric locking); with
+   * a continuous pressure that error is first order at material
+   * interfaces, where the shear modulus jumps — SetPressureSplitPerRegion()
+   * removes it.
    *
    * @param theta Which part of the volumetric term the pressure carries:
    * @f$p = \lambda_p\,\mathrm{div}\,u@f$ with
@@ -729,6 +733,25 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
    * (0: Jacobi, the default), and a factor @p scale on the Schur weight
    * (MINRES is not invariant to the relative scaling of the blocks).
    * Takes effect at the next assembly. */
+  /** @brief A continuous pressure within each material region (element
+   * attribute), discontinuous across regions: Taylor-Hood per region, so
+   * the pressure jump at material interfaces is represented exactly
+   * instead of smeared. Parallel builds only. Call before
+   * SetPressureSplitSolver(). */
+  void SetPressureSplitPerRegion(bool on = true) { psplit_per_region_ = on; }
+
+  /** @brief Experimental: add a coarse correction to the Schur block of
+   * the pressure-split preconditioner, spanned by the constant pressure
+   * of each material region (element attribute), with the exact coarse
+   * Schur complement Z^T (M_c + B A^{-1} B^T) Z (one displacement-block
+   * solve per region and assembly). Targets the region-mean modes of
+   * soft regions enclosed by stiff ones, which the weighted mass
+   * misjudges by the shear contrast. Parallel builds only. */
+  void SetPressureSplitCoarse(bool on = true) {
+    psplit_coarse_ = on;
+    MarkOperatorDirty();
+  }
+
   void SetPressureSplitSchurOptions(int chebyshev_order, mfem::real_t scale,
                                     bool triangular = false) {
     psplit_cheb_order_ = chebyshev_order;
@@ -842,6 +865,12 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
    * route: base solves without machinery of their own. Default false; the
    * clamped class opts in. */
   virtual bool SupportsPressureSplit() const { return false; }
+  /** @brief The null space of a free body's displacement block, which the
+   * pressure-split route projects out (null: the body is held by
+   * essential conditions). */
+  virtual const NullSpaceProjector* PressureSplitNullSpace() {
+    return nullptr;
+  }
 
   /** @brief Preconditioned CG (Gauss-Seidel serial, BoomerAMG with elasticity
    * options in parallel) in prec_/cg_, warm-started; the preconditioner is
@@ -1146,8 +1175,29 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   int psplit_cheb_order_ = 0;            // SetPressureSplitSchurOptions()
   mfem::real_t psplit_schur_scale_ = 1.0;
   bool psplit_triangular_ = false;  // block lower-triangular + FGMRES
+  bool psplit_per_region_ = false;     // per-region continuous pressure
+  bool psplit_coarse_ = false;         // region-mean coarse correction
+  std::unique_ptr<mfem::Solver> psplit_schur_cc_;
+  // Per-region pressure: the continuous space Q (order k-1) whose region
+  // copies P = [D_1 G, ..., D_R G] embeds into the L2 host psplit_fes_
+  // (G the injection Q -> L2, D_r the region-r element rows); the blocks
+  // are assembled on the host and projected, B_P = P^T B, M_P = P^T M P.
+  std::unique_ptr<mfem::FiniteElementCollection> psplit_qfec_;
+  std::unique_ptr<mfem::FiniteElementSpace> psplit_qfes_;
+  mfem::Vector psplit_pP_;  // per-region pressure (warm start)
+#ifdef MFEM_USE_MPI
+  std::unique_ptr<mfem::HypreParMatrix> psplit_P_, psplit_PT_;
+  void ProjectPerRegionPressure();
+#endif
   std::unique_ptr<mfem::BlockLowerTriangularPreconditioner> psplit_tri_prec_;
   std::unique_ptr<mfem::Operator> psplit_neg_schur_;
+  // Free bodies (PressureSplitNullSpace()): the projected displacement
+  // block and AMG, and the mass-shifted matrix the AMG is built on.
+  std::unique_ptr<ProjectedOperator> psplit_proj_op_;
+  std::unique_ptr<ProjectedSolver> psplit_proj_prec_;
+#ifdef MFEM_USE_MPI
+  std::unique_ptr<mfem::HypreParMatrix> psplit_shift_mat_;
+#endif
   mfem::Coefficient* psplit_kappa_ = nullptr;
   mfem::Coefficient* psplit_mu_ = nullptr;
   std::vector<std::unique_ptr<mfem::Coefficient>> psplit_coefs_;
@@ -1237,6 +1287,13 @@ class LinearQuasiStaticTractionProblem : public LinearQuasiStaticProblemBase {
  protected:
   void SetupSolver(mfem::OperatorHandle& A) override;
   bool SolveLinearSystem(const mfem::Vector& B, mfem::Vector& X) override;
+  // The pressure-split route on the free body: the rigid modes are
+  // divergence-free, so only the displacement block is projected (the
+  // Euclidean gauge; SetMassWeightedGauge() does not apply to it).
+  bool SupportsPressureSplit() const override { return true; }
+  const NullSpaceProjector* PressureSplitNullSpace() override {
+    return &RigidModes();
+  }
 
  private:
   /** @brief The rigid-mode projector (built on first use; the space does

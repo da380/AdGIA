@@ -158,7 +158,12 @@ TEST_P(PressureSplitTest, MatchesPrimalUnderRefinement) {
   };
   const double coarse = gap(0);
   const double fine = gap(1);
+  std::cout << "split-primal gap: coarse " << coarse << ", fine " << fine
+            << ", ratio " << fine / coarse << "\n";
   EXPECT_LT(coarse, 0.05);
+  // Measured ratios 0.53-0.61 (2-D/3-D, simplex/tensor): the clamped-free
+  // corners of the beam are singular and cap both discretisations' max-norm
+  // rate, so the ratio of a smooth order-2 problem (<= 0.25) does not apply.
   EXPECT_LT(fine, 0.7 * coarse);
 }
 
@@ -321,15 +326,9 @@ TEST_P(PressureSplitTest, ViscoelasticSteppingExact) {
 
 // The route refuses what it does not carry.
 TEST_P(PressureSplitTest, Refusals) {
-  auto rheology = IsotropicMaxwellRheology::Maxwell(dim, *kappa, *mu, *mu);
   VectorFunctionCoefficient traction(dim, [](const Vector&, Vector& f) {
     f = 0.0;
   });
-  const Array<int> marker = Marker(nbdr, {top_attr});
-  LinearQuasiStaticTractionProblem traction_problem(fes.get(), rheology,
-                                                    traction, marker);
-  EXPECT_DEATH(traction_problem.SetPressureSplitSolver(), "clamped solid");
-
   // Order 1 is not a Taylor-Hood pair.
   H1_FECollection fec1(1, dim);
   FiniteElementSpace fes1(mesh.get(), &fec1, dim);

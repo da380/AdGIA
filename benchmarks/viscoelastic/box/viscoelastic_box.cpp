@@ -109,7 +109,7 @@ int main(int argc, char* argv[]) try {
   bool psplit = false;
   real_t psplit_theta = 0.0, psplit_scale = 1.0;
   int psplit_cheb = 0;
-  bool psplit_tri = false;
+  bool psplit_tri = false, psplit_region = false;
 
   OptionsParser args(argc, argv);
   args.AddOption(&case_file, "-c", "--case", "Case file (cases.py).");
@@ -136,6 +136,10 @@ int main(int argc, char* argv[]) try {
                  "-no-upg", "--no-pressure-split-triangular",
                  "Block lower-triangular preconditioner with FGMRES on the "
                  "pressure-split route (experimental).");
+  args.AddOption(&psplit_region, "-upr", "--pressure-split-per-region",
+                 "-no-upr", "--no-pressure-split-per-region",
+                 "Continuous pressure per material region (discontinuous "
+                 "across regions) on the pressure-split route.");
   args.AddOption(&rheology_mode, "-rheology", "--rheology",
                  "composite (one region per layer, by element centre) or "
                  "pointwise (layers looked up at every point).");
@@ -433,6 +437,7 @@ int main(int argc, char* argv[]) try {
         &fes, *rheology, bottom, traction, top);
   }
   if (psplit) {
+    problem->SetPressureSplitPerRegion(psplit_region);
     problem->SetPressureSplitSolver(psplit_theta);  // refuses uniaxial_stress
     if (psplit_cheb > 0 || psplit_scale != 1.0 || psplit_tri) {
       problem->SetPressureSplitSchurOptions(psplit_cheb, psplit_scale,

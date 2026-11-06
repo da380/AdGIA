@@ -1255,6 +1255,44 @@ bool LinearQuasiStaticProblemBase::SolveLinearSystem(const Vector& B,
   return cg_->GetConverged();
 }
 
+#ifdef MFEM_USE_MPI
+namespace {
+// base^{-1} plus the coarse correction Z S_c^{-1} Z^T (additive, so SPD
+// when base is): the region-mean pressure modes solved exactly.
+class CoarseCorrectedSolver : public Solver {
+ public:
+  CoarseCorrectedSolver(Solver& base, std::vector<Vector> Z,
+                        DenseMatrix Sc_inv, MPI_Comm comm)
+      : Solver(base.Height()),
+        base_(base),
+        Z_(std::move(Z)),
+        Sc_inv_(std::move(Sc_inv)),
+        comm_(comm) {}
+  void Mult(const Vector& x, Vector& y) const override {
+    base_.Mult(x, y);
+    const int R = static_cast<int>(Z_.size());
+    Vector loc(R), c(R), d(R);
+    for (int r = 0; r < R; r++) {
+      loc(r) = Z_[r] * x;
+    }
+    MPI_Allreduce(loc.GetData(), c.GetData(), R,
+                  MPITypeMap<real_t>::mpi_type, MPI_SUM, comm_);
+    Sc_inv_.Mult(c, d);
+    for (int r = 0; r < R; r++) {
+      y.Add(d(r), Z_[r]);
+    }
+  }
+  void SetOperator(const Operator&) override {}
+
+ private:
+  Solver& base_;
+  std::vector<Vector> Z_;
+  DenseMatrix Sc_inv_;
+  MPI_Comm comm_;
+};
+}  // namespace
+#endif
+
 void LinearQuasiStaticProblemBase::SetPressureSplitSolver(real_t theta) {
   if (pressure_split_) {
     return;
@@ -1263,7 +1301,7 @@ void LinearQuasiStaticProblemBase::SetPressureSplitSolver(real_t theta) {
               "SetPressureSplitSolver: this class's solve carries machinery "
               "(rigid-mode projection, gravity blocks, interface "
               "constraints) the pressure-split route does not; it is "
-              "supported on the plain clamped solid.");
+              "supported on the clamped and the free (traction) solid.");
   MFEM_VERIFY(fluid_treatment_ == FluidTreatment::None && !gauge_prec_only_,
               "SetPressureSplitSolver: no fluid treatments on the "
               "pressure-split route.");
@@ -1287,9 +1325,9 @@ void LinearQuasiStaticProblemBase::SetPressureSplitSolver(real_t theta) {
                   MPI_SUM, pfes_->GetComm());
   }
 #endif
-  MFEM_VERIFY(ness > 0,
-              "SetPressureSplitSolver: essential boundary conditions "
-              "required (the route carries no rigid-mode projection).");
+  MFEM_VERIFY(ness > 0 || PressureSplitNullSpace(),
+              "SetPressureSplitSolver: a free body needs its class to "
+              "supply the rigid-mode projector (PressureSplitNullSpace).");
 
   MFEM_VERIFY(theta >= 0.0 && theta <= 1.0,
               "SetPressureSplitSolver: theta must lie in [0, 1].");
@@ -1297,7 +1335,16 @@ void LinearQuasiStaticProblemBase::SetPressureSplitSolver(real_t theta) {
   psplit_theta_ = theta;
   psplit_kappa_ = kappa;
   psplit_mu_ = mu;
-  psplit_fec_ = std::make_unique<H1_FECollection>(order - 1, dim);
+  if (psplit_per_region_) {
+    MFEM_VERIFY(pfes_, "SetPressureSplitPerRegion: parallel builds only.");
+    // The L2 host carries the assembled blocks; the unknowns are the
+    // region copies of the continuous space (ProjectPerRegionPressure).
+    psplit_fec_ = std::make_unique<L2_FECollection>(order - 1, dim);
+    psplit_qfec_ = std::make_unique<H1_FECollection>(order - 1, dim);
+    psplit_qfes_ = detail::MakeFESpace(*fes_, psplit_qfec_.get());
+  } else {
+    psplit_fec_ = std::make_unique<H1_FECollection>(order - 1, dim);
+  }
   psplit_fes_ = detail::MakeFESpace(*fes_, psplit_fec_.get());
   psplit_p_ = detail::MakeGridFunction(psplit_fes_.get());
   *psplit_p_ = 0.0;
@@ -1315,6 +1362,12 @@ void LinearQuasiStaticProblemBase::ClearPressureSplitSolver() {
   }
   pressure_split_ = false;
   psplit_minres_.reset();
+  psplit_schur_cc_.reset();
+  psplit_proj_op_.reset();
+  psplit_proj_prec_.reset();
+#ifdef MFEM_USE_MPI
+  psplit_shift_mat_.reset();
+#endif
   psplit_tri_prec_.reset();
   psplit_neg_schur_.reset();
   psplit_prec_.reset();
@@ -1336,6 +1389,13 @@ void LinearQuasiStaticProblemBase::ClearPressureSplitSolver() {
   psplit_p_.reset();
   psplit_fes_.reset();
   psplit_fec_.reset();
+  psplit_qfes_.reset();
+  psplit_qfec_.reset();
+  psplit_pP_.Destroy();
+#ifdef MFEM_USE_MPI
+  psplit_P_.reset();
+  psplit_PT_.reset();
+#endif
   psplit_kappa_ = nullptr;
   psplit_mu_ = nullptr;
   psplit_theta_ = 0.0;
@@ -1484,11 +1544,23 @@ void LinearQuasiStaticProblemBase::AssemblePressureSplitOperator() {
   psplit_schur_form_->Assemble();
   set_type(psplit_Mw_);
   psplit_schur_form_->FormSystemMatrix(none, psplit_Mw_);
+#ifdef MFEM_USE_MPI
+  if (psplit_per_region_) {
+    ProjectPerRegionPressure();
+  }
+#endif
 
 #ifdef MFEM_USE_MPI
   if (pfes_) {
-    auto amg =
-        std::make_unique<HypreBoomerAMG>(*psplit_Aprec_.As<HypreParMatrix>());
+    psplit_amg_.reset();
+    psplit_shift_mat_.reset();
+    HypreParMatrix* Ap = psplit_Aprec_.As<HypreParMatrix>();
+    if (PressureSplitNullSpace()) {
+      // Free body: AMG on the definite A + eps M (as the primal route).
+      psplit_shift_mat_ = MassShiftedMatrix(*Ap);
+      Ap = psplit_shift_mat_.get();
+    }
+    auto amg = std::make_unique<HypreBoomerAMG>(*Ap);
     // The systems settings of SetupDefaultPreconditioner.
     detail::SetSystemsAMGOptions(*amg, *pfes_);
     HYPRE_BoomerAMGSetCycleRelaxType(*amg, 8, 3);
@@ -1520,18 +1592,120 @@ void LinearQuasiStaticProblemBase::AssemblePressureSplitOperator() {
   psplit_offsets_.SetSize(3);
   psplit_offsets_[0] = 0;
   psplit_offsets_[1] = fes_->GetTrueVSize();
-  psplit_offsets_[2] = psplit_offsets_[1] + psplit_fes_->GetTrueVSize();
+  int np = psplit_fes_->GetTrueVSize();
+#ifdef MFEM_USE_MPI
+  if (psplit_per_region_) {
+    np = psplit_P_->Width();
+  }
+#endif
+  psplit_offsets_[2] = psplit_offsets_[1] + np;
   psplit_op_ = std::make_unique<BlockOperator>(psplit_offsets_);
-  psplit_op_->SetBlock(0, 0, psplit_Amu_.Ptr());
+  // Free body: project the rigid modes out of the displacement block and
+  // its preconditioner (an unprojected AMG amplifies their round-off).
+  psplit_proj_op_.reset();
+  psplit_proj_prec_.reset();
+  Operator* a00 = psplit_Amu_.Ptr();
+  Solver* p00 = psplit_amg_.get();
+  if (const NullSpaceProjector* P = PressureSplitNullSpace()) {
+    psplit_proj_op_ = std::make_unique<ProjectedOperator>(*a00, *P);
+    psplit_proj_prec_ = std::make_unique<ProjectedSolver>(*P);
+    psplit_proj_prec_->SetSolver(*psplit_amg_);
+    a00 = psplit_proj_op_.get();
+    p00 = psplit_proj_prec_.get();
+  }
+  psplit_op_->SetBlock(0, 0, a00);
   psplit_BT_ = std::make_unique<TransposeOperator>(psplit_B_.Ptr());
   psplit_op_->SetBlock(0, 1, psplit_BT_.get());
   psplit_op_->SetBlock(1, 0, psplit_B_.Ptr());
   psplit_op_->SetBlock(1, 1, psplit_M_.Ptr(), -1.0);
 
+  // Optional coarse correction of the Schur block by the region-mean
+  // pressures (SetPressureSplitCoarse).
+  psplit_schur_cc_.reset();
+  Solver* sprec = psplit_schur_prec_.get();
+#ifdef MFEM_USE_MPI
+  if (psplit_coarse_ && pfes_) {
+    MPI_Comm comm = pfes_->GetComm();
+    Mesh* mesh = fes_->GetMesh();
+    const Array<int>& attrs = mesh->attributes;
+    std::vector<Vector> Z;
+    Array<int> vdofs;
+    for (int r = 0; r < attrs.Size(); r++) {
+      Vector z(np);
+      z = 0.0;
+      if (psplit_per_region_) {
+        // copy r's live dofs: where P^T (host indicator of region r) > 0
+        Vector ind(psplit_P_->Height());
+        ind = 0.0;
+        for (int e = 0; e < mesh->GetNE(); e++) {
+          if (mesh->GetAttribute(e) != attrs[r]) continue;
+          psplit_fes_->GetElementVDofs(e, vdofs);
+          for (int v : vdofs) {
+            const int t = static_cast<ParFiniteElementSpace*>(psplit_fes_.get())
+                              ->GetLocalTDofNumber(v >= 0 ? v : -1 - v);
+            if (t >= 0) ind(t) = 1.0;
+          }
+        }
+        Vector w(np);
+        psplit_PT_->Mult(ind, w);
+        for (int i = 0; i < np; i++) z(i) = w(i) > 0.0 ? 1.0 : 0.0;
+      } else {
+        auto* qf = static_cast<ParFiniteElementSpace*>(psplit_fes_.get());
+        for (int e = 0; e < mesh->GetNE(); e++) {
+          if (mesh->GetAttribute(e) != attrs[r]) continue;
+          qf->GetElementVDofs(e, vdofs);
+          for (int v : vdofs) {
+            const int t = qf->GetLocalTDofNumber(v >= 0 ? v : -1 - v);
+            if (t >= 0) z(t) = 1.0;
+          }
+        }
+      }
+      Z.push_back(std::move(z));
+    }
+    // S_c = Z^T (M_c + B A^{-1} B^T) Z, A^{-1} by AMG-preconditioned CG
+    const int R = static_cast<int>(Z.size());
+    CGSolver cg(comm);
+    cg.SetOperator(*a00);
+    cg.SetPreconditioner(*p00);
+    cg.SetRelTol(1e-10);
+    cg.SetAbsTol(0.0);
+    cg.SetMaxIter(5000);
+    cg.SetPrintLevel(0);
+    std::vector<Vector> SZ(R);
+    for (int r = 0; r < R; r++) {
+      Vector t(psplit_offsets_[1]), y(psplit_offsets_[1]);
+      psplit_B_->MultTranspose(Z[r], t);
+      if (const NullSpaceProjector* P = PressureSplitNullSpace()) {
+        P->Project(t);
+      }
+      y = 0.0;
+      cg.Mult(t, y);
+      SZ[r].SetSize(np);
+      psplit_B_->Mult(y, SZ[r]);
+      Vector mz(np);
+      psplit_M_->Mult(Z[r], mz);
+      SZ[r] += mz;
+    }
+    DenseMatrix Sc(R);
+    for (int a = 0; a < R; a++) {
+      for (int b = 0; b < R; b++) {
+        real_t loc = Z[a] * SZ[b], glob = 0.0;
+        MPI_Allreduce(&loc, &glob, 1, MPITypeMap<real_t>::mpi_type, MPI_SUM,
+                      comm);
+        Sc(a, b) = glob;
+      }
+    }
+    Sc.Symmetrize();
+    Sc.Invert();
+    psplit_schur_cc_ = std::make_unique<CoarseCorrectedSolver>(
+        *psplit_schur_prec_, std::move(Z), Sc, comm);
+    sprec = psplit_schur_cc_.get();
+  }
+#endif
   psplit_prec_ =
       std::make_unique<BlockDiagonalPreconditioner>(psplit_offsets_);
-  psplit_prec_->SetDiagonalBlock(0, psplit_amg_.get());
-  psplit_prec_->SetDiagonalBlock(1, psplit_schur_prec_.get());
+  psplit_prec_->SetDiagonalBlock(0, p00);
+  psplit_prec_->SetDiagonalBlock(1, sprec);
 
   // Experimental alternative: the block lower-triangular preconditioner
   // [[P_A, 0], [B, -P_S]]^{-1} (the exact factor of the saddle with the
@@ -1540,10 +1714,10 @@ void LinearQuasiStaticProblemBase::AssemblePressureSplitOperator() {
   psplit_neg_schur_.reset();
   if (psplit_triangular_) {
     psplit_neg_schur_ =
-        std::make_unique<ScaledOperator>(psplit_schur_prec_.get(), -1.0);
+        std::make_unique<ScaledOperator>(sprec, -1.0);
     psplit_tri_prec_ =
         std::make_unique<BlockLowerTriangularPreconditioner>(psplit_offsets_);
-    psplit_tri_prec_->SetDiagonalBlock(0, psplit_amg_.get());
+    psplit_tri_prec_->SetDiagonalBlock(0, p00);
     psplit_tri_prec_->SetBlock(1, 0, psplit_B_.Ptr());
     psplit_tri_prec_->SetDiagonalBlock(1, psplit_neg_schur_.get());
   }
@@ -1605,15 +1779,35 @@ bool LinearQuasiStaticProblemBase::PressureSplitSolve() {
   zero_p = 0.0;
   Array<int> none;
   Vector Xtmp, Bp;
+  // A scratch handle: the block operator's psplit_B_ may be a projection
+  // of the form's matrix (per-region pressure) and must not be replaced.
+  OperatorHandle B_scratch(psplit_B_.Type());
   psplit_b_form_->FormRectangularLinearSystem(ess_tdof_list_, none, *u_,
-                                              zero_p, psplit_B_, Xtmp, Bp);
+                                              zero_p, B_scratch, Xtmp, Bp);
   BlockVector X(psplit_offsets_), B(psplit_offsets_);
   X.GetBlock(0) = Xu;
-  Vector Xp;
-  psplit_p_->GetTrueDofs(Xp);
-  X.GetBlock(1) = Xp;  // the pressure warm start
   B.GetBlock(0) = Bu;
-  B.GetBlock(1) = Bp;
+#ifdef MFEM_USE_MPI
+  if (psplit_per_region_) {
+    if (psplit_pP_.Size() != psplit_P_->Width()) {
+      psplit_pP_.SetSize(psplit_P_->Width());
+      psplit_pP_ = 0.0;
+    }
+    X.GetBlock(1) = psplit_pP_;  // the pressure warm start
+    psplit_PT_->Mult(Bp, B.GetBlock(1));
+  } else
+#endif
+  {
+    Vector Xp;
+    psplit_p_->GetTrueDofs(Xp);
+    X.GetBlock(1) = Xp;  // the pressure warm start
+    B.GetBlock(1) = Bp;
+  }
+  const NullSpaceProjector* nullspace = PressureSplitNullSpace();
+  if (nullspace) {
+    nullspace->Project(B.GetBlock(0));
+    nullspace->Project(X.GetBlock(0));
+  }
   bool ok = true;
   bool solve = true;
   if (psplit_triangular_) {
@@ -1637,11 +1831,93 @@ bool LinearQuasiStaticProblemBase::PressureSplitSolve() {
   // recovery: in serial Xu ALIASES u_'s data and RecoverFEMSolution is a
   // no-op that assumes the solver wrote through it; in parallel the
   // recovery prolongates whatever vector it is given.
+  if (nullspace) {
+    nullspace->Project(X.GetBlock(0));
+  }
   Xu = X.GetBlock(0);
   psplit_amu_form_->RecoverFEMSolution(Xu, rhs_, *u_);
-  psplit_p_->SetFromTrueDofs(X.GetBlock(1));
+#ifdef MFEM_USE_MPI
+  if (psplit_per_region_) {
+    psplit_pP_ = X.GetBlock(1);
+    Vector pl(psplit_P_->Height());
+    psplit_P_->Mult(psplit_pP_, pl);
+    psplit_p_->SetFromTrueDofs(pl);
+  } else
+#endif
+  {
+    psplit_p_->SetFromTrueDofs(X.GetBlock(1));
+  }
   return ok;
 }
+
+#ifdef MFEM_USE_MPI
+void LinearQuasiStaticProblemBase::ProjectPerRegionPressure() {
+  auto* lfes = static_cast<ParFiniteElementSpace*>(psplit_fes_.get());
+  auto* qfes = static_cast<ParFiniteElementSpace*>(psplit_qfes_.get());
+  if (!psplit_P_) {  // the spaces never change: build P once
+    ParDiscreteLinearOperator inj(qfes, lfes);
+    inj.AddDomainInterpolator(new IdentityInterpolator);
+    inj.Assemble();
+    inj.Finalize();
+    std::unique_ptr<HypreParMatrix> G(inj.ParallelAssemble());
+    Mesh* mesh = lfes->GetMesh();
+    const Array<int>& attrs = mesh->attributes;  // global, sorted
+    Array2D<const HypreParMatrix*> blocks(1, attrs.Size());
+    std::vector<std::unique_ptr<HypreParMatrix>> gr;
+    Array<int> vdofs;
+    for (int r = 0; r < attrs.Size(); r++) {
+      Vector d(lfes->GetTrueVSize());
+      d = 0.0;
+      for (int e = 0; e < mesh->GetNE(); e++) {
+        if (mesh->GetAttribute(e) != attrs[r]) {
+          continue;
+        }
+        lfes->GetElementVDofs(e, vdofs);
+        for (int v : vdofs) {
+          const int t = lfes->GetLocalTDofNumber(v >= 0 ? v : -1 - v);
+          if (t >= 0) {
+            d(t) = 1.0;
+          }
+        }
+      }
+      gr.push_back(std::make_unique<HypreParMatrix>(*G));
+      gr.back()->ScaleRows(d);
+      blocks(0, r) = gr.back().get();
+    }
+    psplit_P_.reset(HypreParMatrixFromBlocks(blocks));
+    psplit_PT_.reset(psplit_P_->Transpose());
+  }
+  // Region copies with no support in their region (the continuous dofs
+  // away from it) have empty rows and columns: an identity there makes
+  // them decoupled zeros.
+  auto project = [this](HypreParMatrix& M, Vector* dead_in, Vector& dead) {
+    std::unique_ptr<HypreParMatrix> MP(RAP(&M, psplit_P_.get()));
+    if (!dead_in) {
+      Vector diag;
+      MP->GetDiag(diag);
+      dead.SetSize(diag.Size());
+      for (int i = 0; i < diag.Size(); i++) {
+        dead(i) = diag(i) == 0.0 ? 1.0 : 0.0;
+      }
+    }
+    SparseMatrix id(dead.Size());
+    for (int i = 0; i < dead.Size(); i++) {
+      id.Add(i, i, dead(i));
+    }
+    id.Finalize();
+    HypreParMatrix idp(MP->GetComm(), MP->GetGlobalNumRows(), MP->RowPart(),
+                       &id);
+    return std::unique_ptr<HypreParMatrix>(Add(1.0, *MP, 1.0, idp));
+  };
+  Vector dead;
+  auto M = project(*psplit_M_.As<HypreParMatrix>(), nullptr, dead);
+  auto Mw = project(*psplit_Mw_.As<HypreParMatrix>(), &dead, dead);
+  HypreParMatrix* BP = ParMult(psplit_PT_.get(), psplit_B_.As<HypreParMatrix>());
+  psplit_M_.Reset(M.release(), true);
+  psplit_Mw_.Reset(Mw.release(), true);
+  psplit_B_.Reset(BP, true);
+}
+#endif
 
 std::unique_ptr<BilinearForm> LinearQuasiStaticProblemBase::AssembleMassOperator(
     Coefficient* rho, OperatorHandle& M) {
