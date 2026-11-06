@@ -256,6 +256,8 @@ struct CaseOptions {
   int psplit_cheb = 4;
   real_t psplit_scale = 4.0;
   bool psplit_region = false;
+  real_t prec_full = 0.0;   // > 0: AMG on the full operator, this shift factor
+  bool block_gmres = false; // FGMRES for the block solves
   const char* method = "dahlen";
   real_t slip_theta = 1e2;
   real_t gs_scale = 1.0;
@@ -380,6 +382,14 @@ struct CaseOptions {
                    "Chebyshev order on the Schur block (0: Jacobi).");
     args.AddOption(&psplit_scale, "-ups", "--pressure-split-schur-scale",
                    "Factor on the Schur weight.");
+    args.AddOption(&prec_full, "-pfull", "--prec-full-operator",
+                   "Experimental: build the displacement AMG on the full "
+                   "operator (elastic + gravity) with this multiple of the "
+                   "free-body mass shift (0: the elastic stiffness alone).");
+    args.AddOption(&block_gmres, "-gmres", "--block-gmres", "-no-gmres",
+                   "--no-block-gmres",
+                   "Experimental: FGMRES instead of MINRES for the block "
+                   "solves.");
     args.AddOption(&psplit_region, "-upr", "--pressure-split-per-region",
                    "-no-upr", "--no-pressure-split-per-region",
                    "Continuous pressure per material region.");
@@ -796,6 +806,12 @@ class Case {
                                                  : "")
                     << ").\n";
         }
+      }
+      if (options.prec_full > 0.0) {
+        problem->SetPreconditionerFullOperator(true, options.prec_full);
+      }
+      if (options.block_gmres) {
+        problem->SetBlockGMRES(true);
       }
       if (options.psplit) {
         MFEM_VERIFY(method == "dahlen",
@@ -1621,6 +1637,12 @@ class Case {
                                            : std::vector<FluidRegion>{});
       Evac_ = NewRadialVacuumExtension(*fes_u, *fes_buffer_, radius, r_out);
       ref_problem->SetPrescribedVacuumExtension(*fes_buffer_, *Evac_);
+      if (options.prec_full > 0.0) {
+        ref_problem->SetPreconditionerFullOperator(true, options.prec_full);
+      }
+      if (options.block_gmres) {
+        ref_problem->SetBlockGMRES(true);
+      }
       if (ref_eliminated) {
         const int first = manifest.Interfaces().front().attribute;
         const auto blist = manifest.FluidSolidInterfaces(fluid_attributes[0]);

@@ -2807,11 +2807,11 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetupSolver(OperatorHan
 
 #ifdef MFEM_USE_MPI
   if (pfes_) {
-    minres_ = std::make_unique<MINRESSolver>(pfes_->GetComm());
+    minres_ = MakeBlockKrylov();
   } else
 #endif
   {
-    minres_ = std::make_unique<MINRESSolver>();
+    minres_ = MakeBlockKrylov();
   }
   projected_op_ =
       std::make_unique<ProjectedOperator>(*block_op_, *projector_block_);
@@ -3005,7 +3005,7 @@ bool LinearQuasiStaticReferentialSelfGravitatingProblem::SolveUnbordered(const V
   B_block_->GetBlock(0) = B;
   B_block_->GetBlock(1) = B_zeta_;
   bool ok = true;
-  if (!SetWarmStartTolerance(*minres_, *projected_prec_, *B_block_)) {
+  if (!SetBlockKrylovTolerance(*minres_, *projected_prec_, *B_block_)) {
     X = 0.0;
     Zeta_true_ = 0.0;
     *X_block_ = 0.0;

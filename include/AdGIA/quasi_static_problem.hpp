@@ -763,6 +763,36 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   /** @brief Back to the primal displacement solve. */
   void ClearPressureSplitSolver();
 
+  /**
+   * @brief Where the displacement AMG of a class that adds terms to the
+   * stiffness (the gravitating classes' gravity and fluid folds) is built.
+   * On (the default): on the full operator the solver is handed, shifted
+   * by @p shift_factor (default 100) times the free-body mass-shift scale
+   * (MassShiftedMatrix). Off: on the rheology's stiffness alone.
+   *
+   * Measured (planning note preconditioning-2026-11-06 §9; static solves,
+   * stratified Earth model, mantle shear scaled by f = 1, 0.1, 0.01 into
+   * the time-stepping regime): the full operator needs 3.9x fewer MINRES
+   * iterations for the referential class at f = 0.01 (1028 -> 265) and
+   * 1.2x fewer for the mixed one (246 -> 212); identical solutions. The
+   * shift must cover the operator's negative directions (discrete rigid
+   * rotations, O(h^2); coarse inner-core models need factor ~100) for an
+   * SPD preconditioner under MINRES; SetBlockGMRES() drops the SPD need.
+   */
+  void SetPreconditionerFullOperator(bool on, mfem::real_t shift_factor = 1.0) {
+    prec_full_operator_ = on;
+    prec_full_shift_ = shift_factor;
+    prec_stale_ = true;
+    MarkOperatorDirty();
+  }
+  /** @brief Experimental (default off): flexible GMRES instead of MINRES
+   * for the gravitating classes' block solves (no SPD requirement on the
+   * preconditioner). */
+  void SetBlockGMRES(bool on = true) {
+    block_gmres_ = on;
+    MarkOperatorDirty();
+  }
+
   /** @brief Whether Solve() runs the pressure-split route. */
   bool UsingPressureSplit() const { return pressure_split_; }
 
@@ -1015,7 +1045,17 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   bool FreeDisplacementBody() const;
   /// A + eps M with eps ~ mu / L^2 estimated from the matrices.
   std::unique_ptr<mfem::HypreParMatrix> MassShiftedMatrix(
-      mfem::HypreParMatrix& A) const;
+      mfem::HypreParMatrix& A, mfem::real_t factor = 1.0) const;
+  bool prec_full_operator_ = true;   // SetPreconditionerFullOperator
+  mfem::real_t prec_full_shift_ = 100.0;
+  bool block_gmres_ = false;         // SetBlockGMRES
+  /** @brief MINRES, or FGMRES with SetBlockGMRES(), for a block solve. */
+  std::unique_ptr<mfem::IterativeSolver> MakeBlockKrylov() const;
+  /** @brief The block solve's tolerance: the preconditioner-norm warm-start
+   * target for MINRES (SetWarmStartTolerance), rel_tol ||B|| on the true
+   * residual for FGMRES. False when B vanishes. */
+  bool SetBlockKrylovTolerance(mfem::IterativeSolver& solver,
+                               mfem::Solver& prec, const mfem::Vector& B) const;
   /// Scale factor of the free-body mass shift (see MassShiftedMatrix).
   static constexpr mfem::real_t kPrecMassShift = 1e-2;
   // The rheology-only stiffness the AMG is built on when a derived class

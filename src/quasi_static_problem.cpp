@@ -1130,7 +1130,7 @@ bool LinearQuasiStaticProblemBase::FreeDisplacementBody() const {
 }
 
 std::unique_ptr<HypreParMatrix> LinearQuasiStaticProblemBase::MassShiftedMatrix(
-    HypreParMatrix& A) const {
+    HypreParMatrix& A, real_t factor) const {
   ParBilinearForm m(pfes_);
   m.AddDomainIntegrator(new VectorMassIntegrator);
   m.Assemble();
@@ -1149,11 +1149,47 @@ std::unique_ptr<HypreParMatrix> LinearQuasiStaticProblemBase::MassShiftedMatrix(
   const real_t nodes =
       static_cast<real_t>(pfes_->GlobalTrueVSize()) / pfes_->GetVDim();
   const int d = pfes_->GetParMesh()->Dimension();
-  const real_t eps =
-      kPrecMassShift * glob[0] / glob[1] * std::pow(nodes, -2.0 / d);
+  const real_t eps = factor * kPrecMassShift * glob[0] / glob[1] *
+                     std::pow(nodes, -2.0 / d);
   return std::unique_ptr<HypreParMatrix>(Add(1.0, A, eps, *M));
 }
 #endif
+
+std::unique_ptr<IterativeSolver> LinearQuasiStaticProblemBase::MakeBlockKrylov()
+    const {
+  std::unique_ptr<IterativeSolver> k;
+#ifdef MFEM_USE_MPI
+  if (pfes_) {
+    if (block_gmres_) {
+      auto g = std::make_unique<FGMRESSolver>(pfes_->GetComm());
+      g->SetKDim(200);
+      k = std::move(g);
+    } else {
+      k = std::make_unique<MINRESSolver>(pfes_->GetComm());
+    }
+    return k;
+  }
+#endif
+  if (block_gmres_) {
+    auto g = std::make_unique<FGMRESSolver>();
+    g->SetKDim(200);
+    k = std::move(g);
+  } else {
+    k = std::make_unique<MINRESSolver>();
+  }
+  return k;
+}
+
+bool LinearQuasiStaticProblemBase::SetBlockKrylovTolerance(
+    IterativeSolver& solver, Solver& prec, const Vector& B) const {
+  if (!block_gmres_) {
+    return SetWarmStartTolerance(solver, prec, B);
+  }
+  const real_t nb = std::sqrt(Dot(B, B));
+  solver.SetRelTol(0.0);
+  solver.SetAbsTol(rel_tol_ * nb);
+  return nb > 0.0;
+}
 
 void LinearQuasiStaticProblemBase::SetupDefaultCG(OperatorHandle& A) {
   SetupDefaultPreconditioner(A);
@@ -1171,25 +1207,26 @@ void LinearQuasiStaticProblemBase::SetupDefaultPreconditioner(
       prec_shift_mat_.reset();
       prec_elastic_A_.Clear();
       prec_elastic_form_.reset();
-      if (HasNonElasticIntegrators()) {
-        // The AMG is built on the rheology's stiffness alone. The terms a
-        // derived class adds (the self-gravitating classes' gravity and
-        // fluid-interface terms) can make the displacement block
-        // indefinite, and an AMG built on an indefinite matrix is an
-        // indefinite preconditioner, which block MINRES cannot use; they
-        // are lower order than the stiffness and left to the Krylov
-        // method.
+      if (HasNonElasticIntegrators() && !prec_full_operator_) {
+        // SetPreconditionerFullOperator(false): the AMG is built on the
+        // rheology's stiffness alone, the added terms (gravity, fluid
+        // folds) left to the Krylov method. The default builds it on the
+        // full operator, shifted below to cover its (small, rigid-mode)
+        // negative directions: an AMG on an indefinite matrix is an
+        // indefinite preconditioner, which block MINRES cannot use.
         AssembleElasticPreconditionerMatrix();
         Amat = prec_elastic_A_.As<HypreParMatrix>();
       }
-      if (FreeDisplacementBody()) {
+      if (FreeDisplacementBody() ||
+          (prec_full_operator_ && HasNonElasticIntegrators())) {
         // A free body's operator is singular (rigid modes, region
         // rotations): AMG on it amplifies the kernel components of its
         // input without bound and the V-cycle stops being positive
         // definite in floating point (MINRES breaks down; CG stalls).
         // The AMG is therefore built on A + eps M (vector mass), which is
         // definite; the Krylov method still solves with A.
-        prec_shift_mat_ = MassShiftedMatrix(*Amat);
+        prec_shift_mat_ = MassShiftedMatrix(
+            *Amat, prec_full_operator_ ? prec_full_shift_ : 1.0);
         Amat = prec_shift_mat_.get();
       }
       auto amg = std::make_unique<HypreBoomerAMG>(*Amat);

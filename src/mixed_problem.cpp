@@ -1457,7 +1457,7 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetupMinres(OperatorHandle& A
     if (type_ == SolverType::BlockCG) {
       minres_ = std::make_unique<CGSolver>(pfes_->GetComm());
     } else {
-      minres_ = std::make_unique<MINRESSolver>(pfes_->GetComm());
+      minres_ = MakeBlockKrylov();
     }
   } else
 #endif
@@ -1465,7 +1465,7 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetupMinres(OperatorHandle& A
     if (type_ == SolverType::BlockCG) {
       minres_ = std::make_unique<CGSolver>();
     } else {
-      minres_ = std::make_unique<MINRESSolver>();
+      minres_ = MakeBlockKrylov();
     }
   }
   projected_op_ =
@@ -2675,7 +2675,7 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveUnbordered(
   } else {
     B_block_->GetBlock(0) = B;
     B_block_->GetBlock(1) = B_phi_;
-    if (!SetWarmStartTolerance(*minres_, *projected_prec_, *B_block_)) {
+    if (!SetBlockKrylovTolerance(*minres_, *projected_prec_, *B_block_)) {
       X = 0.0;
       Phi_true_ = 0.0;
       *X_block_ = 0.0;
