@@ -278,7 +278,7 @@ Class (prefix \code{LinearQuasiStatic}) & Gravity & Reference state & Fluid regi
 \code{MixedSelfGravitating\-Problem} (\S\ref{sec:mixed}, \S\ref{sec:gauged})
   & Eulerian $\phi$ & hydrostatic and natural, \emph{required} & Dahlen (\code{FluidRegion}); Maxwell (default) or gauge penalty (\code{SetFluid}) & block MINRES; Schur CG \\
 \code{ReferentialSelf\-GravitatingProblem} (\S\ref{sec:referential})
-  & referential $\zeta^1$ & general & welded: Maxwell (default) or gauge penalty (\code{SetFluid}) & block MINRES \\
+  & referential $\zeta^1$ & general & welded: Maxwell (default) or gauge penalty (\code{SetFluid}) & block FGMRES (\code{SetBlockGMRES(false)}: block MINRES) \\
 \code{ReferentialSelf\-GravitatingSlipProblem} (\S\ref{sec:slip}; extends the welded class)
   & referential, single-valued or broken & general (broken organisation for $\varphi_e\neq\mathrm{id}$) & slipping, its own gauge (refuses \code{SetFluid}) & block MINRES with AL sweeps; or KKT MINRES \\
 \bottomrule

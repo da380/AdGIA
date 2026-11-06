@@ -257,7 +257,8 @@ struct CaseOptions {
   real_t psplit_scale = 4.0;
   bool psplit_region = false;
   real_t prec_full = 0.0;   // > 0: AMG on the full operator, this shift factor
-  bool block_gmres = false; // FGMRES for the block solves
+  bool block_gmres = false;  // force FGMRES for the block solves
+  bool block_minres = false; // force MINRES (default: the class's choice)
   const char* method = "dahlen";
   real_t slip_theta = 1e2;
   real_t gs_scale = 1.0;
@@ -388,8 +389,13 @@ struct CaseOptions {
                    "free-body mass shift (0: the elastic stiffness alone).");
     args.AddOption(&block_gmres, "-gmres", "--block-gmres", "-no-gmres",
                    "--no-block-gmres",
-                   "Experimental: FGMRES instead of MINRES for the block "
-                   "solves.");
+                   "FGMRES for the gravitating block solves (the "
+                   "referential class's default; MINRES is the mixed "
+                   "class's).");
+    args.AddOption(&block_minres, "-minres", "--block-minres", "-no-minres",
+                   "--no-block-minres",
+                   "MINRES for the gravitating block solves (the mixed "
+                   "class's default).");
     args.AddOption(&psplit_region, "-upr", "--pressure-split-per-region",
                    "-no-upr", "--no-pressure-split-per-region",
                    "Continuous pressure per material region.");
@@ -810,8 +816,10 @@ class Case {
       if (options.prec_full > 0.0) {
         problem->SetPreconditionerFullOperator(true, options.prec_full);
       }
-      if (options.block_gmres) {
-        problem->SetBlockGMRES(true);
+      MFEM_VERIFY(!(options.block_gmres && options.block_minres),
+                  "-gmres and -minres are exclusive.");
+      if (options.block_gmres || options.block_minres) {
+        problem->SetBlockGMRES(options.block_gmres);
       }
       if (options.psplit) {
         MFEM_VERIFY(method == "dahlen",
@@ -1640,8 +1648,10 @@ class Case {
       if (options.prec_full > 0.0) {
         ref_problem->SetPreconditionerFullOperator(true, options.prec_full);
       }
-      if (options.block_gmres) {
-        ref_problem->SetBlockGMRES(true);
+      MFEM_VERIFY(!(options.block_gmres && options.block_minres),
+                  "-gmres and -minres are exclusive.");
+      if (options.block_gmres || options.block_minres) {
+        ref_problem->SetBlockGMRES(options.block_gmres);
       }
       if (ref_eliminated) {
         const int first = manifest.Interfaces().front().attribute;

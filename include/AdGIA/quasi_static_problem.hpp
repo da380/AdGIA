@@ -785,9 +785,14 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
     prec_stale_ = true;
     MarkOperatorDirty();
   }
-  /** @brief Experimental (default off): flexible GMRES instead of MINRES
-   * for the gravitating classes' block solves (no SPD requirement on the
-   * preconditioner). */
+  /** @brief Flexible GMRES(200) instead of MINRES for the gravitating
+   * classes' block solves (no SPD requirement on the preconditioner; the
+   * tolerance is rel_tol on the true residual instead of MINRES's
+   * preconditioner norm). Default: on for the referential class, off for
+   * the mixed one (planning note preconditioning-2026-11-06 §9: on a
+   * stratified model with mantle shear scaled into the time-stepping
+   * regime, FGMRES cut the referential iterations by 15-20%, e.g. 265 ->
+   * 227 at mu x 0.01). */
   void SetBlockGMRES(bool on = true) {
     block_gmres_ = on;
     MarkOperatorDirty();
