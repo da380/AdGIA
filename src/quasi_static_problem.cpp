@@ -1255,7 +1255,7 @@ bool LinearQuasiStaticProblemBase::SolveLinearSystem(const Vector& B,
   return cg_->GetConverged();
 }
 
-void LinearQuasiStaticProblemBase::SetPressureSplitSolver() {
+void LinearQuasiStaticProblemBase::SetPressureSplitSolver(real_t theta) {
   if (pressure_split_) {
     return;
   }
@@ -1291,7 +1291,10 @@ void LinearQuasiStaticProblemBase::SetPressureSplitSolver() {
               "SetPressureSplitSolver: essential boundary conditions "
               "required (the route carries no rigid-mode projection).");
 
+  MFEM_VERIFY(theta >= 0.0 && theta <= 1.0,
+              "SetPressureSplitSolver: theta must lie in [0, 1].");
   pressure_split_ = true;
+  psplit_theta_ = theta;
   psplit_kappa_ = kappa;
   psplit_mu_ = mu;
   psplit_fec_ = std::make_unique<H1_FECollection>(order - 1, dim);
@@ -1312,6 +1315,8 @@ void LinearQuasiStaticProblemBase::ClearPressureSplitSolver() {
   }
   pressure_split_ = false;
   psplit_minres_.reset();
+  psplit_tri_prec_.reset();
+  psplit_neg_schur_.reset();
   psplit_prec_.reset();
   psplit_op_.reset();
   psplit_amg_.reset();
@@ -1333,6 +1338,7 @@ void LinearQuasiStaticProblemBase::ClearPressureSplitSolver() {
   psplit_fec_.reset();
   psplit_kappa_ = nullptr;
   psplit_mu_ = nullptr;
+  psplit_theta_ = 0.0;
   psplit_version_ = -1;
   MarkOperatorDirty();
 }
@@ -1352,8 +1358,27 @@ void LinearQuasiStaticProblemBase::AssemblePressureSplitOperator() {
   psplit_kappa_ = kappa;
   psplit_mu_ = mu;
   psplit_coefs_.clear();
-  psplit_coefs_.push_back(std::make_unique<RatioCoefficient>(1.0, *kappa));
-  Coefficient* inv_kappa = psplit_coefs_.back().get();
+  // p = lambda_p div u, lambda_p = kappa - theta 2 mu / d (floored at a
+  // small multiple of kappa so that 1/lambda_p stays bounded: theta = 1
+  // needs Poisson's ratio > 0); the displacement block carries the rest
+  // of the volumetric term, lambda_A = (kappa - 2 mu / d) - lambda_p, so
+  // the reformulation is exact for every theta.
+  const real_t theta = psplit_theta_;
+  const real_t two_over_d = 2.0 / dim;
+  psplit_coefs_.push_back(std::make_unique<TransformedCoefficient>(
+      mu, kappa, [theta, two_over_d](real_t m, real_t k) {
+        return std::max(k - theta * two_over_d * m, real_t{1e-3} * k);
+      }));
+  Coefficient* lambda_p = psplit_coefs_.back().get();
+  psplit_coefs_.push_back(std::make_unique<TransformedCoefficient>(
+      mu, kappa, [theta, two_over_d](real_t m, real_t k) {
+        const real_t lp =
+            std::max(k - theta * two_over_d * m, real_t{1e-3} * k);
+        return (k - two_over_d * m) - lp;
+      }));
+  Coefficient* lambda_A = psplit_coefs_.back().get();
+  psplit_coefs_.push_back(std::make_unique<RatioCoefficient>(1.0, *lambda_p));
+  Coefficient* inv_kappa = psplit_coefs_.back().get();  // 1 / lambda_p
   // The Schur weight inverts the effective shear, so it is floored at a
   // tiny multiple of kappa (the bulk modulus is the natural local scale):
   // the clamped weight interpolant can still touch zero between internal
@@ -1369,8 +1394,8 @@ void LinearQuasiStaticProblemBase::AssemblePressureSplitOperator() {
   Coefficient* mu_floored = psplit_coefs_.back().get();
   psplit_coefs_.push_back(std::make_unique<RatioCoefficient>(0.5, *mu_floored));
   Coefficient* inv_mu2 = psplit_coefs_.back().get();
-  psplit_coefs_.push_back(
-      std::make_unique<SumCoefficient>(*inv_kappa, *inv_mu2));
+  psplit_coefs_.push_back(std::make_unique<SumCoefficient>(
+      *inv_kappa, *inv_mu2, psplit_schur_scale_, psplit_schur_scale_));
   Coefficient* schur_w = psplit_coefs_.back().get();
 
   auto set_type = [this](OperatorHandle& h) {
@@ -1385,11 +1410,11 @@ void LinearQuasiStaticProblemBase::AssemblePressureSplitOperator() {
   };
   Array<int> none;
 
-  // A_mu = 2 mu dev eps : dev eps, essential dofs eliminated (DIAG_ONE,
-  // as the primal path).
+  // A = 2 mu eps : eps + lambda_A div div (theta = 0: 2 mu dev eps : dev
+  // eps), essential dofs eliminated (DIAG_ONE, as the primal path).
   psplit_amu_form_ = detail::MakeBilinearForm(fes_);
   psplit_amu_form_->AddDomainIntegrator(
-      new ElasticityIntegrator(*mu, -2.0 / dim, 1.0));
+      new ElasticityIntegrator(*lambda_A, *mu));
   psplit_amu_form_->Assemble();
   set_type(psplit_Amu_);
   psplit_amu_form_->FormSystemMatrix(ess_tdof_list_, psplit_Amu_);
@@ -1469,8 +1494,17 @@ void LinearQuasiStaticProblemBase::AssemblePressureSplitOperator() {
     HYPRE_BoomerAMGSetCycleRelaxType(*amg, 8, 3);
     amg->SetPrintLevel(0);
     psplit_amg_ = std::move(amg);
-    psplit_schur_prec_ =
-        std::make_unique<HypreDiagScale>(*psplit_Mw_.As<HypreParMatrix>());
+    if (psplit_cheb_order_ > 0) {
+      Vector diag;
+      psplit_Mw_.As<HypreParMatrix>()->GetDiag(diag);
+      Array<int> no_ess;
+      psplit_schur_prec_ = std::make_unique<OperatorChebyshevSmoother>(
+          *psplit_Mw_.Ptr(), diag, no_ess, psplit_cheb_order_,
+          pfes_->GetComm());
+    } else {
+      psplit_schur_prec_ =
+          std::make_unique<HypreDiagScale>(*psplit_Mw_.As<HypreParMatrix>());
+    }
   } else
 #endif
   {
@@ -1499,17 +1533,47 @@ void LinearQuasiStaticProblemBase::AssemblePressureSplitOperator() {
   psplit_prec_->SetDiagonalBlock(0, psplit_amg_.get());
   psplit_prec_->SetDiagonalBlock(1, psplit_schur_prec_.get());
 
+  // Experimental alternative: the block lower-triangular preconditioner
+  // [[P_A, 0], [B, -P_S]]^{-1} (the exact factor of the saddle with the
+  // Schur complement S = M_c + B A^{-1} B^T) with flexible GMRES.
+  psplit_tri_prec_.reset();
+  psplit_neg_schur_.reset();
+  if (psplit_triangular_) {
+    psplit_neg_schur_ =
+        std::make_unique<ScaledOperator>(psplit_schur_prec_.get(), -1.0);
+    psplit_tri_prec_ =
+        std::make_unique<BlockLowerTriangularPreconditioner>(psplit_offsets_);
+    psplit_tri_prec_->SetDiagonalBlock(0, psplit_amg_.get());
+    psplit_tri_prec_->SetBlock(1, 0, psplit_B_.Ptr());
+    psplit_tri_prec_->SetDiagonalBlock(1, psplit_neg_schur_.get());
+  }
 #ifdef MFEM_USE_MPI
   if (pfes_) {
-    psplit_minres_ = std::make_unique<MINRESSolver>(pfes_->GetComm());
+    if (psplit_triangular_) {
+      auto gm = std::make_unique<FGMRESSolver>(pfes_->GetComm());
+      gm->SetKDim(100);
+      psplit_minres_ = std::move(gm);
+    } else {
+      psplit_minres_ = std::make_unique<MINRESSolver>(pfes_->GetComm());
+    }
   } else
 #endif
   {
-    psplit_minres_ = std::make_unique<MINRESSolver>();
+    if (psplit_triangular_) {
+      auto gm = std::make_unique<FGMRESSolver>();
+      gm->SetKDim(100);
+      psplit_minres_ = std::move(gm);
+    } else {
+      psplit_minres_ = std::make_unique<MINRESSolver>();
+    }
   }
   // Operator before preconditioner, as in SetupCG.
   psplit_minres_->SetOperator(*psplit_op_);
-  psplit_minres_->SetPreconditioner(*psplit_prec_);
+  if (psplit_triangular_) {
+    psplit_minres_->SetPreconditioner(*psplit_tri_prec_);
+  } else {
+    psplit_minres_->SetPreconditioner(*psplit_prec_);
+  }
   psplit_minres_->SetRelTol(rel_tol_);
   psplit_minres_->SetAbsTol(0.0);
   psplit_minres_->SetMaxIter(10000);
@@ -1551,7 +1615,18 @@ bool LinearQuasiStaticProblemBase::PressureSplitSolve() {
   B.GetBlock(0) = Bu;
   B.GetBlock(1) = Bp;
   bool ok = true;
-  if (SetWarmStartTolerance(*psplit_minres_, *psplit_prec_, B)) {
+  bool solve = true;
+  if (psplit_triangular_) {
+    // FGMRES stops on the unpreconditioned residual; the warm start's
+    // target is the cold start's, rel_tol ||B||.
+    const real_t nb = std::sqrt(Dot(B, B));
+    solve = nb > 0.0;
+    psplit_minres_->SetRelTol(0.0);
+    psplit_minres_->SetAbsTol(rel_tol_ * nb);
+  } else {
+    solve = SetWarmStartTolerance(*psplit_minres_, *psplit_prec_, B);
+  }
+  if (solve) {
     psplit_minres_->Mult(B, X);
     NoteIterations(psplit_minres_->GetNumIterations());
     ok = psplit_minres_->GetConverged();

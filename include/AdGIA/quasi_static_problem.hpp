@@ -710,8 +710,32 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
    * discrete solution is the Taylor–Hood one, which differs from the
    * primal discretisation at discretisation-error level (and is free of
    * volumetric locking).
+   *
+   * @param theta Which part of the volumetric term the pressure carries:
+   * @f$p = \lambda_p\,\mathrm{div}\,u@f$ with
+   * @f$\lambda_p = \kappa - \theta\,2\mu/d@f$ (floored at
+   * @f$10^{-3}\kappa@f$), the displacement block keeping the rest,
+   * @f$2\mu\,\varepsilon:\varepsilon + (\lambda - \lambda_p)\,
+   * \mathrm{div}\,\mathrm{div}@f$. 0 (the default) is the kappa split
+   * above (deviatoric block, p the mean stress); 1 is the Herrmann split
+   * (block @f$2\mu\,\varepsilon:\varepsilon@f$, the operator the AMG is
+   * built on; p = lambda div u). The displacement is the same for every
+   * theta (an exact reformulation); only Pressure()'s meaning changes.
    */
-  void SetPressureSplitSolver();
+  void SetPressureSplitSolver(mfem::real_t theta = 0.0);
+
+  /** @brief Experimental pressure-split Schur-block options: a Chebyshev
+   * smoother of order @p chebyshev_order on the weighted pressure mass
+   * (0: Jacobi, the default), and a factor @p scale on the Schur weight
+   * (MINRES is not invariant to the relative scaling of the blocks).
+   * Takes effect at the next assembly. */
+  void SetPressureSplitSchurOptions(int chebyshev_order, mfem::real_t scale,
+                                    bool triangular = false) {
+    psplit_cheb_order_ = chebyshev_order;
+    psplit_schur_scale_ = scale;
+    psplit_triangular_ = triangular;
+    MarkOperatorDirty();
+  }
 
   /** @brief Back to the primal displacement solve. */
   void ClearPressureSplitSolver();
@@ -1118,6 +1142,12 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   // dirty. The (kappa, mu) pointers come from the stiffness's
   // IsotropicSplit() and track the live effective modulus.
   bool pressure_split_ = false;
+  mfem::real_t psplit_theta_ = 0.0;  // see SetPressureSplitSolver()
+  int psplit_cheb_order_ = 0;            // SetPressureSplitSchurOptions()
+  mfem::real_t psplit_schur_scale_ = 1.0;
+  bool psplit_triangular_ = false;  // block lower-triangular + FGMRES
+  std::unique_ptr<mfem::BlockLowerTriangularPreconditioner> psplit_tri_prec_;
+  std::unique_ptr<mfem::Operator> psplit_neg_schur_;
   mfem::Coefficient* psplit_kappa_ = nullptr;
   mfem::Coefficient* psplit_mu_ = nullptr;
   std::vector<std::unique_ptr<mfem::Coefficient>> psplit_coefs_;

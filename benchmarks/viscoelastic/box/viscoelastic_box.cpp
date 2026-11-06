@@ -107,6 +107,9 @@ int main(int argc, char* argv[]) try {
   bool conform = true;
   real_t rtol = 1e-4, atol = 1e-10;
   bool psplit = false;
+  real_t psplit_theta = 0.0, psplit_scale = 1.0;
+  int psplit_cheb = 0;
+  bool psplit_tri = false;
 
   OptionsParser args(argc, argv);
   args.AddOption(&case_file, "-c", "--case", "Case file (cases.py).");
@@ -121,6 +124,18 @@ int main(int argc, char* argv[]) try {
                  "--no-pressure-split",
                  "Route the solid solves through the pressure-split (u, p) "
                  "MINRES (Taylor-Hood; clamped cases, order >= 2).");
+  args.AddOption(&psplit_theta, "-upt", "--pressure-split-theta",
+                 "Pressure-split volumetric partition: 0 the kappa split, "
+                 "1 the Herrmann split (see SetPressureSplitSolver).");
+  args.AddOption(&psplit_cheb, "-upc", "--pressure-split-chebyshev",
+                 "Chebyshev order on the pressure-split Schur block (0: "
+                 "Jacobi).");
+  args.AddOption(&psplit_scale, "-ups", "--pressure-split-schur-scale",
+                 "Factor on the pressure-split Schur weight.");
+  args.AddOption(&psplit_tri, "-upg", "--pressure-split-triangular",
+                 "-no-upg", "--no-pressure-split-triangular",
+                 "Block lower-triangular preconditioner with FGMRES on the "
+                 "pressure-split route (experimental).");
   args.AddOption(&rheology_mode, "-rheology", "--rheology",
                  "composite (one region per layer, by element centre) or "
                  "pointwise (layers looked up at every point).");
@@ -418,7 +433,11 @@ int main(int argc, char* argv[]) try {
         &fes, *rheology, bottom, traction, top);
   }
   if (psplit) {
-    problem->SetPressureSplitSolver();  // refuses the uniaxial_stress case
+    problem->SetPressureSplitSolver(psplit_theta);  // refuses uniaxial_stress
+    if (psplit_cheb > 0 || psplit_scale != 1.0 || psplit_tri) {
+      problem->SetPressureSplitSchurOptions(psplit_cheb, psplit_scale,
+                                            psplit_tri);
+    }
   }
   problem->SetPrintLevel(IterativeSolver::PrintLevel().None());
 
@@ -625,6 +644,7 @@ int main(int argc, char* argv[]) try {
        << ",\n  \"conform\": " << (conform ? "true" : "false")
        << ",\n  \"rheology\": \""
        << mode << "\",\n  \"pressure_split\": " << (psplit ? "true" : "false")
+       << ",\n  \"pressure_split_theta\": " << Num(psplit_theta)
        << ",\n  \"branches\": " << nb << ",\n  \"scheme\": \""
        << scheme_name << "\",\n  \"dt\": " << Num(dt)
        << ",\n  \"min_steps\": " << min_steps << ",\n  \"align\": "
