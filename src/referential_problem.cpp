@@ -4088,8 +4088,8 @@ void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::AssembleBrokenBlock
     amg3->SetPrintLevel(0);
     prec33_ = std::move(amg3);
     auto amg1 = std::make_unique<HypreBoomerAMG>(*pbzS_[5]);
-    // order_bynodes = true: the displacement spaces are Ordering::byNODES.
-    amg1->SetSystemsOptions(dim_, true);
+    // Fluid and solid spaces share the ordering (checked at construction).
+    detail::SetSystemsAMGOptions(*amg1, *fes_);
     amg1->SetPrintLevel(0);
     prec11_ = std::move(amg1);
   }
@@ -4717,8 +4717,8 @@ void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::AssembleSlipBlocksP
   op_Bn_ = pBn_.get();
   {
     auto amg = std::make_unique<HypreBoomerAMG>(*pA11_solve_);
-    // order_bynodes = true: the displacement spaces are Ordering::byNODES.
-    amg->SetSystemsOptions(dim_, true);
+    // Fluid and solid spaces share the ordering (checked at construction).
+    detail::SetSystemsAMGOptions(*amg, *fes_);
     amg->SetPrintLevel(0);
     prec11_ = std::move(amg);
   }
@@ -5112,8 +5112,8 @@ void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::SetupSolverKKT(
     op_SK10 = pSK10_.get();
     op_SK11 = pSK11_.get();
     auto amg = std::make_unique<HypreBoomerAMG>(*pSK11_);
-    // order_bynodes = true: the displacement spaces are Ordering::byNODES.
-    amg->SetSystemsOptions(dim_, true);
+    // Fluid and solid spaces share the ordering (checked at construction).
+    detail::SetSystemsAMGOptions(*amg, *fes_);
     amg->SetPrintLevel(0);
     prec11_kkt_ = std::move(amg);
   } else

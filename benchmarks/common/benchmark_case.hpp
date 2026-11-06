@@ -241,7 +241,6 @@ struct CaseOptions {
   real_t gauge_eps = 1e-2;
   int gauge_refinements = 3;
   real_t gauge_prec_eps = 0.0;    // > 0: solid-everywhere prec experiment
-  bool amg_rbm = false;           // rigid-rotation AMG interpolation vectors
   real_t gauge_plateau = 0.0;     // > 0: stagnation stop ratio (with -gpe)
   real_t mx_beta0 = -1.0;         // maxwell: physical-phase dt/tau
   real_t mx_prec_eps = 0.0;       // maxwell: frozen-preconditioner epsilon
@@ -388,11 +387,6 @@ struct CaseOptions {
                    "Gauge penalty factor epsilon (gauged fluid).");
     args.AddOption(&gauge_refinements, "-gref", "--gauge-refinements",
                    "Tikhonov refinement steps per solve (gauged fluid).");
-    args.AddOption(&amg_rbm, "-amg-rbm", "--amg-rigid-rotations",
-                   "-no-amg-rbm", "--no-amg-rigid-rotations",
-                   "Give the displacement AMG the rigid-body rotations as "
-                   "GM-2 interpolation vectors (every method; off = the "
-                   "nodal-systems default).");
     args.AddOption(&gauge_prec_eps, "-gpe", "--gauge-prec-epsilon",
                    "Solid-everywhere preconditioner experiment (gauged "
                    "fluid, block MINRES only): the Krylov operator is the "
@@ -770,9 +764,6 @@ class Case {
                                           *rho_c_, G,
                                           options.dtn_degree, nullptr,
                                           fluids);
-      if (options.amg_rbm) {
-        problem->SetElasticityNearNull();
-      }
       if (options.level_border > 0 && method == "dahlen" && !fluids.empty()) {
         problem->SetLevelBorder(options.level_border);
         if (options.level_monolithic) {
@@ -1593,9 +1584,6 @@ class Case {
           options.dtn_degree, nullptr, ref_eliminated
                                            ? fluids
                                            : std::vector<FluidRegion>{});
-      if (options.amg_rbm) {
-        ref_problem->SetElasticityNearNull();
-      }
       Evac_ = NewRadialVacuumExtension(*fes_u, *fes_buffer_, radius, r_out);
       ref_problem->SetPrescribedVacuumExtension(*fes_buffer_, *Evac_);
       if (ref_eliminated) {
@@ -1710,9 +1698,6 @@ class Case {
           std::make_unique<LinearQuasiStaticReferentialSelfGravitatingSlipProblem>(
               fes_u.get(), fes_f_.get(), fes_phi.get(), *ref_rheology_,
               *rho_use, *pi_use, interface_marker_, G, options.dtn_degree);
-      if (options.amg_rbm) {
-        slip_problem->SetElasticityNearNull();
-      }
       Evac_ = NewRadialVacuumExtension(*fes_u, *fes_buffer_, radius, r_out);
       slip_problem->SetPrescribedVacuumExtension(*fes_buffer_, *Evac_);
       slip_problem->SetFluidGauge(*kappa_fluid_c_dispatch_,

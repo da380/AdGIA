@@ -171,6 +171,10 @@ LinearQuasiStaticProblemBase::LinearQuasiStaticProblemBase(
   // change of modulus never has to reuse a matrix pattern.
   integrators_ = detail::MakeBilinearForm(fes_);
   stiffness_->AddIntegrators(*integrators_);
+  // Everything a derived class adds later (gravity, interface and load
+  // terms) comes after these; the preconditioner may leave it out.
+  n_rheology_domain_ = integrators_->GetDBFI()->Size();
+  n_rheology_boundary_ = integrators_->GetBBFI()->Size();
 
   b_ = detail::MakeLinearForm(fes_);
   u_ = detail::MakeGridFunction(fes_);
@@ -1077,6 +1081,80 @@ bool LinearQuasiStaticProblemBase::MaxwellSolve() {
   return ok;
 }
 
+bool LinearQuasiStaticProblemBase::HasNonElasticIntegrators() {
+  return integrators_->GetDBFI()->Size() > n_rheology_domain_ ||
+         integrators_->GetBBFI()->Size() > n_rheology_boundary_ ||
+         integrators_->GetFBFI()->Size() > 0 ||
+         integrators_->GetBFBFI()->Size() > 0;
+}
+
+#ifdef MFEM_USE_MPI
+void LinearQuasiStaticProblemBase::AssembleElasticPreconditionerMatrix() {
+  // A form borrowing the rheology's integrators only (and, with a gauged
+  // fluid, the penalty that makes the fluid block definite, as in
+  // AssembleOperator's solve form).
+  prec_elastic_form_ = detail::MakeBilinearForm(fes_);
+  prec_elastic_form_->UseExternalIntegrators();
+  auto& dom = *integrators_->GetDBFI();
+  auto& dom_mk = *integrators_->GetDBFI_Marker();
+  for (int i = 0; i < n_rheology_domain_; i++) {
+    if (dom_mk[i]) {
+      prec_elastic_form_->AddDomainIntegrator(dom[i], *dom_mk[i]);
+    } else {
+      prec_elastic_form_->AddDomainIntegrator(dom[i]);
+    }
+  }
+  auto& bdr = *integrators_->GetBBFI();
+  auto& bdr_mk = *integrators_->GetBBFI_Marker();
+  for (int i = 0; i < n_rheology_boundary_; i++) {
+    if (bdr_mk[i]) {
+      prec_elastic_form_->AddBoundaryIntegrator(bdr[i], *bdr_mk[i]);
+    } else {
+      prec_elastic_form_->AddBoundaryIntegrator(bdr[i]);
+    }
+  }
+  if (HasGaugedFluid()) {
+    prec_elastic_form_->AddDomainIntegrator(fluid_op_.Integrator(),
+                                            fluid_op_.Marker());
+  }
+  prec_elastic_form_->Assemble();
+  prec_elastic_A_.SetType(Operator::Hypre_ParCSR);
+  prec_elastic_form_->FormSystemMatrix(ess_tdof_list_, prec_elastic_A_);
+}
+
+bool LinearQuasiStaticProblemBase::FreeDisplacementBody() const {
+  if (!pfes_) return false;
+  long long n = ess_tdof_list_.Size(), ng = 0;
+  MPI_Allreduce(&n, &ng, 1, MPI_LONG_LONG, MPI_SUM, pfes_->GetComm());
+  return ng == 0;
+}
+
+std::unique_ptr<HypreParMatrix> LinearQuasiStaticProblemBase::MassShiftedMatrix(
+    HypreParMatrix& A) const {
+  ParBilinearForm m(pfes_);
+  m.AddDomainIntegrator(new VectorMassIntegrator);
+  m.Assemble();
+  m.Finalize();
+  std::unique_ptr<HypreParMatrix> M(m.ParallelAssemble());
+  // eps ~ the stiffness of the smoothest non-rigid deformation, mu / L^2:
+  // tr(A) / tr(M) is the mean eigenvalue ratio, ~ mu / h^2, and h^2 / L^2
+  // ~ N^(-2/d) for N nodes in d dimensions. The iteration count is
+  // insensitive to eps over decades, so the estimate need not be sharp.
+  Vector dA, dM;
+  A.GetDiag(dA);
+  M->GetDiag(dM);
+  real_t loc[2] = {dA.Sum(), dM.Sum()}, glob[2];
+  MPI_Allreduce(loc, glob, 2, MPITypeMap<real_t>::mpi_type, MPI_SUM,
+                pfes_->GetComm());
+  const real_t nodes =
+      static_cast<real_t>(pfes_->GlobalTrueVSize()) / pfes_->GetVDim();
+  const int d = pfes_->GetParMesh()->Dimension();
+  const real_t eps =
+      kPrecMassShift * glob[0] / glob[1] * std::pow(nodes, -2.0 / d);
+  return std::unique_ptr<HypreParMatrix>(Add(1.0, A, eps, *M));
+}
+#endif
+
 void LinearQuasiStaticProblemBase::SetupDefaultCG(OperatorHandle& A) {
   SetupDefaultPreconditioner(A);
   SetupCG(*A.Ptr(), *prec_);
@@ -1088,47 +1166,41 @@ void LinearQuasiStaticProblemBase::SetupDefaultPreconditioner(
   if (rebuild) {
 #ifdef MFEM_USE_MPI
     if (pfes_) {
-      auto amg = std::make_unique<HypreBoomerAMG>(*A.As<HypreParMatrix>());
-      // Systems AMG with the nodal coarsening and coarse-grid smoother of
-      // SetElasticityOptions; its rigid-body interpolation needs
-      // Ordering::byVDIM in mfem's own path (the displacement spaces
-      // here are byNODES), so with SetElasticityNearNull() the rotation
-      // vectors are attached directly through the hypre interface
-      // instead (GM-2; the translations are the nodal coarsening's
-      // constants).
-      amg->SetSystemsOptions(pfes_->GetVDim(), true);
-      HYPRE_BoomerAMGSetNodal(*amg, 4);
-      HYPRE_BoomerAMGSetNodalDiag(*amg, 1);
-      HYPRE_BoomerAMGSetCycleRelaxType(*amg, 8, 3);
-      if (amg_rbm_) {
-        HYPRE_BoomerAMGSetInterpVecVariant(*amg, 2);
-        HYPRE_BoomerAMGSetInterpVecQMax(*amg, 4);
-        HYPRE_BoomerAMGSetSmoothInterpVectors(*amg, 1);
-        const int dim = pfes_->GetParMesh()->Dimension();
-        amg_rbms_.clear();
-        amg_rbm_handles_.SetSize(0);
-        auto add_rotation = [&](int component) {
-          RigidRotation rot(dim, component);
-          ParGridFunction gf(pfes_);
-          gf.ProjectCoefficient(rot);
-          auto tv = std::unique_ptr<HypreParVector>(pfes_->NewTrueDofVector());
-          gf.GetTrueDofs(*tv);
-          amg_rbm_handles_.Append(*tv);
-          amg_rbms_.push_back(std::move(tv));
-        };
-        if (dim == 2) {
-          add_rotation(2);
-        } else {
-          add_rotation(0);
-          add_rotation(1);
-          add_rotation(2);
-        }
-        HYPRE_BoomerAMGSetInterpVectors(*amg, amg_rbm_handles_.Size(),
-                                        amg_rbm_handles_.GetData());
-        // The elasticity interpolation can leave singular coarse grids
-        // that hypre's solve handles but whose setup reports errors.
-        amg->SetErrorMode(HypreSolver::IGNORE_HYPRE_ERRORS);
+      HypreParMatrix* Amat = A.As<HypreParMatrix>();
+      prec_.reset();  // the matrices it was built on are replaced below
+      prec_shift_mat_.reset();
+      prec_elastic_A_.Clear();
+      prec_elastic_form_.reset();
+      if (HasNonElasticIntegrators()) {
+        // The AMG is built on the rheology's stiffness alone. The terms a
+        // derived class adds (the self-gravitating classes' gravity and
+        // fluid-interface terms) can make the displacement block
+        // indefinite, and an AMG built on an indefinite matrix is an
+        // indefinite preconditioner, which block MINRES cannot use; they
+        // are lower order than the stiffness and left to the Krylov
+        // method.
+        AssembleElasticPreconditionerMatrix();
+        Amat = prec_elastic_A_.As<HypreParMatrix>();
       }
+      if (FreeDisplacementBody()) {
+        // A free body's operator is singular (rigid modes, region
+        // rotations): AMG on it amplifies the kernel components of its
+        // input without bound and the V-cycle stops being positive
+        // definite in floating point (MINRES breaks down; CG stalls).
+        // The AMG is therefore built on A + eps M (vector mass), which is
+        // definite; the Krylov method still solves with A.
+        prec_shift_mat_ = MassShiftedMatrix(*Amat);
+        Amat = prec_shift_mat_.get();
+      }
+      auto amg = std::make_unique<HypreBoomerAMG>(*Amat);
+      // Unknown-based systems AMG; see SetSystemsAMGOptions for why
+      // nodal coarsening is not used. The coarsest level gets one
+      // l1-Gauss-Seidel sweep instead of hypre's default Gaussian
+      // elimination (which SetRelaxType installs): free-body and fluid
+      // operators are singular, and a direct solve on a singular coarse
+      // grid makes the V-cycle indefinite (MINRES then breaks down).
+      detail::SetSystemsAMGOptions(*amg, *pfes_);
+      HYPRE_BoomerAMGSetCycleRelaxType(*amg, 8, 3);
       amg->SetPrintLevel(0);
       prec_ = std::move(amg);
     } else
@@ -1392,10 +1464,8 @@ void LinearQuasiStaticProblemBase::AssemblePressureSplitOperator() {
   if (pfes_) {
     auto amg =
         std::make_unique<HypreBoomerAMG>(*psplit_Aprec_.As<HypreParMatrix>());
-    // The nodal-systems settings of SetupDefaultPreconditioner.
-    amg->SetSystemsOptions(pfes_->GetVDim(), true);
-    HYPRE_BoomerAMGSetNodal(*amg, 4);
-    HYPRE_BoomerAMGSetNodalDiag(*amg, 1);
+    // The systems settings of SetupDefaultPreconditioner.
+    detail::SetSystemsAMGOptions(*amg, *pfes_);
     HYPRE_BoomerAMGSetCycleRelaxType(*amg, 8, 3);
     amg->SetPrintLevel(0);
     psplit_amg_ = std::move(amg);

@@ -682,17 +682,6 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   bool GaugePreconditionerOnly() const { return gauge_prec_only_; }
 
   /**
-   * @brief Give the displacement BoomerAMG the rigid-body rotations as
-   * interpolation vectors (hypre's GM-2 elasticity interpolation; the
-   * translations are the constants of the nodal coarsening). The byNODES
-   * equivalent of mfem's SetElasticityOptions, whose own path requires
-   * Ordering::byVDIM. Parallel builds only (the serial smoother ignores
-   * it); call before the first Solve(). Off by default pending
-   * measurement against the nodal-systems default.
-   */
-  void SetElasticityNearNull(bool on = true) { amg_rbm_ = on; }
-
-  /**
    * @brief Route Solve() through the pressure-split @f$(u, p)@f$
    * reformulation of the solid, @f$p = \kappa\,\mathrm{div}\,u@f$: MINRES
    * on the symmetric block system
@@ -946,6 +935,29 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   mfem::Vector X_, B_;
 
   std::unique_ptr<mfem::Solver> prec_;
+#ifdef MFEM_USE_MPI
+  // The free-body preconditioner matrix A + eps M (SetupDefaultPreconditioner),
+  // which the AMG references; rebuilt with it.
+  std::unique_ptr<mfem::HypreParMatrix> prec_shift_mat_;
+  /// True if the displacement problem has no essential dofs on any rank.
+  bool FreeDisplacementBody() const;
+  /// A + eps M with eps ~ mu / L^2 estimated from the matrices.
+  std::unique_ptr<mfem::HypreParMatrix> MassShiftedMatrix(
+      mfem::HypreParMatrix& A) const;
+  /// Scale factor of the free-body mass shift (see MassShiftedMatrix).
+  static constexpr mfem::real_t kPrecMassShift = 1e-2;
+  // The rheology-only stiffness the AMG is built on when a derived class
+  // has added integrators (SetupDefaultPreconditioner), and its form,
+  // which owns the matrix.
+  std::unique_ptr<mfem::BilinearForm> prec_elastic_form_;
+  mfem::OperatorHandle prec_elastic_A_;
+  void AssembleElasticPreconditionerMatrix();
+#endif
+  /// Number of domain/boundary integrators the rheology contributes to
+  /// StiffnessIntegrators() (those added first, in the constructor).
+  int n_rheology_domain_ = 0, n_rheology_boundary_ = 0;
+  /// True if a derived class has added integrators beyond the rheology's.
+  bool HasNonElasticIntegrators();
   std::unique_ptr<mfem::CGSolver> cg_;
   // Preconditioner reuse: the form and matrix the preconditioner was built
   // on are kept alive while it is reused.
@@ -979,15 +991,6 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   FluidTreatment fluid_treatment_ = FluidTreatment::None;
   int gauge_refinements_ = 2;
   bool gauge_prec_only_ = false;  // clean-A operator, A + eps_prec Q prec
-  bool amg_rbm_ = false;  // rigid-rotation interpolation vectors on the AMG
-#ifdef MFEM_USE_MPI
-  // The interpolation vectors hypre references during AMG setup — and
-  // the HANDLE ARRAY itself, whose pointer hypre stores without
-  // copying; both must outlive the preconditioner, so they are rebuilt
-  // with it.
-  std::vector<std::unique_ptr<mfem::HypreParVector>> amg_rbms_;
-  mfem::Array<HYPRE_ParVector> amg_rbm_handles_;
-#endif
   mfem::real_t gauge_plateau_ratio_ = 0.0;  // 0: no stagnation stop
   int gauge_plateau_chunk_ = 25;
 

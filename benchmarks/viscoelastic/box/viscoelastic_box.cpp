@@ -106,7 +106,6 @@ int main(int argc, char* argv[]) try {
   bool align = true;
   bool conform = true;
   real_t rtol = 1e-4, atol = 1e-10;
-  bool amg_rbm = false;
   bool psplit = false;
 
   OptionsParser args(argc, argv);
@@ -118,10 +117,6 @@ int main(int argc, char* argv[]) try {
   args.AddOption(&nz, "-nz", "--nz", "Elements along z.");
   args.AddOption(&scheme, "-scheme", "--scheme",
                  "exptrap (default), sdirk23, be, etd1, rk4 or adaptive.");
-  args.AddOption(&amg_rbm, "-amg-rbm", "--amg-rigid-rotations",
-                 "-no-amg-rbm", "--no-amg-rigid-rotations",
-                 "Rigid-rotation GM-2 interpolation vectors on the "
-                 "displacement AMG (off = the nodal-systems default).");
   args.AddOption(&psplit, "-up", "--pressure-split", "-no-up",
                  "--no-pressure-split",
                  "Route the solid solves through the pressure-split (u, p) "
@@ -421,9 +416,6 @@ int main(int argc, char* argv[]) try {
   } else {
     problem = std::make_unique<LinearQuasiStaticClampedProblem>(
         &fes, *rheology, bottom, traction, top);
-  }
-  if (amg_rbm) {
-    problem->SetElasticityNearNull();
   }
   if (psplit) {
     problem->SetPressureSplitSolver();  // refuses the uniaxial_stress case

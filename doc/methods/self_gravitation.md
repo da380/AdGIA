@@ -268,9 +268,12 @@ maximised in φ), but the assembled symmetric system is congruent to
 stable body — CG on the projected block system is admissible
 (`SolverType::BlockCG`, available as a diagnostic; its cost matches
 MINRES on the stable and steep three-layer test models). The solve uses
-a block-diagonal SPD preconditioner: Gauss–Seidel or
-systems BoomerAMG with nodal coarsening on `A_uu`, and on the shifted Laplacian
-`(K + εM)/4πG`, without `M_F`.
+a block-diagonal SPD preconditioner: Gauss–Seidel on `A_uu` (serial), or
+unknown-based systems BoomerAMG built on the rheology's stiffness alone
+(parallel; the gravity and fluid-interface terms can make `A_uu`
+indefinite, and an AMG on an indefinite matrix is not SPD), shifted for a
+free body by a small vector mass term `ε_u M_u` that makes it definite;
+and on the shifted Laplacian `(K + εM)/4πG`, without `M_F`.
 
 **Schur CG.** CG on `S = A_uu − C A_φφ⁻¹ Cᵀ`, symmetric and, for a
 gravitationally stable body, positive on the complement of the rigid modes.

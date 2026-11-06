@@ -946,8 +946,7 @@ GridFunctionDiffeomorphism NewHarmonicExtensionMapping(
   a.FormLinearSystem(ess_tdof, h_buffer, b, A, X, B);
   HypreBoomerAMG prec(*A.As<HypreParMatrix>());
   prec.SetPrintLevel(0);
-  // order_bynodes = true: fes_buffer uses the default Ordering::byNODES.
-  prec.SetSystemsOptions(dim, true);
+  detail::SetSystemsAMGOptions(prec, fes_buffer);
   CGSolver cg(parent.GetComm());
   cg.SetOperator(*A);
   cg.SetPreconditioner(prec);

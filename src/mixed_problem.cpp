@@ -1618,8 +1618,7 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetupKKTGauge() {
 #ifdef MFEM_USE_MPI
   if (pfes_) {
     auto amg = std::make_unique<HypreBoomerAMG>(*A_.As<HypreParMatrix>());
-    // order_bynodes = true: the displacement space is Ordering::byNODES.
-    amg->SetSystemsOptions(fes_->GetVDim(), true);
+    detail::SetSystemsAMGOptions(*amg, *fes_);
     amg->SetPrintLevel(0);
     prec_clean_u_ = std::move(amg);
   } else
