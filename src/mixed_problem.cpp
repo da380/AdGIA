@@ -1500,6 +1500,115 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetupMinres(OperatorHandle& A
     *X_block_ = 0.0;
   }
   B_block_ = std::make_unique<BlockVector>(offsets_);
+  if (UsingPressureSplit()) {
+    SetupSplitMinres(A);
+  }
+}
+
+void LinearQuasiStaticMixedSelfGravitatingProblem::SetupSplitMinres(
+    OperatorHandle& A) {
+#ifdef MFEM_USE_MPI
+  MFEM_VERIFY(pfes_, "Pressure split (gravitating): parallel builds only.");
+  MFEM_VERIFY(type_ == SolverType::BlockMINRES && !gauge_kkt_ &&
+                  !GaugePreconditionerOnly() && !monolithic_border_ &&
+                  !mass_gauge_,
+              "Pressure split (gravitating): block MINRES with the "
+              "elimination border and the Euclidean gauge only.");
+  // The shared blocks: B, the pressure masses, the AMG on 2 mu eps:eps
+  // (mass-shifted: the body is free) and the Schur preconditioner.
+  const PressureSplitParts parts = AssemblePressureSplitParts();
+  // The displacement block hands lambda_p div div to the pressure:
+  // A' = A - D(lambda_p), A the assembled (elastic + gravity) block, so
+  // eliminating p gives back the Taylor-Hood primal operator.
+  split_d_form_ = detail::MakeBilinearForm(fes_);
+  split_d_form_->AddDomainIntegrator(
+      new ElasticityIntegrator(*parts.lambda_p, split_zero_));
+  split_d_form_->Assemble();
+  split_D_.Clear();
+  split_D_.SetType(Operator::Hypre_ParCSR);
+  Array<int> none;
+  split_d_form_->FormSystemMatrix(none, split_D_);
+  split_A_.reset(Add(1.0, *A.As<HypreParMatrix>(), -1.0,
+                     *split_D_.As<HypreParMatrix>()));
+
+  const int nu = offsets_[1], nphi = offsets_[2] - offsets_[1];
+  const int np = parts.np;
+  split_offsets_.SetSize(4);
+  split_offsets_[0] = 0;
+  split_offsets_[1] = nu;
+  split_offsets_[2] = nu + np;
+  split_offsets_[3] = nu + np + nphi;
+  split_op_ = std::make_unique<BlockOperator>(split_offsets_);
+  split_BT_ = std::make_unique<TransposeOperator>(parts.B);
+  split_op_->SetBlock(0, 0, split_A_.get());
+  split_op_->SetBlock(0, 1, split_BT_.get());
+  split_op_->SetBlock(0, 2, const_cast<Operator*>(C_op_));
+  split_op_->SetBlock(1, 0, parts.B);
+  split_op_->SetBlock(1, 1, parts.M, -1.0);
+  split_op_->SetBlock(2, 0, const_cast<Operator*>(Ct_op_));
+  split_op_->SetBlock(2, 2, A_phiphi_);
+
+  split_prec_ = std::make_unique<BlockDiagonalPreconditioner>(split_offsets_);
+  split_prec_->SetDiagonalBlock(0, parts.amg);
+  split_prec_->SetDiagonalBlock(1, parts.schur);
+  split_prec_->SetDiagonalBlock(2, prec_phi_.get());
+
+  // The null space of the (u, phi) system with a zero pressure part (the
+  // rigid modes and region rotations are divergence-free).
+  split_proj_ = std::make_unique<NullSpaceProjector>(pfes_->GetComm());
+  for (int i = 0; i < projector_block_->Size(); i++) {
+    const Vector& b2 = projector_block_->Basis(i);
+    Vector b3(split_offsets_[3]);
+    b3 = 0.0;
+    for (int k = 0; k < nu; k++) b3[k] = b2[k];
+    for (int k = 0; k < nphi; k++) b3[nu + np + k] = b2[nu + k];
+    split_proj_->Add(b3);
+  }
+  split_proj_op_ = std::make_unique<ProjectedOperator>(*split_op_, *split_proj_);
+  split_proj_prec_ = std::make_unique<ProjectedSolver>(*split_proj_);
+  split_proj_prec_->SetSolver(*split_prec_);
+  split_minres_ = std::make_unique<MINRESSolver>(pfes_->GetComm());
+  split_minres_->SetOperator(*split_proj_op_);
+  split_minres_->SetPreconditioner(*split_proj_prec_);
+  split_minres_->SetRelTol(rel_tol_);
+  split_minres_->SetAbsTol(0.0);
+  split_minres_->SetMaxIter(10000);
+  split_minres_->SetPrintLevel(print_level_);
+  split_minres_->iterative_mode = true;
+  split_outer_ = std::make_unique<ProjectedSolver>(*split_proj_);
+  split_outer_->SetSolver(*split_minres_);
+  split_outer_->iterative_mode = true;
+  if (!split_X_ || split_X_->Size() != split_offsets_[3]) {
+    split_X_ = std::make_unique<BlockVector>(split_offsets_);
+    *split_X_ = 0.0;
+  }
+  split_B_ = std::make_unique<BlockVector>(split_offsets_);
+#else
+  (void)A;
+  MFEM_ABORT("Pressure split (gravitating): parallel builds only.");
+#endif
+}
+
+bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveSplitBlock(
+    const Vector& B, Vector& X) {
+  split_B_->GetBlock(0) = B;
+  split_B_->GetBlock(1) = 0.0;
+  split_B_->GetBlock(2) = B_phi_;
+  bool ok = true;
+  if (!SetWarmStartTolerance(*split_minres_, *split_proj_prec_, *split_B_)) {
+    X = 0.0;
+    Phi_true_ = 0.0;
+    *split_X_ = 0.0;
+  } else {
+    split_outer_->Mult(*split_B_, *split_X_);
+    ok = split_minres_->GetConverged();
+    outer_its_ = split_minres_->GetNumIterations();
+  }
+  NoteIterations(outer_its_);
+  X = split_X_->GetBlock(0);
+  projector_u_->Project(X);
+  Phi_true_ = split_X_->GetBlock(2);
+  return ok;
 }
 
 void LinearQuasiStaticMixedSelfGravitatingProblem::ConfigureFluidOperator(
@@ -1909,8 +2018,18 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveLinearSystem(
           Vector col(rhs[1]);
           MakeCompatible(col);
           B_phi_ = col;
-          xs[0].SetSize(rhs[0].Size());
-          xs[0] = 0.0;
+          // A seeded state (the column's solution at the previous
+          // operator version) is the initial guess; otherwise start cold.
+          const bool seeded = xs[0].Size() == rhs[0].Size() &&
+                              xs[1].Size() == Phi_true_.Size();
+          if (!seeded) {
+            xs[0].SetSize(rhs[0].Size());
+            xs[0] = 0.0;
+          } else if (type_ != SolverType::SchurCG && X_block_ &&
+                     !gauge_kkt_) {
+            X_block_->GetBlock(0) = xs[0];
+            X_block_->GetBlock(1) = xs[1];
+          }
           const bool converged = SolveUnbordered(rhs[0], xs[0]);
           xs[1] = Phi_true_;
           B_phi_ = Bphi_save;
@@ -2551,6 +2670,8 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveUnbordered(
       X = Xk4_->GetBlock(0);
       Phi_true_ = Xk4_->GetBlock(1);
     }
+  } else if (UsingPressureSplit()) {
+    ok = SolveSplitBlock(B, X) && ok;
   } else {
     B_block_->GetBlock(0) = B;
     B_block_->GetBlock(1) = B_phi_;

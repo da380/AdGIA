@@ -517,7 +517,7 @@ bool LinearQuasiStaticProblemBase::Solve() {
   if (fluid_treatment_ == FluidTreatment::Maxwell) {
     return MaxwellSolve();
   }
-  if (pressure_split_) {
+  if (pressure_split_ && !PressureSplitInClassSolve()) {
     return PressureSplitSolve();
   }
   EnsureOperator();
@@ -1403,8 +1403,7 @@ void LinearQuasiStaticProblemBase::ClearPressureSplitSolver() {
   MarkOperatorDirty();
 }
 
-void LinearQuasiStaticProblemBase::AssemblePressureSplitOperator() {
-  operator_version_++;
+void LinearQuasiStaticProblemBase::AssemblePressureSplitBlocks() {
   const int dim = fes_->GetMesh()->Dimension();
   // Re-read the split each assembly: the pointers track the live
   // effective modulus (a redirectable, or a piecewise dispatch over the
@@ -1430,6 +1429,7 @@ void LinearQuasiStaticProblemBase::AssemblePressureSplitOperator() {
         return std::max(k - theta * two_over_d * m, real_t{1e-3} * k);
       }));
   Coefficient* lambda_p = psplit_coefs_.back().get();
+  psplit_lambda_p_ = lambda_p;
   psplit_coefs_.push_back(std::make_unique<TransformedCoefficient>(
       mu, kappa, [theta, two_over_d](real_t m, real_t k) {
         const real_t lp =
@@ -1589,6 +1589,29 @@ void LinearQuasiStaticProblemBase::AssemblePressureSplitOperator() {
         std::make_unique<DSmoother>(*psplit_Mw_.As<SparseMatrix>());
   }
 
+}
+
+LinearQuasiStaticProblemBase::PressureSplitParts
+LinearQuasiStaticProblemBase::AssemblePressureSplitParts() {
+  AssemblePressureSplitBlocks();
+  PressureSplitParts parts;
+  parts.B = psplit_B_.Ptr();
+  parts.M = psplit_M_.Ptr();
+  parts.amg = psplit_amg_.get();
+  parts.schur = psplit_schur_prec_.get();
+  parts.lambda_p = psplit_lambda_p_;
+  parts.np = psplit_fes_->GetTrueVSize();
+#ifdef MFEM_USE_MPI
+  if (psplit_per_region_) {
+    parts.np = psplit_P_->Width();
+  }
+#endif
+  return parts;
+}
+
+void LinearQuasiStaticProblemBase::AssemblePressureSplitOperator() {
+  operator_version_++;
+  AssemblePressureSplitBlocks();
   psplit_offsets_.SetSize(3);
   psplit_offsets_[0] = 0;
   psplit_offsets_[1] = fes_->GetTrueVSize();

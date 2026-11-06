@@ -33,7 +33,14 @@ namespace AdGIA {
  * operator (such as the steps of a viscoelastic time integration). Two
  * cache entries are kept, so solves that alternate between two operator
  * versions — a viscoelastic stepper switching between the unrelaxed and
- * the effective modulus — keep both column sets.
+ * the effective modulus — keep both column sets. On a miss the column
+ * solves are seeded with the most recent entry's solutions (the solve
+ * callback takes a sized state as its initial guess).
+ *
+ * Cost: a new operator version costs one solve per column, so when the
+ * operator changes every few solves (implicit stepping whose dt changes),
+ * a monolithic bordered solve is cheaper (the mixed class's
+ * SetMonolithicBorder route: 3.3x on fluid_core h 0.3 exptrap).
  */
 class BorderedElimination {
  public:

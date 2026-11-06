@@ -678,6 +678,38 @@ void ViscoelasticOperator::EvaluateRelaxationTimes(const Vector& d,
       // Per node per evaluation, so checked in debug builds only.
       MFEM_ASSERT(F > 0.0, "relaxation law factor must be positive");
       itau_[k][q] = itau0_[k][q] / F;
+      ApplyRelaxationTimeFloor(k, q);
+    }
+  }
+  tau_version_++;
+}
+
+void ViscoelasticOperator::CheckSolve(bool ok, const char* where) const {
+  if (ok) {
+    return;
+  }
+  if (abort_on_failure_) {
+    MFEM_ABORT(where << ": elastic solve failed (t = " << GetTime() << ").");
+  }
+  if (solve_failures_++ == 0) {
+    first_failure_ =
+        std::string(where) + ", step from t = " + std::to_string(GetTime());
+  }
+}
+
+void ViscoelasticOperator::SetRelaxationTimeFloor(real_t tau_min) {
+  MFEM_VERIFY(tau_min >= 0.0,
+              "SetRelaxationTimeFloor: the floor must be non-negative.");
+  tau_floor_ = tau_min;
+  // Linear branches: re-derive from the model's times; state-dependent
+  // ones are re-derived (and floored) at their next law update, and are
+  // floored here meanwhile.
+  for (int k = 0; k < NumBranches(); k++) {
+    if (!law_[k]) {
+      itau_[k] = itau0_[k];
+    }
+    for (int q = 0; q < itau_[k].Size(); q++) {
+      ApplyRelaxationTimeFloor(k, q);
     }
   }
   tau_version_++;
@@ -875,8 +907,7 @@ void ViscoelasticOperator::UpdateCache(const Vector& m, real_t t) const {
 void ViscoelasticOperator::Mult(const Vector& m, Vector& k) const {
   const real_t t = GetTime();
   UseUnrelaxedOperator();
-  MFEM_VERIFY(ElasticUpdate(m, t),
-              "ViscoelasticOperator::Mult: elastic solve failed.");
+  CheckSolve(ElasticUpdate(m, t), "ViscoelasticOperator::Mult");
   ComputeCurrentStrain();
   k.SetSize(m.Size());
   EvaluateRelaxationTimes(d_, m);
@@ -918,8 +949,7 @@ void ViscoelasticOperator::ImplicitSolve(real_t dt, const Vector& m,
       ApplyBranchModulus(b, dual_, zeta_);
       AddCoupledForce(b, zeta_);
     }
-    MFEM_VERIFY(problem_.Solve(),
-                "ViscoelasticOperator::ImplicitSolve: elastic solve failed.");
+    CheckSolve(problem_.Solve(), "ViscoelasticOperator::ImplicitSolve");
     ComputeCurrentStrain();
 
     for (int b = 0; b < NumBranches(); b++) {
@@ -992,9 +1022,8 @@ void ViscoelasticOperator::ExponentialTrapezoidStep(Vector& m, real_t& t,
   // a SolveElastic) left it consistent.
   if (!CacheMatches(m, t)) {
     UseUnrelaxedOperator();
-    MFEM_VERIFY(ElasticUpdate(m, t),
-                "ViscoelasticOperator::ExponentialTrapezoidStep: elastic "
-                "solve failed.");
+    CheckSolve(ElasticUpdate(m, t),
+               "ViscoelasticOperator::ExponentialTrapezoidStep (start)");
     ComputeCurrentStrain();
   }
   d_prev_ = d_;
@@ -1033,9 +1062,8 @@ void ViscoelasticOperator::ExponentialTrapezoidStep(Vector& m, real_t& t,
       ApplyBranchModulus(b, dual_, zeta_);
       AddCoupledForce(b, zeta_);
     }
-    MFEM_VERIFY(problem_.Solve(),
-                "ViscoelasticOperator::ExponentialTrapezoidStep: elastic "
-                "solve failed.");
+    CheckSolve(problem_.Solve(),
+               "ViscoelasticOperator::ExponentialTrapezoidStep");
     ComputeCurrentStrain();  // d^{n+1}
 
     for (int b = 0; b < NumBranches(); b++) {

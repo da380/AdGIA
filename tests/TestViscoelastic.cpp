@@ -207,6 +207,77 @@ TEST_P(ViscoelasticTest, CreepUnderConstantStress) {
   }
 }
 
+// The opt-in relaxation-time floor: a model with tau = 0.01 floored at 0.1
+// steps exactly as the model with tau = 0.1 (internal variables and
+// displacement); with no floor (the default) the model is untouched, and
+// removing the floor restores it.
+TEST_P(ViscoelasticTest, RelaxationTimeFloor) {
+  ConstantCoefficient fast_tau(0.01), slow_tau(0.1);
+  auto fast = IsotropicMaxwellRheology::Maxwell(dim, *kappa, *mu, fast_tau);
+  auto slow = IsotropicMaxwellRheology::Maxwell(dim, *kappa, *mu, slow_tau);
+  auto marker = Marker(nbdr, {x0_attr, x1_attr});
+  VectorFunctionCoefficient traction(dim, ConstantUniaxial);
+  LinearQuasiStaticTractionProblem pf(fes.get(), fast, traction, marker);
+  LinearQuasiStaticTractionProblem ps(fes.get(), slow, traction, marker);
+  ViscoelasticOperator vf(pf), vs(ps);
+  EXPECT_EQ(vf.RelaxationTimeFloor(), 0.0);
+  EXPECT_NEAR(vf.MinRelaxationTime(), 0.01, 1e-14);
+  vf.SetRelaxationTimeFloor(0.1);
+  EXPECT_NEAR(vf.MinRelaxationTime(), 0.1, 1e-14);
+  auto run = [](ViscoelasticOperator& v, Vector& m) {
+    ExponentialTrapezoidSolver ode;
+    ode.Init(v);
+    m.SetSize(v.Height());
+    m = 0.0;
+    double t = 0.0, dt = 0.05;
+    for (int step = 0; step < 5; step++) {
+      ode.Step(m, t, dt);
+    }
+    return v.SolveElastic(m, t);
+  };
+  Vector mf, ms;
+  ASSERT_TRUE(run(vf, mf));
+  ASSERT_TRUE(run(vs, ms));
+  Vector d(mf);
+  d -= ms;
+  EXPECT_LT(d.Normlinf(), 1e-12 * ms.Normlinf());
+  Vector du(pf.Displacement());
+  du -= ps.Displacement();
+  EXPECT_LT(du.Normlinf(), 1e-10 * Vector(ps.Displacement()).Normlinf());
+  vf.SetRelaxationTimeFloor(0.0);
+  EXPECT_NEAR(vf.MinRelaxationTime(), 0.01, 1e-14);
+}
+
+// A failed elastic solve inside a step aborts by default; in soft mode it
+// is recorded (SolveFailures) and the step completes, so a driver can stop
+// cleanly and keep its outputs. An unattainable tolerance forces the
+// failure.
+TEST_P(ViscoelasticTest, SoftSolveFailure) {
+  auto rheology = IsotropicMaxwellRheology::Maxwell(dim, *kappa, *mu, *tau);
+  auto marker = Marker(nbdr, {x0_attr, x1_attr});
+  VectorFunctionCoefficient traction(dim, ConstantUniaxial);
+  LinearQuasiStaticTractionProblem problem(fes.get(), rheology, traction,
+                                           marker);
+  problem.SetRelTol(1e-40);
+  ViscoelasticOperator visco(problem);
+  ExponentialTrapezoidSolver ode;
+  ode.Init(visco);
+  Vector m(visco.Height());
+  m = 0.0;
+  double t = 0.0, dt = 0.5;
+  EXPECT_DEATH(ode.Step(m, t, dt), "elastic solve failed");
+  visco.SetAbortOnSolveFailure(false);
+  EXPECT_EQ(visco.SolveFailures(), 0);
+  t = 0.0;
+  dt = 0.5;
+  ode.Step(m, t, dt);
+  EXPECT_GT(visco.SolveFailures(), 0);
+  EXPECT_NE(visco.FirstSolveFailure().find("ExponentialTrapezoidStep"),
+            std::string::npos);
+  visco.ClearSolveFailures();
+  EXPECT_EQ(visco.SolveFailures(), 0);
+}
+
 TEST_P(ViscoelasticTest, RelaxationUnderPrescribedStrain) {
   ConstantCoefficient mu_inf(0.3), mu1(0.7), mu2(0.5), tau1(1.0), tau2(100.0);
   std::vector<MaxwellBranch> branches{{&mu1, &tau1}, {&mu2, &tau2}};

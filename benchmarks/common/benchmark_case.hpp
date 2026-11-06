@@ -250,6 +250,12 @@ struct CaseOptions {
   bool level_monolithic = false;  // dahlen: solve the bordered system
                                   // monolithically (MINRES) instead of
                                   // by the elimination (3-D only)
+  // dahlen: the pressure split on the gravitating solve (-up)
+  bool psplit = false;
+  real_t psplit_theta = 1.0;
+  int psplit_cheb = 4;
+  real_t psplit_scale = 4.0;
+  bool psplit_region = false;
   const char* method = "dahlen";
   real_t slip_theta = 1e2;
   real_t gs_scale = 1.0;
@@ -363,6 +369,20 @@ struct CaseOptions {
                    "this many nodes in Phi_0 per fluid region (0: off). "
                    "Turns degree 0 into the compressible fluid problem and "
                    "leaves the sphere's l >= 1 untouched.");
+    args.AddOption(&psplit, "-up", "--pressure-split", "-no-up",
+                   "--no-pressure-split",
+                   "Dahlen: solve the gravitating system with the pressure "
+                   "split (u, p, phi) block MINRES (near-incompressible / "
+                   "strongly relaxed material; parallel, order >= 2).");
+    args.AddOption(&psplit_theta, "-upt", "--pressure-split-theta",
+                   "Pressure-split volumetric partition (1: Herrmann).");
+    args.AddOption(&psplit_cheb, "-upc", "--pressure-split-chebyshev",
+                   "Chebyshev order on the Schur block (0: Jacobi).");
+    args.AddOption(&psplit_scale, "-ups", "--pressure-split-schur-scale",
+                   "Factor on the Schur weight.");
+    args.AddOption(&psplit_region, "-upr", "--pressure-split-per-region",
+                   "-no-upr", "--no-pressure-split-per-region",
+                   "Continuous pressure per material region.");
     args.AddOption(&level_monolithic, "-level-mono", "--level-monolithic",
                    "-no-level-mono", "--no-level-monolithic",
                    "With -level-border: solve the bordered system "
@@ -774,6 +794,21 @@ class Case {
                     << options.level_border << " nodes per region"
                     << (options.level_monolithic ? ", monolithic route"
                                                  : "")
+                    << ").\n";
+        }
+      }
+      if (options.psplit) {
+        MFEM_VERIFY(method == "dahlen",
+                    "-up: the gravitating pressure split is the Dahlen "
+                    "route's (-method dahlen).");
+        problem->SetPressureSplitPerRegion(options.psplit_region);
+        problem->SetPressureSplitSolver(options.psplit_theta);
+        problem->SetPressureSplitSchurOptions(options.psplit_cheb,
+                                              options.psplit_scale);
+        if (root) {
+          std::cout << "Pressure split on the gravitating solve (theta "
+                    << options.psplit_theta
+                    << (options.psplit_region ? ", per-region pressure" : "")
                     << ").\n";
         }
       }

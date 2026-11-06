@@ -9,6 +9,7 @@
 
 #include <functional>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "mfem.hpp"
@@ -267,6 +268,47 @@ class ViscoelasticOperator : public mfem::TimeDependentOperator {
    * parallel); the explicit stability limit is a small multiple of it. */
   mfem::real_t MinRelaxationTime() const;
 
+  /**
+   * @brief Opt-in effective-medium regularisation — OFF by default (the
+   * operator solves the model as given): floor every relaxation time at
+   * @p tau_min, in the problem's time units (cap the nodal 1/tau; for
+   * state-dependent laws after every update). 0 removes the floor.
+   *
+   * Use: regions whose relaxation is much faster than the steps resolve
+   * have a saturated influence on the response (once their effective
+   * shear mu tau / dt is far below that of the surroundings, a lower tau
+   * changes the surface response by roughly the contrast itself), while
+   * the near-incompressible effective shear they produce (kappa fixed) is
+   * what makes the elastic solves hard. A floor bounds that contrast at a
+   * controlled change of the model: measured on a free ball with an
+   * enclosed soft core, a contrast floor of 1e-3 moves the degree-2
+   * response by 0.2 %, 1e-2 by 2 % (planning note preconditioning-
+   * 2026-11-06). Choose tau_min against the largest step of the run;
+   * MinRelaxationTime() reports the floored value.
+   */
+  void SetRelaxationTimeFloor(mfem::real_t tau_min);
+  /** @brief The relaxation-time floor (0: none). */
+  mfem::real_t RelaxationTimeFloor() const { return tau_floor_; }
+
+  /**
+   * @brief What a failed elastic solve inside a step does: abort (the
+   * default) or, with @p abort false, get recorded — the step completes
+   * with the unconverged displacement, which is NOT a solution, so the
+   * caller checks SolveFailures() after each step and stops (writing what
+   * it has). Long runs use this to keep their completed outputs.
+   */
+  void SetAbortOnSolveFailure(bool abort) { abort_on_failure_ = abort; }
+  /** @brief Elastic solves that failed inside steps since the last
+   * ClearSolveFailures() (soft mode only; global in parallel, since the
+   * solve outcome is). */
+  int SolveFailures() const { return solve_failures_; }
+  /** @brief Where and when the first recorded failure happened. */
+  const std::string& FirstSolveFailure() const { return first_failure_; }
+  void ClearSolveFailures() {
+    solve_failures_ = 0;
+    first_failure_.clear();
+  }
+
   /** @brief The strain map: d = D u at the internal nodes. */
   void ComputeStrain(const mfem::GridFunction& u, mfem::Vector& d) const;
 
@@ -396,6 +438,18 @@ class ViscoelasticOperator : public mfem::TimeDependentOperator {
   mutable long effective_version_ = -1;  ///< tau version the weights hold
   mutable bool relax_engaged_ = false;   ///< weights active in the problem
   mutable long tau_version_ = 0;         ///< bumped by EvaluateRelaxationTimes
+  mfem::real_t tau_floor_ = 0.0;  ///< SetRelaxationTimeFloor (0: off)
+  bool abort_on_failure_ = true;        ///< SetAbortOnSolveFailure
+  mutable int solve_failures_ = 0;      ///< soft mode: failed step solves
+  mutable std::string first_failure_;   ///< soft mode: the first one
+  /** @brief Abort, or record, a failed step solve (see
+   * SetAbortOnSolveFailure). */
+  void CheckSolve(bool ok, const char* where) const;
+  void ApplyRelaxationTimeFloor(int k, int q) const {
+    if (tau_floor_ > 0.0 && itau_[k][q] * tau_floor_ > 1.0) {
+      itau_[k][q] = 1.0 / tau_floor_;
+    }
+  }
 
   // Exponential-trapezoid nodal weights (e, alpha, beta) per branch, valid
   // for the step size and tau version they were computed at.

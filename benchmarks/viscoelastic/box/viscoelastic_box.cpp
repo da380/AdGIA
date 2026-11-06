@@ -108,6 +108,7 @@ int main(int argc, char* argv[]) try {
   real_t rtol = 1e-4, atol = 1e-10;
   bool psplit = false;
   real_t psplit_theta = 0.0, psplit_scale = 1.0;
+  real_t tau_floor = 0.0;
   int psplit_cheb = 0;
   bool psplit_tri = false, psplit_region = false;
 
@@ -120,6 +121,10 @@ int main(int argc, char* argv[]) try {
   args.AddOption(&nz, "-nz", "--nz", "Elements along z.");
   args.AddOption(&scheme, "-scheme", "--scheme",
                  "exptrap (default), sdirk23, be, etd1, rk4 or adaptive.");
+  args.AddOption(&tau_floor, "-tau-floor", "--relaxation-time-floor",
+                 "Opt-in effective-medium regularisation: floor every "
+                 "relaxation time at this value (0, the default: the model "
+                 "as given). See ViscoelasticOperator::SetRelaxationTimeFloor.");
   args.AddOption(&psplit, "-up", "--pressure-split", "-no-up",
                  "--no-pressure-split",
                  "Route the solid solves through the pressure-split (u, p) "
@@ -447,7 +452,13 @@ int main(int argc, char* argv[]) try {
   problem->SetPrintLevel(IterativeSolver::PrintLevel().None());
 
   ViscoelasticOperator visco(*problem);
+  if (tau_floor > 0.0) {
+    visco.SetRelaxationTimeFloor(tau_floor);
+  }
   const int nb = visco.NumBranches();
+  // Diagnostic (always): the smallest relaxation time the run sees, and
+  // the nominal largest dt / tau, the effective-shear contrast scale.
+  const real_t tau_min_run = visco.MinRelaxationTime();
 
   // --- observables ------------------------------------------------------------
 
@@ -650,6 +661,9 @@ int main(int argc, char* argv[]) try {
        << ",\n  \"rheology\": \""
        << mode << "\",\n  \"pressure_split\": " << (psplit ? "true" : "false")
        << ",\n  \"pressure_split_theta\": " << Num(psplit_theta)
+       << ",\n  \"tau_floor\": " << Num(tau_floor)
+       << ",\n  \"min_relaxation_time\": " << Num(tau_min_run)
+       << ",\n  \"max_dt_over_tau\": " << Num(dt / tau_min_run)
        << ",\n  \"branches\": " << nb << ",\n  \"scheme\": \""
        << scheme_name << "\",\n  \"dt\": " << Num(dt)
        << ",\n  \"min_steps\": " << min_steps << ",\n  \"align\": "

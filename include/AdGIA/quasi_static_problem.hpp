@@ -871,6 +871,25 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   virtual const NullSpaceProjector* PressureSplitNullSpace() {
     return nullptr;
   }
+  /** @brief Whether the class carries the pressure split inside its own
+   * SolveLinearSystem (Solve() then assembles and solves as usual, and the
+   * class builds its split stack in SetupSolver); false: the base's (u, p)
+   * route (PressureSplitSolve) replaces the solve. */
+  virtual bool PressureSplitInClassSolve() const { return false; }
+  /** @brief The shared pressure-split pieces, for a class carrying the
+   * split in its own solve: B (pressure x displacement), the compressibility
+   * mass (1/lambda_p) M, the displacement AMG on 2 mu eps:eps (mass-shifted
+   * for a free body), the Schur-block preconditioner, lambda_p, and the
+   * pressure block size. Assembled by AssemblePressureSplitParts(). */
+  struct PressureSplitParts {
+    mfem::Operator* B = nullptr;
+    mfem::Operator* M = nullptr;
+    mfem::Solver* amg = nullptr;
+    mfem::Solver* schur = nullptr;
+    mfem::Coefficient* lambda_p = nullptr;
+    int np = 0;
+  };
+  PressureSplitParts AssemblePressureSplitParts();
 
   /** @brief Preconditioned CG (Gauss-Seidel serial, BoomerAMG with elasticity
    * options in parallel) in prec_/cg_, warm-started; the preconditioner is
@@ -1198,6 +1217,13 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
 #ifdef MFEM_USE_MPI
   std::unique_ptr<mfem::HypreParMatrix> psplit_shift_mat_;
 #endif
+  mfem::Coefficient* psplit_lambda_p_ = nullptr;  // the pressure's lambda
+  /** @brief The split's blocks shared by every class carrying it: the
+   * coefficients, B, the pressure masses (per-region projected), the
+   * displacement AMG on 2 mu eps:eps (mass-shifted for a free body) and
+   * the Schur preconditioner. (AssemblePressureSplitOperator adds the
+   * plain solid's displacement block and its (u, p) solver.) */
+  void AssemblePressureSplitBlocks();
   mfem::Coefficient* psplit_kappa_ = nullptr;
   mfem::Coefficient* psplit_mu_ = nullptr;
   std::vector<std::unique_ptr<mfem::Coefficient>> psplit_coefs_;
