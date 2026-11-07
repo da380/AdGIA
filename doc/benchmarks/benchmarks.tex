@@ -216,7 +216,17 @@ matter for the comparisons below.
   cores of \code{fluid\_core} and \code{inner\_core} are of this kind.
   PREM's outer core is close to Adams--Williamson ($N^2\approx 0$);
   \code{aw\_core} is exactly so by construction, which makes it the
-  clean cross-method comparison model.
+  clean cross-method comparison model. The same local criterion applies
+  to a solid layer once its shear has relaxed: every uniform solid layer
+  of the ladder, and the linearly stratified mantles of
+  \code{stratified\_core} and \code{earth\_like} (density gradient
+  $0.56$--$0.75$ of adiabatic), are sub-adiabatic, so the long-time
+  viscoelastic runs on them have growing modes. \code{prem\_4}'s lower
+  mantle is within $3\,\%$ of adiabatic and its upper mantle stable, as
+  PREM's are. \code{prem\_6}'s cubic refits across the merged
+  discontinuities give density \emph{inversions} (density increasing
+  outward over parts of the transition zone, upper mantle and crust),
+  which PREM does not have; it is for elastic runs only until refit.
 \item \emph{Shiftable interfaces.} \code{fluid\_core} (its CMB),
   \code{aw\_core} (its CMB, every shifted member re-derived exactly
   neutral) and \code{two\_solid} (its mid-mantle discontinuity) take
@@ -2419,6 +2429,17 @@ about two hours on ten cores. At $C\ge10^4$ the slab references are the
 Talbot histories (\S\ref{sec:box}); with them every $C\ge10^4$ slab
 settles at the $n_z=10$ spatial error ($4.5\times10^{-4}$), like $C=1$
 ($2.9\times10^{-4}$).
+
+The upper rungs are solver stress tests, not a GIA regime. In practice
+the ice history sets the step and bulk-mantle Maxwell times are of the
+same order ($\eta\approx10^{21}$\,Pa\,s gives $\tau\approx450$\,yr), so
+$\Delta t/\tau$ is $O(1)$ across the bulk and reaches $10^{2}$--$10^{3}$
+only in localised low-viscosity zones. $C\ge10^4$ here, like a mantle
+shear scaled uniformly by $10^{-3}$ in the static systems, probes the
+near-incompressible limit of the displacement-only solver; a failure
+there is a statement about the preconditioner, never about the physics.
+The physically relevant stress test is a localised weak zone, with and
+without the relaxation-time floor (\code{-tau-floor}).
 
 \paragraph{Results (Figures~\ref{fig:box-contrast-col}, \ref{fig:box-contrast-slab}).}
 \begin{itemize}[leftmargin=*]

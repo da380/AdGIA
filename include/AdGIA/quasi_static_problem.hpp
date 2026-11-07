@@ -778,6 +778,13 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
    * shift must cover the operator's negative directions (discrete rigid
    * rotations, O(h^2); coarse inner-core models need factor ~100) for an
    * SPD preconditioner under MINRES; SetBlockGMRES() drops the SPD need.
+   * The factor is an empirical margin set on those models: eps ~ mu / L^2
+   * at factor 100, the stiffness of the smoothest non-rigid mode, which is
+   * of the order of the first-order gravity term rho g / L for Earth-like
+   * bodies (rho g L / mu ~ 1); it is not a small perturbation and should
+   * not be tuned down on a non-gravitating intuition. A load on which the
+   * shifted preconditioner is not positive is caught by
+   * SetWarmStartTolerance() and reported as a failed solve.
    */
   void SetPreconditionerFullOperator(bool on,
                                      mfem::real_t shift_factor = 100.0) {
@@ -793,7 +800,10 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
    * the mixed one (planning note preconditioning-2026-11-06 §9: on a
    * stratified model with mantle shear scaled into the time-stepping
    * regime, FGMRES cut the referential iterations by 15-20%, e.g. 265 ->
-   * 227 at mu x 0.01). */
+   * 227 at mu x 0.01; note the two stop on different norms, MINRES on the
+   * preconditioned residual and FGMRES on the true one at rel_tol ||B||,
+   * so the counts are not a like-for-like comparison). Memory: FGMRES
+   * keeps up to 200 block vectors, ~1.3 GB in total at 787k unknowns. */
   void SetBlockGMRES(bool on = true) {
     block_gmres_ = on;
     MarkOperatorDirty();
@@ -953,6 +963,12 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
    * preconditioner norm, which is what a cold start would use. Returns false
    * when B vanishes (solution zero, no solve needed).
    */
+  /** @brief After a false SetWarmStartTolerance() / SetBlockKrylovTolerance():
+   * true if the (projected) load vanished, so the zero solution is exact and
+   * the solve succeeds; false if the load did not vanish but the
+   * preconditioner was not positive on it, which a derived class reports as
+   * a failed solve. */
+  bool WarmStartZeroLoad() const { return warm_start_zero_load_; }
   bool SetWarmStartTolerance(mfem::IterativeSolver& solver, mfem::Solver& prec,
                              const mfem::Vector& B) const;
 
@@ -1042,11 +1058,14 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   mfem::OperatorHandle A_;
   mfem::Vector X_, B_;
 
-  std::unique_ptr<mfem::Solver> prec_;
 #ifdef MFEM_USE_MPI
   // The free-body preconditioner matrix A + eps M (SetupDefaultPreconditioner),
-  // which the AMG references; rebuilt with it.
+  // which the AMG references; rebuilt with it. Declared before prec_ so that
+  // it outlives the AMG built on it.
   std::unique_ptr<mfem::HypreParMatrix> prec_shift_mat_;
+#endif
+  std::unique_ptr<mfem::Solver> prec_;
+#ifdef MFEM_USE_MPI
   /// True if the displacement problem has no essential dofs on any rank.
   bool FreeDisplacementBody() const;
   /// A + eps M with eps ~ mu / L^2 estimated from the matrices.
@@ -1072,7 +1091,11 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   void AssembleElasticPreconditionerMatrix();
 #endif
   /// Number of domain/boundary integrators the rheology contributes to
-  /// StiffnessIntegrators() (those added first, in the constructor).
+  /// StiffnessIntegrators() (those added first, in the constructor). The
+  /// detection is by count, so it relies on derived classes appending
+  /// their terms AFTER construction, and it counts every face integrator
+  /// as non-elastic (a rheology adding face terms at construction would be
+  /// dropped from the elastic-only preconditioner matrix).
   int n_rheology_domain_ = 0, n_rheology_boundary_ = 0;
   /// True if a derived class has added integrators beyond the rheology's.
   bool HasNonElasticIntegrators();
@@ -1171,6 +1194,11 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   void WarnGaugeContraction() const;
 
   mutable mfem::Vector warm_z_;  ///< SetWarmStartTolerance workspace
+  /// Why the last SetWarmStartTolerance / SetBlockKrylovTolerance returned
+  /// false: the load vanished (true; a zero solution is exact) or the
+  /// preconditioner was not positive on it (false; the solve has failed).
+  mutable bool warm_start_zero_load_ = true;
+  mutable bool prec_indefinite_reported_ = false;
   mfem::real_t t_ = 0.0;
   mfem::real_t rel_tol_ = 1e-12;
   mfem::IterativeSolver::PrintLevel print_level_ =
@@ -1260,9 +1288,6 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   // block and AMG, and the mass-shifted matrix the AMG is built on.
   std::unique_ptr<ProjectedOperator> psplit_proj_op_;
   std::unique_ptr<ProjectedSolver> psplit_proj_prec_;
-#ifdef MFEM_USE_MPI
-  std::unique_ptr<mfem::HypreParMatrix> psplit_shift_mat_;
-#endif
   mfem::Coefficient* psplit_lambda_p_ = nullptr;  // the pressure's lambda
   /** @brief The split's blocks shared by every class carrying it: the
    * coefficients, B, the pressure masses (per-region projected), the
@@ -1282,6 +1307,11 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   mfem::OperatorHandle psplit_Amu_, psplit_Aprec_, psplit_B_, psplit_M_,
       psplit_Mw_;
   std::unique_ptr<mfem::TransposeOperator> psplit_BT_;
+#ifdef MFEM_USE_MPI
+  // The free-body mass-shifted matrix the split's AMG is built on; declared
+  // before the AMG so that it outlives it.
+  std::unique_ptr<mfem::HypreParMatrix> psplit_shift_mat_;
+#endif
   std::unique_ptr<mfem::Solver> psplit_amg_, psplit_schur_prec_;
   std::unique_ptr<mfem::BlockOperator> psplit_op_;
   std::unique_ptr<mfem::BlockDiagonalPreconditioner> psplit_prec_;

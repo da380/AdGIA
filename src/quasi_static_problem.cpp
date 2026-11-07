@@ -1188,6 +1188,7 @@ bool LinearQuasiStaticProblemBase::SetBlockKrylovTolerance(
   const real_t nb = std::sqrt(Dot(B, B));
   solver.SetRelTol(0.0);
   solver.SetAbsTol(rel_tol_ * nb);
+  warm_start_zero_load_ = true;  // no preconditioner involved: false = zero load
   return nb > 0.0;
 }
 
@@ -1285,7 +1286,7 @@ bool LinearQuasiStaticProblemBase::SolveLinearSystem(const Vector& B,
                                                      Vector& X) {
   if (!SetWarmStartTolerance(*cg_, *prec_, B)) {
     X = 0.0;
-    return true;
+    return WarmStartZeroLoad();
   }
   cg_->Mult(B, X);
   NoteIterations(cg_->GetNumIterations());
@@ -1402,14 +1403,14 @@ void LinearQuasiStaticProblemBase::ClearPressureSplitSolver() {
   psplit_schur_cc_.reset();
   psplit_proj_op_.reset();
   psplit_proj_prec_.reset();
-#ifdef MFEM_USE_MPI
-  psplit_shift_mat_.reset();
-#endif
   psplit_tri_prec_.reset();
   psplit_neg_schur_.reset();
   psplit_prec_.reset();
   psplit_op_.reset();
   psplit_amg_.reset();
+#ifdef MFEM_USE_MPI
+  psplit_shift_mat_.reset();  // after the AMG built on it
+#endif
   psplit_schur_prec_.reset();
   psplit_BT_.reset();
   psplit_Amu_.Clear();
@@ -1886,6 +1887,7 @@ bool LinearQuasiStaticProblemBase::PressureSplitSolve() {
     ok = psplit_minres_->GetConverged();
   } else {
     X = 0.0;
+    ok = WarmStartZeroLoad();
   }
   // Copy the solved block back into the FormLinearSystem vector BEFORE the
   // recovery: in serial Xu ALIASES u_'s data and RecoverFEMSolution is a
@@ -2011,8 +2013,35 @@ bool LinearQuasiStaticProblemBase::SetWarmStartTolerance(
   prec.Mult(B, warm_z_);
   const real_t nom = Dot(B, warm_z_);
   if (!(nom > 0.0)) {
+    // Two different things land here. A vanishing (projected) load gives
+    // nom = 0 to rounding: the zero solution is exact. A load on which the
+    // preconditioner is not positive (an AMG built on an indefinite
+    // matrix, a free-body shift too small for the operator's negative
+    // directions) gives nom < 0 beyond rounding: there is no solution to
+    // report, and a caller must not pass a zero displacement off as one.
+    const real_t scale = std::sqrt(Dot(B, B) * Dot(warm_z_, warm_z_));
+    warm_start_zero_load_ = !(nom < -1e-10 * scale);
+    if (!warm_start_zero_load_ && !prec_indefinite_reported_) {
+      prec_indefinite_reported_ = true;
+      bool root = true;
+#ifdef MFEM_USE_MPI
+      if (pfes_) {
+        root = pfes_->GetMyRank() == 0;
+      }
+#endif
+      if (root) {
+        mfem::out << "LinearQuasiStaticProblem: the preconditioner is not "
+                     "positive on this load (<B, P B> / (|B| |P B|) = "
+                  << nom / scale
+                  << "); the solve is reported failed. For the "
+                     "gravitating classes raise the mass shift "
+                     "(SetPreconditionerFullOperator) or use "
+                     "SetBlockGMRES().\n";
+      }
+    }
     return false;
   }
+  warm_start_zero_load_ = true;
   solver.SetAbsTol(rel_tol_ * std::sqrt(nom));
   return true;
 }
@@ -2110,7 +2139,7 @@ bool LinearQuasiStaticTractionProblem::SolveLinearSystem(const Vector& B,
   // (P M P B, B) = (M P B, P B): the cold-start norm of the projected load.
   if (!SetWarmStartTolerance(*cg_, *projected_prec_, B)) {
     X = 0.0;
-    return true;
+    return WarmStartZeroLoad();
   }
   projected_->Mult(B, X);
   NoteIterations(cg_->GetNumIterations());

@@ -3012,6 +3012,7 @@ bool LinearQuasiStaticReferentialSelfGravitatingProblem::SolveUnbordered(const V
     X = 0.0;
     Zeta_true_ = 0.0;
     *X_block_ = 0.0;
+    ok = WarmStartZeroLoad() && ok;
   } else {
     if (GaugePreconditionerOnly() && gauge_plateau_ratio_ > 0.0) {
       // Chunked restarts with the stagnation stop (PlateauMult).

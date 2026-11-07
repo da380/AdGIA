@@ -12,10 +12,12 @@
 
 #include <mpi.h>
 
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "MixedProblemTestCommon.hpp"
 #include "mfem.hpp"
@@ -188,6 +190,44 @@ void RunCase(int dim, int order, const std::string& label) {
         label + " restored |u|");
 }
 
+// Mesh-independence of the gravitating block solve's preconditioner (the
+// displacement AMG on the full A_uu plus the mass shift, and the potential
+// AMG): the ball refined once, block MINRES iterations flat in h. Same
+// rationale as TestQuasiStaticProblemPar's gate; here it also covers the
+// shifted free-body matrix and the projected block preconditioner.
+void RunMeshIndependenceCase(int dim, int order, const std::string& label) {
+  std::vector<int> its;
+  for (int level = 0; level <= 1; level++) {
+    Mesh smesh(MeshFile(dim).c_str(), 1, 1);
+    for (int l = 0; l < level; l++) {
+      smesh.UniformRefinement();
+    }
+    ParMesh pmesh(MPI_COMM_WORLD, smesh);
+    ParSubMesh body(ParSubMesh::CreateFromDomain(pmesh, BodyMarker(pmesh)));
+    H1_FECollection fec(order, dim);
+    ParFiniteElementSpace fes_u(&body, &fec, dim);
+    ParFiniteElementSpace fes_phi(&pmesh, &fec);
+    ConstantCoefficient kappa(kKappa), mu(kMu), rho(kRho), tau(1.0);
+    auto rheology = IsotropicMaxwellRheology::Maxwell(dim, kappa, mu, tau);
+    FunctionCoefficient sigma(SurfaceLoad);
+    Array<int> surface = SurfaceMarker(body);
+    LinearQuasiStaticMixedSelfGravitatingProblem p(&fes_u, &fes_phi, rheology,
+                                                   rho, kG, kDtNDegree);
+    p.SetSurfaceLoad(sigma, surface);
+    p.SetRelTol(1e-10);
+    p.AssembleForce(0.0);
+    Check(p.Solve() ? 0.0 : 1.0, 0.0,
+          label + " solve at level " + std::to_string(level));
+    its.push_back(static_cast<int>(p.TotalIterations()));
+  }
+  if (Mpi::Root()) {
+    std::cout << label << ": MINRES iterations " << its[0] << " -> " << its[1]
+              << " under one refinement\n";
+  }
+  const double bound = std::max(1.3 * its[0], its[0] + 3.0);
+  Check(its[1], bound, label + " mesh-independent iteration count");
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -197,6 +237,9 @@ int main(int argc, char* argv[]) {
   RunCase(2, 1, "2d-o1");
   RunCase(2, 2, "2d-o2");
   RunCase(3, 1, "3d-o1");
+  RunMeshIndependenceCase(2, 1, "amg 2d-o1");
+  RunMeshIndependenceCase(2, 2, "amg 2d-o2");
+  RunMeshIndependenceCase(3, 1, "amg 3d-o1");
 
   if (Mpi::Root()) {
     if (num_fails == 0) {

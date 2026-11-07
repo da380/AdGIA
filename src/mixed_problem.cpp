@@ -1272,6 +1272,194 @@ real_t LinearQuasiStaticMixedSelfGravitatingProblem::ModeResidual(const Vector& 
   return std::sqrt(Dot(y, y)) / (a_max * std::sqrt(Dot(u, u)));
 }
 
+namespace {
+
+// Eigenvalues (ascending) and eigenvectors (columns) of a small symmetric
+// matrix by cyclic Jacobi rotations; no LAPACK needed.
+void JacobiEigen(DenseMatrix A, Vector& ev, DenseMatrix& V) {
+  const int n = A.Height();
+  V.SetSize(n);
+  V = 0.0;
+  for (int i = 0; i < n; i++) V(i, i) = 1.0;
+  for (int sweep = 0; sweep < 100; sweep++) {
+    real_t off = 0.0, diag = 0.0;
+    for (int i = 0; i < n; i++) {
+      diag += A(i, i) * A(i, i);
+      for (int j = i + 1; j < n; j++) off += A(i, j) * A(i, j);
+    }
+    if (off <= 1e-30 * (diag + 1e-300)) break;
+    for (int p = 0; p < n; p++) {
+      for (int q = p + 1; q < n; q++) {
+        if (std::abs(A(p, q)) < 1e-300) continue;
+        const real_t theta = (A(q, q) - A(p, p)) / (2.0 * A(p, q));
+        const real_t t = (theta >= 0 ? 1.0 : -1.0) /
+                         (std::abs(theta) + std::sqrt(theta * theta + 1.0));
+        const real_t c = 1.0 / std::sqrt(t * t + 1.0), s = t * c;
+        for (int k = 0; k < n; k++) {
+          const real_t akp = A(k, p), akq = A(k, q);
+          A(k, p) = c * akp - s * akq;
+          A(k, q) = s * akp + c * akq;
+        }
+        for (int k = 0; k < n; k++) {
+          const real_t apk = A(p, k), aqk = A(q, k);
+          A(p, k) = c * apk - s * aqk;
+          A(q, k) = s * apk + c * aqk;
+        }
+        for (int k = 0; k < n; k++) {
+          const real_t vkp = V(k, p), vkq = V(k, q);
+          V(k, p) = c * vkp - s * vkq;
+          V(k, q) = s * vkp + c * vkq;
+        }
+      }
+    }
+  }
+  ev.SetSize(n);
+  for (int i = 0; i < n; i++) ev(i) = A(i, i);
+  // Sort ascending, carrying the columns.
+  for (int i = 0; i < n; i++) {
+    int m = i;
+    for (int j = i + 1; j < n; j++) if (ev(j) < ev(m)) m = j;
+    if (m != i) {
+      std::swap(ev(i), ev(m));
+      for (int k = 0; k < n; k++) std::swap(V(k, i), V(k, m));
+    }
+  }
+}
+
+}  // namespace
+
+std::vector<LinearQuasiStaticMixedSelfGravitatingProblem::SchurEigenvalue>
+LinearQuasiStaticMixedSelfGravitatingProblem::SchurEigenvalues(
+    int nev, int max_iter, real_t tol, const Array<int>* region) {
+  std::vector<SchurEigenvalue> out;
+#ifdef MFEM_USE_MPI
+  MFEM_VERIFY(pfes_, "SchurEigenvalues: parallel builds only.");
+  MFEM_VERIFY(nev > 0, "SchurEigenvalues: nev must be positive.");
+  EnsureOperator();
+  const OperatorHandle& A = SystemMatrix();
+  HypreParMatrix* Amat = A.As<HypreParMatrix>();
+  MFEM_VERIFY(Amat, "SchurEigenvalues: the system matrix must be a "
+                    "HypreParMatrix.");
+  MPI_Comm comm = pfes_->GetComm();
+  // The unit vector mass, the metric of the eigenproblem, and the same
+  // mass restricted to the region's elements.
+  ParBilinearForm m(pfes_);
+  m.AddDomainIntegrator(new VectorMassIntegrator);
+  m.Assemble();
+  m.Finalize();
+  std::unique_ptr<HypreParMatrix> M(m.ParallelAssemble());
+  std::unique_ptr<HypreParMatrix> Mr;
+  if (region && region->Size() > 0) {
+    Vector ind(pfes_->GetParMesh()->attributes.Max());
+    ind = 0.0;
+    for (const int a : *region) {
+      if (a >= 1 && a <= ind.Size()) ind(a - 1) = 1.0;
+    }
+    PWConstCoefficient chi(ind);
+    ParBilinearForm mr(pfes_);
+    mr.AddDomainIntegrator(new VectorMassIntegrator(chi));
+    mr.Assemble();
+    mr.Finalize();
+    Mr.reset(mr.ParallelAssemble());
+  }
+  // The solver's own SPD preconditioner matrix: A_uu plus the mass shift
+  // that covers its negative directions (SetPreconditionerFullOperator).
+  std::unique_ptr<HypreParMatrix> Ashift =
+      MassShiftedMatrix(*Amat, prec_full_shift_);
+  HypreBoomerAMG amg(*Ashift);
+  detail::SetSystemsAMGOptions(amg, *pfes_);
+  HYPRE_BoomerAMGSetCycleRelaxType(amg, 8, 3);
+  amg.SetPrintLevel(0);
+  SchurOperator schur(*this, *A.Ptr());
+  HypreLOBPCG lobpcg(comm);
+  lobpcg.SetNumModes(nev);
+  lobpcg.SetRandomSeed(7);
+  lobpcg.SetPreconditioner(amg);
+  lobpcg.SetMaxIter(max_iter);
+  lobpcg.SetTol(tol);
+  lobpcg.SetPrecondUsageMode(1);
+  lobpcg.SetPrintLevel(0);
+  lobpcg.SetMassMatrix(*M);
+  lobpcg.SetOperator(schur);
+  lobpcg.Solve();
+  // Rayleigh-Ritz on the converged subspace with the rigid modes projected
+  // out: X <- P X, then the small pencil (X^T S X, X^T M X).
+  std::vector<Vector> X;
+  for (int i = 0; i < nev; i++) {
+    Vector x(lobpcg.GetEigenvector(i));
+    projector_u_->Project(x);
+    X.push_back(std::move(x));
+  }
+  // Drop the directions the projection emptied (the rigid modes
+  // themselves): M-Gram-Schmidt, keeping vectors with a norm above 1e-6 of
+  // the largest.
+  std::vector<Vector> Q;
+  Vector t(pfes_->GetTrueVSize());
+  real_t largest = 0.0;
+  for (auto& x : X) {
+    M->Mult(x, t);
+    largest = std::max(largest, std::sqrt(InnerProduct(comm, x, t)));
+  }
+  for (auto& x : X) {
+    for (const auto& q : Q) {
+      M->Mult(q, t);
+      x.Add(-InnerProduct(comm, x, t), q);
+    }
+    M->Mult(x, t);
+    const real_t nx = std::sqrt(InnerProduct(comm, x, t));
+    if (nx > 1e-6 * largest) {
+      x /= nx;
+      Q.push_back(x);
+    }
+  }
+  const int nq = static_cast<int>(Q.size());
+  if (nq == 0) return out;
+  std::vector<Vector> SQ(nq);
+  DenseMatrix Sr(nq);
+  for (int j = 0; j < nq; j++) {
+    SQ[j].SetSize(t.Size());
+    schur.Mult(Q[j], SQ[j]);
+  }
+  for (int i = 0; i < nq; i++) {
+    for (int j = 0; j < nq; j++) {
+      Sr(i, j) = InnerProduct(comm, Q[i], SQ[j]);
+    }
+  }
+  Sr.Symmetrize();  // Q is M-orthonormal, so the pencil is (Sr, I)
+  Vector ev;
+  DenseMatrix V;
+  JacobiEigen(Sr, ev, V);
+  Vector y(t.Size()), sy(t.Size()), my(t.Size());
+  for (int k = 0; k < nq; k++) {
+    y = 0.0;
+    sy = 0.0;
+    for (int j = 0; j < nq; j++) {
+      y.Add(V(j, k), Q[j]);
+      sy.Add(V(j, k), SQ[j]);
+    }
+    M->Mult(y, my);
+    const real_t yy = InnerProduct(comm, y, my);
+    my *= ev(k);
+    sy -= my;
+    const real_t num = std::sqrt(InnerProduct(comm, sy, sy));
+    const real_t den = std::sqrt(InnerProduct(comm, my, my));
+    real_t frac = 0.0;
+    if (Mr) {
+      Mr->Mult(y, t);
+      frac = yy > 0.0 ? InnerProduct(comm, y, t) / yy : 0.0;
+    }
+    out.push_back({ev(k), den > 0.0 ? num / den : num, frac});
+  }
+#else
+  (void)nev;
+  (void)max_iter;
+  (void)tol;
+  (void)region;
+  MFEM_ABORT("SchurEigenvalues: parallel builds only.");
+#endif
+  return out;
+}
+
 std::vector<real_t>
 LinearQuasiStaticMixedSelfGravitatingProblem::RigidModeResiduals() {
   std::vector<real_t> residuals;
@@ -1599,6 +1787,7 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveSplitBlock(
     X = 0.0;
     Phi_true_ = 0.0;
     *split_X_ = 0.0;
+    ok = WarmStartZeroLoad();
   } else {
     split_outer_->Mult(*split_B_, *split_X_);
     ok = split_minres_->GetConverged();
@@ -2640,6 +2829,7 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveUnbordered(
     if (!SetWarmStartTolerance(*cg_, *projected_prec_, rhs_s_)) {
       X = 0.0;
       Phi_true_ = w_;
+      ok = WarmStartZeroLoad() && ok;
     } else {
       projected_->Mult(rhs_s_, X);
       ok = cg_->GetConverged() && ok;
@@ -2662,6 +2852,7 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveUnbordered(
       X = 0.0;
       Phi_true_ = 0.0;
       *Xk4_ = 0.0;
+      ok = WarmStartZeroLoad() && ok;
     } else {
       projected_kkt4_->Mult(*Bk4_, *Xk4_);
       ok = minres_kkt4_->GetConverged();
@@ -2679,6 +2870,7 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveUnbordered(
       X = 0.0;
       Phi_true_ = 0.0;
       *X_block_ = 0.0;
+      ok = WarmStartZeroLoad() && ok;
     } else {
       if (GaugePreconditionerOnly() && gauge_plateau_ratio_ > 0.0) {
         // Chunked restarts with the stagnation stop (PlateauMult).
