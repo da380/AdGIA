@@ -1374,7 +1374,11 @@ void LinearQuasiStaticProblemBase::SetPressureSplitSolver(real_t theta) {
   psplit_kappa_ = kappa;
   psplit_mu_ = mu;
   if (psplit_per_region_) {
+#ifdef MFEM_USE_MPI
     MFEM_VERIFY(pfes_, "SetPressureSplitPerRegion: parallel builds only.");
+#else
+    MFEM_ABORT("SetPressureSplitPerRegion: parallel builds only.");
+#endif
     // The L2 host carries the assembled blocks; the unknowns are the
     // region copies of the continuous space (ProjectPerRegionPressure).
     psplit_fec_ = std::make_unique<L2_FECollection>(order - 1, dim);
