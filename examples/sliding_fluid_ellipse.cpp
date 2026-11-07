@@ -311,8 +311,8 @@ int main(int argc, char* argv[]) {
   HypreBoomerAMG prec0(*A00), prec1(*A11);
   prec0.SetPrintLevel(0);
   prec1.SetPrintLevel(0);
-  prec0.SetSystemsOptions(dim);
-  prec1.SetSystemsOptions(dim);
+  prec0.SetSystemsOptions(dim, fes_s->GetOrdering() == Ordering::byNODES);
+  prec1.SetSystemsOptions(dim, fes_f->GetOrdering() == Ordering::byNODES);
 #else
   auto J = NewSubMeshPairingMatrix(inj_s, inj_f);
   std::unique_ptr<SparseMatrix> Jt(Transpose(*J));

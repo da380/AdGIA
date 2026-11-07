@@ -194,7 +194,7 @@ int main(int argc, char* argv[]) {
 #ifdef MFEM_USE_MPI
     HypreBoomerAMG prec(*Amat.As<HypreParMatrix>());
     prec.SetPrintLevel(0);
-    prec.SetSystemsOptions(dim);
+    prec.SetSystemsOptions(dim, fes.GetOrdering() == Ordering::byNODES);
     CGSolver cg(MPI_COMM_WORLD);
 #else
     GSSmoother prec(*Amat.As<SparseMatrix>());

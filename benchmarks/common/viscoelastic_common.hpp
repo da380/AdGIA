@@ -361,6 +361,11 @@ EvolveResult Evolve(LinearQuasiStaticProblemBase& problem,
     adaptive.SetTolerances(opt.rtol, opt.atol);
   }
   if (ode) ode->Init(visco);
+  // A failed elastic solve stops the run cleanly (the outputs so far are
+  // kept and the run is reported unconverged) instead of aborting.
+  visco.SetAbortOnSolveFailure(false);
+  visco.ClearSolveFailures();
+  bool stopped = false;
 
   EvolveResult r;
   Vector m(visco.Height());
@@ -396,10 +401,24 @@ EvolveResult Evolve(LinearQuasiStaticProblemBase& problem,
       for (int s = 0; s < n; s++) {
         real_t step = h;
         ode->Step(m, t, step);
+        r.steps++;
+        if (visco.SolveFailures() > 0) {
+          stopped = true;
+          break;
+        }
       }
-      r.steps += n;
     } else {
       adaptive.Integrate(m, t, mark.time, dt_adaptive);
+      stopped = visco.SolveFailures() > 0;
+    }
+    if (stopped) {
+      r.ok = false;
+      if (Mpi::Root()) {
+        std::cout << "Evolve: stopped — elastic solve failed in "
+                  << visco.FirstSolveFailure() << " (the step ending at t = "
+                  << t << "); the outputs before it are kept.\n";
+      }
+      break;
     }
     // t equals mark.time up to rounding and is not reset (the operator's
     // displacement cache is keyed on the exact (m, t)), except at a jump.

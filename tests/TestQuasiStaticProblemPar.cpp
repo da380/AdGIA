@@ -24,6 +24,7 @@
 #include <memory>
 #include <numbers>
 #include <string>
+#include <vector>
 
 #include "QuasiStaticTestCommon.hpp"
 #include "mfem.hpp"
@@ -236,6 +237,50 @@ void RunMappedCase(int dim, int order, const std::string& label) {
   }
 }
 
+// Mesh-independence of the displacement preconditioner (parallel: the
+// systems BoomerAMG of SetupDefaultPreconditioner). The clamped pull
+// problem on the small mesh refined once and twice: a working multigrid
+// hierarchy gives an iteration count that is flat in h, and the gate is a
+// ratio, which no absolute count could be. (The nodal-systems
+// misconfiguration fixed on 6 Nov 2026 doubled the count with each
+// halving of h and passed every other test, so this is the one gate that
+// would have caught it.) Rank-independent: the counts are global.
+void RunMeshIndependenceCase(int dim, int elementType, int order,
+                             const std::string& label) {
+  std::vector<int> its;
+  for (int level = 1; level <= 2; level++) {
+    auto smesh = MakeSmallMesh(dim, elementType);
+    for (int l = 0; l < level; l++) {
+      smesh.UniformRefinement();
+    }
+    const auto x0_attr = BdrAttributeAt(smesh, 0, 0.0);
+    const auto x1_attr = BdrAttributeAt(smesh, 0, 1.0);
+    const auto nbdr = smesh.bdr_attributes.Max();
+    ParMesh pmesh(MPI_COMM_WORLD, smesh);
+    H1_FECollection fec(order, dim);
+    ParFiniteElementSpace pfes(&pmesh, &fec, dim);
+    ConstantCoefficient kappa(Kappa(dim)), mu(kMu);
+    IsotropicElasticRheology rheology(dim, kappa, mu);
+    auto ess_bdr = Marker(nbdr, {x0_attr});
+    auto pull_marker = Marker(nbdr, {x1_attr});
+    VectorFunctionCoefficient pull(dim, PullTraction);
+    LinearQuasiStaticClampedProblem par(&pfes, rheology, ess_bdr, pull,
+                                        pull_marker);
+    par.SetRelTol(1e-10);
+    par.AssembleForce(0.25);
+    Check(par.Solve() ? 0.0 : 1.0, 0.0,
+          label + ": solve at level " + std::to_string(level));
+    its.push_back(static_cast<int>(par.TotalIterations()));
+  }
+  if (Mpi::Root()) {
+    std::cout << label << ": CG iterations " << its[0] << " -> " << its[1]
+              << " under one refinement\n";
+  }
+  // Flat in h, with a margin for small counts: at most 1.3x, or +3.
+  const double bound = std::max(1.3 * its[0], its[0] + 3.0);
+  Check(its[1], bound, label + ": mesh-independent iteration count");
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -255,6 +300,14 @@ int main(int argc, char* argv[]) {
       auto label = "mapped dim=" + std::to_string(dim) +
                    " p=" + std::to_string(order);
       RunMappedCase(dim, order, label);
+    }
+    for (auto elementType : {0, 1}) {
+      for (auto order : {1, 2}) {
+        auto label = "amg dim=" + std::to_string(dim) +
+                     " et=" + std::to_string(elementType) +
+                     " p=" + std::to_string(order);
+        RunMeshIndependenceCase(dim, elementType, order, label);
+      }
     }
   }
 

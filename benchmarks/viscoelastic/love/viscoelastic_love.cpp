@@ -116,6 +116,7 @@ int main(int argc, char* argv[]) try {
   int lmin = 2;
   int steps = 4;
   real_t dt_max = 0.25;
+  real_t tau_floor = 0.0;
   real_t rtol = 1e-4, atol = 1e-12;
   bool tide = false;
 
@@ -137,6 +138,11 @@ int main(int argc, char* argv[]) try {
   args.AddOption(&dt_max, "-dt-max", "--max-step",
                  "Fixed-step schemes: largest step, in units of the "
                  "smallest finite tau (0: no cap).");
+  args.AddOption(&tau_floor, "-tau-floor", "--relaxation-time-floor",
+                 "Opt-in effective-medium regularisation: floor every "
+                 "relaxation time at this value (model time units; 0, the "
+                 "default: the model as given). See "
+                 "ViscoelasticOperator::SetRelaxationTimeFloor.");
   args.AddOption(&rtol, "-rtol", "--adaptive-rtol",
                  "Adaptive scheme: relative tolerance.");
   args.AddOption(&atol, "-atol", "--adaptive-atol",
@@ -232,10 +238,12 @@ int main(int argc, char* argv[]) try {
   Case c(options, factory);
   MFEM_VERIFY(c.eulerian, "The viscoelastic driver needs an Eulerian method "
                           "(dahlen or gauged).");
-  if (c.method == "dahlen" && c.HasFluid() && lmin == 0) {
-    // As love_benchmark -combined: Dahlen's fluid differs from the
+  if (c.method == "dahlen" && c.HasFluid() && lmin == 0 &&
+      options.level_border == 0) {
+    // As love_benchmark -combined: the naked Dahlen fluid differs from the
     // reference at degree zero by design, and its degree-zero response
-    // would leak into the others' through the discrete coupling.
+    // would leak into the others' through the discrete coupling. The level
+    // border closes degree zero, which is then kept.
     lmin = 1;
     if (root) {
       std::cout << "Degree zero left out of the load (Dahlen's fluid).\n";
@@ -348,6 +356,9 @@ int main(int argc, char* argv[]) try {
     c.psi->SetCoefficients(load ? zero : unit);
 
     ViscoelasticOperator visco(problem);
+    if (tau_floor > 0.0) {
+      visco.SetRelaxationTimeFloor(tau_floor);
+    }
     // The shared evolution (viscoelastic_common.hpp): fixed-step schemes
     // take, between consecutive output times, max(-steps, ceil(span / dt))
     // equal steps with dt = -dt-max tau_min (no bound when -dt-max <= 0);
@@ -484,6 +495,7 @@ int main(int argc, char* argv[]) try {
        << ",\n  \"dt_cap_absolute\": " << Num(dt_max * tau_min)
        << ",\n  \"rtol\": " << Num(rtol) << ",\n  \"atol\": " << Num(atol)
        << ",\n  \"tau_min\": " << Num(tau_min)
+       << ",\n  \"tau_floor\": " << Num(tau_floor)
        << ",\n  \"degree\": " << List(degrees)
        << ",\n  \"times\": " << List(times) << ",\n  \"phi_direct\": [";
     for (std::size_t j = 0; j < degrees.size(); j++) {

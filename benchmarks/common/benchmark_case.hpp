@@ -241,7 +241,6 @@ struct CaseOptions {
   real_t gauge_eps = 1e-2;
   int gauge_refinements = 3;
   real_t gauge_prec_eps = 0.0;    // > 0: solid-everywhere prec experiment
-  bool amg_rbm = false;           // rigid-rotation AMG interpolation vectors
   real_t gauge_plateau = 0.0;     // > 0: stagnation stop ratio (with -gpe)
   real_t mx_beta0 = -1.0;         // maxwell: physical-phase dt/tau
   real_t mx_prec_eps = 0.0;       // maxwell: frozen-preconditioner epsilon
@@ -251,6 +250,16 @@ struct CaseOptions {
   bool level_monolithic = false;  // dahlen: solve the bordered system
                                   // monolithically (MINRES) instead of
                                   // by the elimination (3-D only)
+  // dahlen: the pressure split on the gravitating solve (-up)
+  bool psplit = false;
+  real_t psplit_theta = 1.0;
+  int psplit_cheb = 4;
+  real_t psplit_scale = 4.0;
+  bool psplit_region = false;
+  real_t prec_full = -1.0;   // < 0: library default; 0: elastic-only AMG;
+                             // > 0: AMG on the full operator, this shift factor
+  bool block_gmres = false;  // force FGMRES for the block solves
+  bool block_minres = false; // force MINRES (default: the class's choice)
   const char* method = "dahlen";
   real_t slip_theta = 1e2;
   real_t gs_scale = 1.0;
@@ -364,6 +373,34 @@ struct CaseOptions {
                    "this many nodes in Phi_0 per fluid region (0: off). "
                    "Turns degree 0 into the compressible fluid problem and "
                    "leaves the sphere's l >= 1 untouched.");
+    args.AddOption(&psplit, "-up", "--pressure-split", "-no-up",
+                   "--no-pressure-split",
+                   "Dahlen: solve the gravitating system with the pressure "
+                   "split (u, p, phi) block MINRES (near-incompressible / "
+                   "strongly relaxed material; parallel, order >= 2).");
+    args.AddOption(&psplit_theta, "-upt", "--pressure-split-theta",
+                   "Pressure-split volumetric partition (1: Herrmann).");
+    args.AddOption(&psplit_cheb, "-upc", "--pressure-split-chebyshev",
+                   "Chebyshev order on the Schur block (0: Jacobi).");
+    args.AddOption(&psplit_scale, "-ups", "--pressure-split-schur-scale",
+                   "Factor on the Schur weight.");
+    args.AddOption(&prec_full, "-pfull", "--prec-full-operator",
+                   "Where the displacement AMG is built: > 0 on the full "
+                   "operator (elastic + gravity) with this multiple of the "
+                   "free-body mass shift; 0 on the elastic stiffness alone; "
+                   "< 0 the library default (full operator, 100).");
+    args.AddOption(&block_gmres, "-gmres", "--block-gmres", "-no-gmres",
+                   "--no-block-gmres",
+                   "FGMRES for the gravitating block solves (the "
+                   "referential class's default; MINRES is the mixed "
+                   "class's).");
+    args.AddOption(&block_minres, "-minres", "--block-minres", "-no-minres",
+                   "--no-block-minres",
+                   "MINRES for the gravitating block solves (the mixed "
+                   "class's default).");
+    args.AddOption(&psplit_region, "-upr", "--pressure-split-per-region",
+                   "-no-upr", "--no-pressure-split-per-region",
+                   "Continuous pressure per material region.");
     args.AddOption(&level_monolithic, "-level-mono", "--level-monolithic",
                    "-no-level-mono", "--no-level-monolithic",
                    "With -level-border: solve the bordered system "
@@ -388,11 +425,6 @@ struct CaseOptions {
                    "Gauge penalty factor epsilon (gauged fluid).");
     args.AddOption(&gauge_refinements, "-gref", "--gauge-refinements",
                    "Tikhonov refinement steps per solve (gauged fluid).");
-    args.AddOption(&amg_rbm, "-amg-rbm", "--amg-rigid-rotations",
-                   "-no-amg-rbm", "--no-amg-rigid-rotations",
-                   "Give the displacement AMG the rigid-body rotations as "
-                   "GM-2 interpolation vectors (every method; off = the "
-                   "nodal-systems default).");
     args.AddOption(&gauge_prec_eps, "-gpe", "--gauge-prec-epsilon",
                    "Solid-everywhere preconditioner experiment (gauged "
                    "fluid, block MINRES only): the Krylov operator is the "
@@ -770,9 +802,6 @@ class Case {
                                           *rho_c_, G,
                                           options.dtn_degree, nullptr,
                                           fluids);
-      if (options.amg_rbm) {
-        problem->SetElasticityNearNull();
-      }
       if (options.level_border > 0 && method == "dahlen" && !fluids.empty()) {
         problem->SetLevelBorder(options.level_border);
         if (options.level_monolithic) {
@@ -783,6 +812,31 @@ class Case {
                     << options.level_border << " nodes per region"
                     << (options.level_monolithic ? ", monolithic route"
                                                  : "")
+                    << ").\n";
+        }
+      }
+      if (options.prec_full == 0.0) {
+        problem->SetPreconditionerFullOperator(false);
+      } else if (options.prec_full > 0.0) {
+        problem->SetPreconditionerFullOperator(true, options.prec_full);
+      }
+      MFEM_VERIFY(!(options.block_gmres && options.block_minres),
+                  "-gmres and -minres are exclusive.");
+      if (options.block_gmres || options.block_minres) {
+        problem->SetBlockGMRES(options.block_gmres);
+      }
+      if (options.psplit) {
+        MFEM_VERIFY(method == "dahlen",
+                    "-up: the gravitating pressure split is the Dahlen "
+                    "route's (-method dahlen).");
+        problem->SetPressureSplitPerRegion(options.psplit_region);
+        problem->SetPressureSplitSolver(options.psplit_theta);
+        problem->SetPressureSplitSchurOptions(options.psplit_cheb,
+                                              options.psplit_scale);
+        if (root) {
+          std::cout << "Pressure split on the gravitating solve (theta "
+                    << options.psplit_theta
+                    << (options.psplit_region ? ", per-region pressure" : "")
                     << ").\n";
         }
       }
@@ -1593,11 +1647,18 @@ class Case {
           options.dtn_degree, nullptr, ref_eliminated
                                            ? fluids
                                            : std::vector<FluidRegion>{});
-      if (options.amg_rbm) {
-        ref_problem->SetElasticityNearNull();
-      }
       Evac_ = NewRadialVacuumExtension(*fes_u, *fes_buffer_, radius, r_out);
       ref_problem->SetPrescribedVacuumExtension(*fes_buffer_, *Evac_);
+      if (options.prec_full == 0.0) {
+        ref_problem->SetPreconditionerFullOperator(false);
+      } else if (options.prec_full > 0.0) {
+        ref_problem->SetPreconditionerFullOperator(true, options.prec_full);
+      }
+      MFEM_VERIFY(!(options.block_gmres && options.block_minres),
+                  "-gmres and -minres are exclusive.");
+      if (options.block_gmres || options.block_minres) {
+        ref_problem->SetBlockGMRES(options.block_gmres);
+      }
       if (ref_eliminated) {
         const int first = manifest.Interfaces().front().attribute;
         const auto blist = manifest.FluidSolidInterfaces(fluid_attributes[0]);
@@ -1710,9 +1771,6 @@ class Case {
           std::make_unique<LinearQuasiStaticReferentialSelfGravitatingSlipProblem>(
               fes_u.get(), fes_f_.get(), fes_phi.get(), *ref_rheology_,
               *rho_use, *pi_use, interface_marker_, G, options.dtn_degree);
-      if (options.amg_rbm) {
-        slip_problem->SetElasticityNearNull();
-      }
       Evac_ = NewRadialVacuumExtension(*fes_u, *fes_buffer_, radius, r_out);
       slip_problem->SetPrescribedVacuumExtension(*fes_buffer_, *Evac_);
       slip_problem->SetFluidGauge(*kappa_fluid_c_dispatch_,

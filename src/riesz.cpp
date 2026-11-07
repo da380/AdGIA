@@ -54,14 +54,11 @@ BilinearFormIntegrator* DiffusionOf(FiniteElementSpace& fes,
   return new DiffusionIntegrator(q);
 }
 
-// On a vector space the parallel AMG needs the system structure (the
-// spaces here are byNODES-ordered).
+// On a vector space the parallel AMG needs the system structure.
 void SetSystemsOptions(Solver& prec, FiniteElementSpace& fes) {
 #ifdef MFEM_USE_MPI
-  if (fes.GetVDim() > 1) {
-    if (auto* amg = dynamic_cast<HypreBoomerAMG*>(&prec)) {
-      amg->SetSystemsOptions(fes.GetVDim(), true);
-    }
+  if (auto* amg = dynamic_cast<HypreBoomerAMG*>(&prec)) {
+    detail::SetSystemsAMGOptions(*amg, fes);
   }
 #endif
   (void)prec;

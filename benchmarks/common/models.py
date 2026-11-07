@@ -257,6 +257,85 @@ def stable_core_mild() -> Model:
     return stable_core(drho=4500.0, vp_core=13500.0, name="stable_core_mild")
 
 
+def stable_mantle() -> Model:
+    """stable_core's core under a mantle that is locally stable in the
+    strict sense: stratified_core's velocities (vp 15500 - 6500 r/R,
+    vs 8000 - 3000 r/R) with a steeper density, 9000 - 5500 r/R (5975 to
+    3500 kg/m^3), so that rho' is 1.23-1.35 times the adiabatic
+    -rho^2 g / kappa throughout the mantle and N^2 > 0 in both layers:
+    no growing mode at any effective shear, the ladder model on which the
+    long-time viscoelastic tier must converge in h at every time (the
+    review of 7 November 2026, section 5.4; David's steer: steeper density
+    rather than higher velocities)."""
+    return LayeredIsotropicElastic(
+        [0.0, CMB, RADIUS], rho=[(13000.0, -8000.0), (9000.0, -5500.0)],
+        vp=[14000.0, (15500.0, -6500.0)], vs=[0.0, (8000.0, -3000.0)],
+        scale=RADIUS, layer_names=["core", "mantle"],
+        interface_names=["cmb", "surface"], name="stable_mantle")
+
+
+#: aw_mantle: the mantle density, linear in r (stratified_core's), under
+#: which kappa follows from neutrality with the body's own gravity.
+AW_MANTLE_RHO = (7000.0, -3000.0)
+
+
+def aw_mantle() -> Model:
+    """The neutrally stratified twin of stable_mantle / stratified_core:
+    aw_core's Adams-Williamson core under a mantle that is itself exactly
+    neutral, N^2 = 0 throughout the body, so that the relaxed limit
+    neither grows nor decays and discrete growth rates can be read
+    directly against zero.
+
+    As in aw_core the density is the free profile and kappa follows from
+    the neutrality identity kappa = -rho^2 g / rho', with the body's own
+    enclosed-mass gravity, all closed form. The mantle density is linear,
+    rho = a - b r (stratified_core's 7000 - 3000 r/R), so rho' = -b and
+
+        kappa(r) = rho(r)^2 g(r) / b,
+        g(r)     = G (M_core + 4 pi [a (r^3 - c^3)/3 - b (r^4 - c^4)/4]) / r^2,
+
+    with M_core aw_core's (= fluid_core's) core mass and c the CMB. vs is
+    stratified_core's (8000 - 3000 r/R); vp = sqrt(kappa / rho + 4 vs^2 / 3)
+    is a callable field. kappa runs from about 6e11 at the CMB to 3e11 at
+    the surface, PREM-like at depth and high above 670 km, the price of a
+    linear density with a single neutral kappa."""
+    rho0, alpha = AW_RHO0, AW_ALPHA
+    cmb = CMB
+    kappa0 = 2.0 * math.pi * G_SI * rho0 ** 2 * cmb ** 2 / (3.0 * alpha)
+
+    def vp_core(r):
+        x2 = (np.asarray(r, dtype=float) / cmb) ** 2
+        kappa = kappa0 * (1.0 - alpha * x2) ** 2 * (1.0 - 0.6 * alpha * x2)
+        rho = rho0 * (1.0 - alpha * x2)
+        return np.sqrt(kappa / rho)
+
+    m_core = 4.0 * math.pi * rho0 * cmb ** 3 * (1.0 / 3.0 - 0.2 * alpha)
+    a, b_over_R = AW_MANTLE_RHO
+    b = -b_over_R / RADIUS  # rho = a - b r, b > 0
+
+    def rho_mantle(r):
+        return a - b * np.asarray(r, dtype=float)
+
+    def vs_mantle(r):
+        return 8000.0 - 3000.0 * np.asarray(r, dtype=float) / RADIUS
+
+    def vp_mantle(r):
+        r = np.asarray(r, dtype=float)
+        mass = m_core + 4.0 * math.pi * (a * (r ** 3 - cmb ** 3) / 3.0
+                                         - b * (r ** 4 - cmb ** 4) / 4.0)
+        g = G_SI * mass / r ** 2
+        rho = rho_mantle(r)
+        kappa = rho ** 2 * g / b
+        return np.sqrt(kappa / rho + 4.0 * vs_mantle(r) ** 2 / 3.0)
+
+    return _CallableIsotropicElastic(
+        [0.0, cmb, RADIUS],
+        rho=[(rho0, 0.0, -rho0 * alpha * (RADIUS / cmb) ** 2), rho_mantle],
+        vp=[vp_core, vp_mantle], vs=[0.0, vs_mantle], scale=RADIUS,
+        layer_names=["core", "mantle"], interface_names=["cmb", "surface"],
+        name="aw_mantle")
+
+
 def earth_like() -> Model:
     return LayeredIsotropicElastic(
         [0.0, ICB, CMB, RADIUS],
@@ -289,6 +368,12 @@ def prem_4() -> Model:
 
 
 def prem_6() -> Model:
+    """Six-layer PREM. Elastic runs only for now: the cubic refits across
+    the merged discontinuities give density inversions (rho increasing
+    outward over parts of the transition zone, upper mantle and crust),
+    which are Rayleigh-Taylor unstable at any effective shear once
+    relaxed and are not a property of PREM. Refit with a monotone
+    constraint, or keep more interfaces, before relaxed-regime use."""
     return prem_like(
         ["icb", "cmb", "d670", "d400", "moho"],
         ["inner_core", "outer_core", "lower_mantle", "transition_zone",
@@ -315,6 +400,8 @@ MODELS: dict[str, Callable[[], Model]] = {
     "stable_core": stable_core,
     "stable_core_mild": stable_core_mild,
     "stable_core_strong": stable_core_strong,
+    "stable_mantle": stable_mantle,
+    "aw_mantle": aw_mantle,
     "earth_like": earth_like,
     "prem_4": prem_4,
     "prem_6": prem_6,

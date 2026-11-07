@@ -361,7 +361,7 @@ int main(int argc, char* argv[]) {
     std::unique_ptr<HypreParMatrix> Q(q.ParallelAssemble());
     HypreBoomerAMG prec(*A);
     prec.SetPrintLevel(0);
-    prec.SetSystemsOptions(dim);
+    prec.SetSystemsOptions(dim, fes.GetOrdering() == Ordering::byNODES);
     NullSpaceProjector P(MPI_COMM_WORLD);
     CGSolver cg(MPI_COMM_WORLD);
     {
@@ -530,8 +530,8 @@ int main(int argc, char* argv[]) {
   HypreBoomerAMG prec0(*A00), prec1(*A11);
   prec0.SetPrintLevel(0);
   prec1.SetPrintLevel(0);
-  prec0.SetSystemsOptions(dim);
-  prec1.SetSystemsOptions(dim);
+  prec0.SetSystemsOptions(dim, fes_s->GetOrdering() == Ordering::byNODES);
+  prec1.SetSystemsOptions(dim, fes_f->GetOrdering() == Ordering::byNODES);
   NullSpaceProjector P(MPI_COMM_WORLD);
   CGSolver cg(MPI_COMM_WORLD);
 

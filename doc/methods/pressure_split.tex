@@ -604,7 +604,7 @@ displacement norm is the full symmetric gradient $\Ae$. Note
 \end{equation}
 so $\Ae$ is the primal operator \eqref{eq:primal} of a fictitious material
 with bulk modulus $2\mu/d$, i.e.\ Lamé $\lambda = 0$, Poisson ratio $0$:
-the best-conditioned isotropic elasticity operator for nodal AMG, with no
+the best-conditioned isotropic elasticity operator for systems AMG, with no
 volumetric near-null space. $\Amu$, in contrast, is the elasticity
 operator of zero bulk modulus ($\lambda = -2\mu/d$, Poisson ratio $-1$),
 the edge of the stability range, and its kernel on $H^1$ is the space of
@@ -1129,10 +1129,10 @@ $\Mw$ (prec.) & $((1/(2\mu) + 1/\kappa)p,q)$ & \code{MassIntegrator}, weight a s
 $q_l c$, $q_m c$, so $\lambda = -2\mu/d$ gives the deviatoric form and
 $\lambda = 0$ the full-gradient one.) In parallel the displacement block
 of the preconditioner is \code{HypreBoomerAMG} on $\Ae$ with the house
-nodal-systems settings of \code{SetupDefaultPreconditioner} (systems
-options for the \code{byNODES} ordering, nodal coarsening, symmetric
-$\ell_1$-Gauss--Seidel relaxation, so that the V-cycle is symmetric
-positive definite as MINRES requires), and the pressure block is
+systems settings of \code{SetupDefaultPreconditioner} (unknown-based
+systems AMG with the function map taken from the space's ordering, no
+nodal coarsening, symmetric $\ell_1$-Gauss--Seidel relaxation, so that
+the V-cycle is symmetric positive definite as MINRES requires), and the pressure block is
 \code{HypreDiagScale} on $\Mw$. In serial both blocks are Jacobi
 (\code{DSmoother}): MINRES needs a symmetric positive definite
 preconditioner, which rules out the serial Gauss--Seidel of the primal

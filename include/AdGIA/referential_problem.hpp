@@ -974,7 +974,7 @@ u@f$ columns CONJUGATED
   std::unique_ptr<mfem::BlockDiagonalPreconditioner> block_prec_;
   std::unique_ptr<ProjectedOperator> projected_op_;
   std::unique_ptr<ProjectedSolver> projected_, projected_prec_;
-  std::unique_ptr<mfem::MINRESSolver> minres_;
+  std::unique_ptr<mfem::IterativeSolver> minres_;  ///< MINRES or FGMRES
   std::unique_ptr<mfem::BlockVector> X_block_, B_block_;
   mfem::real_t shift_ = 1e-3;
   int outer_its_ = 0;

@@ -127,7 +127,7 @@ Solve();            // displacement <- K⁻¹ (external + increments)
 displacement space (the space decides) with the rheology's stiffness,
 time-dependent load registration (`RegisterTimeDependent`), lazy
 reassembly, the default preconditioned CG (Gauss–Seidel in serial,
-systems BoomerAMG with nodal coarsening in parallel; default relative tolerance
+unknown-based systems BoomerAMG in parallel; default relative tolerance
 1e-12) and the treatment of fluid regions (`SetFluid`, below). The concrete
 classes:
 

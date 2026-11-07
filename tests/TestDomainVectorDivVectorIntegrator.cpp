@@ -54,9 +54,10 @@ TEST_P(BilinearFormIntegratorTests, DomainVectorDivVectorIntegrator) {
   c.AddDomainIntegrator(new DomainDivVectorScalarIntegrator());
   c.Assemble();
 
-  c.Mult(w, z);
+  auto z0 = GridFunction(&vector_fes0);
+  c.Mult(w, z0);
 
-  auto value2 = u * z;
+  auto value2 = u * z0;
 
   EXPECT_NEAR(value1, value2, 1.e-6 * std::abs(value1));
 }

@@ -1272,6 +1272,194 @@ real_t LinearQuasiStaticMixedSelfGravitatingProblem::ModeResidual(const Vector& 
   return std::sqrt(Dot(y, y)) / (a_max * std::sqrt(Dot(u, u)));
 }
 
+namespace {
+
+// Eigenvalues (ascending) and eigenvectors (columns) of a small symmetric
+// matrix by cyclic Jacobi rotations; no LAPACK needed.
+void JacobiEigen(DenseMatrix A, Vector& ev, DenseMatrix& V) {
+  const int n = A.Height();
+  V.SetSize(n);
+  V = 0.0;
+  for (int i = 0; i < n; i++) V(i, i) = 1.0;
+  for (int sweep = 0; sweep < 100; sweep++) {
+    real_t off = 0.0, diag = 0.0;
+    for (int i = 0; i < n; i++) {
+      diag += A(i, i) * A(i, i);
+      for (int j = i + 1; j < n; j++) off += A(i, j) * A(i, j);
+    }
+    if (off <= 1e-30 * (diag + 1e-300)) break;
+    for (int p = 0; p < n; p++) {
+      for (int q = p + 1; q < n; q++) {
+        if (std::abs(A(p, q)) < 1e-300) continue;
+        const real_t theta = (A(q, q) - A(p, p)) / (2.0 * A(p, q));
+        const real_t t = (theta >= 0 ? 1.0 : -1.0) /
+                         (std::abs(theta) + std::sqrt(theta * theta + 1.0));
+        const real_t c = 1.0 / std::sqrt(t * t + 1.0), s = t * c;
+        for (int k = 0; k < n; k++) {
+          const real_t akp = A(k, p), akq = A(k, q);
+          A(k, p) = c * akp - s * akq;
+          A(k, q) = s * akp + c * akq;
+        }
+        for (int k = 0; k < n; k++) {
+          const real_t apk = A(p, k), aqk = A(q, k);
+          A(p, k) = c * apk - s * aqk;
+          A(q, k) = s * apk + c * aqk;
+        }
+        for (int k = 0; k < n; k++) {
+          const real_t vkp = V(k, p), vkq = V(k, q);
+          V(k, p) = c * vkp - s * vkq;
+          V(k, q) = s * vkp + c * vkq;
+        }
+      }
+    }
+  }
+  ev.SetSize(n);
+  for (int i = 0; i < n; i++) ev(i) = A(i, i);
+  // Sort ascending, carrying the columns.
+  for (int i = 0; i < n; i++) {
+    int m = i;
+    for (int j = i + 1; j < n; j++) if (ev(j) < ev(m)) m = j;
+    if (m != i) {
+      std::swap(ev(i), ev(m));
+      for (int k = 0; k < n; k++) std::swap(V(k, i), V(k, m));
+    }
+  }
+}
+
+}  // namespace
+
+std::vector<LinearQuasiStaticMixedSelfGravitatingProblem::SchurEigenvalue>
+LinearQuasiStaticMixedSelfGravitatingProblem::SchurEigenvalues(
+    int nev, int max_iter, real_t tol, const Array<int>* region) {
+  std::vector<SchurEigenvalue> out;
+#ifdef MFEM_USE_MPI
+  MFEM_VERIFY(pfes_, "SchurEigenvalues: parallel builds only.");
+  MFEM_VERIFY(nev > 0, "SchurEigenvalues: nev must be positive.");
+  EnsureOperator();
+  const OperatorHandle& A = SystemMatrix();
+  HypreParMatrix* Amat = A.As<HypreParMatrix>();
+  MFEM_VERIFY(Amat, "SchurEigenvalues: the system matrix must be a "
+                    "HypreParMatrix.");
+  MPI_Comm comm = pfes_->GetComm();
+  // The unit vector mass, the metric of the eigenproblem, and the same
+  // mass restricted to the region's elements.
+  ParBilinearForm m(pfes_);
+  m.AddDomainIntegrator(new VectorMassIntegrator);
+  m.Assemble();
+  m.Finalize();
+  std::unique_ptr<HypreParMatrix> M(m.ParallelAssemble());
+  std::unique_ptr<HypreParMatrix> Mr;
+  if (region && region->Size() > 0) {
+    Vector ind(pfes_->GetParMesh()->attributes.Max());
+    ind = 0.0;
+    for (const int a : *region) {
+      if (a >= 1 && a <= ind.Size()) ind(a - 1) = 1.0;
+    }
+    PWConstCoefficient chi(ind);
+    ParBilinearForm mr(pfes_);
+    mr.AddDomainIntegrator(new VectorMassIntegrator(chi));
+    mr.Assemble();
+    mr.Finalize();
+    Mr.reset(mr.ParallelAssemble());
+  }
+  // The solver's own SPD preconditioner matrix: A_uu plus the mass shift
+  // that covers its negative directions (SetPreconditionerFullOperator).
+  std::unique_ptr<HypreParMatrix> Ashift =
+      MassShiftedMatrix(*Amat, prec_full_shift_);
+  HypreBoomerAMG amg(*Ashift);
+  detail::SetSystemsAMGOptions(amg, *pfes_);
+  HYPRE_BoomerAMGSetCycleRelaxType(amg, 8, 3);
+  amg.SetPrintLevel(0);
+  SchurOperator schur(*this, *A.Ptr());
+  HypreLOBPCG lobpcg(comm);
+  lobpcg.SetNumModes(nev);
+  lobpcg.SetRandomSeed(7);
+  lobpcg.SetPreconditioner(amg);
+  lobpcg.SetMaxIter(max_iter);
+  lobpcg.SetTol(tol);
+  lobpcg.SetPrecondUsageMode(1);
+  lobpcg.SetPrintLevel(0);
+  lobpcg.SetMassMatrix(*M);
+  lobpcg.SetOperator(schur);
+  lobpcg.Solve();
+  // Rayleigh-Ritz on the converged subspace with the rigid modes projected
+  // out: X <- P X, then the small pencil (X^T S X, X^T M X).
+  std::vector<Vector> X;
+  for (int i = 0; i < nev; i++) {
+    Vector x(lobpcg.GetEigenvector(i));
+    projector_u_->Project(x);
+    X.push_back(std::move(x));
+  }
+  // Drop the directions the projection emptied (the rigid modes
+  // themselves): M-Gram-Schmidt, keeping vectors with a norm above 1e-6 of
+  // the largest.
+  std::vector<Vector> Q;
+  Vector t(pfes_->GetTrueVSize());
+  real_t largest = 0.0;
+  for (auto& x : X) {
+    M->Mult(x, t);
+    largest = std::max(largest, std::sqrt(InnerProduct(comm, x, t)));
+  }
+  for (auto& x : X) {
+    for (const auto& q : Q) {
+      M->Mult(q, t);
+      x.Add(-InnerProduct(comm, x, t), q);
+    }
+    M->Mult(x, t);
+    const real_t nx = std::sqrt(InnerProduct(comm, x, t));
+    if (nx > 1e-6 * largest) {
+      x /= nx;
+      Q.push_back(x);
+    }
+  }
+  const int nq = static_cast<int>(Q.size());
+  if (nq == 0) return out;
+  std::vector<Vector> SQ(nq);
+  DenseMatrix Sr(nq);
+  for (int j = 0; j < nq; j++) {
+    SQ[j].SetSize(t.Size());
+    schur.Mult(Q[j], SQ[j]);
+  }
+  for (int i = 0; i < nq; i++) {
+    for (int j = 0; j < nq; j++) {
+      Sr(i, j) = InnerProduct(comm, Q[i], SQ[j]);
+    }
+  }
+  Sr.Symmetrize();  // Q is M-orthonormal, so the pencil is (Sr, I)
+  Vector ev;
+  DenseMatrix V;
+  JacobiEigen(Sr, ev, V);
+  Vector y(t.Size()), sy(t.Size()), my(t.Size());
+  for (int k = 0; k < nq; k++) {
+    y = 0.0;
+    sy = 0.0;
+    for (int j = 0; j < nq; j++) {
+      y.Add(V(j, k), Q[j]);
+      sy.Add(V(j, k), SQ[j]);
+    }
+    M->Mult(y, my);
+    const real_t yy = InnerProduct(comm, y, my);
+    my *= ev(k);
+    sy -= my;
+    const real_t num = std::sqrt(InnerProduct(comm, sy, sy));
+    const real_t den = std::sqrt(InnerProduct(comm, my, my));
+    real_t frac = 0.0;
+    if (Mr) {
+      Mr->Mult(y, t);
+      frac = yy > 0.0 ? InnerProduct(comm, y, t) / yy : 0.0;
+    }
+    out.push_back({ev(k), den > 0.0 ? num / den : num, frac});
+  }
+#else
+  (void)nev;
+  (void)max_iter;
+  (void)tol;
+  (void)region;
+  MFEM_ABORT("SchurEigenvalues: parallel builds only.");
+#endif
+  return out;
+}
+
 std::vector<real_t>
 LinearQuasiStaticMixedSelfGravitatingProblem::RigidModeResiduals() {
   std::vector<real_t> residuals;
@@ -1457,7 +1645,7 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetupMinres(OperatorHandle& A
     if (type_ == SolverType::BlockCG) {
       minres_ = std::make_unique<CGSolver>(pfes_->GetComm());
     } else {
-      minres_ = std::make_unique<MINRESSolver>(pfes_->GetComm());
+      minres_ = MakeBlockKrylov();
     }
   } else
 #endif
@@ -1465,7 +1653,7 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetupMinres(OperatorHandle& A
     if (type_ == SolverType::BlockCG) {
       minres_ = std::make_unique<CGSolver>();
     } else {
-      minres_ = std::make_unique<MINRESSolver>();
+      minres_ = MakeBlockKrylov();
     }
   }
   projected_op_ =
@@ -1500,6 +1688,116 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetupMinres(OperatorHandle& A
     *X_block_ = 0.0;
   }
   B_block_ = std::make_unique<BlockVector>(offsets_);
+  if (UsingPressureSplit()) {
+    SetupSplitMinres(A);
+  }
+}
+
+void LinearQuasiStaticMixedSelfGravitatingProblem::SetupSplitMinres(
+    OperatorHandle& A) {
+#ifdef MFEM_USE_MPI
+  MFEM_VERIFY(pfes_, "Pressure split (gravitating): parallel builds only.");
+  MFEM_VERIFY(type_ == SolverType::BlockMINRES && !gauge_kkt_ &&
+                  !GaugePreconditionerOnly() && !monolithic_border_ &&
+                  !mass_gauge_,
+              "Pressure split (gravitating): block MINRES with the "
+              "elimination border and the Euclidean gauge only.");
+  // The shared blocks: B, the pressure masses, the AMG on 2 mu eps:eps
+  // (mass-shifted: the body is free) and the Schur preconditioner.
+  const PressureSplitParts parts = AssemblePressureSplitParts();
+  // The displacement block hands lambda_p div div to the pressure:
+  // A' = A - D(lambda_p), A the assembled (elastic + gravity) block, so
+  // eliminating p gives back the Taylor-Hood primal operator.
+  split_d_form_ = detail::MakeBilinearForm(fes_);
+  split_d_form_->AddDomainIntegrator(
+      new ElasticityIntegrator(*parts.lambda_p, split_zero_));
+  split_d_form_->Assemble();
+  split_D_.Clear();
+  split_D_.SetType(Operator::Hypre_ParCSR);
+  Array<int> none;
+  split_d_form_->FormSystemMatrix(none, split_D_);
+  split_A_.reset(Add(1.0, *A.As<HypreParMatrix>(), -1.0,
+                     *split_D_.As<HypreParMatrix>()));
+
+  const int nu = offsets_[1], nphi = offsets_[2] - offsets_[1];
+  const int np = parts.np;
+  split_offsets_.SetSize(4);
+  split_offsets_[0] = 0;
+  split_offsets_[1] = nu;
+  split_offsets_[2] = nu + np;
+  split_offsets_[3] = nu + np + nphi;
+  split_op_ = std::make_unique<BlockOperator>(split_offsets_);
+  split_BT_ = std::make_unique<TransposeOperator>(parts.B);
+  split_op_->SetBlock(0, 0, split_A_.get());
+  split_op_->SetBlock(0, 1, split_BT_.get());
+  split_op_->SetBlock(0, 2, const_cast<Operator*>(C_op_));
+  split_op_->SetBlock(1, 0, parts.B);
+  split_op_->SetBlock(1, 1, parts.M, -1.0);
+  split_op_->SetBlock(2, 0, const_cast<Operator*>(Ct_op_));
+  split_op_->SetBlock(2, 2, A_phiphi_);
+
+  split_prec_ = std::make_unique<BlockDiagonalPreconditioner>(split_offsets_);
+  split_prec_->SetDiagonalBlock(0, parts.amg);
+  split_prec_->SetDiagonalBlock(1, parts.schur);
+  split_prec_->SetDiagonalBlock(2, prec_phi_.get());
+
+  // The null space of the (u, phi) system with a zero pressure part (the
+  // rigid modes and region rotations are divergence-free).
+  split_proj_ = std::make_unique<NullSpaceProjector>(pfes_->GetComm());
+  for (int i = 0; i < projector_block_->Size(); i++) {
+    const Vector& b2 = projector_block_->Basis(i);
+    Vector b3(split_offsets_[3]);
+    b3 = 0.0;
+    for (int k = 0; k < nu; k++) b3[k] = b2[k];
+    for (int k = 0; k < nphi; k++) b3[nu + np + k] = b2[nu + k];
+    split_proj_->Add(b3);
+  }
+  split_proj_op_ = std::make_unique<ProjectedOperator>(*split_op_, *split_proj_);
+  split_proj_prec_ = std::make_unique<ProjectedSolver>(*split_proj_);
+  split_proj_prec_->SetSolver(*split_prec_);
+  split_minres_ = std::make_unique<MINRESSolver>(pfes_->GetComm());
+  split_minres_->SetOperator(*split_proj_op_);
+  split_minres_->SetPreconditioner(*split_proj_prec_);
+  split_minres_->SetRelTol(rel_tol_);
+  split_minres_->SetAbsTol(0.0);
+  split_minres_->SetMaxIter(10000);
+  split_minres_->SetPrintLevel(print_level_);
+  split_minres_->iterative_mode = true;
+  split_outer_ = std::make_unique<ProjectedSolver>(*split_proj_);
+  split_outer_->SetSolver(*split_minres_);
+  split_outer_->iterative_mode = true;
+  if (!split_X_ || split_X_->Size() != split_offsets_[3]) {
+    split_X_ = std::make_unique<BlockVector>(split_offsets_);
+    *split_X_ = 0.0;
+  }
+  split_B_ = std::make_unique<BlockVector>(split_offsets_);
+#else
+  (void)A;
+  MFEM_ABORT("Pressure split (gravitating): parallel builds only.");
+#endif
+}
+
+bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveSplitBlock(
+    const Vector& B, Vector& X) {
+  split_B_->GetBlock(0) = B;
+  split_B_->GetBlock(1) = 0.0;
+  split_B_->GetBlock(2) = B_phi_;
+  bool ok = true;
+  if (!SetWarmStartTolerance(*split_minres_, *split_proj_prec_, *split_B_)) {
+    X = 0.0;
+    Phi_true_ = 0.0;
+    *split_X_ = 0.0;
+    ok = WarmStartZeroLoad();
+  } else {
+    split_outer_->Mult(*split_B_, *split_X_);
+    ok = split_minres_->GetConverged();
+    outer_its_ = split_minres_->GetNumIterations();
+  }
+  NoteIterations(outer_its_);
+  X = split_X_->GetBlock(0);
+  projector_u_->Project(X);
+  Phi_true_ = split_X_->GetBlock(2);
+  return ok;
 }
 
 void LinearQuasiStaticMixedSelfGravitatingProblem::ConfigureFluidOperator(
@@ -1618,8 +1916,7 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetupKKTGauge() {
 #ifdef MFEM_USE_MPI
   if (pfes_) {
     auto amg = std::make_unique<HypreBoomerAMG>(*A_.As<HypreParMatrix>());
-    // order_bynodes = true: the displacement space is Ordering::byNODES.
-    amg->SetSystemsOptions(fes_->GetVDim(), true);
+    detail::SetSystemsAMGOptions(*amg, *fes_);
     amg->SetPrintLevel(0);
     prec_clean_u_ = std::move(amg);
   } else
@@ -1910,8 +2207,18 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveLinearSystem(
           Vector col(rhs[1]);
           MakeCompatible(col);
           B_phi_ = col;
-          xs[0].SetSize(rhs[0].Size());
-          xs[0] = 0.0;
+          // A seeded state (the column's solution at the previous
+          // operator version) is the initial guess; otherwise start cold.
+          const bool seeded = xs[0].Size() == rhs[0].Size() &&
+                              xs[1].Size() == Phi_true_.Size();
+          if (!seeded) {
+            xs[0].SetSize(rhs[0].Size());
+            xs[0] = 0.0;
+          } else if (type_ != SolverType::SchurCG && X_block_ &&
+                     !gauge_kkt_) {
+            X_block_->GetBlock(0) = xs[0];
+            X_block_->GetBlock(1) = xs[1];
+          }
           const bool converged = SolveUnbordered(rhs[0], xs[0]);
           xs[1] = Phi_true_;
           B_phi_ = Bphi_save;
@@ -2522,6 +2829,7 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveUnbordered(
     if (!SetWarmStartTolerance(*cg_, *projected_prec_, rhs_s_)) {
       X = 0.0;
       Phi_true_ = w_;
+      ok = WarmStartZeroLoad() && ok;
     } else {
       projected_->Mult(rhs_s_, X);
       ok = cg_->GetConverged() && ok;
@@ -2544,6 +2852,7 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveUnbordered(
       X = 0.0;
       Phi_true_ = 0.0;
       *Xk4_ = 0.0;
+      ok = WarmStartZeroLoad() && ok;
     } else {
       projected_kkt4_->Mult(*Bk4_, *Xk4_);
       ok = minres_kkt4_->GetConverged();
@@ -2552,13 +2861,16 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveUnbordered(
       X = Xk4_->GetBlock(0);
       Phi_true_ = Xk4_->GetBlock(1);
     }
+  } else if (UsingPressureSplit()) {
+    ok = SolveSplitBlock(B, X) && ok;
   } else {
     B_block_->GetBlock(0) = B;
     B_block_->GetBlock(1) = B_phi_;
-    if (!SetWarmStartTolerance(*minres_, *projected_prec_, *B_block_)) {
+    if (!SetBlockKrylovTolerance(*minres_, *projected_prec_, *B_block_)) {
       X = 0.0;
       Phi_true_ = 0.0;
       *X_block_ = 0.0;
+      ok = WarmStartZeroLoad() && ok;
     } else {
       if (GaugePreconditionerOnly() && gauge_plateau_ratio_ > 0.0) {
         // Chunked restarts with the stagnation stop (PlateauMult).

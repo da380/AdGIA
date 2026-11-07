@@ -682,17 +682,6 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   bool GaugePreconditionerOnly() const { return gauge_prec_only_; }
 
   /**
-   * @brief Give the displacement BoomerAMG the rigid-body rotations as
-   * interpolation vectors (hypre's GM-2 elasticity interpolation; the
-   * translations are the constants of the nodal coarsening). The byNODES
-   * equivalent of mfem's SetElasticityOptions, whose own path requires
-   * Ordering::byVDIM. Parallel builds only (the serial smoother ignores
-   * it); call before the first Solve(). Off by default pending
-   * measurement against the nodal-systems default.
-   */
-  void SetElasticityNearNull(bool on = true) { amg_rbm_ = on; }
-
-  /**
    * @brief Route Solve() through the pressure-split @f$(u, p)@f$
    * reformulation of the solid, @f$p = \kappa\,\mathrm{div}\,u@f$: MINRES
    * on the symmetric block system
@@ -713,19 +702,112 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
    * block, where a weighted mass matrix absorbs them (see
    * doc/methods/pressure_split.tex).
    *
-   * Scope (the box-contrast prototype): the plain clamped solid only —
-   * requires an isotropic(-split) rheology, displacement order >= 2 and no
-   * fluid treatment; classes with their own solver machinery (rigid-mode
-   * projection, gravity blocks) refuse. The modulus-flavour cache is
-   * bypassed: every weight switch reassembles the blocks. Note the
-   * discrete solution is the Taylor–Hood one, which differs from the
-   * primal discretisation at discretisation-error level (and is free of
-   * volumetric locking).
+   * Scope: the clamped solid and the free (traction) solid, whose rigid
+   * modes are projected out of the displacement block (they are
+   * divergence-free, so the pressure rows never see them) — requires an
+   * isotropic(-split) rheology, displacement order >= 2 and no fluid
+   * treatment; classes with gravity blocks or interface constraints
+   * refuse. The modulus-flavour cache is bypassed: every weight switch
+   * reassembles the blocks. Note the discrete solution is the Taylor–Hood
+   * one, which differs from the primal discretisation at
+   * discretisation-error level (and is free of volumetric locking); with
+   * a continuous pressure that error is first order at material
+   * interfaces, where the shear modulus jumps — SetPressureSplitPerRegion()
+   * removes it.
+   *
+   * @param theta Which part of the volumetric term the pressure carries:
+   * @f$p = \lambda_p\,\mathrm{div}\,u@f$ with
+   * @f$\lambda_p = \kappa - \theta\,2\mu/d@f$ (floored at
+   * @f$10^{-3}\kappa@f$), the displacement block keeping the rest,
+   * @f$2\mu\,\varepsilon:\varepsilon + (\lambda - \lambda_p)\,
+   * \mathrm{div}\,\mathrm{div}@f$. 0 (the default) is the kappa split
+   * above (deviatoric block, p the mean stress); 1 is the Herrmann split
+   * (block @f$2\mu\,\varepsilon:\varepsilon@f$, the operator the AMG is
+   * built on; p = lambda div u). The displacement is the same for every
+   * theta (an exact reformulation); only Pressure()'s meaning changes.
    */
-  void SetPressureSplitSolver();
+  void SetPressureSplitSolver(mfem::real_t theta = 0.0);
+
+  /** @brief Experimental pressure-split Schur-block options: a Chebyshev
+   * smoother of order @p chebyshev_order on the weighted pressure mass
+   * (0: Jacobi, the default), and a factor @p scale on the Schur weight
+   * (MINRES is not invariant to the relative scaling of the blocks).
+   * Takes effect at the next assembly. */
+  /** @brief A continuous pressure within each material region (element
+   * attribute), discontinuous across regions: Taylor-Hood per region, so
+   * the pressure jump at material interfaces is represented exactly
+   * instead of smeared. Parallel builds only. Call before
+   * SetPressureSplitSolver(). */
+  void SetPressureSplitPerRegion(bool on = true) { psplit_per_region_ = on; }
+
+  /** @brief Experimental: add a coarse correction to the Schur block of
+   * the pressure-split preconditioner, spanned by the constant pressure
+   * of each material region (element attribute), with the exact coarse
+   * Schur complement Z^T (M_c + B A^{-1} B^T) Z (one displacement-block
+   * solve per region and assembly). Targets the region-mean modes of
+   * soft regions enclosed by stiff ones, which the weighted mass
+   * misjudges by the shear contrast. Parallel builds only. */
+  void SetPressureSplitCoarse(bool on = true) {
+    psplit_coarse_ = on;
+    MarkOperatorDirty();
+  }
+
+  void SetPressureSplitSchurOptions(int chebyshev_order, mfem::real_t scale,
+                                    bool triangular = false) {
+    psplit_cheb_order_ = chebyshev_order;
+    psplit_schur_scale_ = scale;
+    psplit_triangular_ = triangular;
+    MarkOperatorDirty();
+  }
 
   /** @brief Back to the primal displacement solve. */
   void ClearPressureSplitSolver();
+
+  /**
+   * @brief Where the displacement AMG of a class that adds terms to the
+   * stiffness (the gravitating classes' gravity and fluid folds) is built.
+   * On (the default): on the full operator the solver is handed, shifted
+   * by @p shift_factor (default 100) times the free-body mass-shift scale
+   * (MassShiftedMatrix). Off: on the rheology's stiffness alone.
+   *
+   * Measured (planning note preconditioning-2026-11-06 §9; static solves,
+   * stratified Earth model, mantle shear scaled by f = 1, 0.1, 0.01 into
+   * the time-stepping regime): the full operator needs 3.9x fewer MINRES
+   * iterations for the referential class at f = 0.01 (1028 -> 265) and
+   * 1.2x fewer for the mixed one (246 -> 212); identical solutions. The
+   * shift must cover the operator's negative directions (discrete rigid
+   * rotations, O(h^2); coarse inner-core models need factor ~100) for an
+   * SPD preconditioner under MINRES; SetBlockGMRES() drops the SPD need.
+   * The factor is an empirical margin set on those models: eps ~ mu / L^2
+   * at factor 100, the stiffness of the smoothest non-rigid mode, which is
+   * of the order of the first-order gravity term rho g / L for Earth-like
+   * bodies (rho g L / mu ~ 1); it is not a small perturbation and should
+   * not be tuned down on a non-gravitating intuition. A load on which the
+   * shifted preconditioner is not positive is caught by
+   * SetWarmStartTolerance() and reported as a failed solve.
+   */
+  void SetPreconditionerFullOperator(bool on,
+                                     mfem::real_t shift_factor = 100.0) {
+    prec_full_operator_ = on;
+    prec_full_shift_ = shift_factor;
+    prec_stale_ = true;
+    MarkOperatorDirty();
+  }
+  /** @brief Flexible GMRES(200) instead of MINRES for the gravitating
+   * classes' block solves (no SPD requirement on the preconditioner; the
+   * tolerance is rel_tol on the true residual instead of MINRES's
+   * preconditioner norm). Default: on for the referential class, off for
+   * the mixed one (planning note preconditioning-2026-11-06 §9: on a
+   * stratified model with mantle shear scaled into the time-stepping
+   * regime, FGMRES cut the referential iterations by 15-20%, e.g. 265 ->
+   * 227 at mu x 0.01; note the two stop on different norms, MINRES on the
+   * preconditioned residual and FGMRES on the true one at rel_tol ||B||,
+   * so the counts are not a like-for-like comparison). Memory: FGMRES
+   * keeps up to 200 block vectors, ~1.3 GB in total at 787k unknowns. */
+  void SetBlockGMRES(bool on = true) {
+    block_gmres_ = on;
+    MarkOperatorDirty();
+  }
 
   /** @brief Whether Solve() runs the pressure-split route. */
   bool UsingPressureSplit() const { return pressure_split_; }
@@ -829,6 +911,31 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
    * route: base solves without machinery of their own. Default false; the
    * clamped class opts in. */
   virtual bool SupportsPressureSplit() const { return false; }
+  /** @brief The null space of a free body's displacement block, which the
+   * pressure-split route projects out (null: the body is held by
+   * essential conditions). */
+  virtual const NullSpaceProjector* PressureSplitNullSpace() {
+    return nullptr;
+  }
+  /** @brief Whether the class carries the pressure split inside its own
+   * SolveLinearSystem (Solve() then assembles and solves as usual, and the
+   * class builds its split stack in SetupSolver); false: the base's (u, p)
+   * route (PressureSplitSolve) replaces the solve. */
+  virtual bool PressureSplitInClassSolve() const { return false; }
+  /** @brief The shared pressure-split pieces, for a class carrying the
+   * split in its own solve: B (pressure x displacement), the compressibility
+   * mass (1/lambda_p) M, the displacement AMG on 2 mu eps:eps (mass-shifted
+   * for a free body), the Schur-block preconditioner, lambda_p, and the
+   * pressure block size. Assembled by AssemblePressureSplitParts(). */
+  struct PressureSplitParts {
+    mfem::Operator* B = nullptr;
+    mfem::Operator* M = nullptr;
+    mfem::Solver* amg = nullptr;
+    mfem::Solver* schur = nullptr;
+    mfem::Coefficient* lambda_p = nullptr;
+    int np = 0;
+  };
+  PressureSplitParts AssemblePressureSplitParts();
 
   /** @brief Preconditioned CG (Gauss-Seidel serial, BoomerAMG with elasticity
    * options in parallel) in prec_/cg_, warm-started; the preconditioner is
@@ -856,6 +963,12 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
    * preconditioner norm, which is what a cold start would use. Returns false
    * when B vanishes (solution zero, no solve needed).
    */
+  /** @brief After a false SetWarmStartTolerance() / SetBlockKrylovTolerance():
+   * true if the (projected) load vanished, so the zero solution is exact and
+   * the solve succeeds; false if the load did not vanish but the
+   * preconditioner was not positive on it, which a derived class reports as
+   * a failed solve. */
+  bool WarmStartZeroLoad() const { return warm_start_zero_load_; }
   bool SetWarmStartTolerance(mfem::IterativeSolver& solver, mfem::Solver& prec,
                              const mfem::Vector& B) const;
 
@@ -945,7 +1058,52 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   mfem::OperatorHandle A_;
   mfem::Vector X_, B_;
 
+#ifdef MFEM_USE_MPI
+  // The free-body preconditioner matrix A + eps M (SetupDefaultPreconditioner),
+  // which the AMG references; rebuilt with it. Declared before prec_ so that
+  // it outlives the AMG built on it.
+  std::unique_ptr<mfem::HypreParMatrix> prec_shift_mat_;
+#endif
   std::unique_ptr<mfem::Solver> prec_;
+#ifdef MFEM_USE_MPI
+  /// True if the displacement problem has no essential dofs on any rank.
+  bool FreeDisplacementBody() const;
+  /// A + eps M with eps ~ mu / L^2 estimated from the matrices.
+  std::unique_ptr<mfem::HypreParMatrix> MassShiftedMatrix(
+      mfem::HypreParMatrix& A, mfem::real_t factor = 1.0) const;
+  /// Scale factor of the free-body mass shift (see MassShiftedMatrix).
+  static constexpr mfem::real_t kPrecMassShift = 1e-2;
+#endif
+  // The block-solve options and helpers are built in every configuration
+  // (the public setters are unconditional, and the serial block solves
+  // take the same Krylov choice); only the AMG matrices above are MPI-only.
+  bool prec_full_operator_ = true;   // SetPreconditionerFullOperator
+  mfem::real_t prec_full_shift_ = 100.0;
+  bool block_gmres_ = false;         // SetBlockGMRES
+  /** @brief MINRES, or FGMRES with SetBlockGMRES(), for a block solve. */
+  std::unique_ptr<mfem::IterativeSolver> MakeBlockKrylov() const;
+  /** @brief The block solve's tolerance: the preconditioner-norm warm-start
+   * target for MINRES (SetWarmStartTolerance), rel_tol ||B|| on the true
+   * residual for FGMRES. False when B vanishes. */
+  bool SetBlockKrylovTolerance(mfem::IterativeSolver& solver,
+                               mfem::Solver& prec, const mfem::Vector& B) const;
+#ifdef MFEM_USE_MPI
+  // The rheology-only stiffness the AMG is built on when a derived class
+  // has added integrators (SetupDefaultPreconditioner), and its form,
+  // which owns the matrix.
+  std::unique_ptr<mfem::BilinearForm> prec_elastic_form_;
+  mfem::OperatorHandle prec_elastic_A_;
+  void AssembleElasticPreconditionerMatrix();
+#endif
+  /// Number of domain/boundary integrators the rheology contributes to
+  /// StiffnessIntegrators() (those added first, in the constructor). The
+  /// detection is by count, so it relies on derived classes appending
+  /// their terms AFTER construction, and it counts every face integrator
+  /// as non-elastic (a rheology adding face terms at construction would be
+  /// dropped from the elastic-only preconditioner matrix).
+  int n_rheology_domain_ = 0, n_rheology_boundary_ = 0;
+  /// True if a derived class has added integrators beyond the rheology's.
+  bool HasNonElasticIntegrators();
   std::unique_ptr<mfem::CGSolver> cg_;
   // Preconditioner reuse: the form and matrix the preconditioner was built
   // on are kept alive while it is reused.
@@ -979,15 +1137,6 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   FluidTreatment fluid_treatment_ = FluidTreatment::None;
   int gauge_refinements_ = 2;
   bool gauge_prec_only_ = false;  // clean-A operator, A + eps_prec Q prec
-  bool amg_rbm_ = false;  // rigid-rotation interpolation vectors on the AMG
-#ifdef MFEM_USE_MPI
-  // The interpolation vectors hypre references during AMG setup — and
-  // the HANDLE ARRAY itself, whose pointer hypre stores without
-  // copying; both must outlive the preconditioner, so they are rebuilt
-  // with it.
-  std::vector<std::unique_ptr<mfem::HypreParVector>> amg_rbms_;
-  mfem::Array<HYPRE_ParVector> amg_rbm_handles_;
-#endif
   mfem::real_t gauge_plateau_ratio_ = 0.0;  // 0: no stagnation stop
   int gauge_plateau_chunk_ = 25;
 
@@ -1050,6 +1199,11 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   void WarnGaugeContraction() const;
 
   mutable mfem::Vector warm_z_;  ///< SetWarmStartTolerance workspace
+  /// Why the last SetWarmStartTolerance / SetBlockKrylovTolerance returned
+  /// false: the load vanished (true; a zero solution is exact) or the
+  /// preconditioner was not positive on it (false; the solve has failed).
+  mutable bool warm_start_zero_load_ = true;
+  mutable bool prec_indefinite_reported_ = false;
   mfem::real_t t_ = 0.0;
   mfem::real_t rel_tol_ = 1e-12;
   mfem::IterativeSolver::PrintLevel print_level_ =
@@ -1115,6 +1269,37 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   // dirty. The (kappa, mu) pointers come from the stiffness's
   // IsotropicSplit() and track the live effective modulus.
   bool pressure_split_ = false;
+  mfem::real_t psplit_theta_ = 0.0;  // see SetPressureSplitSolver()
+  int psplit_cheb_order_ = 0;            // SetPressureSplitSchurOptions()
+  mfem::real_t psplit_schur_scale_ = 1.0;
+  bool psplit_triangular_ = false;  // block lower-triangular + FGMRES
+  bool psplit_per_region_ = false;     // per-region continuous pressure
+  bool psplit_coarse_ = false;         // region-mean coarse correction
+  std::unique_ptr<mfem::Solver> psplit_schur_cc_;
+  // Per-region pressure: the continuous space Q (order k-1) whose region
+  // copies P = [D_1 G, ..., D_R G] embeds into the L2 host psplit_fes_
+  // (G the injection Q -> L2, D_r the region-r element rows); the blocks
+  // are assembled on the host and projected, B_P = P^T B, M_P = P^T M P.
+  std::unique_ptr<mfem::FiniteElementCollection> psplit_qfec_;
+  std::unique_ptr<mfem::FiniteElementSpace> psplit_qfes_;
+  mfem::Vector psplit_pP_;  // per-region pressure (warm start)
+#ifdef MFEM_USE_MPI
+  std::unique_ptr<mfem::HypreParMatrix> psplit_P_, psplit_PT_;
+  void ProjectPerRegionPressure();
+#endif
+  std::unique_ptr<mfem::BlockLowerTriangularPreconditioner> psplit_tri_prec_;
+  std::unique_ptr<mfem::Operator> psplit_neg_schur_;
+  // Free bodies (PressureSplitNullSpace()): the projected displacement
+  // block and AMG, and the mass-shifted matrix the AMG is built on.
+  std::unique_ptr<ProjectedOperator> psplit_proj_op_;
+  std::unique_ptr<ProjectedSolver> psplit_proj_prec_;
+  mfem::Coefficient* psplit_lambda_p_ = nullptr;  // the pressure's lambda
+  /** @brief The split's blocks shared by every class carrying it: the
+   * coefficients, B, the pressure masses (per-region projected), the
+   * displacement AMG on 2 mu eps:eps (mass-shifted for a free body) and
+   * the Schur preconditioner. (AssemblePressureSplitOperator adds the
+   * plain solid's displacement block and its (u, p) solver.) */
+  void AssemblePressureSplitBlocks();
   mfem::Coefficient* psplit_kappa_ = nullptr;
   mfem::Coefficient* psplit_mu_ = nullptr;
   std::vector<std::unique_ptr<mfem::Coefficient>> psplit_coefs_;
@@ -1127,6 +1312,11 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   mfem::OperatorHandle psplit_Amu_, psplit_Aprec_, psplit_B_, psplit_M_,
       psplit_Mw_;
   std::unique_ptr<mfem::TransposeOperator> psplit_BT_;
+#ifdef MFEM_USE_MPI
+  // The free-body mass-shifted matrix the split's AMG is built on; declared
+  // before the AMG so that it outlives it.
+  std::unique_ptr<mfem::HypreParMatrix> psplit_shift_mat_;
+#endif
   std::unique_ptr<mfem::Solver> psplit_amg_, psplit_schur_prec_;
   std::unique_ptr<mfem::BlockOperator> psplit_op_;
   std::unique_ptr<mfem::BlockDiagonalPreconditioner> psplit_prec_;
@@ -1204,6 +1394,13 @@ class LinearQuasiStaticTractionProblem : public LinearQuasiStaticProblemBase {
  protected:
   void SetupSolver(mfem::OperatorHandle& A) override;
   bool SolveLinearSystem(const mfem::Vector& B, mfem::Vector& X) override;
+  // The pressure-split route on the free body: the rigid modes are
+  // divergence-free, so only the displacement block is projected (the
+  // Euclidean gauge; SetMassWeightedGauge() does not apply to it).
+  bool SupportsPressureSplit() const override { return true; }
+  const NullSpaceProjector* PressureSplitNullSpace() override {
+    return &RigidModes();
+  }
 
  private:
   /** @brief The rigid-mode projector (built on first use; the space does

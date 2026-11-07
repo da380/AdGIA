@@ -106,8 +106,11 @@ int main(int argc, char* argv[]) try {
   bool align = true;
   bool conform = true;
   real_t rtol = 1e-4, atol = 1e-10;
-  bool amg_rbm = false;
   bool psplit = false;
+  real_t psplit_theta = 0.0, psplit_scale = 1.0;
+  real_t tau_floor = 0.0;
+  int psplit_cheb = 0;
+  bool psplit_tri = false, psplit_region = false;
 
   OptionsParser args(argc, argv);
   args.AddOption(&case_file, "-c", "--case", "Case file (cases.py).");
@@ -118,14 +121,30 @@ int main(int argc, char* argv[]) try {
   args.AddOption(&nz, "-nz", "--nz", "Elements along z.");
   args.AddOption(&scheme, "-scheme", "--scheme",
                  "exptrap (default), sdirk23, be, etd1, rk4 or adaptive.");
-  args.AddOption(&amg_rbm, "-amg-rbm", "--amg-rigid-rotations",
-                 "-no-amg-rbm", "--no-amg-rigid-rotations",
-                 "Rigid-rotation GM-2 interpolation vectors on the "
-                 "displacement AMG (off = the nodal-systems default).");
+  args.AddOption(&tau_floor, "-tau-floor", "--relaxation-time-floor",
+                 "Opt-in effective-medium regularisation: floor every "
+                 "relaxation time at this value (0, the default: the model "
+                 "as given). See ViscoelasticOperator::SetRelaxationTimeFloor.");
   args.AddOption(&psplit, "-up", "--pressure-split", "-no-up",
                  "--no-pressure-split",
                  "Route the solid solves through the pressure-split (u, p) "
                  "MINRES (Taylor-Hood; clamped cases, order >= 2).");
+  args.AddOption(&psplit_theta, "-upt", "--pressure-split-theta",
+                 "Pressure-split volumetric partition: 0 the kappa split, "
+                 "1 the Herrmann split (see SetPressureSplitSolver).");
+  args.AddOption(&psplit_cheb, "-upc", "--pressure-split-chebyshev",
+                 "Chebyshev order on the pressure-split Schur block (0: "
+                 "Jacobi).");
+  args.AddOption(&psplit_scale, "-ups", "--pressure-split-schur-scale",
+                 "Factor on the pressure-split Schur weight.");
+  args.AddOption(&psplit_tri, "-upg", "--pressure-split-triangular",
+                 "-no-upg", "--no-pressure-split-triangular",
+                 "Block lower-triangular preconditioner with FGMRES on the "
+                 "pressure-split route (experimental).");
+  args.AddOption(&psplit_region, "-upr", "--pressure-split-per-region",
+                 "-no-upr", "--no-pressure-split-per-region",
+                 "Continuous pressure per material region (discontinuous "
+                 "across regions) on the pressure-split route.");
   args.AddOption(&rheology_mode, "-rheology", "--rheology",
                  "composite (one region per layer, by element centre) or "
                  "pointwise (layers looked up at every point).");
@@ -422,16 +441,24 @@ int main(int argc, char* argv[]) try {
     problem = std::make_unique<LinearQuasiStaticClampedProblem>(
         &fes, *rheology, bottom, traction, top);
   }
-  if (amg_rbm) {
-    problem->SetElasticityNearNull();
-  }
   if (psplit) {
-    problem->SetPressureSplitSolver();  // refuses the uniaxial_stress case
+    problem->SetPressureSplitPerRegion(psplit_region);
+    problem->SetPressureSplitSolver(psplit_theta);  // refuses uniaxial_stress
+    if (psplit_cheb > 0 || psplit_scale != 1.0 || psplit_tri) {
+      problem->SetPressureSplitSchurOptions(psplit_cheb, psplit_scale,
+                                            psplit_tri);
+    }
   }
   problem->SetPrintLevel(IterativeSolver::PrintLevel().None());
 
   ViscoelasticOperator visco(*problem);
+  if (tau_floor > 0.0) {
+    visco.SetRelaxationTimeFloor(tau_floor);
+  }
   const int nb = visco.NumBranches();
+  // Diagnostic (always): the smallest relaxation time the run sees, and
+  // the nominal largest dt / tau, the effective-shear contrast scale.
+  const real_t tau_min_run = visco.MinRelaxationTime();
 
   // --- observables ------------------------------------------------------------
 
@@ -633,6 +660,10 @@ int main(int argc, char* argv[]) try {
        << ",\n  \"conform\": " << (conform ? "true" : "false")
        << ",\n  \"rheology\": \""
        << mode << "\",\n  \"pressure_split\": " << (psplit ? "true" : "false")
+       << ",\n  \"pressure_split_theta\": " << Num(psplit_theta)
+       << ",\n  \"tau_floor\": " << Num(tau_floor)
+       << ",\n  \"min_relaxation_time\": " << Num(tau_min_run)
+       << ",\n  \"max_dt_over_tau\": " << Num(dt / tau_min_run)
        << ",\n  \"branches\": " << nb << ",\n  \"scheme\": \""
        << scheme_name << "\",\n  \"dt\": " << Num(dt)
        << ",\n  \"min_steps\": " << min_steps << ",\n  \"align\": "

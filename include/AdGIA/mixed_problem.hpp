@@ -186,6 +186,18 @@ class DomainVectorGradVectorIntegrator;
  * freedom itself shrinks to label-preserving relabellings. Do not project
  * inner-core rotations in this mode (AddRegionRotations()): with the fluid
  * meshed they cost @f$O(\epsilon)@f$ energy and the penalty handles them.
+ *
+ * Pressure split (experimental; SetPressureSplitSolver, parallel, block
+ * MINRES with the elimination border): the (u, p, phi) system
+ * [[A - lambda_p div div, B^T, C], [B, -M/lambda_p, 0], [C^T, 0, A_phiphi]]
+ * preconditioned block-diagonally (AMG on 2 mu eps:eps, the weighted
+ * pressure mass, the potential's AMG). It is accurate and mesh-robust on
+ * compressible models (~2.5x the primal's iterations), but NOT robust in
+ * relaxed, gravity-dominated regimes (mu_eff << rho g R): removing kappa
+ * from the displacement block exposes the first-order gravity term
+ * rho (div u)(g.v), which kappa div div bounds in the primal route (for
+ * Earth rho g R ~ kappa). The primal route is the production one for
+ * gravitating problems (planning note preconditioning-2026-11-06).
  */
 class LinearQuasiStaticMixedSelfGravitatingProblem
     : public LinearQuasiStaticProblemBase,
@@ -781,6 +793,38 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
    * + M_F@f$ on true dofs. */
   const mfem::Operator& PotentialOperator() const { return *A_phiphi_; }
 
+  /** @brief One of the lowest generalised eigenpairs of the Schur
+   * complement on the complement of the rigid modes (SchurEigenvalues()). */
+  struct SchurEigenvalue {
+    mfem::real_t value;     ///< @f$\lambda@f$ in @f$S x = \lambda M x@f$
+    mfem::real_t residual;  ///< @f$\|S x - \lambda M x\| / \|\lambda M x\|@f$
+    /// @f$\|x\|_M@f$ restricted to the elements of the attributes given,
+    /// over @f$\|x\|_M@f$: where the mode lives (0 if none were given).
+    mfem::real_t region_fraction;
+  };
+  /**
+   * @brief Global gravitational stability, measured: the lowest
+   * generalised eigenvalues of the Schur complement
+   * @f$S = A_{uu} - C A_{\phi\phi}^{-1} C^T@f$ against the unit vector mass
+   * @f$M@f$ on the displacement space, on the complement of the rigid
+   * modes. LOBPCG finds the @p nev lowest modes of the operator as
+   * assembled (the current effective modulus, the fluid treatment and the
+   * water-load border excluded; the solver's own SPD preconditioner,
+   * SetPreconditionerFullOperator); the rigid modes, which come out near
+   * zero up to discretisation and mix with their neighbours, are then
+   * projected out of the converged subspace and the Rayleigh-Ritz values
+   * on what remains are returned, lowest first, with each one's residual
+   * and its mass fraction on @p region (e.g. the fluid attributes, to tell
+   * a fluid-core mode from a mantle one). The body is globally stable iff
+   * the first value is positive. Units: those of @f$\mu/(\rho L^2)@f$ in the
+   * problem's non-dimensionalisation. Parallel builds only; a diagnostic,
+   * O(nev) operator applications (one potential solve each) per LOBPCG
+   * iteration.
+   */
+  std::vector<SchurEigenvalue> SchurEigenvalues(
+      int nev, int max_iter = 400, mfem::real_t tol = 1e-8,
+      const mfem::Array<int>* region = nullptr);
+
   /** @brief The potential load @f$\ell_\phi@f$ of the last AssembleForce()
    * on true dofs (tidal part and 2-D compatibility included). */
   const mfem::Vector& PotentialLoad() const { return B_phi_; }
@@ -865,6 +909,15 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   /** @brief The system solve without the water-load border (the body of
    * SolveLinearSystem() before SetWaterLoad()). */
   bool SolveUnbordered(const mfem::Vector& B, mfem::Vector& X);
+  // The pressure split (SetPressureSplitSolver) on the gravitating solve:
+  // the (u, p, phi) block MINRES, built beside the (u, phi) stack.
+  bool SupportsPressureSplit() const override { return true; }
+  const NullSpaceProjector* PressureSplitNullSpace() override {
+    return projector_u_.get();
+  }
+  bool PressureSplitInClassSolve() const override { return true; }
+  void SetupSplitMinres(mfem::OperatorHandle& A);
+  bool SolveSplitBlock(const mfem::Vector& B, mfem::Vector& X);
   bool SolveBorderedMonolithic(const std::vector<mfem::Vector>& Bu,
                                const std::vector<mfem::Vector>& Bphi,
                                const mfem::DenseMatrix& Db,
@@ -1145,6 +1198,22 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   void SetupKKTGauge();
 
   std::unique_ptr<mfem::BlockVector> X_block_, B_block_;
+  // The (u, p, phi) split stack (SetupSplitMinres).
+  mfem::Array<int> split_offsets_;
+  std::unique_ptr<mfem::BilinearForm> split_d_form_;
+  mfem::OperatorHandle split_D_;
+  mfem::ConstantCoefficient split_zero_{0.0};
+#ifdef MFEM_USE_MPI
+  std::unique_ptr<mfem::HypreParMatrix> split_A_;
+#endif
+  std::unique_ptr<mfem::TransposeOperator> split_BT_;
+  std::unique_ptr<mfem::BlockOperator> split_op_;
+  std::unique_ptr<mfem::BlockDiagonalPreconditioner> split_prec_;
+  std::unique_ptr<NullSpaceProjector> split_proj_;
+  std::unique_ptr<ProjectedOperator> split_proj_op_;
+  std::unique_ptr<ProjectedSolver> split_proj_prec_, split_outer_;
+  std::unique_ptr<mfem::MINRESSolver> split_minres_;
+  std::unique_ptr<mfem::BlockVector> split_X_, split_B_;
   mfem::Vector rhs_s_, w_;
 
   // tolerances and statistics
