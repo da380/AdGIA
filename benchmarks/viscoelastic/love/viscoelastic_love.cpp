@@ -238,10 +238,12 @@ int main(int argc, char* argv[]) try {
   Case c(options, factory);
   MFEM_VERIFY(c.eulerian, "The viscoelastic driver needs an Eulerian method "
                           "(dahlen or gauged).");
-  if (c.method == "dahlen" && c.HasFluid() && lmin == 0) {
-    // As love_benchmark -combined: Dahlen's fluid differs from the
+  if (c.method == "dahlen" && c.HasFluid() && lmin == 0 &&
+      options.level_border == 0) {
+    // As love_benchmark -combined: the naked Dahlen fluid differs from the
     // reference at degree zero by design, and its degree-zero response
-    // would leak into the others' through the discrete coupling.
+    // would leak into the others' through the discrete coupling. The level
+    // border closes degree zero, which is then kept.
     lmin = 1;
     if (root) {
       std::cout << "Degree zero left out of the load (Dahlen's fluid).\n";

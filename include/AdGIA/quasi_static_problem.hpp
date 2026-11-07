@@ -779,7 +779,8 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
    * rotations, O(h^2); coarse inner-core models need factor ~100) for an
    * SPD preconditioner under MINRES; SetBlockGMRES() drops the SPD need.
    */
-  void SetPreconditionerFullOperator(bool on, mfem::real_t shift_factor = 1.0) {
+  void SetPreconditionerFullOperator(bool on,
+                                     mfem::real_t shift_factor = 100.0) {
     prec_full_operator_ = on;
     prec_full_shift_ = shift_factor;
     prec_stale_ = true;

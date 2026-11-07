@@ -256,7 +256,8 @@ struct CaseOptions {
   int psplit_cheb = 4;
   real_t psplit_scale = 4.0;
   bool psplit_region = false;
-  real_t prec_full = 0.0;   // > 0: AMG on the full operator, this shift factor
+  real_t prec_full = -1.0;   // < 0: library default; 0: elastic-only AMG;
+                             // > 0: AMG on the full operator, this shift factor
   bool block_gmres = false;  // force FGMRES for the block solves
   bool block_minres = false; // force MINRES (default: the class's choice)
   const char* method = "dahlen";
@@ -384,9 +385,10 @@ struct CaseOptions {
     args.AddOption(&psplit_scale, "-ups", "--pressure-split-schur-scale",
                    "Factor on the Schur weight.");
     args.AddOption(&prec_full, "-pfull", "--prec-full-operator",
-                   "Experimental: build the displacement AMG on the full "
+                   "Where the displacement AMG is built: > 0 on the full "
                    "operator (elastic + gravity) with this multiple of the "
-                   "free-body mass shift (0: the elastic stiffness alone).");
+                   "free-body mass shift; 0 on the elastic stiffness alone; "
+                   "< 0 the library default (full operator, 100).");
     args.AddOption(&block_gmres, "-gmres", "--block-gmres", "-no-gmres",
                    "--no-block-gmres",
                    "FGMRES for the gravitating block solves (the "
@@ -813,7 +815,9 @@ class Case {
                     << ").\n";
         }
       }
-      if (options.prec_full > 0.0) {
+      if (options.prec_full == 0.0) {
+        problem->SetPreconditionerFullOperator(false);
+      } else if (options.prec_full > 0.0) {
         problem->SetPreconditionerFullOperator(true, options.prec_full);
       }
       MFEM_VERIFY(!(options.block_gmres && options.block_minres),
@@ -1645,7 +1649,9 @@ class Case {
                                            : std::vector<FluidRegion>{});
       Evac_ = NewRadialVacuumExtension(*fes_u, *fes_buffer_, radius, r_out);
       ref_problem->SetPrescribedVacuumExtension(*fes_buffer_, *Evac_);
-      if (options.prec_full > 0.0) {
+      if (options.prec_full == 0.0) {
+        ref_problem->SetPreconditionerFullOperator(false);
+      } else if (options.prec_full > 0.0) {
         ref_problem->SetPreconditionerFullOperator(true, options.prec_full);
       }
       MFEM_VERIFY(!(options.block_gmres && options.block_minres),
