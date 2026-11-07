@@ -1071,6 +1071,12 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   /// A + eps M with eps ~ mu / L^2 estimated from the matrices.
   std::unique_ptr<mfem::HypreParMatrix> MassShiftedMatrix(
       mfem::HypreParMatrix& A, mfem::real_t factor = 1.0) const;
+  /// Scale factor of the free-body mass shift (see MassShiftedMatrix).
+  static constexpr mfem::real_t kPrecMassShift = 1e-2;
+#endif
+  // The block-solve options and helpers are built in every configuration
+  // (the public setters are unconditional, and the serial block solves
+  // take the same Krylov choice); only the AMG matrices above are MPI-only.
   bool prec_full_operator_ = true;   // SetPreconditionerFullOperator
   mfem::real_t prec_full_shift_ = 100.0;
   bool block_gmres_ = false;         // SetBlockGMRES
@@ -1081,8 +1087,7 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
    * residual for FGMRES. False when B vanishes. */
   bool SetBlockKrylovTolerance(mfem::IterativeSolver& solver,
                                mfem::Solver& prec, const mfem::Vector& B) const;
-  /// Scale factor of the free-body mass shift (see MassShiftedMatrix).
-  static constexpr mfem::real_t kPrecMassShift = 1e-2;
+#ifdef MFEM_USE_MPI
   // The rheology-only stiffness the AMG is built on when a derived class
   // has added integrators (SetupDefaultPreconditioner), and its form,
   // which owns the matrix.
