@@ -16,7 +16,7 @@ as fields:
 
 The suffix <s> is empty for the Dahlen method with the full CMB
 treatment, no level border and block MINRES; otherwise it names the
-method, the CMB treatment, the level border (_lb<n>, _lb<n>_mono), the
+method, the CMB treatment, the border (_lb<n>, _lb<n>_mono, _pb<d>), the
 map amplitude (_map<A>), the Schur solver (_schur) and, for the
 Love-number results, --combined, in that order.
 
@@ -26,6 +26,10 @@ default static route; results_o<p>_lb16.json), so that its degree 0 is
 benchmarked; `--level-border 0` runs the naked reduction, whose degree 0
 is the exhibited defect, and `--level-border 16 0` both. The referential
 closure takes the same node counts under `--referential-border`.
+`--profile-border 6` adds the profile border, the dual form of the same
+closure (doc/methods/profile_border.md), at that polynomial degree
+(results_o<p>_pb6.json); on the models of `models.BULLEN_EXCESS` it runs
+with their stratification declared.
 
 A run whose results file exists is skipped unless `--force` is given, and a
 case that exists is kept unless `--remake` is, so a sweep can be extended or
@@ -174,6 +178,15 @@ def main() -> None:
                         "(default: 16; the solid models, the other methods "
                         "and the non-full CMB treatments run unbordered). "
                         "Bordered results carry the suffix _lb<N>")
+    p.add_argument("--profile-border", type=int, nargs="+", default=None,
+                   metavar="D",
+                   help="profile-border closures of the Dahlen method on "
+                        "the fluid models (doc/methods/profile_border.md), "
+                        "one results file each beside the --level-border "
+                        "runs: polynomial degree D on each stratified "
+                        "layer (default: none). Results carry the suffix "
+                        "_pb<D>; a model of models.BULLEN_EXCESS runs with "
+                        "its stratification declared (-bullen-excess)")
     p.add_argument("--level-mono", action="store_true",
                    help="solve the bordered Dahlen system monolithically "
                         "(love_benchmark -level-mono; suffix _lb<N>_mono)")
@@ -264,28 +277,39 @@ def main() -> None:
                 continue
         methods = list(args.method)
         fluid = has_fluid_layer(name)
-        for order, method, solver, cmb, border in (
+        # A closure is a level border of `border` nodes or a profile
+        # border of degree `profile`; both zero is the naked reduction.
+        def closures(m: str) -> list[tuple[int, int]]:
+            out = [(b, 0) for b in borders_for(m, fluid, args)]
+            if m == "dahlen" and fluid and args.profile_border:
+                out += [(0, d) for d in args.profile_border if d > 0]
+            return out
+
+        for order, method, solver, cmb, (border, profile) in (
                 (o, m, s, c, b) for o in args.order for m in methods
                 for s in args.solver for c in args.cmb
-                for b in borders_for(m, fluid, args)):
+                for b in closures(m)):
             if method not in ("dahlen", "gauged") and solver != args.solver[0]:
                 continue  # the referential solvers ignore the choice
             if method != "dahlen" and cmb != args.cmb[0]:
                 continue  # the treatments are the Dahlen path's: one
                 # run of the other methods per sweep, without them
-            if border > 0 and cmb != "full":
+            if (border > 0 or profile > 0) and cmb != "full":
                 continue  # the border closes the full treatment's fluid
             mapped = args.map != 0.0
             if mapped and method not in ("referential", "slip_broken"):
                 continue  # the mapped benchmark runs the mapped methods
-            if mapped and border > 0:
+            if mapped and (border > 0 or profile > 0):
                 continue  # the referential closure: identity mapping only
-            mono = args.level_mono and method == "dahlen" and border > 0
+            mono = (args.level_mono and method == "dahlen"
+                    and (border > 0 or profile > 0))
             suffix = "" if method == "dahlen" else f"_{method}"
             if cmb != "full" and method == "dahlen":
                 suffix += f"_{cmb}"
             if border > 0:
                 suffix += f"_lb{border}" + ("_mono" if mono else "")
+            if profile > 0:
+                suffix += f"_pb{profile}" + ("_mono" if mono else "")
             if mapped:
                 suffix += f"_map{args.map:g}"
             if solver == 0:
@@ -295,6 +319,12 @@ def main() -> None:
                       "-rt", f"{args.rel_tol:g}", "-s", str(solver),
                       "-method", method,
                       *(["-level-border", str(border)] if border > 0 else []),
+                      *(["-profile-border", str(profile)]
+                        if profile > 0 else []),
+                      *(["-bullen-excess",
+                         f"{models.BULLEN_EXCESS[name]:g}"]
+                        if profile > 0 and name in models.BULLEN_EXCESS
+                        else []),
                       *(["-level-mono"] if mono else []),
                       *(["-map", f"{args.map:g}"] if mapped else []),
                       *(["-cmb", cmb]

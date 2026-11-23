@@ -182,6 +182,16 @@ struct MaxwellRelaxationOptions {
  *   only by the level border (SetLevelBorder()), which is the one place
  *   the closure consults the fluid's compressibility. Evaluated like
  *   @p density, on the parent mesh.
+ * - @p stratification: the excess of the Bullen parameter over one,
+ *   @f$-\kappa\rho'_F/\rho^2 - 1@f$, on the parent's fluid elements:
+ *   zero where the fluid is neutrally stratified, positive where it is
+ *   stably stratified. Read only by the profile border
+ *   (SetProfileBorder()), which divides the region into neutral and
+ *   stratified layers by it. When null it is computed from
+ *   @p density_gradient and @p bulk_modulus; a density gradient taken
+ *   numerically from fields on the mesh carries errors of the size of
+ *   the discretisation, which a model that is neutral, or nearly so,
+ *   does not survive, so such a model should supply this.
  */
 struct FluidRegion {
   /** @brief The CMB-approximation ladder: each rung degrades the full
@@ -207,6 +217,7 @@ struct FluidRegion {
   Treatment treatment = Treatment::Full;
   mfem::real_t uniform_density = 0.0;
   mfem::Coefficient* bulk_modulus = nullptr;
+  mfem::Coefficient* stratification = nullptr;
 };
 
 /** @brief The gauge penalty's form: Deviatoric (a fluid: dev-dev

@@ -17,6 +17,10 @@ a planetmodel `Model` in SI:
   linear_solid     one solid layer, density and velocities linear in radius
   stratified_core  a fluid core whose density falls with radius, under a
                    mantle, every parameter linear in radius
+  bullen_core_weak, bullen_core_strong
+                   aw_core with the core's bulk modulus raised so that its
+                   Bullen parameter is 1.02 or 1.5 throughout: a stably
+                   stratified core of uniform, finite stratification
   stable_core      a stably stratified fluid core (N^2 > 0 throughout:
                    density falling faster than adiabatic, large kappa)
                    under fluid_core's mantle; the core with a clean
@@ -274,6 +278,42 @@ def stable_mantle() -> Model:
         interface_names=["cmb", "surface"], name="stable_mantle")
 
 
+def bullen_core(excess: float, name: str) -> Model:
+    """aw_core with the bulk modulus of its core raised by the factor
+    1 + excess: the same density, gravity and mantle, and a core whose
+    Bullen parameter -kappa rho' / (rho^2 g) is 1 + excess throughout,
+    stably stratified for excess > 0 and aw_core itself at excess = 0.
+    The stratification is uniform and stays finite at the centre, where
+    the density is smooth, so the family isolates the strength of the
+    stratification: Earth's outer core departs from neutrality by a few
+    hundredths."""
+    base = aw_core()
+    core_vp = base.layers[0].fields["vp"]
+    factor = math.sqrt(1.0 + excess)
+
+    def vp_core(r):
+        return factor * np.asarray(core_vp(r), dtype=float)
+
+    rho0, alpha = AW_RHO0, AW_ALPHA
+    return _CallableIsotropicElastic(
+        [0.0, CMB, RADIUS],
+        rho=[(rho0, 0.0, -rho0 * alpha * (RADIUS / CMB) ** 2), 4500.0],
+        vp=[vp_core, 11000.0], vs=[0.0, 6000.0], scale=RADIUS,
+        layer_names=["core", "mantle"], interface_names=["cmb", "surface"],
+        name=name)
+
+
+def bullen_core_weak() -> Model:
+    """bullen_core at an excess of 0.02, the size of Earth's outer core's
+    departure from neutrality."""
+    return bullen_core(0.02, "bullen_core_weak")
+
+
+def bullen_core_strong() -> Model:
+    """bullen_core at an excess of 0.5."""
+    return bullen_core(0.5, "bullen_core_strong")
+
+
 #: aw_mantle: the mantle density, linear in r (stratified_core's), under
 #: which kappa follows from neutrality with the body's own gravity.
 AW_MANTLE_RHO = (7000.0, -3000.0)
@@ -388,6 +428,19 @@ SHIFTABLE: dict[str, str] = {
     "two_solid": "discontinuity",
 }
 
+#: Models whose fluid regions have a uniform stratification, with the
+#: excess of their Bullen parameter over one. A case does not carry the
+#: stratification of its model, and on these models it cannot be read
+#: off the case's fields (a neutral or weakly stratified region is within
+#: their discretisation error of an unstable one), so the drivers are
+#: given it (-bullen-excess).
+BULLEN_EXCESS: dict[str, float] = {
+    "aw_core": 0.0,
+    "aw_mantle": 0.0,
+    "bullen_core_weak": 0.02,
+    "bullen_core_strong": 0.5,
+}
+
 MODELS: dict[str, Callable[[], Model]] = {
     "homogeneous": homogeneous,
     "homogeneous_lithosphere": homogeneous_lithosphere,
@@ -402,6 +455,8 @@ MODELS: dict[str, Callable[[], Model]] = {
     "stable_core_strong": stable_core_strong,
     "stable_mantle": stable_mantle,
     "aw_mantle": aw_mantle,
+    "bullen_core_weak": bullen_core_weak,
+    "bullen_core_strong": bullen_core_strong,
     "earth_like": earth_like,
     "prem_4": prem_4,
     "prem_6": prem_6,

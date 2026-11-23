@@ -24,6 +24,7 @@
 #include "mfem.hpp"
 #include "AdGIA/bordered.hpp"
 #include "AdGIA/level_border.hpp"
+#include "AdGIA/profile_border.hpp"
 #include "AdGIA/coefficient.hpp"
 #include "AdGIA/poisson.hpp"
 #include "AdGIA/quasi_static_problem.hpp"
@@ -485,6 +486,8 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
                 "SetPicardBorder: incompatible with SetMonolithicBorder.");
     MFEM_VERIFY(!on || !level_enabled_,
                 "SetPicardBorder: incompatible with SetLevelBorder.");
+    MFEM_VERIFY(!on || !profile_enabled_,
+                "SetPicardBorder: incompatible with SetProfileBorder.");
     MFEM_VERIFY(tol > 0.0 && max_passes > 1,
                 "SetPicardBorder: invalid tolerance or pass cap.");
     picard_border_ = on;
@@ -620,6 +623,52 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
 
   /** @brief Whether SetLevelBorder() is on. */
   bool HasLevelBorder() const { return level_enabled_; }
+
+  /**
+   * @brief Close the eliminated fluid regions by the profile border,
+   * the dual form of the closure that SetLevelBorder() solves in its
+   * primal form (profile_border.hpp; doc/methods/profile_border.md).
+   *
+   * Per region the unknown is the perturbation of the fluid's pressure
+   * profile, a function of the level of @f$\Phi_0@f$: one number on a
+   * neutral layer, a polynomial on a stratified one. It couples to the
+   * potential through a volume integral over the fluid and to the solid
+   * through an integral over the region's wall, both by quadrature with
+   * the profile evaluated at the level of each point. The hypsometry of
+   * the level surfaces is not used and the walls are not classified, so
+   * a wall need not be a level surface. The bordered system is
+   * symmetric and runs on the shared elimination engine or the
+   * monolithic route (SetMonolithicBorder()).
+   *
+   * Requirements: every region under Treatment::Full with a
+   * @p bulk_modulus, and stably or neutrally stratified (an unstable
+   * region is refused unless ProfileBorderOptions::unstable_as_neutral).
+   * Incompatible with SetLevelBorder() and SetPicardBorder(). Composes
+   * with SetRotation() and with a tidal potential, which enter the
+   * border's rows as the potential does. Call once, after construction
+   * and before the first Solve().
+   *
+   * @param options The polynomial degree, the survey bins and the
+   * neutral tolerance.
+   * @param exact_levels Read the levels from the background potential
+   * coefficient (the constructor's background_potential or
+   * SetBackgroundPotential()) in place of its projection.
+   */
+  void SetProfileBorder(const ProfileBorderOptions& options = {},
+                        bool exact_levels = false);
+
+  /** @brief Whether SetProfileBorder() is on. */
+  bool HasProfileBorder() const { return profile_enabled_; }
+
+  /** @brief The number of fluid regions carrying a profile border, in
+   * the order of the FluidRegion list. */
+  int NumProfileBorderRegions() const {
+    return profile_enabled_ ? static_cast<int>(profile_.size()) : 0;
+  }
+
+  /** @brief A region's profile border (layers, dense block, columns
+   * and, after a solve, its unknowns), read-only. */
+  const ProfileBorder& ProfileBorderData(int region) const;
 
   /** @brief The border unknowns of region @p region after the last
    * Solve(): the node levels @p c, the flux @p U (per node; zero at a
@@ -1181,6 +1230,15 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   std::vector<mfem::Coefficient*> fluid_rho_prime_;  ///< per region
   std::vector<std::unique_ptr<mfem::Coefficient>> level_coefs_;
   void BuildLevelBorders();
+
+  // ---- the profile border (SetProfileBorder) ----
+  // ProfileBorder and its builder live in profile_border.hpp.
+  bool profile_enabled_ = false;
+  std::vector<ProfileBorder> profile_;
+  /// The border's centrifugal cross-block per region: the potential
+  /// columns against the psi interpolants, cached with the rotation
+  /// columns.
+  std::vector<mfem::DenseMatrix> rot_profile_;
 
   // ---- KKT gauge (EnableGaugeKKT): the doubled saddle solver ----
   bool gauge_kkt_ = false;

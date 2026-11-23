@@ -79,6 +79,7 @@ counts compared in `timing.png` and in the summary:
 |---|---|
 | `dahlen` | Eulerian, fluid eliminated (`doc/methods/self_gravitation.md`); `--cmb` picks its fluid-interface treatment |
 | `dahlen` + `-level-border <n>` (love_benchmark directly) | the same with the level border of `doc/theory/dahlen_closure.tex`: the degree-0 hole closed on an n-node grid in Phi_0 per fluid region; 16 is right for h 0.3 to 0.2 |
+| `dahlen` + `-profile-border <d>` (`run --profile-border <d>`) | the same closure in its dual form (`doc/methods/profile_border.md`): the perturbation of the fluid's pressure profile, one number on a neutral layer and a polynomial of degree d on a stratified one. On the models of `models.BULLEN_EXCESS` the run script declares the stratification (`-bullen-excess`), which a case does not carry |
 | `referential` + `-level-border <n>` (love_benchmark directly) | the referential closure: the fluid eliminated through the potential glue with the wall seam and closed by the level border (identity mapping only; no tidal leg). On `fluid_core` h 0.2/o2: h'_0 0.47%, h'_1 0.06% against pyslfp; h'_2 is order-limited by the wall kernels' facet geometry (0.94% at o2, 0.007% at o3) |
 | `gauged` | Eulerian, the fluid in the displacement space with a gauge shear penalty (`doc/methods/gauged_fluid.md`) |
 | `referential` | the welded gauged referential formulation (`doc/theory/gravitating_elasticity.md`): bare moduli from the exported hydrostatic pressure `p0`, equilibrium stress `-p0 I` |
@@ -147,6 +148,7 @@ not change and the gain is solver-side only.
 | `two_solid` | two uniform solids, every parameter jumping between them |
 | `fluid_core` | a uniform fluid core under a uniform solid mantle |
 | `aw_core` | `fluid_core`'s neutrally stratified twin: a closed-form Adams–Williamson core (N² = 0 exactly), mass-matched under the same mantle — the clean cross-method comparison model, shiftable with every member exactly neutral |
+| `bullen_core_weak`, `bullen_core_strong` | `aw_core` with the core's bulk modulus raised by 2 % and by 50 %: the same density, gravity and mantle, and a stably stratified core whose Bullen parameter is 1.02 or 1.5 throughout, finite at the centre |
 | `inner_core` | a solid inner core, a fluid outer core and a mantle, each uniform |
 | `linear_solid` | one solid, density and velocities linear in radius |
 | `stratified_core` | a fluid core whose density falls with radius, under a mantle, every parameter linear in radius |

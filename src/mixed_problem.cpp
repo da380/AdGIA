@@ -1993,7 +1993,8 @@ LinearQuasiStaticMixedSelfGravitatingProblem::KKTResiduals() const {
 
 bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveLinearSystem(
     const Vector& B_in, Vector& X) {
-  if (!sea_enabled_ && !rot_enabled_ && !level_enabled_) {
+  if (!sea_enabled_ && !rot_enabled_ && !level_enabled_ &&
+      !profile_enabled_) {
     return SolveUnbordered(B_in, X);
   }
   // The bordered solve:
@@ -2013,6 +2014,9 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveLinearSystem(
   int nl = 0;
   for (const auto& L : level_) {
     nl += L.size;
+  }
+  for (const auto& P : profile_) {
+    nl += P.size;
   }
   const int nb = nb0 + nl;
 
@@ -2075,6 +2079,19 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveLinearSystem(
           }
         }
         rot_level_nu_.push_back(M);
+      }
+      // The profile border's cross-block: the centrifugal potential
+      // enters the border's rows as the potential does, through the
+      // same columns.
+      rot_profile_.clear();
+      for (const auto& P : profile_) {
+        DenseMatrix M(P.size, nw);
+        for (int i = 0; i < P.size; i++) {
+          for (int k = 0; k < nw; k++) {
+            M(i, k) = Dot(P.phi_cols[i], Psi[k]);
+          }
+        }
+        rot_profile_.push_back(M);
       }
       rot_cache_version_ = OperatorVersion();
     }
@@ -2154,6 +2171,37 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveLinearSystem(
       }
       off += L.size;
       lr++;
+    }
+  }
+
+  // The profile borders (SetProfileBorder): every unknown couples to
+  // the potential and to the solid. An applied potential enters the
+  // rows with the potential unknown, so it is moved to the right.
+  if (profile_enabled_) {
+    int off = nb0;
+    int pr = 0;
+    for (const auto& P : profile_) {
+      for (int j = 0; j < P.size; j++) {
+        Bu[off + j] = P.u_cols[j];
+        Bphi[off + j] = P.phi_cols[j];
+        for (int i = 0; i < P.size; i++) {
+          Db(off + i, off + j) = P.Db(i, j);
+        }
+        if (psi_) {
+          r[off + j] -= Dot(P.phi_cols[j], Psi_true_);
+        }
+      }
+      if (rot_enabled_) {
+        const DenseMatrix& M = rot_profile_[pr];
+        for (int k = 0; k < nw; k++) {
+          for (int i = 0; i < P.size; i++) {
+            Db(off + i, ns + k) = M(i, k);
+            Db(ns + k, off + i) = M(i, k);
+          }
+        }
+      }
+      off += P.size;
+      pr++;
     }
   }
 
@@ -2250,6 +2298,16 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveLinearSystem(
         L.y[j] = y[off + j];
       }
       off += L.size;
+    }
+  }
+  if (profile_enabled_) {
+    int off = nb0;
+    for (auto& P : profile_) {
+      P.y.SetSize(P.size);
+      for (int j = 0; j < P.size; j++) {
+        P.y[j] = y[off + j];
+      }
+      off += P.size;
     }
   }
   if (rot_enabled_) {
@@ -2797,6 +2855,16 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveBorderedMonolithic(
       off += L.size;
     }
   }
+  if (profile_enabled_) {
+    int off = ns + (rot_enabled_ ? static_cast<int>(rot_psi_.size()) : 0);
+    for (auto& P : profile_) {
+      P.y.SetSize(P.size);
+      for (int j = 0; j < P.size; j++) {
+        P.y[j] = y[off + j];
+      }
+      off += P.size;
+    }
+  }
   if (rot_enabled_) {
     static_cast<CentrifugalPotential*>(rot_psi_total_.get())
         ->SetAmplitudes(omega_);
@@ -2943,6 +3011,8 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetLevelBorder(
   MFEM_VERIFY(!picard_border_,
               "SetLevelBorder: incompatible with the Picard border route.");
 
+  MFEM_VERIFY(!profile_enabled_,
+              "SetLevelBorder: incompatible with SetProfileBorder.");
   MFEM_VERIFY(!gauge_kkt_, "SetLevelBorder: incompatible with the KKT gauge.");
   MFEM_VERIFY(fluid_rho_prime_.size() == fluids_.size(),
               "SetLevelBorder: the fluid mass term is not set up.");
@@ -2977,6 +3047,52 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::BuildLevelBorders() {
   ctx.n = level_n_;
   level_ = AdGIA::BuildLevelBorders(ctx, fluids_, fluid_markers_,
                                     fluid_rho_prime_, level_coefs_);
+}
+
+// The profile border (SetProfileBorder): the dual form of the closure.
+void LinearQuasiStaticMixedSelfGravitatingProblem::SetProfileBorder(
+    const ProfileBorderOptions& options, bool exact_levels) {
+  MFEM_VERIFY(!exact_levels || phi0_coef_,
+              "SetProfileBorder: exact levels need the background potential "
+              "as a coefficient (the constructor's background_potential or "
+              "SetBackgroundPotential()); this problem solved for it.");
+  MFEM_VERIFY(!fluids_.empty(), "SetProfileBorder: no fluid regions.");
+  for (const auto& f : fluids_) {
+    MFEM_VERIFY(f.treatment == FluidRegion::Treatment::Full,
+                "SetProfileBorder: every region must use Treatment::Full.");
+    MFEM_VERIFY(f.bulk_modulus,
+                "SetProfileBorder: every region needs its bulk_modulus.");
+  }
+  MFEM_VERIFY(!level_enabled_,
+              "SetProfileBorder: incompatible with SetLevelBorder.");
+  MFEM_VERIFY(!picard_border_,
+              "SetProfileBorder: incompatible with the Picard border route.");
+  MFEM_VERIFY(!gauge_kkt_,
+              "SetProfileBorder: incompatible with the KKT gauge.");
+  MFEM_VERIFY(fluid_rho_prime_.size() == fluids_.size(),
+              "SetProfileBorder: the fluid mass term is not set up.");
+  ProfileBorderContext ctx;
+  ctx.fes_u = fes_;
+  ctx.fes_pot = fes_phi_;
+  ctx.pot0 = phi0_.get();
+  ctx.pot0_shadow = phi0_shadow_.get();
+  ctx.pot0_coef = exact_levels ? phi0_coef_ : nullptr;
+  ctx.options = options;
+  profile_ = BuildProfileBorders(ctx, fluids_, fluid_markers_,
+                                 fluid_rho_prime_);
+  profile_enabled_ = true;
+  rot_cache_version_ = -1;  // the centrifugal cross-block is border data
+  if (border_elim_) {
+    border_elim_->InvalidateCache();
+  }
+}
+
+const ProfileBorder& LinearQuasiStaticMixedSelfGravitatingProblem::
+    ProfileBorderData(int region) const {
+  MFEM_VERIFY(profile_enabled_ && region >= 0 &&
+                  region < static_cast<int>(profile_.size()),
+              "ProfileBorderData: no such profile border.");
+  return profile_[region];
 }
 
 real_t LinearQuasiStaticMixedSelfGravitatingProblem::

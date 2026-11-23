@@ -50,6 +50,22 @@ using Problem = LinearQuasiStaticMixedSelfGravitatingProblem;
 // The fields of the model a case holds.
 inline constexpr const char* kFields[] = {"rho", "kappa", "mu"};
 
+/** A scalar function of the values of two coefficients at a point. */
+class FunctionCoefficientFromTwo : public Coefficient {
+ public:
+  FunctionCoefficientFromTwo(Coefficient& a, Coefficient& b,
+                             std::function<real_t(real_t, real_t)> f)
+      : a_(&a), b_(&b), f_(std::move(f)) {}
+  real_t Eval(ElementTransformation& T, const IntegrationPoint& ip) override {
+    return f_(a_->Eval(T, ip), b_->Eval(T, ip));
+  }
+
+ private:
+  Coefficient* a_;
+  Coefficient* b_;
+  std::function<real_t(real_t, real_t)> f_;
+};
+
 // Where the parts of a case for a number of ranks are (partition_case.cpp).
 inline std::string PartsDirectory(const planetmodel::MeshManifest& manifest,
                                   int ranks) {
@@ -250,6 +266,10 @@ struct CaseOptions {
   bool level_monolithic = false;  // dahlen: solve the bordered system
                                   // monolithically (MINRES) instead of
                                   // by the elimination (3-D only)
+  int profile_border = 0;         // dahlen: profile-border degree (0: off)
+  bool profile_unstable_neutral = false;  // treat unstable levels as neutral
+  real_t profile_neutral_tol = 1e-4;      // the border's neutral tolerance
+  real_t bullen_excess = -1.0;    // dahlen: declared stratification (< 0: off)
   // dahlen: the pressure split on the gravitating solve (-up)
   bool psplit = false;
   real_t psplit_theta = 1.0;
@@ -373,6 +393,31 @@ struct CaseOptions {
                    "this many nodes in Phi_0 per fluid region (0: off). "
                    "Turns degree 0 into the compressible fluid problem and "
                    "leaves the sphere's l >= 1 untouched.");
+    args.AddOption(&profile_border, "-profile-border", "--profile-border",
+                   "Method dahlen: close the reduction's free function with "
+                   "the profile border, the dual form of the closure, with "
+                   "polynomials of this degree in Phi_0 on each stratified "
+                   "layer of a fluid region (0: off). A neutral layer "
+                   "carries one number whatever the degree.");
+    args.AddOption(&profile_unstable_neutral, "-profile-unstable-neutral",
+                   "--profile-unstable-neutral", "-no-profile-unstable-neutral",
+                   "--no-profile-unstable-neutral",
+                   "With -profile-border: treat unstably stratified levels "
+                   "as neutral instead of refusing them.");
+    args.AddOption(&profile_neutral_tol, "-profile-neutral-tol",
+                   "--profile-neutral-tol",
+                   "With -profile-border: levels whose Bullen parameter is "
+                   "within this of one are neutral. The stratification is "
+                   "read off the case's fields, so on a neutral model it "
+                   "should exceed their discretisation error.");
+    args.AddOption(&bullen_excess, "-bullen-excess", "--bullen-excess",
+                   "Method dahlen, full CMB treatment: declare the "
+                   "stratification of every fluid region, the excess of "
+                   "its Bullen parameter over one, uniform (0: neutral). "
+                   "The fluid's density gradient is then "
+                   "-(1 + excess) rho^2 / kappa from the case's fields "
+                   "in place of a numerical derivative, and the profile "
+                   "border reads the excess as declared. Negative: off.");
     args.AddOption(&psplit, "-up", "--pressure-split", "-no-up",
                    "--no-pressure-split",
                    "Dahlen: solve the gravitating system with the pressure "
@@ -573,6 +618,12 @@ class Case {
                 "not built).");
     MFEM_VERIFY(!options.level_monolithic || method == "dahlen",
                 "-level-mono is the mixed class's route (-method dahlen).");
+    MFEM_VERIFY(options.profile_border == 0 || method == "dahlen",
+                "-profile-border is built on the mixed class "
+                "(-method dahlen).");
+    MFEM_VERIFY(options.profile_border == 0 || options.level_border == 0,
+                "-profile-border and -level-border are two forms of one "
+                "closure; choose one.");
     MFEM_VERIFY(!ref_eliminated || options.gauge_prec_eps == 0.0,
                 "-gpe is a gauge-treatment knob; the eliminated fluid "
                 "has no gauge penalty.");
@@ -763,6 +814,24 @@ class Case {
         if (options.no_fluid_gradient && cmb == "full") {
           f.density_gradient = &zero_;
         }
+        if (options.bullen_excess >= 0.0 && method == "dahlen" &&
+            cmb == "full" && !options.no_fluid_gradient) {
+          // The declared stratification: d rho / d Phi_0 follows from
+          // the density, the bulk modulus and the excess, with no
+          // derivative taken on the mesh.
+          if (!bullen_excess_c_) {
+            bullen_excess_c_ =
+                std::make_unique<ConstantCoefficient>(options.bullen_excess);
+            const real_t factor = -(1.0 + options.bullen_excess);
+            bullen_gradient_c_ = std::make_unique<FunctionCoefficientFromTwo>(
+                *rho_parent_c_, *kappa_parent_c_,
+                [factor](real_t rho_v, real_t kappa_v) {
+                  return factor * rho_v * rho_v / kappa_v;
+                });
+          }
+          f.stratification = bullen_excess_c_.get();
+          f.density_gradient = bullen_gradient_c_.get();
+        }
         if (cmb == "nomass") {
           f.treatment = FluidRegion::Treatment::NoMass;
         } else if (cmb == "uniform" || cmb == "winkler") {
@@ -812,6 +881,23 @@ class Case {
                     << options.level_border << " nodes per region"
                     << (options.level_monolithic ? ", monolithic route"
                                                  : "")
+                    << ").\n";
+        }
+      }
+      if (options.profile_border > 0 && method == "dahlen" &&
+          !fluids.empty()) {
+        ProfileBorderOptions profile;
+        profile.degree = options.profile_border;
+        profile.unstable_as_neutral = options.profile_unstable_neutral;
+        profile.neutral_tol = options.profile_neutral_tol;
+        problem->SetProfileBorder(profile);
+        if (options.level_monolithic) {
+          problem->SetMonolithicBorder();
+        }
+        if (root) {
+          std::cout << "Dahlen fluid closed by the profile border (degree "
+                    << options.profile_border
+                    << (options.level_monolithic ? ", monolithic route" : "")
                     << ").\n";
         }
       }
@@ -1328,6 +1414,10 @@ class Case {
                           ? std::string(",\n  \"level_monolithic\": ") +
                                 (options_.level_monolithic ? "true" : "false")
                           : std::string())
+               : std::string())
+       << (options_.profile_border > 0
+               ? ",\n  \"profile_border\": " +
+                     std::to_string(options_.profile_border)
                : std::string())
        << (options_.map_amplitude != 0.0
                ? ",\n  \"map_amplitude\": " + Num(options_.map_amplitude) +
@@ -1908,6 +1998,7 @@ class Case {
  private:
   std::vector<std::unique_ptr<ParFiniteElementSpace>> spaces_;
   std::unique_ptr<ParGridFunction> rho_solid_, kappa_solid_, mu_solid_;
+  std::unique_ptr<Coefficient> bullen_excess_c_, bullen_gradient_c_;
   std::unique_ptr<Coefficient> rho_c_, kappa_c_, mu_c_, rho_parent_c_,
       kappa_parent_c_, model_kappa_;
   std::optional<planetmodel::ModelFile> model_file_;

@@ -106,6 +106,9 @@ class Run:
     #: per fluid region, 0 for the naked reduction
     level_border: int = 0
     level_monolithic: bool = False
+    #: the profile-border closure of the fluid (dahlen): the polynomial
+    #: degree, 0 when the fluid is not closed by it
+    profile_border: int = 0
     map_amplitude: float = 0.0
     schur: bool = False
     combined: bool = False
@@ -125,6 +128,8 @@ class Run:
             name += f", level border {self.level_border}"
             if self.level_monolithic:
                 name += " (monolithic)"
+        if self.profile_border:
+            name += f", profile border {self.profile_border}"
         if self.map_amplitude:
             name += f", map {self.map_amplitude:g}"
         if self.schur:
@@ -155,6 +160,7 @@ def read_run(path: Path) -> Run:
     cmb = r.get("cmb", "full")
     level_border = int(r.get("level_border", 0))
     level_monolithic = bool(r.get("level_monolithic", False))
+    profile_border = int(r.get("profile_border", 0))
     schur = r.get("solver") == "schur_cg"
     map_amplitude = r.get("map_amplitude", 0.0)
     values: dict[str, dict[int, float]] = {key: {} for key, *_ in QUANTITIES}
@@ -202,6 +208,9 @@ def read_run(path: Path) -> Run:
         tag += f"_lb{level_border}" + ("_mono" if level_monolithic else "")
         label += (f" (lb {level_border}" +
                   (", mono)" if level_monolithic else ")"))
+    if profile_border:
+        tag += f"_pb{profile_border}"
+        label += f" (pb {profile_border})"
     if schur:
         tag += "_schur"
         label += " (schur)"
@@ -218,6 +227,7 @@ def read_run(path: Path) -> Run:
                solve_seconds=solve_seconds, iterations=iterations,
                cmb=cmb, level_border=level_border,
                level_monolithic=level_monolithic,
+               profile_border=profile_border,
                map_amplitude=map_amplitude, schur=schur,
                combined=combined)
 
@@ -723,7 +733,9 @@ def plot_field_maps(field: dict, title: str, out: Path) -> None:
         "" if field.get("cmb", "full") == "full"
         else f", cmb {field['cmb']}") + (
         f", level border {int(field['level_border'])}"
-        if int(field.get("level_border", 0)) > 0 else "")
+        if int(field.get("level_border", 0)) > 0 else "") + (
+        f", profile border {int(field['profile_border'])}"
+        if int(field.get("profile_border", 0)) > 0 else "")
     fig.suptitle(
         f"{title} ({variant}): response on the surface to a "
         f"cap of radius "
@@ -764,6 +776,8 @@ def field_key(case: str, field: dict) -> str:
     if int(field.get("level_border", 0)) > 0:
         key += f"_lb{int(field['level_border'])}" + (
             "_mono" if field.get("level_monolithic") else "")
+    if int(field.get("profile_border", 0)) > 0:
+        key += f"_pb{int(field['profile_border'])}"
     if field.get("solver") == "schur_cg":
         key += "_schur"
     return key
