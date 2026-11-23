@@ -770,7 +770,7 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
    * by @p shift_factor (default 100) times the free-body mass-shift scale
    * (MassShiftedMatrix). Off: on the rheology's stiffness alone.
    *
-   * Measured (planning note preconditioning-2026-11-06 §9; static solves,
+   * Measured (static solves,
    * stratified Earth model, mantle shear scaled by f = 1, 0.1, 0.01 into
    * the time-stepping regime): the full operator needs 3.9x fewer MINRES
    * iterations for the referential class at f = 0.01 (1028 -> 265) and
@@ -797,7 +797,7 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
    * classes' block solves (no SPD requirement on the preconditioner; the
    * tolerance is rel_tol on the true residual instead of MINRES's
    * preconditioner norm). Default: on for the referential class, off for
-   * the mixed one (planning note preconditioning-2026-11-06 §9: on a
+   * the mixed one (measured: on a
    * stratified model with mantle shear scaled into the time-stepping
    * regime, FGMRES cut the referential iterations by 15-20%, e.g. 265 ->
    * 227 at mu x 0.01; note the two stop on different norms, MINRES on the
@@ -1450,7 +1450,7 @@ class LinearQuasiStaticClampedProblem : public LinearQuasiStaticProblemBase {
   void UpdateBoundaryValues(mfem::real_t t) override;
 
   // The base solve path with essential conditions and no extra solver
-  // machinery: the pressure-split prototype's home (see solvers.md).
+  // machinery: the pressure split's home (doc/methods/pressure_split.tex).
   bool SupportsPressureSplit() const override { return true; }
 
  private:

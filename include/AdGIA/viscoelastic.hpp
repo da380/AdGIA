@@ -282,8 +282,7 @@ class ViscoelasticOperator : public mfem::TimeDependentOperator {
    * what makes the elastic solves hard. A floor bounds that contrast at a
    * controlled change of the model: measured on a free ball with an
    * enclosed soft core, a contrast floor of 1e-3 moves the degree-2
-   * response by 0.2 %, 1e-2 by 2 % (planning note preconditioning-
-   * 2026-11-06). Choose tau_min against the largest step of the run;
+   * response by 0.2 %, 1e-2 by 2 %. Choose tau_min against the largest step of the run;
    * MinRelaxationTime() reports the floored value.
    */
   void SetRelaxationTimeFloor(mfem::real_t tau_min);

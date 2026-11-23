@@ -20,8 +20,6 @@ panel), regenerated at will from the raw results:
   ladder.png      h-refinement at orders 2 and 3 (fluid_core)
   models.png      every model of the sweep at orders 2 and 3: the
                   typical and the worst error of its Love numbers
-  viscoelastic.png  Maxwell Love-number histories in time, finite
-                  elements against the Laplace-domain reference
   fieldmap.png    the response to an off-axis cap load on the surface:
                   reference, finite elements, difference
 
@@ -32,7 +30,7 @@ panel), regenerated at will from the raw results:
         --ladder runs/ladder/fluid_core --combined
 
 Every input has a flag (--methods-case, --cmb-case, --identity-logs,
---aspherical, --derivative-case, --ladder, --models, --viscoelastic,
+--aspherical, --derivative-case, --ladder, --models,
 --field; --combined selects combined Love results for methods.png); the
 defaults point at the build-tree runs this repository's campaigns produce
 (run from <build>/benchmarks). A figure whose inputs are missing is
@@ -480,57 +478,6 @@ def models_figure(tree: Path, out: Path, h: float = 0.2) -> None:
     save(fig, out / "models.png")
 
 
-def viscoelastic_figure(series: Path, out: Path) -> None:
-    """Maxwell load Love numbers h'_l(t) in time, finite elements
-    (markers) on the Laplace-domain reference (lines): an elastic
-    lithosphere over a Maxwell interior, and a Maxwell mantle over a
-    fluid core."""
-    cases = [("fe_hl_series.json", "laplace_hl_series.json",
-              "elastic lithosphere, Maxwell interior"),
-             ("fe_fluid_core_series.json", "laplace_fluid_core_series.json",
-              "Maxwell mantle, fluid core")]
-    cases = [c for c in cases if (series / c[0]).exists()
-             and (series / c[1]).exists()]
-    if not cases:
-        print(f"no viscoelastic series under {series}: skipped")
-        return
-    palette = ["#2a78d6", "#eb6834", "#1baf7a"]
-    fig, axes = plt.subplots(1, len(cases), figsize=(6.2 * len(cases), 4.8),
-                             squeeze=False)
-    for ax, (fe_name, ref_name, title) in zip(axes[0], cases):
-        fe = json.loads((series / fe_name).read_text())
-        ref = json.loads((series / ref_name).read_text())
-        for k, l in enumerate(d for d in fe["degree"] if d in ref["degree"]):
-            c = palette[k % len(palette)]
-            r, d = ref["degree"].index(l), fe["degree"].index(l)
-            ax.plot([0.0] + [h["time"] for h in ref["histories"]],
-                    [ref["elastic"]["h_load"][r]]
-                    + [h["h_load"][r] for h in ref["histories"]],
-                    color=c, label=f"$l$ = {l}")
-            ft = [0.0] + [h["time"] for h in fe["histories"]]
-            fv = [fe["elastic"]["h_load"][d]] + [h["h_load"][d]
-                                                 for h in fe["histories"]]
-            ax.plot(ft[::2], fv[::2], "o", color=c, markerfacecolor="white",
-                    markeredgewidth=1.6, markersize=6)
-            relaxed = (ref.get("relaxed") or {}).get("h_load")
-            if relaxed and relaxed[r] is not None:
-                ax.axhline(relaxed[r], color=c, linewidth=1.0, linestyle=":")
-        ax.set_title(title, loc="left")
-        ax.set_xlabel("time after the load / Maxwell time")
-        ax.set_xlim(left=0.0)
-    axes[0][0].set_ylabel("load Love number $h'_l(t)$")
-    handles, labels = axes[0][0].get_legend_handles_labels()
-    handles += [plt.Line2D([], [], color=INK),
-                plt.Line2D([], [], ls="none", marker="o", color=INK,
-                           markerfacecolor="white", markeredgewidth=1.6),
-                plt.Line2D([], [], color=INK, linestyle=":", linewidth=1.0)]
-    labels += ["reference (Laplace)", "finite elements",
-               "static-fluid limit"]
-    fig.legend(handles, labels, loc="center left", bbox_to_anchor=(1.0, 0.5),
-               frameon=False)
-    save(fig, out / "viscoelastic.png")
-
-
 def fieldmap_figure(field_path: Path, out: Path) -> None:
     """The radial displacement on the surface under an off-axis cap
     load: reference, finite elements, and their difference on its own
@@ -576,8 +523,8 @@ def main() -> None:
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     # Defaults read the campaign tree (runs_campaign, campaign.py) and
-    # the hand-made trees beside it (talk_data, viscoelastic_series,
-    # runs_campaign/ladder), relative to the working directory.
+    # the hand-made trees beside it (talk_data, runs_campaign/ladder),
+    # relative to the working directory.
     base = Path("runs_campaign/love_numbers")
     p.add_argument("--out", type=Path, default=Path("talk"))
     p.add_argument("--methods-case", type=Path,
@@ -596,8 +543,6 @@ def main() -> None:
                    help="the UNCAPPED ladder (--angular 1.0: every rung "
                         "refines the CMB)")
     p.add_argument("--models", type=Path, default=base)
-    p.add_argument("--viscoelastic", type=Path,
-                   default=Path("viscoelastic_series"))
     p.add_argument("--field", type=Path,
                    default=Path("runs_campaign/love_numbers/fluid_core/h0.3/"
                                 "field_o2.json"))
@@ -619,7 +564,6 @@ def main() -> None:
     aspherical_figure(args.aspherical, args.out)
     ladder_figure(args.ladder, args.out)
     models_figure(args.models, args.out)
-    viscoelastic_figure(args.viscoelastic, args.out)
     fieldmap_figure(args.field, args.out)
 
 

@@ -105,7 +105,7 @@ and the MPI launcher of that build:
 | `disc/` | `check`, `explore` |
 | `viscoelastic/box/` | `cases`, `reference`, `compare`, `study` |
 | `viscoelastic/sphere/` | `meshes`, `cases`, `reference`, `study` |
-| `viscoelastic/love/` | `laplace_reference`, `compare`, `make_case` |
+| `viscoelastic/love/` | `make_case`, `from_results` |
 | `viscoelastic/stepping/` | `survey` |
 | `sea_level/` | `run`, `make_case` |
 
@@ -162,7 +162,6 @@ families:
 <out>/perturbation/<model>/         shifted profiles, references, runs, figures
 <out>/scaling/                      the weak-scaling rungs
 <out>/scaling_summary.md            their timings
-<out>/viscoelastic/<model>/         (opt-in) case, Laplace reference, FE histories, errors, figures
 <out>/viscoelastic_box/<study>/     (opt-in) the box studies, summaries and figures
 <out>/viscoelastic_sphere/<study>/  (opt-in) the sphere studies
 <out>/campaign_log.md               every command and stage outcome (appended)

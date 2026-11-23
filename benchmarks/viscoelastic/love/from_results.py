@@ -1,16 +1,13 @@
 """A love-family JSON as a V1 exchange file.
 
-`viscoelastic_love` results and `laplace_reference.py` outputs share one
-schema; this turns either into the cross-code exchange format of the V1
-tier: columns t (in units of the shortest Maxwell time) and, per degree,
-hp<l> lp<l> kp<l> — the conventional load numbers (`--channel tide`
-writes the tidal triple instead, named hT<l> lT<l> kT<l>).  Times the
-reference marks invalid (beyond its Gaver–Stehfest horizon) are NaN.
-The numbers are copied, not recomputed.
+This turns a `viscoelastic_love` results file into the cross-code
+exchange format of the V1 tier: columns t (in units of the shortest
+Maxwell time) and, per degree, hp<l> lp<l> kp<l> — the conventional load
+numbers (`--channel tide` writes the tidal triple instead, named hT<l>
+lT<l> kT<l>).  A time marked invalid is NaN.  The numbers are copied,
+not recomputed.
 
     ./from_results results.json --out runs/v1_homogeneous_adgia.txt
-    ./from_results ../../viscoelastic/love/references/laplace_homogeneous_tau1.json \
-        --out runs/v1_homogeneous_laplace.txt
 """
 from __future__ import annotations
 
@@ -66,7 +63,7 @@ def main(argv: list[str] | None = None) -> None:
     columns = ["t"]
     for l in degrees:
         columns += [f"{p}{l}" for p in prefix]
-    code = "adgia" if "scheme" in d or "cost" in d else "laplace"
+    code = "adgia"
     comments = [
         f"V1 Maxwell {args.channel} Love-number histories from {code} "
         f"({args.results.name})",

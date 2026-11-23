@@ -2199,8 +2199,8 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetFluidPotentialGlue(
   std::unique_ptr<SparseMatrix> Xc(Add(1.0, C_F, -1.0, *StAF));
   ext_C_total_.reset(Add(*ext_C_total_, *Xc));
 
-  // The gravity half of the wall seam (hybrid_wall_seam.md, "Assembly
-  // map"): W3 the symmetrised gravity kernel +1/2(G_A + G_A^T) into the
+  // The gravity half of the wall seam (doc/theory/dahlen_closure.tex,
+  // "The wall seam"): W3 the symmetrised gravity kernel +1/2(G_A + G_A^T) into the
   // uu fold, W4 the scalar gravity kernel B_s into the coupling and,
   // conjugated through the glue's wall rows, -1/2(B_s S + S^T B_s^T)
   // into the uu fold. The seam uses only the wall trace of S, so it is

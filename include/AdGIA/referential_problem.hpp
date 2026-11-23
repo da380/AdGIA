@@ -395,8 +395,9 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
    * the background potential; their perturbation terms — F1, F2, the
    * fluid halves of F3, the follower load and the level border
    * (doc/theory/dahlen_closure.tex, "The referential solid, and the wall
-   * seam") — are not yet assembled, and Solve() refuses
-   * until they are. Empty for a solid body.
+   * seam") — are assembled by SetFluidPotentialGlue() and
+   * SetLevelBorder(); Solve() refuses a fluid region without the glue.
+   * Empty for a solid body.
    */
   LinearQuasiStaticReferentialSelfGravitatingProblem(
       mfem::FiniteElementSpace* fes_u, mfem::FiniteElementSpace* fes_zeta,
@@ -797,8 +798,8 @@ u@f$ columns CONJUGATED
 
   // eliminated fluid regions (constructor): geometry and background
   // sources; the perturbation terms come through the potential glue
-  // (SetFluidPotentialGlue), the level border is still to come
-  // (doc/theory/dahlen_closure.tex, "Implementation").
+  // (SetFluidPotentialGlue) and the level border (SetLevelBorder;
+  // doc/theory/dahlen_closure.tex, "Implementation").
   std::vector<FluidRegion> fluids_;
   std::list<mfem::Array<int>> fluid_markers_;  ///< parent-attribute markers
 

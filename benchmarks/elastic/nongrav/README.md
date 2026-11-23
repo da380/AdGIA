@@ -14,8 +14,8 @@ The compared quantities are the traction numbers: U(a) and V(a) per
 unit normal and per unit tangential traction, SI (m per Pa), per unit
 coefficient of the fully normalised Y_lm — pyslfp's
 `traction_numbers(..., gravitating=False)`, sl3dpp's
-`ComputeTractionNumbers(material, lmax, false)`, and (to come) AdGIA's
-traction problem analysed on the surface. Self-adjointness gives
+`ComputeTractionNumbers(material, lmax, false)`, and AdGIA's
+traction problem analysed on the surface (`traction_benchmark`). Self-adjointness gives
 h_v = l(l+1) l_u in every code.
 
 ## Producing the exchange files

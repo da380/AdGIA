@@ -192,7 +192,7 @@ void RunCase(int dim, int elementType, const std::string& label) {
           0.10, label + ": mild-contrast agreement");
 
     // Extreme contrast: the primal discretisation locks (kappa/mu_eff ~
-    // 1e6+), so robustness only; iteration counts feed solvers.md.
+    // 1e6+), so robustness only; the iteration counts are printed.
     const std::vector<Coefficient*> beta{&beta_healthy, &beta_weak};
     split->SetRelaxationWeights(beta);
     primal->SetRelaxationWeights(beta);

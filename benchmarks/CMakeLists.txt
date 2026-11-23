@@ -151,8 +151,6 @@ benchmark_launcher(perturbation perturbation plot)
 benchmark_launcher(viscoelastic/stepping viscoelastic/stepping survey)
 
 benchmark_driver(viscoelastic/love viscoelastic_love)
-benchmark_launcher(viscoelastic/love viscoelastic/love laplace_reference)
-benchmark_launcher(viscoelastic/love viscoelastic/love compare)
 benchmark_launcher(common viscoelastic/love make_case)
 # The V1 cross-code flow: the JSON-to-exchange converter; exchange files
 # are compared with elastic/nongrav's `compare` launcher, and

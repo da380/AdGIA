@@ -197,7 +197,7 @@ class DomainVectorGradVectorIntegrator;
  * from the displacement block exposes the first-order gravity term
  * rho (div u)(g.v), which kappa div div bounds in the primal route (for
  * Earth rho g R ~ kappa). The primal route is the production one for
- * gravitating problems (planning note preconditioning-2026-11-06).
+ * gravitating problems.
  */
 class LinearQuasiStaticMixedSelfGravitatingProblem
     : public LinearQuasiStaticProblemBase,
