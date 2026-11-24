@@ -80,6 +80,13 @@ real_t BarotropicDensityGradientCoefficient::Eval(ElementTransformation& T,
   return (gr_ * gp_) / g2;
 }
 
+real_t DeclaredDensityGradientCoefficient::Eval(ElementTransformation& T,
+                                                const IntegrationPoint& ip) {
+  T.SetIntPoint(&ip);
+  const real_t rho = rho_->Eval(T, ip);
+  return -(1.0 + excess_->Eval(T, ip)) * rho * rho / kappa_->Eval(T, ip);
+}
+
 void MatrixDeltaCoefficient::SetTime(real_t t) {
   d_.SetTime(t);
   MatrixCoefficient::SetTime(t);

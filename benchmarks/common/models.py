@@ -21,6 +21,9 @@ a planetmodel `Model` in SI:
                    aw_core with the core's bulk modulus raised so that its
                    Bullen parameter is 1.02 or 1.5 throughout: a stably
                    stratified core of uniform, finite stratification
+  bullen_mantle    stable_mantle with a core of that kind (Bullen parameter
+                   1.02) and of the same mass: stably stratified
+                   throughout, weakly in the core, smooth at the centre
   stable_core      a stably stratified fluid core (N^2 > 0 throughout:
                    density falling faster than adiabatic, large kappa)
                    under fluid_core's mantle; the core with a clean
@@ -287,20 +290,29 @@ def bullen_core(excess: float, name: str) -> Model:
     the density is smooth, so the family isolates the strength of the
     stratification: Earth's outer core departs from neutrality by a few
     hundredths."""
-    base = aw_core()
-    core_vp = base.layers[0].fields["vp"]
-    factor = math.sqrt(1.0 + excess)
-
-    def vp_core(r):
-        return factor * np.asarray(core_vp(r), dtype=float)
-
-    rho0, alpha = AW_RHO0, AW_ALPHA
+    rho_core, vp_core = _bullen_core_fields(AW_RHO0, AW_ALPHA, CMB, excess)
     return _CallableIsotropicElastic(
-        [0.0, CMB, RADIUS],
-        rho=[(rho0, 0.0, -rho0 * alpha * (RADIUS / CMB) ** 2), 4500.0],
+        [0.0, CMB, RADIUS], rho=[rho_core, 4500.0],
         vp=[vp_core, 11000.0], vs=[0.0, 6000.0], scale=RADIUS,
         layer_names=["core", "mantle"], interface_names=["cmb", "surface"],
         name=name)
+
+
+def _bullen_core_fields(rho0: float, alpha: float, cmb: float,
+                        excess: float):
+    """The density (coefficients in r / RADIUS) and the vp (a callable) of
+    a core of density rho0 (1 - alpha (r / cmb)^2) whose Bullen parameter
+    is 1 + excess throughout: aw_core's closed forms, with the neutral
+    bulk modulus multiplied by 1 + excess."""
+    kappa0 = (1.0 + excess) * 2.0 * math.pi * G_SI * rho0 ** 2 * cmb ** 2 \
+        / (3.0 * alpha)
+
+    def vp_core(r):
+        x2 = (np.asarray(r, dtype=float) / cmb) ** 2
+        kappa = kappa0 * (1.0 - alpha * x2) ** 2 * (1.0 - 0.6 * alpha * x2)
+        return np.sqrt(kappa / (rho0 * (1.0 - alpha * x2)))
+
+    return (rho0, 0.0, -rho0 * alpha * (RADIUS / cmb) ** 2), vp_core
 
 
 def bullen_core_weak() -> Model:
@@ -312,6 +324,28 @@ def bullen_core_weak() -> Model:
 def bullen_core_strong() -> Model:
     """bullen_core at an excess of 0.5."""
     return bullen_core(0.5, "bullen_core_strong")
+
+
+def bullen_mantle() -> Model:
+    """stable_mantle with its core replaced by one of Earth-like
+    stratification that is smooth at the centre: density
+    rho0 (1 - alpha (r / cmb)^2) with a Bullen parameter of 1.02
+    throughout, and rho0 chosen so that the core has the mass of
+    stable_mantle's. Gravity in the mantle, and with it the mantle's
+    hydrostatic state and its stratification (rho' 1.23 to 1.35 times the
+    adiabatic gradient), are then stable_mantle's exactly; the body is
+    stably stratified everywhere, weakly in the core as the Earth's is,
+    and nothing is singular at the centre."""
+    # stable_mantle's core: 13000 - 8000 r / RADIUS, of mean density
+    # 13000 - 8000 (3 / 4) CMB / RADIUS.
+    mean = 13000.0 - 6000.0 * CMB / RADIUS
+    rho0 = mean / (1.0 - 0.6 * AW_ALPHA)
+    rho_core, vp_core = _bullen_core_fields(rho0, AW_ALPHA, CMB, 0.02)
+    return _CallableIsotropicElastic(
+        [0.0, CMB, RADIUS], rho=[rho_core, (9000.0, -5500.0)],
+        vp=[vp_core, (15500.0, -6500.0)], vs=[0.0, (8000.0, -3000.0)],
+        scale=RADIUS, layer_names=["core", "mantle"],
+        interface_names=["cmb", "surface"], name="bullen_mantle")
 
 
 #: aw_mantle: the mantle density, linear in r (stratified_core's), under
@@ -439,6 +473,7 @@ BULLEN_EXCESS: dict[str, float] = {
     "aw_mantle": 0.0,
     "bullen_core_weak": 0.02,
     "bullen_core_strong": 0.5,
+    "bullen_mantle": 0.02,
 }
 
 MODELS: dict[str, Callable[[], Model]] = {
@@ -457,6 +492,7 @@ MODELS: dict[str, Callable[[], Model]] = {
     "aw_mantle": aw_mantle,
     "bullen_core_weak": bullen_core_weak,
     "bullen_core_strong": bullen_core_strong,
+    "bullen_mantle": bullen_mantle,
     "earth_like": earth_like,
     "prem_4": prem_4,
     "prem_6": prem_6,

@@ -489,8 +489,9 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::ComputeBackgroundPotential(
 
 void LinearQuasiStaticMixedSelfGravitatingProblem::SetupFluidMass() {
   // M_F = int_{M_F} rho'_F phi chi on the parent's fluid elements, with
-  // rho'_F from the region or, by default, from the element-wise L2
-  // projection of the density and the discrete grad Phi0. Then
+  // rho'_F from the region, from its declared stratification or, by
+  // default, from the element-wise L2 projection of the density and the
+  // discrete grad Phi0. Then
   // A_phiphi = A_lap + M_F and the potential solver is rebuilt on it.
   if (fluids_.empty()) {
     return;
@@ -502,6 +503,14 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetupFluidMass() {
   auto marker = fluid_markers_.begin();
   for (auto& f : fluids_) {
     Coefficient* rho_prime = f.density_gradient;
+    if (!rho_prime && f.stratification && f.bulk_modulus) {
+      // The region declares its stratification: the gradient follows
+      // from it, with no derivative taken on the mesh.
+      auto rp = std::make_unique<DeclaredDensityGradientCoefficient>(
+          *f.density, *f.bulk_modulus, *f.stratification);
+      rho_prime = rp.get();
+      fluid_coefs_.push_back(std::move(rp));
+    }
     if (!rho_prime) {
       if (!l2_fes_) {
         l2_fec_ = std::make_unique<L2_FECollection>(

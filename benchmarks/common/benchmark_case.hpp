@@ -50,22 +50,6 @@ using Problem = LinearQuasiStaticMixedSelfGravitatingProblem;
 // The fields of the model a case holds.
 inline constexpr const char* kFields[] = {"rho", "kappa", "mu"};
 
-/** A scalar function of the values of two coefficients at a point. */
-class FunctionCoefficientFromTwo : public Coefficient {
- public:
-  FunctionCoefficientFromTwo(Coefficient& a, Coefficient& b,
-                             std::function<real_t(real_t, real_t)> f)
-      : a_(&a), b_(&b), f_(std::move(f)) {}
-  real_t Eval(ElementTransformation& T, const IntegrationPoint& ip) override {
-    return f_(a_->Eval(T, ip), b_->Eval(T, ip));
-  }
-
- private:
-  Coefficient* a_;
-  Coefficient* b_;
-  std::function<real_t(real_t, real_t)> f_;
-};
-
 // Where the parts of a case for a number of ranks are (partition_case.cpp).
 inline std::string PartsDirectory(const planetmodel::MeshManifest& manifest,
                                   int ranks) {
@@ -816,21 +800,13 @@ class Case {
         }
         if (options.bullen_excess >= 0.0 && method == "dahlen" &&
             cmb == "full" && !options.no_fluid_gradient) {
-          // The declared stratification: d rho / d Phi_0 follows from
-          // the density, the bulk modulus and the excess, with no
-          // derivative taken on the mesh.
+          // The declared stratification: the class takes
+          // d rho / d Phi_0 from it, with no derivative on the mesh.
           if (!bullen_excess_c_) {
             bullen_excess_c_ =
                 std::make_unique<ConstantCoefficient>(options.bullen_excess);
-            const real_t factor = -(1.0 + options.bullen_excess);
-            bullen_gradient_c_ = std::make_unique<FunctionCoefficientFromTwo>(
-                *rho_parent_c_, *kappa_parent_c_,
-                [factor](real_t rho_v, real_t kappa_v) {
-                  return factor * rho_v * rho_v / kappa_v;
-                });
           }
           f.stratification = bullen_excess_c_.get();
-          f.density_gradient = bullen_gradient_c_.get();
         }
         if (cmb == "nomass") {
           f.treatment = FluidRegion::Treatment::NoMass;
@@ -1998,7 +1974,7 @@ class Case {
  private:
   std::vector<std::unique_ptr<ParFiniteElementSpace>> spaces_;
   std::unique_ptr<ParGridFunction> rho_solid_, kappa_solid_, mu_solid_;
-  std::unique_ptr<Coefficient> bullen_excess_c_, bullen_gradient_c_;
+  std::unique_ptr<Coefficient> bullen_excess_c_;
   std::unique_ptr<Coefficient> rho_c_, kappa_c_, mu_c_, rho_parent_c_,
       kappa_parent_c_, model_kappa_;
   std::optional<planetmodel::ModelFile> model_file_;

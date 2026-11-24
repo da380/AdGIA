@@ -98,8 +98,10 @@ The excess comes from one of two places.
 
 - **Declared** (`FluidRegion::stratification`): the region supplies it.
   This is the route for a model that is neutral or weakly stratified.
-  With `density_gradient` set to `-(1 + excess) rho^2 / kappa` as well, no
-  derivative is taken on the mesh anywhere.
+  Unless the region gives a density gradient of its own, the problem
+  class then takes `rho' = -(1 + excess) rho^2 / kappa`
+  (`DeclaredDensityGradientCoefficient`), and no derivative is taken on
+  the mesh anywhere.
 - **Computed**, from `density_gradient` and `bulk_modulus`. When the
   density gradient is the class's numerical one, its errors are of the
   size of the discretisation and are large next to a centre, where it is

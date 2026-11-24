@@ -2142,6 +2142,14 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetFluidPotentialGlue(
   Array<int> empty;
   Array<int>& marker = fluid_markers_.front();
   Coefficient* rho_prime = f.density_gradient;
+  if (!rho_prime && f.stratification && f.bulk_modulus) {
+    // The region declares its stratification: the gradient follows from
+    // it, with no derivative taken on the mesh.
+    auto rp = std::make_unique<DeclaredDensityGradientCoefficient>(
+        *f.density, *f.bulk_modulus, *f.stratification);
+    rho_prime = rp.get();
+    fluid_coefs_.push_back(std::move(rp));
+  }
   if (!rho_prime) {
     l2_fec_ = std::make_unique<L2_FECollection>(
         fes_zeta_->GetMaxElementOrder(), dim_);
@@ -2332,6 +2340,14 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetFluidPotentialGlue(
   Array<int> empty;
   Array<int>& marker = fluid_markers_.front();
   Coefficient* rho_prime = f.density_gradient;
+  if (!rho_prime && f.stratification && f.bulk_modulus) {
+    // The region declares its stratification: the gradient follows from
+    // it, with no derivative taken on the mesh.
+    auto rp = std::make_unique<DeclaredDensityGradientCoefficient>(
+        *f.density, *f.bulk_modulus, *f.stratification);
+    rho_prime = rp.get();
+    fluid_coefs_.push_back(std::move(rp));
+  }
   if (!rho_prime) {
     l2_fec_ = std::make_unique<L2_FECollection>(
         fes_zeta_->GetMaxElementOrder(), dim_);

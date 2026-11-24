@@ -142,8 +142,10 @@ struct MaxwellRelaxationOptions {
  *   domain attribute or a GridFunctionCoefficient on the parent does not.
  * - @p density_gradient: @f$\rho'_F = d\rho/d\Phi_0 = g^{-1}\partial_r\rho@f$
  *   on the fluid elements (BarotropicDensityGradientCoefficient, or an
- *   analytic form for radial models). When null it is computed from the
- *   element-wise L2 projection of @p density and the discrete
+ *   analytic form for radial models). When null it follows from
+ *   @p stratification and @p bulk_modulus where both are given
+ *   (DeclaredDensityGradientCoefficient), and is otherwise computed from
+ *   the element-wise L2 projection of @p density and the discrete
  *   @f$\nabla\Phi_0@f$.
  * - @p interface_marker: the SubMesh boundary attributes of the fluid's
  *   interfaces with the solid (sized to the SubMesh's bdr_attributes.Max()).
@@ -185,9 +187,10 @@ struct MaxwellRelaxationOptions {
  * - @p stratification: the excess of the Bullen parameter over one,
  *   @f$-\kappa\rho'_F/\rho^2 - 1@f$, on the parent's fluid elements:
  *   zero where the fluid is neutrally stratified, positive where it is
- *   stably stratified. Read only by the profile border
- *   (SetProfileBorder()), which divides the region into neutral and
- *   stratified layers by it. When null it is computed from
+ *   stably stratified. With @p bulk_modulus it gives the density
+ *   gradient where @p density_gradient is null, and the profile border
+ *   (SetProfileBorder()) divides the region into neutral and stratified
+ *   layers by it. When null the profile border computes it from
  *   @p density_gradient and @p bulk_modulus; a density gradient taken
  *   numerically from fields on the mesh carries errors of the size of
  *   the discretisation, which a model that is neutral, or nearly so,

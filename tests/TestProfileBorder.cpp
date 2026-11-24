@@ -284,6 +284,21 @@ TEST(ProfileBorder, DeclaredStratification) {
   EXPECT_LT(RelDiff(pw->Displacement(), pn->Displacement()), 1e-10);
 }
 
+// A region that declares its stratification and gives no density
+// gradient has the gradient derived from the declaration, the density
+// and the bulk modulus, which here is the analytic gradient exactly.
+TEST(ProfileBorder, DensityGradientFromDeclaration) {
+  ConstantCoefficient sigma(0.02);
+  Case analytic(1, 0.5), derived(1, 0.5);
+  ConstantCoefficient half(0.5);
+  derived.fluids[0].stratification = &half;
+  derived.fluids[0].density_gradient = nullptr;
+  auto pa = analytic.Solve(2, sigma);
+  auto pd = derived.Solve(2, sigma);
+  EXPECT_LT(RelDiff(pd->Displacement(), pa->Displacement()), 1e-9);
+  EXPECT_LT(RelDiff(pd->Potential(), pa->Potential()), 1e-9);
+}
+
 // An unstably stratified region is refused; with the option it is
 // treated as neutral, and since a neutral layer does not consult the
 // bulk modulus the answer is the neutral model's.

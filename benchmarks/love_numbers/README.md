@@ -149,6 +149,7 @@ not change and the gain is solver-side only.
 | `fluid_core` | a uniform fluid core under a uniform solid mantle |
 | `aw_core` | `fluid_core`'s neutrally stratified twin: a closed-form Adams–Williamson core (N² = 0 exactly), mass-matched under the same mantle — the clean cross-method comparison model, shiftable with every member exactly neutral |
 | `bullen_core_weak`, `bullen_core_strong` | `aw_core` with the core's bulk modulus raised by 2 % and by 50 %: the same density, gravity and mantle, and a stably stratified core whose Bullen parameter is 1.02 or 1.5 throughout, finite at the centre |
+| `bullen_mantle` | `stable_mantle` with its core replaced by one of that kind (Bullen parameter 1.02) and of the same mass: the mantle and its stratification are `stable_mantle`'s exactly, the core is weakly stratified as the Earth's is, and nothing is singular at the centre |
 | `inner_core` | a solid inner core, a fluid outer core and a mantle, each uniform |
 | `linear_solid` | one solid, density and velocities linear in radius |
 | `stratified_core` | a fluid core whose density falls with radius, under a mantle, every parameter linear in radius |

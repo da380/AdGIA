@@ -106,6 +106,35 @@ class BarotropicDensityGradientCoefficient : public mfem::Coefficient {
 };
 
 /**
+ * @brief The barotropic density gradient of a hydrostatic fluid from its
+ * declared stratification,
+ * @f[
+ *   \rho'_F = \frac{d\rho}{d\Phi_0} = -(1 + e)\,\frac{\rho^2}{\kappa},
+ * @f]
+ * with @f$e@f$ the excess of the Bullen parameter over one (zero for a
+ * neutrally stratified fluid, positive for a stably stratified one). No
+ * derivative is taken on the mesh, so the gradient is as accurate as the
+ * three fields and regular next to a centre, where
+ * BarotropicDensityGradientCoefficient is a ratio of two vanishing
+ * quantities. None of the coefficients is owned.
+ */
+class DeclaredDensityGradientCoefficient : public mfem::Coefficient {
+ public:
+  DeclaredDensityGradientCoefficient(mfem::Coefficient& rho,
+                                     mfem::Coefficient& kappa,
+                                     mfem::Coefficient& excess)
+      : rho_(&rho), kappa_(&kappa), excess_(&excess) {}
+
+  mfem::real_t Eval(mfem::ElementTransformation& T,
+                    const mfem::IntegrationPoint& ip) override;
+
+ private:
+  mfem::Coefficient* rho_;
+  mfem::Coefficient* kappa_;
+  mfem::Coefficient* excess_;
+};
+
+/**
  * @brief A matrix-valued delta function @f$\mathbf{M}\,\delta(\mathbf{x} -
  * \mathbf{x}_c)@f$: a constant matrix (a moment tensor, or a point stress
  * glut) times an mfem::DeltaCoefficient, following the pattern of
