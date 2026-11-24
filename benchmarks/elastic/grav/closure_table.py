@@ -26,8 +26,7 @@ def load(path):
             if l and not l.startswith("#") and l[0].isdigit()]
     return {int(r[0]): [float(x) for x in r[1:]] for r in rows}
 
-models = sys.argv[1:] or ["fluid_core", "aw_core", "inner_core", "stratified_core",
-                           "stable_core_mild", "stable_core", "stable_core_strong"]
+models = sys.argv[1:] or ["aw_core", "inner_core", "bullen_mantle"]
 cols = ["hp", "lp", "kp", "hT", "lT", "kT"]
 print(f"{'model':18s} {'h':>4s} {'o':>2s} {'lb':>3s} {'h0_ref':>10s} {'h0_adgia':>10s} {'dh0':>9s} {'k0_adgia':>10s} "
       f"{'worst l>=1 (chan)':>18s} {'hp1':>8s} {'hp2':>8s} {'s':>7s}")
@@ -43,7 +42,9 @@ for model in models:
             lb = int(r.get("level_border", 0))
             if r.get("level_monolithic"):
                 continue
-            out = RUNS / f"e2_{model}_adgia_dahlen{'_lb'+str(lb) if lb else ''}_o{r['order']}_h{h}.txt"
+            pb = int(r.get("profile_border", 0))
+            closure = f"_lb{lb}" if lb else f"_pb{pb}" if pb else ""
+            out = RUNS / f"e2_{model}_adgia_dahlen{closure}_o{r['order']}_h{h}.txt"
             subprocess.run([P, str(SRC / "elastic/grav/from_results.py"), str(res), "--out", str(out)],
                            check=True, capture_output=True)
             a = load(out)

@@ -50,6 +50,10 @@ using Problem = LinearQuasiStaticMixedSelfGravitatingProblem;
 // The fields of the model a case holds.
 inline constexpr const char* kFields[] = {"rho", "kappa", "mu"};
 
+// The field of the case's model file in which a fluid layer states its
+// stratification: the excess of its Bullen parameter over one.
+inline constexpr const char* kStratification = "bullen_excess";
+
 // Where the parts of a case for a number of ranks are (partition_case.cpp).
 inline std::string PartsDirectory(const planetmodel::MeshManifest& manifest,
                                   int ranks) {
@@ -228,7 +232,7 @@ struct InterfaceAnalysis {
 // What a driver asks of a case.
 struct CaseOptions {
   const char* manifest = "case.json";
-  bool model_fields = false;
+  bool model_fields = true;
   int order = 2;
   int order_phi = 0;  // the potential space's order; 0: the displacement's
   int dtn_degree = 16;
@@ -252,8 +256,6 @@ struct CaseOptions {
                                   // by the elimination (3-D only)
   int profile_border = 0;         // dahlen: profile-border degree (0: off)
   bool profile_unstable_neutral = false;  // treat unstable levels as neutral
-  real_t profile_neutral_tol = 1e-4;      // the border's neutral tolerance
-  real_t bullen_excess = -1.0;    // dahlen: declared stratification (< 0: off)
   // dahlen: the pressure split on the gravitating solve (-up)
   bool psplit = false;
   real_t psplit_theta = 1.0;
@@ -382,26 +384,15 @@ struct CaseOptions {
                    "the profile border, the dual form of the closure, with "
                    "polynomials of this degree in Phi_0 on each stratified "
                    "layer of a fluid region (0: off). A neutral layer "
-                   "carries one number whatever the degree.");
+                   "carries one number whatever the degree. The fluid "
+                   "layers of the case's model must state their "
+                   "stratification (the field bullen_excess of the model "
+                   "file).");
     args.AddOption(&profile_unstable_neutral, "-profile-unstable-neutral",
                    "--profile-unstable-neutral", "-no-profile-unstable-neutral",
                    "--no-profile-unstable-neutral",
                    "With -profile-border: treat unstably stratified levels "
                    "as neutral instead of refusing them.");
-    args.AddOption(&profile_neutral_tol, "-profile-neutral-tol",
-                   "--profile-neutral-tol",
-                   "With -profile-border: levels whose Bullen parameter is "
-                   "within this of one are neutral. The stratification is "
-                   "read off the case's fields, so on a neutral model it "
-                   "should exceed their discretisation error.");
-    args.AddOption(&bullen_excess, "-bullen-excess", "--bullen-excess",
-                   "Method dahlen, full CMB treatment: declare the "
-                   "stratification of every fluid region, the excess of "
-                   "its Bullen parameter over one, uniform (0: neutral). "
-                   "The fluid's density gradient is then "
-                   "-(1 + excess) rho^2 / kappa from the case's fields "
-                   "in place of a numerical derivative, and the profile "
-                   "border reads the excess as declared. Negative: off.");
     args.AddOption(&psplit, "-up", "--pressure-split", "-no-up",
                    "--no-pressure-split",
                    "Dahlen: solve the gravitating system with the pressure "
@@ -470,12 +461,13 @@ struct CaseOptions {
     args.AddOption(&manifest, "-c", "--case", "Manifest of the case.");
     args.AddOption(&model_fields, "-model-fields", "--model-fields",
                    "-gf-fields", "--gf-fields",
-                   "Constitutive coefficients from the case's netCDF model "
-                   "file (make_case.py --model-file) instead of the "
-                   "exported .gf fields: planetmodel's own interpolants, "
-                   "evaluated at the integration points. Eulerian methods "
-                   "(dahlen, gauged); the .gf fields still carry the "
-                   "partitioning.");
+                   "Eulerian methods (dahlen, gauged): the constitutive "
+                   "coefficients from the case's model file, planetmodel's "
+                   "own interpolants evaluated at the integration points "
+                   "(the default where the case holds a model file), or "
+                   "from the exported .gf fields. The referential methods "
+                   "read the .gf fields. Either way a fluid layer's "
+                   "stratification is the model file's.");
     args.AddOption(&order, "-o", "--order", "Finite element order.");
     args.AddOption(&order_phi, "-ophi", "--order-phi",
                    "Order of the potential space (0: the displacement's). "
@@ -702,11 +694,19 @@ class Case {
     mu_c_ = std::make_unique<GridFunctionCoefficient>(mu_solid_.get());
     rho_parent_c_ = std::make_unique<GridFunctionCoefficient>(rho.get());
     kappa_parent_c_ = std::make_unique<GridFunctionCoefficient>(kappa.get());
-    if (options.model_fields) {
-      MFEM_VERIFY(eulerian,
-                  "-model-fields: the Eulerian methods (the referential "
-                  "family still reads the .gf fields).");
+    // The model file of the case, where it holds one: the Eulerian
+    // methods read the model from it unless told otherwise, and Dahlen's
+    // fluid reads its stratification from it either way.
+    const auto has_model = manifest.Model().has_value();
+    if (eulerian && has_model) {
       model_file_.emplace(LoadModelFile(manifest));
+    }
+    if (eulerian && root && !(options.model_fields && has_model)) {
+      std::cout << "Constitutive coefficients from the exported fields"
+                << (has_model ? "" : " (the case holds no model file)")
+                << "\n";
+    }
+    if (options.model_fields && model_file_) {
       rho_c_ = std::make_unique<ModelScalarCoefficient>(*model_file_, "rho");
       kappa_c_ =
           std::make_unique<ModelScalarCoefficient>(*model_file_, "kappa");
@@ -723,6 +723,7 @@ class Case {
           std::make_unique<ModelScalarCoefficient>(*model_file_, "kappa");
       kappa_parent_c_ = std::make_unique<RestrictedCoefficient>(*model_kappa_,
                                                                 body_marker);
+      model_fields_used_ = true;
       if (root) {
         std::cout << "Constitutive coefficients from the model file "
                   << manifest.ModelFile().filename().string() << "\n";
@@ -798,15 +799,31 @@ class Case {
         if (options.no_fluid_gradient && cmb == "full") {
           f.density_gradient = &zero_;
         }
-        if (options.bullen_excess >= 0.0 && method == "dahlen" &&
-            cmb == "full" && !options.no_fluid_gradient) {
-          // The declared stratification: the class takes
-          // d rho / d Phi_0 from it, with no derivative on the mesh.
+        if (method == "dahlen" && model_file_ &&
+            model_file_->HasField(attribute - 1, kStratification)) {
+          // The stratification the model states for the layer: the class
+          // takes d rho / d Phi_0 from it, with no derivative on the
+          // mesh, and the profile border its layers.
           if (!bullen_excess_c_) {
-            bullen_excess_c_ =
-                std::make_unique<ConstantCoefficient>(options.bullen_excess);
+            bullen_excess_c_ = std::make_unique<ModelScalarCoefficient>(
+                *model_file_, kStratification);
           }
           f.stratification = bullen_excess_c_.get();
+        }
+        if (options.profile_border > 0 && method == "dahlen" &&
+            !f.stratification) {
+          const auto& layer =
+              manifest.Layers()[static_cast<std::size_t>(attribute - 1)];
+          MFEM_ABORT("-profile-border: the fluid layer '"
+                     << layer.name << "' (attribute " << attribute
+                     << ") states no stratification: "
+                     << (has_model ? "the case's model file holds no "
+                                   : "the case holds no model file, and so no ")
+                     << kStratification
+                     << " on it. Describe the layer by its stratification in "
+                        "the model (planetmodel's with_bullen_excess, or "
+                        "stabilised) and make the case again; "
+                        "-level-border runs on the case as it is.");
         }
         if (cmb == "nomass") {
           f.treatment = FluidRegion::Treatment::NoMass;
@@ -865,7 +882,6 @@ class Case {
         ProfileBorderOptions profile;
         profile.degree = options.profile_border;
         profile.unstable_as_neutral = options.profile_unstable_neutral;
-        profile.neutral_tol = options.profile_neutral_tol;
         problem->SetProfileBorder(profile);
         if (options.level_monolithic) {
           problem->SetMonolithicBorder();
@@ -1364,8 +1380,8 @@ class Case {
                           "\""
                     : std::string())
        << ",\n  \"method\": \"" << method << "\""
-       << (options_.model_fields ? ",\n  \"model_fields\": true"
-                                 : std::string())
+       << (model_fields_used_ ? ",\n  \"model_fields\": true"
+                              : std::string())
        << ",\n  \"fluid_treatment\": \""
        // dahlen keeps Dahlen's fluid; the gauged Eulerian and the welded
        // referential methods gauge it; maxwell relaxes it; the slip pair
@@ -1974,7 +1990,8 @@ class Case {
  private:
   std::vector<std::unique_ptr<ParFiniteElementSpace>> spaces_;
   std::unique_ptr<ParGridFunction> rho_solid_, kappa_solid_, mu_solid_;
-  std::unique_ptr<Coefficient> bullen_excess_c_;
+  std::unique_ptr<ModelScalarCoefficient> bullen_excess_c_;
+  bool model_fields_used_ = false;
   std::unique_ptr<Coefficient> rho_c_, kappa_c_, mu_c_, rho_parent_c_,
       kappa_parent_c_, model_kappa_;
   std::optional<planetmodel::ModelFile> model_file_;

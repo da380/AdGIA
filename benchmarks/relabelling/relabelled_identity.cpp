@@ -47,7 +47,7 @@
 //    every WELDED case is STRICT, the gauged fluid included
 //    (u 1.6e-7 at A = 0.02, h = 0.3, the DtN-centring floor).
 //    Through the SLIPPING interface the run is STRICT too (u 1.6e-6,
-//    zeta 7.2e-7 at A = 0.02, h = 0.3 on fluid_core): the interface
+//    zeta 7.2e-7 at A = 0.02, h = 0.3, a uniform fluid core): the interface
 //    kernels' direction slot is the pullback-consistent
 //    P_T F^{-1}(1 - nu nu^T/|nu|^2).
 //    For the welded organisation the driver prints the

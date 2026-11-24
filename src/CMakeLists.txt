@@ -22,6 +22,8 @@ target_sources(${PROJECT_NAME} PRIVATE null_space.cpp
     level_border.cpp
     profile_border.cpp
     mixed_problem.cpp
+                                       material_law.cpp
+                                       nonlinear_problem.cpp
                                        viscoelastic.cpp
                                        adjoint.cpp
                                        tangent.cpp

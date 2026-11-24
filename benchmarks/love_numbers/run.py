@@ -7,7 +7,8 @@ love_benchmark on it under MPI, and with `--field` a run of field_benchmark
 as well (Eulerian methods only), which compares the response to a cap load
 as fields:
 
-  <out>/<model>/h<h>/                 the case: mesh, fields, reference
+  <out>/<model>/h<h>/                 the case: mesh, fields, model file,
+                                      reference
   <out>/<model>/h<h>/results_o<p><s>.json
   <out>/<model>/h<h>/log_o<p><s>.txt
   <out>/<model>/h<h>/field_o<p><s>.json   with --field
@@ -15,21 +16,23 @@ as fields:
   <out>/<model>/h<h>/parts_<np>/          with --partition
 
 The suffix <s> is empty for the Dahlen method with the full CMB
-treatment, no level border and block MINRES; otherwise it names the
+treatment, no border and block MINRES; otherwise it names the
 method, the CMB treatment, the border (_lb<n>, _lb<n>_mono, _pb<d>), the
 map amplitude (_map<A>), the Schur solver (_schur) and, for the
 Love-number results, --combined, in that order.
 
-On the fluid models the Dahlen method closes the fluid by the level
-border of doc/theory/dahlen_closure.tex by default (`--level-border 16`, the
-default static route; results_o<p>_lb16.json), so that its degree 0 is
-benchmarked; `--level-border 0` runs the naked reduction, whose degree 0
-is the exhibited defect, and `--level-border 16 0` both. The referential
-closure takes the same node counts under `--referential-border`.
-`--profile-border 6` adds the profile border, the dual form of the same
-closure (doc/methods/profile_border.md), at that polynomial degree
-(results_o<p>_pb6.json); on the models of `models.BULLEN_EXCESS` it runs
-with their stratification declared.
+On the fluid models the Dahlen method closes the fluid by the profile
+border by default (doc/methods/profile_border.md; `--profile-border 6`,
+results_o<p>_pb6.json), so that its degree 0 is benchmarked. The border
+reads the stratification of each fluid layer from the case's model file,
+where the model states it (`bullen_excess`); the driver refuses a layer
+that states none. `--level-border 16` adds the level border, the primal
+form of the same closure (doc/theory/dahlen_closure.tex;
+results_o<p>_lb16.json), and `--level-border 0` the naked reduction,
+whose degree 0 is the exhibited defect; `--profile-border 0` leaves the
+profile border out. The non-full CMB treatments run the naked reduction.
+The referential closure is the level border, at the `--level-border`
+node counts (16 where none is given), under `--referential-border`.
 
 A run whose results file exists is skipped unless `--force` is given, and a
 case that exists is kept unless `--remake` is, so a sweep can be extended or
@@ -40,7 +43,7 @@ is a file written without them. plot.py reads the tree.
 
     python run.py homogeneous --h 0.3 0.2 0.15 --order 2 --np 8
     python run.py inner_core --h 0.1 0.07 --order 2 3 --np 128 --lmax 8
-    python run.py earth_like --h 0.2 --order 3 --field --paraview
+    python run.py prem_4 --h 0.2 --order 3 --field --paraview
     python run.py all --h 0.2 --order 2 3 --field
 
 The build makes a launcher of this script, <build>/benchmarks/love_numbers/
@@ -108,15 +111,31 @@ def has_fluid_layer(name: str) -> bool:
     return any(is_fluid(layer) for layer in models.model(name).layers)
 
 
-def borders_for(method: str, fluid: bool, args: argparse.Namespace) -> list[int]:
-    """The level-border node counts a method runs with on a model: the
-    naked reduction alone (0) where the border does not apply."""
+#: The polynomial degree of the profile border where none is asked for.
+PROFILE_DEGREE = 6
+
+#: The node count of the referential closure where none is asked for.
+LEVEL_NODES = 16
+
+
+def closures_for(method: str, cmb: str, fluid: bool,
+                 args: argparse.Namespace) -> list[tuple[int, int]]:
+    """The closures a method runs with on a model under a CMB
+    treatment, each a pair (level-border nodes, profile-border degree) of
+    which at most one is positive; (0, 0) is the naked reduction, alone
+    where no border applies."""
     if not fluid:
-        return [0]
-    if method == "dahlen" or (method == "referential"
-                              and args.referential_border):
-        return [16] if args.level_border is None else list(args.level_border)
-    return [0]
+        return [(0, 0)]
+    if method == "dahlen":
+        if cmb != "full":
+            return [(0, 0)]  # the borders close the full treatment's fluid
+        profile = ([PROFILE_DEGREE] if args.profile_border is None
+                   else args.profile_border)
+        return ([(0, d) for d in profile if d > 0]
+                + [(n, 0) for n in args.level_border or []])
+    if method == "referential" and args.referential_border:
+        return [(n, 0) for n in args.level_border or [LEVEL_NODES]]
+    return [(0, 0)]
 
 
 def main() -> None:
@@ -173,20 +192,20 @@ def main() -> None:
                    metavar="N",
                    help="level-border closures of the Dahlen method on the "
                         "fluid models (doc/theory/dahlen_closure.tex), one results "
-                        "file each: N nodes per fluid region, 0 the naked "
-                        "reduction whose degree 0 is the exhibited defect "
-                        "(default: 16; the solid models, the other methods "
-                        "and the non-full CMB treatments run unbordered). "
-                        "Bordered results carry the suffix _lb<N>")
+                        "file each beside the profile border's: N nodes "
+                        "per fluid region, 0 the naked reduction whose "
+                        "degree 0 is the exhibited defect (default: "
+                        "none). Results carry the suffix _lb<N>")
     p.add_argument("--profile-border", type=int, nargs="+", default=None,
                    metavar="D",
                    help="profile-border closures of the Dahlen method on "
                         "the fluid models (doc/methods/profile_border.md), "
-                        "one results file each beside the --level-border "
-                        "runs: polynomial degree D on each stratified "
-                        "layer (default: none). Results carry the suffix "
-                        "_pb<D>; a model of models.BULLEN_EXCESS runs with "
-                        "its stratification declared (-bullen-excess)")
+                        "one results file each: polynomial degree D on "
+                        "each stratified layer, 0 for none (default: 6; "
+                        "the solid models, the other methods and the "
+                        "non-full CMB treatments run unbordered). Results "
+                        "carry the suffix _pb<D>. The model must state "
+                        "the stratification of its fluid layers")
     p.add_argument("--level-mono", action="store_true",
                    help="solve the bordered Dahlen system monolithically "
                         "(love_benchmark -level-mono; suffix _lb<N>_mono)")
@@ -277,25 +296,15 @@ def main() -> None:
                 continue
         methods = list(args.method)
         fluid = has_fluid_layer(name)
-        # A closure is a level border of `border` nodes or a profile
-        # border of degree `profile`; both zero is the naked reduction.
-        def closures(m: str) -> list[tuple[int, int]]:
-            out = [(b, 0) for b in borders_for(m, fluid, args)]
-            if m == "dahlen" and fluid and args.profile_border:
-                out += [(0, d) for d in args.profile_border if d > 0]
-            return out
-
         for order, method, solver, cmb, (border, profile) in (
                 (o, m, s, c, b) for o in args.order for m in methods
                 for s in args.solver for c in args.cmb
-                for b in closures(m)):
+                for b in closures_for(m, c, fluid, args)):
             if method not in ("dahlen", "gauged") and solver != args.solver[0]:
                 continue  # the referential solvers ignore the choice
             if method != "dahlen" and cmb != args.cmb[0]:
                 continue  # the treatments are the Dahlen path's: one
                 # run of the other methods per sweep, without them
-            if (border > 0 or profile > 0) and cmb != "full":
-                continue  # the border closes the full treatment's fluid
             mapped = args.map != 0.0
             if mapped and method not in ("referential", "slip_broken"):
                 continue  # the mapped benchmark runs the mapped methods
@@ -321,10 +330,6 @@ def main() -> None:
                       *(["-level-border", str(border)] if border > 0 else []),
                       *(["-profile-border", str(profile)]
                         if profile > 0 else []),
-                      *(["-bullen-excess",
-                         f"{models.BULLEN_EXCESS[name]:g}"]
-                        if profile > 0 and name in models.BULLEN_EXCESS
-                        else []),
                       *(["-level-mono"] if mono else []),
                       *(["-map", f"{args.map:g}"] if mapped else []),
                       *(["-cmb", cmb]

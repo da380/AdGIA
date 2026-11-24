@@ -1166,12 +1166,18 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   mfem::OperatorHandle A_solve_;
   std::vector<mfem::real_t> gauge_residuals_;
 
-  /** @brief Mark the assembled operator out of date. EVERY mutation of
-   * operator data outside the modulus-flavour switch goes through here
-   * (never by writing the flag): it also drops the cached flavour
-   * states, whose revived operator versions would otherwise resurrect
-   * stale version-keyed caches (border columns). */
+ public:
+  /** @brief Mark the assembled operator out of date, so that it is
+   * assembled again before the next solve: the call of a caller whose
+   * coefficients, read by the stiffness integrators, have changed (the
+   * state of a nonlinear solve, for one). EVERY mutation of operator
+   * data outside the modulus-flavour switch goes through here (never by
+   * writing the flag): it also drops the cached flavour states, whose
+   * revived operator versions would otherwise resurrect stale
+   * version-keyed caches (border columns). */
   void MarkOperatorDirty();
+
+ protected:
   /** @brief As MarkOperatorDirty() when only the gauge epsilon
    * changed, keeping the cheap RescaleGaugeOperator() update path. */
   void MarkGaugeEpsilonDirty();

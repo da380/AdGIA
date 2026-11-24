@@ -32,7 +32,7 @@
 // then per f the Ritz values, their residuals and fluid fractions.
 //
 // Sample run:
-//    mpiexec -np 4 ./stability_probe -c runs/fluid_core/h0.3/case.json \
+//    mpiexec -np 4 ./stability_probe -c runs/aw_core/h0.3/case.json \
 //        -o 2 -f 1,0.1,0.01 -nev 10 -out probe.json
 // ============================================================================
 #include <cmath>

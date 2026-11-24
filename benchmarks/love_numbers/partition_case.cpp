@@ -14,7 +14,7 @@
 // simpler and costs each rank the memory of the whole mesh.
 //
 // Sample run:
-//    ./partition_case -c cases/earth_like/case.json -np 128
+//    ./partition_case -c cases/inner_core/case.json -np 128
 // ============================================================================
 
 #include <filesystem>

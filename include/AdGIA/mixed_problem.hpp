@@ -162,7 +162,8 @@ class DomainVectorGradVectorIntegrator;
  * potential through volume integrals over the fluid elements and to the
  * solid through each wall's level-mean normal flux, eliminated by the
  * shared bordered engine. Requires each region's @p bulk_modulus. Gated
- * on @c fluid_core against pyslfp at degree 0 and inert at every degree
+ * against pyslfp at degree 0 on the fluid models of the Love-number
+ * benchmark, and inert at every degree
  * @f$\ell \ge 1@f$ on a sphere. Data on the border's own rows enter
  * through AddLevelBorderForce(), and the border can read its levels off
  * an analytic background (SetLevelBorder(levels, true, grad_phi0)).
@@ -441,8 +442,8 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
    * solves disappear at the price of an indefinite outer iteration
    * whose cost is flat in the border count. Gated to agree with the
    * elimination at solver grade; the elimination stays the default.
-   * With the level border (measured, fluid_core h0.2 order 2, 8
-   * ranks): agreement to eight digits; the one-off degree-0 solve is
+   * With the level border (measured on a body with a uniform fluid
+   * core, h 0.2, order 2, 8 ranks): agreement to eight digits; the one-off degree-0 solve is
    * ~2.4x cheaper than the elimination's column setup (2.9 s against
    * 6.9 s), but EVERY solve then costs 3-6x the naked iterations
    * (the border scalars degrade the outer Krylov), so the elimination

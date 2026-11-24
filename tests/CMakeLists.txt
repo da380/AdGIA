@@ -75,6 +75,8 @@ if(USE_MPI)
     target_link_libraries(TestSubMeshMixedBilinearFormPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestQuasiStaticProblemPar TestQuasiStaticProblemPar.cpp)
     target_link_libraries(TestQuasiStaticProblemPar PRIVATE AdGIA MPI::MPI_CXX)
+    add_executable(TestNonlinearClampedPar TestNonlinearClampedPar.cpp)
+    target_link_libraries(TestNonlinearClampedPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestFaultProblemPar TestFaultProblemPar.cpp)
     target_link_libraries(TestFaultProblemPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestViscoelasticPar TestViscoelasticPar.cpp)
@@ -153,6 +155,9 @@ if(USE_MPI)
         add_test(NAME TestSubMeshMixedBilinearFormPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestSubMeshMixedBilinearFormPar>)
+        add_test(NAME TestNonlinearClampedPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestNonlinearClampedPar>)
         add_test(NAME TestQuasiStaticProblemPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestQuasiStaticProblemPar>)
@@ -317,6 +322,14 @@ gtest_discover_tests(TestRheology)
 add_executable(TestQuasiStaticProblem TestQuasiStaticProblem.cpp)
 target_link_libraries(TestQuasiStaticProblem PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestQuasiStaticProblem)
+
+add_executable(TestMaterialLaw TestMaterialLaw.cpp)
+target_link_libraries(TestMaterialLaw PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestMaterialLaw)
+
+add_executable(TestNonlinearClamped TestNonlinearClamped.cpp)
+target_link_libraries(TestNonlinearClamped PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestNonlinearClamped)
 
 add_executable(TestFaultProblem TestFaultProblem.cpp)
 target_link_libraries(TestFaultProblem PRIVATE AdGIA gtest_main)

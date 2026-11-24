@@ -57,9 +57,9 @@ Three conventions carry the programme:
   hand in the C++ drivers. Comparisons read two such files and report
   relative differences; they never need the producing code. Degree 1 is
   compared in the centre-of-mass frame; degree 0 of a Dahlen run is
-  compared when the fluid is closed by the level border (the default
-  static route, `doc/theory/dahlen_closure.tex`) and excluded, by design, for
-  the naked reduction.
+  compared when the fluid is closed by a border (the profile border is
+  the default static route, `doc/methods/profile_border.md`) and excluded,
+  by design, for the naked reduction.
 - **Tiered tolerances.** Where two codes solve the identical discrete
   problem (pyslfp and sl3dpp on the same deck and mesh rule), near
   machine precision. Across discretisations (FEM against spectral),
@@ -134,12 +134,11 @@ cd <build>/benchmarks
 ```
 
 - `--profile local`: the models `homogeneous`, `two_solid` and
-  `fluid_core`, h = 0.3, order 2, degrees 0–4, 8 ranks; the default stages
+  `aw_core`, h = 0.3, order 2, degrees 0–4, 8 ranks; the default stages
   run end to end in about an hour — the shape to validate before a server
   run.
-- `--profile server`: eight models (`homogeneous`, `two_solid`,
-  `linear_solid`, `fluid_core`, `inner_core`, `stratified_core`,
-  `earth_like`, `prem_4`), an h-ladder 0.2/0.15/0.1 at orders 2 and 3,
+- `--profile server`: six models (`homogeneous`, `two_solid`,
+  `linear_solid`, `aw_core`, `inner_core`, `prem_4`), an h-ladder 0.2/0.15/0.1 at orders 2 and 3,
   degrees to 16, 100 ranks (sized for a 128-core shared-memory machine),
   both Eulerian solvers, and a weak-scaling stage whose rungs hold the
   unknowns per rank roughly constant (h ~ np^(-1/3)); consider
@@ -181,7 +180,7 @@ the degrees, shown once and labelled combined, and `cmb_report.py`
 tabulates the combined treatments apart from those by degree.
 
 The campaign does not make every run that `doc/benchmarks/benchmarks.tex` reports:
-the all-model sweep at h = 0.2, the uncapped `fluid_core` h-ladder, the
+the all-model sweep at h = 0.2, the uncapped `aw_core` h-ladder, the
 `prem_4` CMB runs and the dense viscoelastic histories are made with the
 family scripts; the commands are in the section "Reproducing the figures"
 of `doc/benchmarks/benchmarks.tex`.
@@ -242,11 +241,14 @@ In brief (the measurements are in `doc/benchmarks/benchmarks.tex`):
   spread at coarse resolution is mesh error, not physics. The welded
   mapped assembly passes a solver-level change-of-variables identity to
   ~1e-6; the slipping-interface forms under a mapping are not verified.
-- On hydrostatic (spherical) models the Dahlen path closed by the level
-  border (`-level-border <n>`, `doc/theory/dahlen_closure.tex`) is the default
-  static route: the cheapest here, as accurate as anything at l >= 1,
-  and with the border its degree zero is right too (the naked reduction
-  leaves degree zero to an arbitrary function, exhibited as the defect).
+- On hydrostatic (spherical) models the Dahlen path closed by the
+  profile border (`-profile-border <d>`, `doc/methods/profile_border.md`)
+  is the default static route: the cheapest here, as accurate as anything
+  at l >= 1, and with the border its degree zero is right too (the naked
+  reduction leaves degree zero to an arbitrary function, exhibited as the
+  defect). The level border (`-level-border <n>`,
+  `doc/theory/dahlen_closure.tex`) is the primal form of the same closure
+  and runs on request.
   The dearer formulations buy the slipping interface and the referential
   family's mapped machinery. None buys non-neutral core stratification:
   at N² ≠ 0 the gauged and referential (gauge-penalty) methods are
@@ -265,8 +267,8 @@ In brief (the measurements are in `doc/benchmarks/benchmarks.tex`):
   times worse on tides and so on the rotational feedback, which runs
   through the degree-2 tidal response; buoyancy alone (`winkler`) is safe
   for neither. At degree zero every naked Dahlen-family treatment is
-  wrong; the level border (full treatment only) and the gauged method
-  are right.
+  wrong; the profile and level borders (full treatment only) and the
+  gauged method are right.
 
 ## The shared pieces (`common/`)
 
@@ -295,14 +297,20 @@ one-sided field values on each interface. The driver reads all of it
 through `planetmodel::MeshManifest` and sets nothing about the
 model itself. pyslfp solves the same model on its own radial mesh.
 
-Two delivery routes carry the material onto the problem. The `.gf`
-fields are the default and the FE-exact one (a discontinuity at an
-interface stays one). With `make_case.py --model-file` the case also
-holds the model as a netCDF model file, and a driver's `-model-fields`
-builds the constitutive coefficients from it instead
+Two delivery routes carry the material onto the problem. A case holds
+the model as a netCDF model file (`case.model.nc`), and the Eulerian
+methods build the constitutive coefficients from it by default
 (`model_coefficient.hpp`: planetmodel's own interpolants evaluated at
-the integration points) — the delivery route of models that exist only
-as files. The two routes agree to the solver tolerance on the
-piecewise-polynomial models; the viscoelastic sphere family's
+the integration points), which is also the delivery route of models that
+exist only as files. The `.gf` fields are the FE-exact route (a
+discontinuity at an interface stays one): the referential methods read
+them, and the Eulerian ones with `-gf-fields` or on a case without a
+model file. The two routes agree to the solver tolerance on the
+piecewise-polynomial models. The model file also carries what the mesh
+fields cannot: the stratification of each fluid layer, its Bullen excess
+(`bullen_excess`), where the model states it. Dahlen's fluid takes its
+density gradient from that, with no derivative on the mesh, and the
+profile border its layers; the driver refuses the profile border on a
+fluid layer that states none. The viscoelastic sphere family's
 `model_file.py` and the driver's `-model` flag do the same for a
 (possibly lateral) viscosity, `tau = eta / mu` per Maxwell branch.

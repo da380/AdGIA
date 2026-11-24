@@ -85,38 +85,36 @@ from planetmodel import is_fluid  # noqa: E402
 
 
 def has_fluid_layer(model: str) -> bool:
-    """Whether the named model has a fluid layer (the level border applies)."""
+    """Whether the named model has a fluid layer (a border applies)."""
     return any(is_fluid(layer) for layer in models.model(model).layers)
 
 #: Which methods and stages run on which models, beyond the Eulerian
 #: pair, which run on everything.
 REFERENTIAL_MODELS = ("homogeneous", "two_solid", "linear_solid",
-                      "fluid_core", "inner_core", "stratified_core",
-                      "earth_like", "prem_4")
-SLIP_MODELS = ("fluid_core",)
+                      "aw_core", "inner_core", "prem_4")
+SLIP_MODELS = ("aw_core",)
 SOLID_MODELS = ("homogeneous", "two_solid", "linear_solid")
-MAPPED_MODELS = ("homogeneous", "two_solid", "linear_solid", "fluid_core")
+MAPPED_MODELS = ("homogeneous", "two_solid", "linear_solid", "aw_core")
 # The identity is strict for every welded case: solids and the gauged
 # fluid core alike (the gauge penalty is covariant).
 IDENTITY_MODELS = ("homogeneous", "two_solid", "linear_solid",
-                   "fluid_core")
+                   "aw_core")
 ASPHERICAL_MODELS = ("homogeneous", "linear_solid")
 # slip_broken runs the shift legs; the driver forces interpolated-F shift
 # maps so that its one-sided interface terms stay side-consistent
 # (perturbation/README.md).
-PERTURBATION = {"fluid_core": ("referential", "slip_broken"),
+PERTURBATION = {"aw_core": ("referential", "slip_broken"),
                 "two_solid": ("referential",)}
 
 PROFILES = {
-    "local": dict(models=["homogeneous", "two_solid", "fluid_core"],
+    "local": dict(models=["homogeneous", "two_solid", "aw_core"],
                   h=[0.3], orders=[2], lmax=4, dtn_degree=16, np=8,
                   solvers=[1], cmb=["full", "nomass", "uniform", "winkler"],
                   map_amplitude=0.02,
                   shift_eps=[0.02], pert_lmax=3, field=True, scaling=[],
                   aspherical_scale=1.0, aspherical_lmax=4),
     "server": dict(models=["homogeneous", "two_solid", "linear_solid",
-                           "fluid_core", "inner_core", "stratified_core",
-                           "earth_like", "prem_4"],
+                           "aw_core", "inner_core", "prem_4"],
                    h=[0.2, 0.15, 0.1], orders=[2, 3], lmax=16,
                    dtn_degree=24, np=100, solvers=[1, 0],
                    cmb=["full", "nomass", "uniform", "winkler"],
@@ -304,14 +302,14 @@ def main() -> None:
                 methods += ["referential", "maxwell"]
             if model in SLIP_MODELS:
                 methods += ["slip", "slip_broken"]
-            # The Dahlen method runs closed by the level border (the
-            # default static route, doc/theory/dahlen_closure.tex) AND as the
-            # naked reduction, whose degree 0 is the exhibited defect;
-            # run.py applies the axis to the fluid models only.
+            # The Dahlen method runs closed by the profile border (the
+            # default static route, doc/methods/profile_border.md) AND as
+            # the naked reduction, whose degree 0 is the exhibited
+            # defect; run.py applies the axis to the fluid models only.
             stage(f"methods:{model}", run_py(
                 "love_numbers", "run", model, *common,
                 "--method", *methods, "--solver", *prof["solvers"],
-                "--level-border", 16, 0, *combined))
+                "--level-border", 0, *combined))
 
     # 2. The approximate CMB conditions (Dahlen path, fluid models):
     # cost against accuracy, collated by cmb_report.py in the plot stage.
@@ -323,7 +321,8 @@ def main() -> None:
             # naked full treatment (cmb_report.py's baseline): no border.
             stage(f"cmb:{model}", run_py(
                 "love_numbers", "run", model, *common,
-                "--cmb", *prof["cmb"], "--level-border", 0, *combined))
+                "--cmb", *prof["cmb"], "--profile-border", 0,
+                "--level-border", 0, *combined))
 
     # 3. The field benchmark (Eulerian pair); runs when the profile's
     # field flag is set (both profiles set it) or the stage is named
@@ -439,7 +438,7 @@ def main() -> None:
     if "scaling" in stages and prof["scaling"]:
         for np_s, h_s in prof["scaling"]:
             stage(f"scaling:np{np_s}", run_py(
-                "love_numbers", "run", "fluid_core", "--h", h_s,
+                "love_numbers", "run", "aw_core", "--h", h_s,
                 "--order", max(prof["orders"]), "--np", np_s,
                 "--lmax", 2, "--dtn-degree", prof["dtn_degree"],
                 "--out", out / "scaling",
@@ -491,7 +490,7 @@ def main() -> None:
                 "s / solve | iterations |",
                 "|---|---|---|---|---|---|---|"]
         for np_s, h_s in prof.get("scaling", []):
-            path = (out / "scaling" / "fluid_core" / f"h{h_s:g}" /
+            path = (out / "scaling" / "aw_core" / f"h{h_s:g}" /
                     f"results_o{max(prof['orders'])}.json")
             if not path.exists():
                 continue

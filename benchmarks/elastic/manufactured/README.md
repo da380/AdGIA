@@ -391,8 +391,7 @@ gravitating solve of the mixed class is second-order accurate in the
 energy norm; surface observables (Love numbers) gain the duality orders
 (about 20× from order 2 to 3 at h 0.3, consistent with an L2-like rate
 of 3 rather than 4). Results computed with the interpolant move at the
-discretisation level under the default (fluid_core at h 0.3, order 3:
-h'_0 from 2.1e-5 to 1.4e-5; the l ≥ 1 entries, mesh-dominated, unchanged).
+discretisation level under the default.
 
 Tables of every run: `runs_facet/d2_g2*/table.txt`, `d3_g2*/table.txt`
 in the build tree (the ladder script writes `table.txt` beside each

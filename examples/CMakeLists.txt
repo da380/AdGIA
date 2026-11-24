@@ -14,6 +14,7 @@ set(EXAMPLES
     coupled_poisson             # coupled Poisson pair across mesh / submesh
     elastogravity_layered       # LinearQuasiStaticMixedSelfGravitatingProblem: uniform, fluid core (+ inner core)
     quasi_static_elasticity     # quasi_static_problem.hpp driver
+    finite_strain               # NonlinearClampedProblem: a clamped beam at finite strain, linear vs nonlinear
     gauged_fluid_cavity         # gauged fluid region, purely elastic (SetGaugedFluid)
     sliding_fluid_ellipse       # sliding interface (displacement discontinuity) on an elliptical body
     slipping_interface          # self-gravitating slipping fluid core: every option, spherical or aspherical reference

@@ -32,10 +32,10 @@ G = 1.0
 RADIUS = 1.0
 CMB = 3483.0 / 6371.0
 
-#: fluid_core's SI values in the density scale.
+#: A uniform core and a uniform mantle: SI values in the density scale.
 RHO_CORE = 11000.0 / 5000.0
 RHO_MANTLE = 4500.0 / 5000.0
-#: Moduli follow the 3-D fluid_core model's ratios (core kappa from
+#: Moduli follow the ratios of round velocities (core kappa from
 #: vp 9000, rho 11000; mantle kappa and mu from vp 11000, vs 6000,
 #: rho 4500), times 10; the absolute scale is free in a linear problem.
 KAPPA_CORE = RHO_CORE * (9000.0 / 11000.0) ** 2 * 10.0

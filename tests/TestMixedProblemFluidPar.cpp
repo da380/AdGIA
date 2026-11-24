@@ -218,6 +218,33 @@ void RunCmbCase(int dim, int order, const std::string& label) {
     Check(RelErr(L2Norm(p_named->Potential()), L2Norm(p_hand->Potential())),
           1e-11, name + " |phi|");
   }
+
+  // On a fluid of uniform density the Full, NoMass and UniformCore rungs
+  // coincide: the fluid mass term vanishes with the density gradient and
+  // the interface density is already the constant.
+  const auto density = 1.15;
+  ConstantCoefficient rho_u(density);
+  auto rung = [&](FluidRegion::Treatment t, const std::string& what) {
+    std::vector<FluidRegion> fluids{OuterCore(solid, rho_u)};
+    fluids[0].treatment = t;
+    if (t == FluidRegion::Treatment::UniformCore) {
+      fluids[0].uniform_density = density;
+    }
+    return solve(fluids, label + " uniform fluid " + what);
+  };
+  auto p_full = rung(FluidRegion::Treatment::Full, "full");
+  auto p_nomass = rung(FluidRegion::Treatment::NoMass, "nomass");
+  auto p_uniform = rung(FluidRegion::Treatment::UniformCore, "uniform");
+  const auto u_full = L2Norm(p_full->Displacement());
+  const auto phi_full = L2Norm(p_full->Potential());
+  Check(RelErr(L2Norm(p_nomass->Displacement()), u_full), 1e-8,
+        label + " uniform fluid nomass |u|");
+  Check(RelErr(L2Norm(p_nomass->Potential()), phi_full), 1e-8,
+        label + " uniform fluid nomass |phi|");
+  Check(RelErr(L2Norm(p_uniform->Displacement()), u_full), 1e-8,
+        label + " uniform fluid uniform |u|");
+  Check(RelErr(L2Norm(p_uniform->Potential()), phi_full), 1e-8,
+        label + " uniform fluid uniform |phi|");
 }
 
 // The dropped-inner-core recipe in parallel: a mantle-only ParSubMesh

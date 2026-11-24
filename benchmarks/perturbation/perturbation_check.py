@@ -28,7 +28,7 @@ prints, per degree and Love number: the absolute agreement at each eps
 and the derivative comparison, with the eps-ladder showing the O(eps^2)
 remainder.
 
-    python perturbation_check.py runs/fluid_core/h0.3 \
+    python perturbation_check.py runs/aw_core/h0.3 \
         --eps 0.01 0.02 --method referential slip_broken --np 8
 """
 from __future__ import annotations

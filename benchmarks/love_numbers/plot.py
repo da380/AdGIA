@@ -320,7 +320,7 @@ def relative_error(run: Run, ref: dict, key: str) -> dict[int, float]:
 def scaled_error(run: Run, ref: dict, key: str) -> dict[int, float]:
     """The error against the quantity's own scale, max over the degrees
     of |reference|, rather than the pointwise value: a quantity passing
-    near zero at one degree (l'_2 crosses zero on fluid_core) otherwise
+    near zero at one degree (l'_2 does on some models) otherwise
     dominates a worst-of-six column with a large ratio that says nothing
     about the method."""
     values = ref.get(key, {})

@@ -23,7 +23,7 @@ of pyslfp solves, not an analytic kernel.
 
 ```
 cd <build>/benchmarks/perturbation
-./perturbation_check ../love_numbers/runs/fluid_core/h0.3 \
+./perturbation_check ../love_numbers/runs/aw_core/h0.3 \
     --eps 0.01 0.02 --method referential slip_broken --np 8
 ```
 
@@ -38,7 +38,7 @@ derivative comparison, the eps-ladder showing the O(eps^2) remainder.
 Defaults: `--eps 0.01 0.02`, `--method referential`, `--np 8`,
 `--lmax 4`; `--interface` picks the interface (1 = the innermost),
 `--program-args` passes further driver options. The models with a
-shiftable interface are named in `models.SHIFTABLE` (`fluid_core` moves
+shiftable interface are named in `models.SHIFTABLE` (`aw_core` moves
 its CMB, `two_solid` its mid-mantle discontinuity). The methods are the
 mapped ones, `referential` and `slip_broken`.
 
@@ -51,11 +51,11 @@ number (marker the number, colour the degree); and the relative
 discrepancy of each derivative:
 
 ```
-./plot ../love_numbers/runs/fluid_core/h0.3 --out <root> \
+./plot ../love_numbers/runs/aw_core/h0.3 --out <root> \
     --method referential slip_broken
 ```
 
-The campaign runs the check (stage `perturbation`) on `fluid_core`
+The campaign runs the check (stage `perturbation`) on `aw_core`
 (`referential`, `slip_broken`) and `two_solid` (`referential`), at
 eps = 0.02 in the local profile and 0.01, 0.02 in the server profile.
 
@@ -84,7 +84,4 @@ eps = 0.02 in the local profile and 0.01, 0.02 in the server profile.
 The referential derivatives agree with the reference to about 1 % at
 degree 0 and 1–2 % in k'; the slip_broken derivatives at degrees 2 and 3
 are not verified (they are several times further off than the
-referential ones on the same mesh). On `fluid_core` the degree-2 numbers
-carry an absolute offset against pyslfp at every eps, for both methods:
-the O(N²) mismatch of the compressible methods on its non-neutral core.
-The numbers are in `doc/benchmarks/benchmarks.tex`.
+referential ones on the same mesh). The numbers are in `doc/benchmarks/benchmarks.tex`.
