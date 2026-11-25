@@ -95,9 +95,28 @@ TEST_P(MaterialLawTest, StressAndTangentAreDerivatives) {
   const auto n = material.quadratic.StrainSize();
   const auto h = 1e-5;
 
+  // A law about an equilibrium that is the image of the mesh under a
+  // mapping of constant gradient, as a law about the mesh.
+  auto equilibrium = CallableDiffeomorphism(
+      dim,
+      [](const Vector& x, Vector& y) {
+        y = x;
+        y[0] += 0.2 * x[x.Size() - 1];
+        y *= 1.1;
+      },
+      [dim](const Vector&, DenseMatrix& F) {
+        F = 0.0;
+        for (auto i = 0; i < dim; i++) {
+          F(i, i) = 1.1;
+        }
+        F(0, dim - 1) += 0.22;
+      });
+  auto mapped = MappedMaterialLaw(material.cubic, equilibrium);
+
   for (MaterialLaw* law :
        {static_cast<MaterialLaw*>(&material.quadratic),
-        static_cast<MaterialLaw*>(&material.cubic)}) {
+        static_cast<MaterialLaw*>(&material.cubic),
+        static_cast<MaterialLaw*>(&mapped)}) {
     auto S = Vector(n);
     auto C = DenseMatrix(n);
     law->Evaluate(*point.T, point.ip, e, &S, &C);
@@ -121,6 +140,61 @@ TEST_P(MaterialLawTest, StressAndTangentAreDerivatives) {
     Ct -= C;
     EXPECT_LT(Ct.MaxMaxNorm(), 1e-14);
   }
+}
+
+// The mapped law is the law at the strain from equilibrium, per unit
+// volume of the mesh: with F^ the gradient from the mesh and F_e the
+// equilibrium's, J_e W(E(F^ F_e^-1)); and at F^ = F_e its first
+// Piola-Kirchhoff stress is the pull-back J_e T0 F_e^-T of the
+// equilibrium stress.
+TEST_P(MaterialLawTest, MappedLawIsTheLawFromEquilibrium) {
+  const auto dim = GetParam();
+  auto point = Point(dim);
+  auto material = Material(dim);
+  auto Fe = DenseMatrix(dim);
+  Fe = 0.0;
+  for (auto i = 0; i < dim; i++) {
+    Fe(i, i) = 1.1;
+  }
+  Fe(0, dim - 1) += 0.22;
+  auto equilibrium = CallableDiffeomorphism(
+      dim, [&Fe](const Vector& x, Vector& y) { Fe.Mult(x, y); },
+      [&Fe](const Vector&, DenseMatrix& F) { F = Fe; });
+  auto mapped = MappedMaterialLaw(material.cubic, equilibrium);
+
+  auto F_hat = Fe;
+  for (auto i = 0; i < dim; i++) {
+    for (auto j = 0; j < dim; j++) {
+      F_hat(i, j) += 0.05 * std::sin(1.0 + 2.0 * i + 0.7 * j);
+    }
+  }
+  auto Fe_inverse = Fe;
+  Fe_inverse.Invert();
+  auto F = DenseMatrix(dim);
+  Mult(F_hat, Fe_inverse, F);
+  auto e_hat = Vector(), e = Vector();
+  GreenStrain(F_hat, e_hat);
+  GreenStrain(F, e);
+  const auto W_hat = mapped.Evaluate(*point.T, point.ip, e_hat, nullptr, nullptr);
+  const auto W =
+      material.cubic.Evaluate(*point.T, point.ip, e, nullptr, nullptr);
+  EXPECT_NEAR(W_hat, Fe.Det() * W, 1e-14);
+
+  // At the equilibrium: P^ = F_e S^ = J_e T0 F_e^-T.
+  GreenStrain(Fe, e_hat);
+  auto s_hat = Vector();
+  mapped.Evaluate(*point.T, point.ip, e_hat, &s_hat, nullptr);
+  auto S_hat = DenseMatrix();
+  MandelToMatrix(dim, s_hat, S_hat);
+  auto P_hat = DenseMatrix(dim);
+  Mult(Fe, S_hat, P_hat);
+  auto T0 = DenseMatrix();
+  material.T0.Eval(T0, *point.T, point.ip);
+  auto expected = DenseMatrix(dim);
+  MultABt(T0, Fe_inverse, expected);
+  expected *= Fe.Det();
+  expected -= P_hat;
+  EXPECT_LT(expected.MaxMaxNorm(), 1e-14);
 }
 
 TEST_P(MaterialLawTest, QuadraticLawAtTheReference) {
@@ -227,19 +301,20 @@ TEST_P(MaterialLawTest, CoefficientsAtADeformation) {
   EXPECT_LT(C_at.MaxMaxNorm(), 1e-15);
 
   // With the reference taken off: P - S(0), and W - S(0) : (F - 1).
+  auto identity = IdentityDiffeomorphism(dim);
   auto zero = Vector(n);
   zero = 0.0;
   auto s0 = Vector(n);
   law.Evaluate(*point.T, point.ip, zero, &s0, nullptr);
   auto S0 = DenseMatrix();
   MandelToMatrix(dim, s0, S0);
-  auto P_incremental = FirstPiolaKirchhoffStressCoefficient(law, map, true);
+  auto P_incremental = FirstPiolaKirchhoffStressCoefficient(law, map, &identity);
   auto P_inc = DenseMatrix();
   P_incremental.Eval(P_inc, *point.T, point.ip);
   P_inc += S0;
   P_inc -= P_at;
   EXPECT_LT(P_inc.MaxMaxNorm(), 1e-14);
-  auto W_incremental = StrainEnergyDensityCoefficient(law, map, true);
+  auto W_incremental = StrainEnergyDensityCoefficient(law, map, &identity);
   auto linear = real_t{0};
   for (auto i = 0; i < dim; i++) {
     for (auto j = 0; j < dim; j++) {

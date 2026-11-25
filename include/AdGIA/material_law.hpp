@@ -113,25 +113,112 @@ class QuadraticMaterialLaw : public MaterialLaw {
 };
 
 /**
+ * @brief A law with the isotropic terms of third order in the strain
+ * added to another,
+ * @f[
+ *   W = W_{\mathrm{base}} + \frac{\nu_1}{6}(\operatorname{tr}\mathbf E)^3
+ *   + \nu_2\,\operatorname{tr}\mathbf E\,\operatorname{tr}\mathbf E^2
+ *   + \frac{4\nu_3}{3}\operatorname{tr}\mathbf E^3 ,
+ * @f]
+ * the general isotropic function of that order (Toupin and Bernstein's
+ * constants; Murnaghan's are @f$l = \nu_1/2 + \nu_2@f$,
+ * @f$m = \nu_2 + 2\nu_3@f$, @f$n = 4\nu_3@f$). Its stress is
+ * @f$\tfrac{\nu_1}{2}(\operatorname{tr}\mathbf E)^2\mathbf 1 +
+ * \nu_2(\operatorname{tr}\mathbf E^2\,\mathbf 1 +
+ * 2\operatorname{tr}\mathbf E\,\mathbf E) + 4\nu_3\mathbf E^2@f$ and its
+ * tangent depends on the strain.
+ *
+ * Over the quadratic law it is the first law in which the moduli change
+ * with strain: the three constants fix, to first order, how the bulk and
+ * the shear modulus change with pressure, which the quadratic law leaves
+ * at the values its truncation implies. It is offered for trying whether
+ * that dependence matters to a result, with constants from outside the
+ * library.
+ */
+class ThirdOrderIsotropicLaw : public MaterialLaw {
+ public:
+  /** @param base The law to add to; not owned.
+   * @param nu1, nu2, nu3 The three constants, which may vary over the
+   * body; not owned. */
+  ThirdOrderIsotropicLaw(MaterialLaw& base, mfem::Coefficient& nu1,
+                         mfem::Coefficient& nu2, mfem::Coefficient& nu3);
+
+  mfem::real_t Evaluate(mfem::ElementTransformation& T,
+                        const mfem::IntegrationPoint& ip,
+                        const mfem::Vector& e, mfem::Vector* S,
+                        mfem::DenseMatrix* tangent) override;
+
+ private:
+  MaterialLaw* base_;
+  mfem::Coefficient* nu_[3];
+  mfem::DenseMatrix E_, E2_, H_, D_;
+  mfem::Vector unit_, column_;
+};
+
+/**
+ * @brief A law about an equilibrium that is the image of the mesh under
+ * a mapping, as a law about the mesh.
+ *
+ * The mesh is then a reference of labels, @f$\varphi_e@f$ takes it to
+ * the equilibrium configuration with gradient @f$\mathbf F_e@f$ and
+ * Jacobian @f$J_e@f$, and a configuration has the gradient
+ * @f$\hat{\mathbf F}@f$ from the mesh. The deformation from equilibrium
+ * is @f$\mathbf F = \hat{\mathbf F}\mathbf F_e^{-1}@f$, so that with
+ * @f$\mathbf G = \mathbf F_e^{-1}@f$
+ * @f[
+ *   \mathbf E = \mathbf G^T\hat{\mathbf E}\,\mathbf G
+ *   + \tfrac12(\mathbf G^T\mathbf G - \mathbf 1),
+ * @f]
+ * and the energy per unit volume of the mesh is
+ * @f$\hat W = J_e\,W(\mathbf E)@f$, with stress
+ * @f$\hat{\mathbf S} = J_e\,\mathbf G\,\mathbf S\,\mathbf G^T@f$ and the
+ * tangent transformed likewise. At @f$\hat{\mathbf F} = \mathbf F_e@f$
+ * the strain from equilibrium vanishes and the stress is the pull-back
+ * of the equilibrium stress.
+ *
+ * The inner law is evaluated at points of the mesh: where it varies over
+ * the body, its coefficients are to be those of the point's image (a
+ * field of position composed with the mapping).
+ */
+class MappedMaterialLaw : public MaterialLaw {
+ public:
+  /** @param law The law about the equilibrium; not owned.
+   * @param equilibrium @f$\varphi_e@f$; not owned. */
+  MappedMaterialLaw(MaterialLaw& law, Diffeomorphism& equilibrium);
+
+  mfem::real_t Evaluate(mfem::ElementTransformation& T,
+                        const mfem::IntegrationPoint& ip,
+                        const mfem::Vector& e, mfem::Vector* S,
+                        mfem::DenseMatrix* tangent) override;
+
+ private:
+  MaterialLaw* law_;
+  Diffeomorphism* equilibrium_;
+  mfem::DenseMatrix G_, GtG_, Q_, D_, QtD_, s1_, s2_, s3_;
+  mfem::Vector e0_, e_, s_;
+};
+
+/**
  * @brief The energy density of a law at the deformation of a mapping,
  * @f$W(X, \mathbf E(\mathbf F))@f$ with @f$\mathbf F@f$ the mapping's
- * gradient. With @p subtract_reference the term linear in the
- * displacement gradient at the reference, @f$\mathbf S(0) : (\mathbf F -
- * \mathbf 1)@f$, is taken off, which gives the energy whose first
- * variation is the incremental residual.
+ * gradient. With a @p reference mapping, of gradient
+ * @f$\mathbf F_0@f$, the term linear in the displacement from it,
+ * @f$\mathbf P(\mathbf F_0) : (\mathbf F - \mathbf F_0)@f$, is taken
+ * off, which gives the energy whose first variation is the incremental
+ * residual.
  */
 class StrainEnergyDensityCoefficient : public mfem::Coefficient {
  public:
   StrainEnergyDensityCoefficient(MaterialLaw& law, Diffeomorphism& map,
-                                 bool subtract_reference = false);
+                                 Diffeomorphism* reference = nullptr);
   mfem::real_t Eval(mfem::ElementTransformation& T,
                     const mfem::IntegrationPoint& ip) override;
 
  private:
   MaterialLaw* law_;
   Diffeomorphism* map_;
-  bool subtract_reference_;
-  mfem::DenseMatrix F_, S_;
+  Diffeomorphism* reference_;
+  mfem::DenseMatrix F_, S_, F0_, P0_;
   mfem::Vector e_, s_;
 };
 
@@ -159,22 +246,22 @@ class SecondPiolaKirchhoffStressCoefficient : public mfem::MatrixCoefficient {
  * @f$P_{iA}@f$ the force in direction i per unit reference area of
  * normal A: the coefficient of the elastic residual
  * @f$\int \mathbf P : \nabla\mathbf v@f$
- * (DomainLFDeformationGradientIntegrator). With @p subtract_reference
- * its value at the reference, @f$\mathbf S(0)@f$, is taken off, which
- * gives the incremental residual.
+ * (DomainLFDeformationGradientIntegrator). With a @p reference mapping
+ * its value at that mapping is taken off, which gives the incremental
+ * residual.
  */
 class FirstPiolaKirchhoffStressCoefficient : public mfem::MatrixCoefficient {
  public:
   FirstPiolaKirchhoffStressCoefficient(MaterialLaw& law, Diffeomorphism& map,
-                                       bool subtract_reference = false);
+                                       Diffeomorphism* reference = nullptr);
   void Eval(mfem::DenseMatrix& P, mfem::ElementTransformation& T,
             const mfem::IntegrationPoint& ip) override;
 
  private:
   MaterialLaw* law_;
   Diffeomorphism* map_;
-  bool subtract_reference_;
-  mfem::DenseMatrix F_, S_;
+  Diffeomorphism* reference_;
+  mfem::DenseMatrix F_, S_, F0_, P0_;
   mfem::Vector e_, s_;
 };
 

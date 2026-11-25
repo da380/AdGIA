@@ -90,6 +90,35 @@ double L2Norm(const GridFunction& u) {
   return const_cast<GridFunction&>(u).ComputeL2Error(z);
 }
 
+// The solve repeated from zero with the block diagonal alone, built on
+// the folded displacement block, in place of the default preconditioner
+// (SetEulerianPotentialPreconditioner, SetPreconditionerOnFold): the same
+// displacement and potential, in no fewer iterations.
+void CheckPreconditioners(
+    LinearQuasiStaticReferentialSelfGravitatingProblem& problem,
+    const std::string& label) {
+  Check(problem.EulerianPotentialPreconditioner() ? 0.0 : 1.0, 0.0,
+        label + " the Eulerian-potential preconditioner is the default");
+  const double u_ref = L2Norm(problem.Displacement());
+  const double z_ref = L2Norm(problem.Potential());
+  const int its = problem.LastOuterIterations();
+  problem.SetEulerianPotentialPreconditioner(false);
+  problem.SetPreconditionerOnFold(true);
+  problem.ResetSolution();
+  Check(problem.Solve() ? 0.0 : 1.0, 0.0, label + " block-diagonal solve");
+  Check(RelErr(L2Norm(problem.Displacement()), u_ref), 1e-7,
+        label + " displacement under either preconditioner");
+  Check(RelErr(L2Norm(problem.Potential()), z_ref), 1e-7,
+        label + " potential under either preconditioner");
+  const int its_block = problem.LastOuterIterations();
+  if (Mpi::Root()) {
+    std::cout << label << ": " << its << " iterations, " << its_block
+              << " with the block diagonal\n";
+  }
+  Check(its <= its_block ? 0.0 : 1.0, 0.0,
+        label + " no more iterations than the block diagonal");
+}
+
 void RunCase(int order, const std::string& label) {
   const char* mesh_file = "../data/disc_buffer_2d.msh";
   Mesh smesh(mesh_file, 1, 1);
@@ -159,6 +188,7 @@ void RunCase(int order, const std::string& label) {
   problem.SetRelTol(1e-11);
   problem.AssembleForce(0.0);
   Check(problem.Solve() ? 0.0 : 1.0, 0.0, label + " parallel solve");
+  CheckPreconditioners(problem, label);
   Check(RelErr(L2Norm(problem.Displacement()), u_ref), 1e-5,
         label + " displacement norm");
   Check(RelErr(L2Norm(problem.Potential()), z_ref), 1e-5,
@@ -341,6 +371,7 @@ void RunFluidCoreGlueCase(int order, const std::string& label) {
   problem.SetRelTol(1e-11);
   problem.AssembleForce(0.0);
   Check(problem.Solve() ? 0.0 : 1.0, 0.0, label + " parallel glue solve");
+  CheckPreconditioners(problem, label);
   Check(RelErr(L2Norm(problem.Displacement()), u_ref), 1e-5,
         label + " glue displacement norm");
   Check(RelErr(L2Norm(problem.Potential()), z_ref), 1e-5,
@@ -443,6 +474,7 @@ void RunLevelBorderCase(const std::string& label) {
   problem.SetRelTol(1e-11);
   problem.AssembleForce(0.0);
   Check(problem.Solve() ? 0.0 : 1.0, 0.0, label + " parallel solve");
+  CheckPreconditioners(problem, label);
   Check(RelErr(L2Norm(problem.Displacement()), u_ref), 1e-5,
         label + " displacement norm");
   Check(RelErr(L2Norm(problem.Potential()), z_ref), 1e-5,

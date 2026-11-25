@@ -15,6 +15,10 @@
 //     at every geometric order.
 //  4. MaxIdentityDeviation: zero for the identity and for mappings that are
 //     the identity on the boundary, |c| for a translation by c.
+//  5. DisplacedDiffeomorphism: a base mapping displaced by a field held
+//     on a mesh and on two SubMeshes of it is the same mapping on all
+//     three, follows the fields, and is refused on a mesh it has no field
+//     for.
 #include <numbers>
 
 #include "TestCommon.hpp"
@@ -59,6 +63,111 @@ CallableDiffeomorphism SmoothMap(int dim, real_t c) {
           F(i, (i + 1) % dim) = c * pi * std::cos(pi * x((i + 1) % dim));
         }
       });
+}
+
+// A quadratic displacement lies in the order-2 spaces, so the displaced
+// mapping is known exactly: xi = base(x) + u(x), F = F_base + grad u.
+TEST(Mappings, DisplacedMappingOnAMeshAndItsSubMeshes) {
+  for (int dim : {2, 3}) {
+    Mesh mesh = SmallMesh(dim);
+    for (int e = 0; e < mesh.GetNE(); e++) {
+      Vector c;
+      mesh.GetElementCenter(e, c);
+      mesh.SetAttribute(e, c[0] < 0.5 ? 1 : 2);
+    }
+    mesh.SetAttributes();
+    Array<int> left({1}), right({2});
+    SubMesh a(SubMesh::CreateFromDomain(mesh, left));
+    SubMesh b(SubMesh::CreateFromDomain(mesh, right));
+    H1_FECollection fec(2, dim);
+    FiniteElementSpace fes(&mesh, &fec, dim), fes_a(&a, &fec, dim),
+        fes_b(&b, &fec, dim);
+    auto displacement = [dim](const Vector& x, Vector& u) {
+      u.SetSize(dim);
+      for (int i = 0; i < dim; i++) {
+        u[i] = 0.05 * (i + 1) * x[0] * x[dim - 1] + 0.02 * x[i] * x[i];
+      }
+    };
+    VectorFunctionCoefficient u_c(dim, displacement);
+    GridFunction u(&fes), u_a(&fes_a), u_b(&fes_b);
+    u.ProjectCoefficient(u_c);
+    u_a.ProjectCoefficient(u_c);
+    u_b.ProjectCoefficient(u_c);
+
+    // The base: a shear, x -> x + 0.1 x_0 e_last.
+    CallableDiffeomorphism base(
+        dim,
+        [dim](const Vector& x, Vector& y) {
+          y = x;
+          y[dim - 1] += 0.1 * x[0];
+        },
+        [dim](const Vector&, DenseMatrix& F) {
+          F = 0.0;
+          for (int i = 0; i < dim; i++) {
+            F(i, i) = 1.0;
+          }
+          F(dim - 1, 0) += 0.1;
+        });
+    DisplacedDiffeomorphism map(base);
+    map.AddField(u);
+    map.AddField(u_a);
+    map.AddField(u_b);
+
+    auto check = [&](Mesh& m, double scale) {
+      Vector x, xi, expected;
+      DenseMatrix F, Fe(dim);
+      real_t worst = 0.0;
+      for (int e = 0; e < m.GetNE(); e++) {
+        ElementTransformation* T = m.GetElementTransformation(e);
+        const IntegrationRule& ir = IntRules.Get(T->GetGeometryType(), 3);
+        for (int q = 0; q < ir.GetNPoints(); q++) {
+          const IntegrationPoint& ip = ir.IntPoint(q);
+          T->SetIntPoint(&ip);
+          T->Transform(ip, x);
+          map.Eval(xi, *T, ip);
+          map.EvalGradient(F, *T, ip);
+          displacement(x, expected);
+          expected *= scale;
+          expected += x;
+          expected[dim - 1] += 0.1 * x[0];
+          for (int i = 0; i < dim; i++) {
+            worst = std::max(worst, std::abs(xi[i] - expected[i]));
+          }
+          Fe = 0.0;
+          for (int i = 0; i < dim; i++) {
+            Fe(i, i) = 1.0;
+            Fe(i, 0) += scale * 0.05 * (i + 1) * x[dim - 1];
+            Fe(i, dim - 1) += scale * 0.05 * (i + 1) * x[0];
+            Fe(i, i) += scale * 0.04 * x[i];
+          }
+          Fe(dim - 1, 0) += 0.1;
+          worst = std::max(worst, MaxEntryDiff(F, Fe));
+        }
+      }
+      return worst;
+    };
+    EXPECT_LT(check(mesh, 1.0), 1e-12);
+    EXPECT_LT(check(a, 1.0), 1e-12);
+    EXPECT_LT(check(b, 1.0), 1e-12);
+
+    // The mapping reads the fields as they are.
+    u *= 2.0;
+    u_a *= 2.0;
+    u_b *= 2.0;
+    EXPECT_LT(check(mesh, 2.0), 1e-12);
+    EXPECT_LT(check(a, 2.0), 1e-12);
+
+    // A mesh without a field of its own is refused, not served by
+    // another's.
+    DisplacedDiffeomorphism partial(base);
+    partial.AddField(u);
+    Vector xi;
+    ElementTransformation* T = a.GetElementTransformation(0);
+    const IntegrationPoint& ip = IntRules.Get(T->GetGeometryType(), 1).IntPoint(0);
+    T->SetIntPoint(&ip);
+    EXPECT_DEATH(partial.Eval(xi, *T, ip), "no\n?.*displacement was given");
+    EXPECT_DEATH(partial.AddField(u), "held");
+  }
 }
 
 }  // namespace

@@ -61,6 +61,46 @@ inline std::string PartsDirectory(const planetmodel::MeshManifest& manifest,
       .string();
 }
 
+// The radii inside a fluid layer at which the model's stratification
+// changes: the edges of the layer's radial elements in the model file
+// (a field's breakpoints are element edges there) across which the
+// excess of the Bullen parameter goes from zero throughout one element
+// to positive in the next, or jumps. They are the ends of the layers of
+// the profile border.
+inline std::vector<double> StratificationChanges(
+    const planetmodel::ModelFile& file, int layer) {
+  std::vector<double> radii;
+  const auto excess = file.FieldOn(layer, kStratification).AsScalar();
+  for (const auto& part : file.Parts()) {
+    if (std::ranges::find(part.layers, layer) == part.layers.end()) {
+      continue;
+    }
+    const auto [first, last] = part.Elements(layer);
+    auto lower = [&](std::size_t e) { return part.element_bounds[2 * e]; };
+    auto upper = [&](std::size_t e) { return part.element_bounds[2 * e + 1]; };
+    auto at = [&](std::size_t e, double t) {
+      return excess.Value(lower(e) + t * (upper(e) - lower(e)), 0.0, 0.0);
+    };
+    auto stratified = [&](std::size_t e) {
+      for (const double t : {0.1, 0.3, 0.5, 0.7, 0.9}) {
+        if (at(e, t) > 1e-12) {
+          return true;
+        }
+      }
+      return false;
+    };
+    for (auto e = first; e + 1 < last; e++) {
+      const double below = at(e, 1.0 - 1e-6), above = at(e + 1, 1e-6);
+      const bool jump = std::abs(above - below) >
+                        1e-3 * std::max(std::abs(above), std::abs(below));
+      if (stratified(e) != stratified(e + 1) || jump) {
+        radii.push_back(upper(e));
+      }
+    }
+  }
+  return radii;
+}
+
 inline double Seconds(Clock::time_point since) {
   return std::chrono::duration<double>(Clock::now() - since).count();
 }
@@ -256,6 +296,7 @@ struct CaseOptions {
                                   // by the elimination (3-D only)
   int profile_border = 0;         // dahlen: profile-border degree (0: off)
   bool profile_unstable_neutral = false;  // treat unstable levels as neutral
+  bool profile_survey = false;  // profile border: layers by the survey alone
   // dahlen: the pressure split on the gravitating solve (-up)
   bool psplit = false;
   real_t psplit_theta = 1.0;
@@ -266,6 +307,8 @@ struct CaseOptions {
                              // > 0: AMG on the full operator, this shift factor
   bool block_gmres = false;  // force FGMRES for the block solves
   bool block_minres = false; // force MINRES (default: the class's choice)
+  bool eulerian_prec = true; // referential: the Eulerian-potential preconditioner
+  bool prec_on_fold = false; // referential: AMG on the folded displacement block
   const char* method = "dahlen";
   real_t slip_theta = 1e2;
   real_t gs_scale = 1.0;
@@ -393,6 +436,12 @@ struct CaseOptions {
                    "--no-profile-unstable-neutral",
                    "With -profile-border: treat unstably stratified levels "
                    "as neutral instead of refusing them.");
+    args.AddOption(&profile_survey, "-profile-survey", "--profile-survey",
+                   "-no-profile-survey", "--no-profile-survey",
+                   "With -profile-border: leave the layers of each fluid "
+                   "region to the border's survey. Off, they end where the "
+                   "case's model says the stratification changes kind or "
+                   "jumps.");
     args.AddOption(&psplit, "-up", "--pressure-split", "-no-up",
                    "--no-pressure-split",
                    "Dahlen: solve the gravitating system with the pressure "
@@ -414,6 +463,16 @@ struct CaseOptions {
                    "FGMRES for the gravitating block solves (the "
                    "referential class's default; MINRES is the mixed "
                    "class's).");
+    args.AddOption(&eulerian_prec, "-eulerian-prec", "--eulerian-prec",
+                   "-no-eulerian-prec", "--no-eulerian-prec",
+                   "Method referential: precondition through the change of "
+                   "variables to the Eulerian potential (the class's "
+                   "default); off, the block diagonal alone.");
+    args.AddOption(&prec_on_fold, "-prec-on-fold", "--prec-on-fold",
+                   "-no-prec-on-fold", "--no-prec-on-fold",
+                   "Method referential: build the displacement block's AMG "
+                   "on the block with the folds of the vacuum extension and "
+                   "the eliminated fluid (off is the class's default).");
     args.AddOption(&block_minres, "-minres", "--block-minres", "-no-minres",
                    "--no-block-minres",
                    "MINRES for the gravitating block solves (the mixed "
@@ -883,6 +942,33 @@ class Case {
         ProfileBorderOptions profile;
         profile.degree = options.profile_border;
         profile.unstable_as_neutral = options.profile_unstable_neutral;
+        if (!options.profile_survey && model_file_) {
+          // The layers the model declares: the level of the background
+          // potential at each radius where a fluid layer's
+          // stratification changes.
+          std::vector<double> radii;
+          for (const int attribute : fluid_attributes) {
+            if (model_file_->HasField(attribute - 1, kStratification)) {
+              const auto changes =
+                  StratificationChanges(*model_file_, attribute - 1);
+              radii.insert(radii.end(), changes.begin(), changes.end());
+            }
+          }
+          Vector point(dim);
+          for (const double radius : radii) {
+            point = 0.0;
+            point[dim - 1] = radius;
+            profile.breaks.push_back(
+                ValueAtPoint(problem->BackgroundPotential(), point));
+          }
+          if (root && !radii.empty()) {
+            std::cout << "Profile border: layers declared at the radii";
+            for (const double radius : radii) {
+              std::cout << " " << radius;
+            }
+            std::cout << "\n";
+          }
+        }
         problem->SetProfileBorder(profile);
         if (options.level_monolithic) {
           problem->SetMonolithicBorder();
@@ -1744,6 +1830,8 @@ class Case {
       if (options.block_gmres || options.block_minres) {
         ref_problem->SetBlockGMRES(options.block_gmres);
       }
+      ref_problem->SetEulerianPotentialPreconditioner(options.eulerian_prec);
+      ref_problem->SetPreconditionerOnFold(options.prec_on_fold);
       if (ref_eliminated) {
         const int first = manifest.Interfaces().front().attribute;
         const auto blist = manifest.FluidSolidInterfaces(fluid_attributes[0]);

@@ -87,14 +87,44 @@ route (`SetMonolithicBorder()`).
 
 ## 3. The stratification
 
-The layers are found by a survey: the level range is divided into
-`ProfileBorderOptions::bins` bins, and the mean excess of the Bullen
-parameter in each decides whether it is neutral (within `neutral_tol` of
-zero), stratified (above) or unstable (below). Neighbouring bins of one
-kind form a layer. Within a stratified layer `beta` is taken from the bin
-means, joined linearly in the level, not from the value at each point.
+The layers of a region come from one of two places.
 
-The excess comes from one of two places.
+- **Declared** (`ProfileBorderOptions::breaks`): the levels at which the
+  model says the stratification changes. A region with any of them
+  inside its level range has for layers the intervals between them. An
+  interval is stratified when most of its fluid is, by the weight
+  `rho^2 / kappa`, and neutral otherwise; neighbouring neutral intervals
+  are one layer, and two stratified ones stay two, the break a knot of
+  `gamma`. A stratified layer takes the degree asked for.
+- **Surveyed**, in a region with no break inside its range: the range is
+  divided into `ProfileBorderOptions::bins` bins, and the mean excess of
+  the Bullen parameter in each decides whether it is neutral (within
+  `neutral_tol` of zero) or stratified (above). Neighbouring bins of one
+  kind form a layer, of degree no more than the number of bins it spans.
+  A boundary between a stratified and a neutral stretch is then at an
+  edge of a bin and not where the model has it, which costs accuracy
+  (§4).
+
+The survey is made in every region, and a bin whose mean excess is below
+`-neutral_tol` is unstable: the region is refused, or the bin taken as
+neutral.
+
+A break is a level, the value of the background potential, because the
+level is the profile's own coordinate. For a spherical model a knot at a
+radius is the discrete background potential at a point of that radius
+(`ValueAtPoint`, `mesh.hpp`). The benchmark drivers declare, for each
+fluid layer of a case's model, the radii at which its Bullen excess goes
+from zero to positive or jumps; they are edges of the model file's
+radial elements (`StratificationChanges`, `benchmark_case.hpp`;
+`-profile-survey` leaves the layers to the survey).
+
+A break need not be an interface of the mesh. Where it is inside
+elements the levels of the discrete potential put a sliver of the fluid
+of one side on the other; that is why an interval's kind goes by most of
+its fluid and not by its mean, and a point of neutral fluid in a
+declared stratified layer takes the layer's mean excess.
+
+The excess itself comes from one of two places.
 
 - **Declared** (`FluidRegion::stratification`): the region supplies it.
   This is the route for a model that is neutral or weakly stratified,
@@ -108,7 +138,9 @@ The excess comes from one of two places.
   (`DeclaredDensityGradientCoefficient`), and no derivative is taken on
   the mesh anywhere. Within a stratified layer `beta` is then the
   declared value at each point, not below `neutral_tol`.
-- **Computed**, from `density_gradient` and `bulk_modulus`. When the
+- **Computed**, from `density_gradient` and `bulk_modulus`. Within a
+  stratified layer `beta` is then taken from the survey's bin means,
+  joined linearly in the level, not from the value at each point. When the
   density gradient is the class's numerical one, its errors are of the
   size of the discretisation and are large next to a centre, where it is
   a ratio of two vanishing quantities. A strongly stratified region
@@ -130,7 +162,16 @@ ball with a fluid core of density `rho_c - a r^2` and bulk modulus
 - the conservation of the region's mass, evaluated from the solution;
 - the elimination against the monolithic route, with and without
   rotation, at solver tolerance;
-- the refusal of an unstable region, and the declared stratification.
+- the refusal of an unstable region, and the declared stratification;
+- on a core stratified below a knot and neutral above it, with the
+  knot's level declared: the two layers the model has, the mass of the
+  region, the two routes, and the level border's answer to 3e-4 in the
+  displacement, where the survey's layers are 7e-3 from it;
+- a break where nothing changes: two stratified layers give the one
+  layer's answer (4e-7), two neutral intervals are one layer, a break
+  outside the region's range is ignored, a break given twice refused;
+- in parallel the knot's level and the displacement are the serial
+  problem's.
 
 The degree-0 load Love number against the radial reference
 (`benchmarks/love_numbers`, method `dahlen`, order 3; signed
@@ -144,10 +185,10 @@ model's stratification read from its case):
 | `bullen_core_strong` | excess 0.5 | -2.5e-4, -9.3e-5, +1.5e-5, +9.2e-6 | -3.3e-5, +2.7e-4, +5.6e-4, +5.7e-4 |
 | `bullen_mantle` | excess 0.02 | -2.8e-4, -1.2e-4, -2.9e-5, -4.5e-6 | -6.4e-5, +4.0e-4, +8.2e-4, +9.2e-4 |
 | `inner_core` | neutral, a shell between two walls | -2.2e-4, -6.5e-5, +2.0e-5, +8.4e-6 | -9.5e-4, -9.7e-4, -1.9e-4, +8.0e-5 |
-| `bullen_mantle_stacked` | excess 0.02 below half the core's radius, neutral above | -3.3e-4, -1.7e-4, -9.1e-5, -6.1e-5 | -5.6e-5, +4.0e-4, +8.2e-4, +9.3e-4 |
-| `prem_4` | PREM's outer core made stable: four layers | +7.5e-4, +5.1e-4, +4.5e-4, +4.0e-4 | +2.4e-4, -1.9e-4, +2.3e-4, +5.4e-4 |
+| `bullen_mantle_stacked` | excess 0.02 below half the core's radius, neutral above | -2.7e-4, -1.2e-4, -2.9e-5, -4.1e-6 | -5.6e-5, +4.0e-4, +8.2e-4, +9.3e-4 |
+| `prem_4` | PREM's outer core made stable: four layers | +7.8e-4, +5.3e-4, +4.7e-4, +4.3e-4 | +2.4e-4, -1.9e-4, +2.3e-4, +5.4e-4 |
 
-On the first five the profile border's error falls with the mesh and is
+On the first six the profile border's error falls with the mesh and is
 the same at degree 10 as at degree 6; the level border's does not fall
 and depends on its number of nodes. At an element size of 0.07 the
 profile border gives +5.9e-6 on `aw_core` and -1.2e-6 on
@@ -155,15 +196,14 @@ profile border gives +5.9e-6 on `aw_core` and -1.2e-6 on
 profile border's error on `bullen_mantle` is -1.9e-3, -1.9e-3, -1.4e-3
 and -3.7e-4 on the four meshes.
 
-On `bullen_mantle_stacked` the error falls more slowly and depends on
-the degree (degree 10: -3.0e-4, -1.4e-4, -5.7e-5, -2.9e-5): the layers
-are bins of the survey, so the border's boundary between the stratified
-and the neutral layer is at an edge of a bin and not at the knot of the
-model, and within the bin that holds the knot the stratified layer runs
-on into neutral fluid. On `prem_4` degrees 3, 6 and 10 are at 4e-4 to 8e-4 on
-these meshes, which do not resolve the model; the border finds the four
-layers of the stabilised core, the thinner of the stratified ones at
-degree 3.
+`bullen_mantle_stacked` has its two layers from the knot of its model,
+which is not an interface of the mesh. With the layers left to the
+survey its error is -3.3e-4, -1.7e-4, -9.1e-5, -6.1e-5 at degree 6 and
+-3.0e-4, -1.4e-4, -5.7e-5, -2.9e-5 at degree 10: slower, and dependent
+on the degree. On `prem_4` the border has the four layers of the
+stabilised core (stratified, neutral, stratified, neutral) and its error
+is the same at degree 10; the other Love numbers of that model are at
+1e-3 on these meshes, which do not resolve it.
 
 The profile border has fewer column solves than the level border: one
 for a neutral region and `degree + 1` for a stratified layer, against one
@@ -180,9 +220,6 @@ on 24.
   (a wall with topography) shares it.
 - A model whose stratification is singular at a centre is resolved
   slowly by polynomials in the level.
-- The layers are bins of the survey. A boundary between a stratified and
-  a neutral stretch of one region is placed at an edge of a bin, not
-  where the model has it, which costs accuracy on a model with such a
-  boundary (§4).
-- A stratified layer that spans few bins takes a lower degree than the
-  one asked for.
+- Without declared breaks the layers are bins of the survey (§3).
+- A break is declared as a level. On a body that is not spherical the
+  caller has to know the levels of its model's knots.

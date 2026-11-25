@@ -179,6 +179,10 @@ returning F, a `Jacobian` helper for det F, `MapNormal` (below) and
   the DtN sphere. The analytic buffer-taper rule for an equilibrium
   mapping that is non-trivial on the physical surface
   (`doc/theory/gravitating_elasticity.md`, section "Gravity: three formulations").
+- `DisplacedDiffeomorphism` — ξ = ξ₀ + u for a base mapping and a
+  displacement held as one grid function for each mesh it is evaluated
+  on (a mesh and SubMeshes of it), `F = F₀ + ∇u`: the configuration of a
+  body at finite strain (`doc/methods/finite_strain.md`, §6).
 - `GridFunctionDiffeomorphism` — ξ = x + h for a displacement grid
   function, `F = I + ∇h` through the element transformation. The
   discrete representative: interpolated mappings and mappings supplied
@@ -431,4 +435,7 @@ unverified.
   error. Problems that assemble on SubMeshes of the parent need the
   interpolant transplanted onto every SubMesh (the benchmark's
   `MultiMeshDiffeomorphism` in `benchmarks/common/relabelling.hpp` does
-  this); analytic mappings have no such restriction.
+  this); analytic mappings have no such restriction. `DisplacedDiffeomorphism`
+  is the library's mapping on several meshes: a base mapping displaced
+  by a field held once for each mesh, served by the field of the
+  element's own mesh, and refused on a mesh it has none for.

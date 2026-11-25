@@ -116,6 +116,30 @@ struct Setting {
   }
 };
 
+// The solve repeated from zero with the block diagonal alone, built on
+// the folded displacement block, in place of the default preconditioner
+// (SetEulerianPotentialPreconditioner, SetPreconditionerOnFold): the same
+// displacement and potential. The default's solution is restored.
+void ExpectPreconditionersAgree(
+    LinearQuasiStaticReferentialSelfGravitatingProblem& problem) {
+  ASSERT_TRUE(problem.EulerianPotentialPreconditioner());
+  ASSERT_FALSE(problem.PreconditionerOnFold());
+  GridFunction u(problem.Displacement()), zeta(problem.Potential());
+  const double u_size = u.Normlinf(), zeta_size = zeta.Normlinf();
+  problem.SetEulerianPotentialPreconditioner(false);
+  problem.SetPreconditionerOnFold(true);
+  problem.ResetSolution();
+  ASSERT_TRUE(problem.Solve());
+  u -= problem.Displacement();
+  zeta -= problem.Potential();
+  EXPECT_LT(u.Normlinf(), 1e-7 * u_size);
+  EXPECT_LT(zeta.Normlinf(), 1e-7 * zeta_size);
+  problem.SetEulerianPotentialPreconditioner(true);
+  problem.SetPreconditionerOnFold(false);
+  problem.ResetSolution();
+  ASSERT_TRUE(problem.Solve());
+}
+
 }  // namespace
 
 TEST(ReferentialProblem, TranslationsAreExactNullPairs) {
@@ -229,6 +253,7 @@ TEST(ReferentialProblem, HydrostaticCrossCheck2D) {
     referential.SetRelTol(1e-11);
     referential.AssembleForce(0.0);
     ASSERT_TRUE(referential.Solve());
+    ExpectPreconditionersAgree(referential);
 
     // A second, different extension (steeper taper): a gauge choice, so
     // the body observables must agree at the discretisation level or
@@ -485,6 +510,7 @@ TEST(ReferentialProblem, HydrostaticCrossCheckBallWide2D) {
       problem.SetRelTol(1e-11);
       problem.AssembleForce(0.0);
       ASSERT_TRUE(problem.Solve());
+      ExpectPreconditionersAgree(problem);
       u_out = problem.Displacement();
       z_out = problem.Potential();
     };
@@ -813,6 +839,7 @@ TEST(ReferentialProblem, FluidCoreGlueCrossCheck2D) {
     referential.SetRelTol(1e-11);
     referential.AssembleForce(0.0);
     ASSERT_TRUE(referential.Solve());
+    ExpectPreconditionersAgree(referential);
 
     {
       GridFunction d(referential.Displacement());
@@ -1357,6 +1384,7 @@ TEST(ReferentialProblem, RelabelledEquilibrium2D) {
     ref.SetRelTol(1e-11);
     ref.AssembleForce(0.0);
     ASSERT_TRUE(ref.Solve());
+    ExpectPreconditionersAgree(ref);
 
     // Relabelled: phi_e = xi, coefficients through the generator.
     Setting s2(dim, order);
@@ -1375,6 +1403,7 @@ TEST(ReferentialProblem, RelabelledEquilibrium2D) {
     rel.SetRelTol(1e-11);
     rel.AssembleForce(0.0);
     ASSERT_TRUE(rel.Solve());
+    ExpectPreconditionersAgree(rel);
 
     // Compare at sample points: u~(x) = u(xi(x)), zeta~ = zeta o xi
     // (modulo the constant).

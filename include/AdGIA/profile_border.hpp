@@ -57,10 +57,20 @@ namespace AdGIA {
 /** @brief Options of the profile border. */
 struct ProfileBorderOptions {
   /// Polynomial degree of @f$\gamma@f$ on each stratified layer. A layer
-  /// that spans fewer level bins than this takes the smaller number.
+  /// found by the survey that spans fewer level bins than this takes the
+  /// smaller number.
   int degree = 6;
-  /// Level bins of the stratification survey that divides each region
-  /// into neutral and stratified layers.
+  /// Levels at which the layers of a region end, where the model says
+  /// its stratification changes: a region with any of them inside its
+  /// level range has for layers the intervals between them, each neutral
+  /// or stratified by its own mean excess (neighbouring neutral
+  /// intervals are one layer; two stratified ones stay two, the break a
+  /// knot of @f$\gamma@f$). A region with none inside its range is
+  /// divided by the survey. In any order; none twice.
+  std::vector<mfem::real_t> breaks;
+  /// Level bins of the stratification survey, which divides a region
+  /// without breaks into neutral and stratified layers and, in every
+  /// region, finds unstable levels.
   int bins = 48;
   /// A bin is neutral when its mean of @f$\beta\hat\kappa/\hat\rho^2@f$
   /// (the excess of the Bullen parameter over one) is within this of
@@ -93,6 +103,9 @@ struct ProfileBorder {
     int bubble = 0;    ///< first interior mode (degree - 1 of them)
   };
   std::vector<Layer> layers;
+  /// Whether the layers are the intervals between the breaks given
+  /// (ProfileBorderOptions::breaks) and not the survey's.
+  bool declared = false;
   int size = 0;              ///< the number of unknowns
   mfem::Vector scale;        ///< the scaling of each basis function
   mfem::DenseMatrix Db;      ///< the dense block, @f$-a@f$ on the basis

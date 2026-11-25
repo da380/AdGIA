@@ -299,6 +299,21 @@ and pausing (`-no-anim` turns the saving off).
 `./postseismic_deformation`, `./postseismic_deformation -nl 0 -tau-e 4 -tf 20`,
 `./postseismic_deformation -tgamma 0.9 -tbx 1 -tbz 2`
 
+### Finite strain
+
+**`finite_strain`**: a clamped beam bent by a dead load, without gravity,
+at finite strain (`NonlinearClampedProblem`): over a ladder of loads, the
+linear and the nonlinear displacement, the Newton iterations and the
+assemblies of the tangent. `./finite_strain -rc 0 -l 0.2`
+
+**`finite_strain_gravity`**: a self-gravitating ball under a surface
+mass at finite strain (`NonlinearSelfGravitatingProblem`): the mean
+radial displacement of the surface in the linear and the nonlinear
+problem over a ladder of loads; their difference falls as the load
+squared. With a uniform load the problem is radial and
+`tests/radial_nonlinear_solid.py` solves it independently.
+`./finite_strain_gravity -a2 0.5 -l 0.1 -n 4`
+
 ### Sea level and rotation
 
 **`rotational_feedback`**: a degree-2 surface mass load without and with

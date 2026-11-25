@@ -2398,12 +2398,48 @@ constants, $\phi + \vu\cdot\grad\Phi_0$ is not).
 
 \subsection{Solver and null space}
 
-Block MINRES on the symmetric saddle system with the projected
-block-diagonal preconditioner (AMG/Gauss--Seidel on the displacement block
-and on the shifted \emph{mapped} Laplacian), serial and parallel in one
-class, warm-started (\code{ResetSolution()} zeroes the iterate between
+Flexible GMRES (restart 200; \code{SetBlockGMRES(false)} gives block
+MINRES) on the symmetric saddle system, serial and parallel in one class,
+warm-started (\code{ResetSolution()} zeroes the iterate between
 independent forcings, since the gauge refinement carries the previous
-solution's fluid-gauge component forward).
+solution's fluid-gauge component forward). The preconditioner is projected
+as in \S\ref{sec:mixed}.
+
+\paragraph{The preconditioner, through the Eulerian potential.}
+The referential increment of the potential and the Eulerian one are
+related by
+\[
+  \zeta^1 = \phi^1\circ\varphi_e + \vu\cdot\nabla_x\Phi_0,
+  \qquad \nabla_x\Phi_0 = F_e^{-T}\nabla\zeta^0 .
+\]
+In $(\vu,\zeta^1)$ the coupling of the two unknowns pairs first derivatives
+of each (\S\ref{sec:referential}); in $(\vu,\phi^1)$ it is the
+$\rho\,\nabla\phi\cdot\vu$ of the mixed class, of lower order. A block
+diagonal of the displacement block's AMG (Gauss--Seidel in serial) and the
+shifted \emph{mapped} Laplacian's is therefore a good preconditioner of the
+system in the second pair and a poorer one in the first. Let $G$ be the
+nodal map $\vu\mapsto\vu_{\mathrm{ext}}\cdot\nabla_x\Phi_0$ on the
+potential's nodes: the body's own, the buffer's through the prescribed
+vacuum extension, an eliminated fluid's through the potential glue, which
+is the same map there. With
+\[
+  S = \begin{pmatrix} I & 0\\ G & I\end{pmatrix},
+\]
+the system in $(\vu,\phi^1)$ is $S^TKS$ to discretisation error, and the
+class applies $S\,D^{-1}S^T$, $D$ the block diagonal
+(\code{SetEulerianPotentialPreconditioner}, on by default). It is
+symmetric. The operator and the solution are untouched.
+
+The displacement block of the Krylov operator carries the folds of the
+vacuum extension and of an eliminated fluid, which are several times the
+block itself in entries. The displacement preconditioner is built on the
+block without them (\code{SetPreconditionerOnFold} builds it with them).
+
+On stratified solid bodies and on a body with an eliminated fluid core,
+at orders 2 and 3, the two together take the iterations to those of the
+mixed class on the same body (about half the block diagonal's) and the
+time of a solve to between a third and a sixth, on a mapped body as at
+the identity.
 
 \paragraph{Rigid modes have no potential partners.} $\zeta = \Phi\circ
 \varphi$ is invariant under rigid motions of the body, so the null pairs are

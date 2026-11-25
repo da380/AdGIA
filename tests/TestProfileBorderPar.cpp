@@ -12,6 +12,11 @@
   the region's mass evaluated from the solution. The border's blocks
   are global sums over the ranks and its columns live on the true dofs,
   which is what these runs exercise.
+
+  And the layers declared (ProfileBorderOptions::breaks) on a core that is
+  stratified below a knot and neutral above it: the level of the knot
+  from ValueAtPoint, the layers, the two routes and the mass, with the
+  level and the displacement against the serial problem's.
 */
 
 #include <mpi.h>
@@ -201,6 +206,142 @@ void RunCase(double delta, const std::string& label) {
         label + ": rotating, level vs profile angular velocity");
 }
 
+// A core stratified (excess 0.5) below a knot and neutral above it, its
+// stratification declared and the knot's level given to the border.
+// Every rank also solves the serial problem.
+void RunDeclaredLayers(const std::string& label) {
+  const double delta = 0.5, knot = 0.6 * kMeshRCmb;
+  auto excess_at = [=](const Vector& x) {
+    return x.Norml2() < knot ? delta : 0.0;
+  };
+  Mesh smesh(TwoLayerMeshFile(3).c_str(), 1, 1);
+  Array<int> solid_attr({2});
+  H1_FECollection fec(1, 3);
+  ConstantCoefficient kappa(kKappa), mu(kMu), rho(kRho);
+  IsotropicElasticRheology rheology(3, kappa, mu);
+  FunctionCoefficient rho_f(CoreDensity), rho_prime(CoreDensityGradient);
+  FunctionCoefficient kappa_f([&](const Vector& x) {
+    const double r = CoreDensity(x);
+    return -(1.0 + excess_at(x)) * r * r / CoreDensityGradient(x);
+  });
+  FunctionCoefficient excess(excess_at);
+  ConstantCoefficient sigma(0.02);
+  Vector at_knot(3);
+  at_knot = 0.0;
+  at_knot[2] = knot;
+
+  // One problem on a mesh and its SubMesh, serial or parallel by the
+  // spaces; with no break given, the survey's layers.
+  auto solve = [&](FiniteElementSpace& fes_u, FiniteElementSpace& fes_phi,
+                   Mesh& body, const std::vector<double>& breaks,
+                   bool monolithic, const std::string& name) {
+    FluidRegion core;
+    core.attributes = Array<int>({1});
+    core.density = &rho_f;
+    core.density_gradient = &rho_prime;
+    core.interface_marker.SetSize(body.bdr_attributes.Max());
+    core.interface_marker = 0;
+    core.interface_marker[0] = 1;
+    core.bulk_modulus = &kappa_f;
+    core.stratification = &excess;
+    auto p = std::make_unique<LinearQuasiStaticMixedSelfGravitatingProblem>(
+        &fes_u, &fes_phi, rheology, rho, kG, kDtNDegree, nullptr,
+        std::vector<FluidRegion>{core});
+    p->SetSolverType(
+        LinearQuasiStaticMixedSelfGravitatingProblem::SolverType::BlockMINRES);
+    p->SetRelTol(1e-12);
+    ProfileBorderOptions options;
+    options.breaks = breaks;
+    p->SetProfileBorder(options);
+    if (monolithic) {
+      p->SetMonolithicBorder();
+    }
+    auto surface = SurfaceMarker(body);
+    p->SetSurfaceLoad(sigma, surface);
+    p->AssembleForce(0.0);
+    Check(p->Solve() ? 0.0 : 1.0, 0.0, label + ": " + name + " solve");
+    return p;
+  };
+
+  // Serial reference.
+  double level_serial = 0.0, u_serial = 0.0;
+  {
+    SubMesh body(SubMesh::CreateFromDomain(smesh, solid_attr));
+    FiniteElementSpace fes_u(&body, &fec, 3), fes_phi(&smesh, &fec);
+    auto surveyed = solve(fes_u, fes_phi, body, {}, false, "serial survey");
+    level_serial = ValueAtPoint(surveyed->BackgroundPotential(), at_knot);
+    auto declared =
+        solve(fes_u, fes_phi, body, {level_serial}, false, "serial declared");
+    u_serial = declared->Displacement().Norml2();
+  }
+
+  ParMesh pmesh(MPI_COMM_WORLD, smesh);
+  ParSubMesh body(ParSubMesh::CreateFromDomain(pmesh, solid_attr));
+  ParFiniteElementSpace fes_u(&body, &fec, 3), fes_phi(&pmesh, &fec);
+  auto surveyed = solve(fes_u, fes_phi, body, {}, false, "survey");
+  const double level = ValueAtPoint(surveyed->BackgroundPotential(), at_knot);
+  Check((level - level_serial) / level_serial, 1e-9,
+        label + ": the knot's level against serial");
+  auto pe = solve(fes_u, fes_phi, body, {level}, false, "declared");
+  auto pm = solve(fes_u, fes_phi, body, {level}, true, "declared, monolithic");
+  const auto& B = pe->ProfileBorderData(0);
+  Check(B.declared ? 0.0 : 1.0, 0.0, label + ": layers declared");
+  Check(static_cast<double>(B.layers.size()) - 2.0, 0.0, label + ": two layers");
+  Check(B.size - 7, 0.0, label + ": unknowns");
+  if (B.layers.size() == 2) {
+    Check(B.layers[0].c1 - level, 0.0, label + ": the boundary at the level");
+    Check(B.layers[0].neutral ? 1.0 : 0.0, 0.0, label + ": stratified below");
+    Check(B.layers[1].neutral ? 0.0 : 1.0, 0.0, label + ": neutral above");
+  }
+  Check(surveyed->ProfileBorderData(0).declared ? 1.0 : 0.0, 0.0,
+        label + ": the survey's layers without a break");
+  Check((GlobalNorm(static_cast<const ParGridFunction&>(pe->Displacement())) -
+         u_serial) / u_serial,
+        1e-7, label + ": displacement against serial");
+  Check(RelDiff(pm->Displacement(), pe->Displacement()), 1e-7,
+        label + ": monolithic vs elimination displacement");
+  Check(RelDiff(pm->ProfileBorderData(0).y, B.y), 1e-7,
+        label + ": monolithic vs elimination unknowns");
+
+  // The mass of the region, as in RunCase.
+  {
+    FluidRegion core;
+    core.interface_marker.SetSize(body.bdr_attributes.Max());
+    core.interface_marker = 0;
+    core.interface_marker[0] = 1;
+    ParLinearForm wall(&fes_u);
+    wall.AddBoundaryIntegrator(new VectorBoundaryFluxLFIntegrator(rho_f),
+                               core.interface_marker);
+    wall.Assemble();
+    const double swept =
+        wall(static_cast<const ParGridFunction&>(pe->Displacement()));
+    const GridFunction& phi = pe->Potential();
+    const GridFunction& phi0 = pe->BackgroundPotential();
+    const int qorder = 2 * fes_phi.GetMaxElementOrder() + 2;
+    double dm = 0.0;
+    Vector b, db;
+    for (int e = 0; e < pmesh.GetNE(); e++) {
+      if (pmesh.GetAttribute(e) != 1) {
+        continue;
+      }
+      ElementTransformation* T = pmesh.GetElementTransformation(e);
+      const IntegrationRule& ir = IntRules.Get(T->GetGeometryType(), qorder);
+      for (int q = 0; q < ir.GetNPoints(); q++) {
+        const IntegrationPoint& ip = ir.IntPoint(q);
+        T->SetIntPoint(&ip);
+        B.Basis(phi0.GetValue(*T, ip), b, db);
+        const double gamma = b * B.y, dgamma = db * B.y;
+        const double rp = rho_prime.Eval(*T, ip);
+        dm += ip.weight * T->Weight() *
+              (rp * phi.GetValue(*T, ip) - rp * gamma -
+               rho_f.Eval(*T, ip) * dgamma);
+      }
+    }
+    MPI_Allreduce(MPI_IN_PLACE, &dm, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    Check((dm - swept) / swept, 1e-8, label + ": mass of the region");
+  }
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -208,6 +349,7 @@ int main(int argc, char* argv[]) {
   Hypre::Init();
   RunCase(0.0, "neutral core");
   RunCase(0.5, "stratified core");
+  RunDeclaredLayers("declared layers");
   if (Mpi::Root()) {
     std::cout << num_checks << " checks, " << num_failures << " failures\n";
   }

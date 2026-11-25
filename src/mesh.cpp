@@ -467,4 +467,36 @@ std::tuple<MPI_Comm, bool, int> SplitBoundaryCommunicator(mfem::ParMesh* mesh) {
 
 #endif
 
+mfem::real_t ValueAtPoint(const mfem::GridFunction& field,
+                          const mfem::Vector& point) {
+  auto* mesh = field.FESpace()->GetMesh();
+  MFEM_VERIFY(field.FESpace()->GetVDim() == 1,
+              "ValueAtPoint: the field must be scalar.");
+  MFEM_VERIFY(point.Size() == mesh->SpaceDimension(),
+              "ValueAtPoint: the point must have the mesh's dimension.");
+  auto points = mfem::DenseMatrix(point.Size(), 1);
+  for (auto i = 0; i < point.Size(); i++) {
+    points(i, 0) = point[i];
+  }
+  auto elements = mfem::Array<int>();
+  auto ips = mfem::Array<mfem::IntegrationPoint>();
+  // On a ParMesh this is the parallel overload, which leaves the point
+  // with one rank.
+  auto found = mesh->FindPoints(points, elements, ips, false);
+  auto value = mfem::real_t{0};
+  if (elements[0] >= 0) {
+    value = field.GetValue(elements[0], ips[0]);
+  }
+#ifdef MFEM_USE_MPI
+  if (auto* pmesh = dynamic_cast<mfem::ParMesh*>(mesh)) {
+    MPI_Allreduce(MPI_IN_PLACE, &value, 1,
+                  mfem::MPITypeMap<mfem::real_t>::mpi_type, MPI_SUM,
+                  pmesh->GetComm());
+  }
+#endif
+  MFEM_VERIFY(found == 1, "ValueAtPoint: no element of the mesh holds the "
+                          "point.");
+  return value;
+}
+
 }  // namespace AdGIA

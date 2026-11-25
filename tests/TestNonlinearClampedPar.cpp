@@ -9,7 +9,8 @@
   energy, the corrections of each iteration). In parallel as well: the
   residual against differences of the energy and the tangent against
   differences of the residual, at a state that is not the reference; the
-  affine patch; and the reference as the solution without loads.
+  affine patch; the reference as the solution without loads; and a
+  relabelled body under a load given by a stress.
 */
 
 #include <mpi.h>
@@ -214,6 +215,45 @@ void RunNoLoad(int dim, int order, int type, const std::string& label) {
   Check(L2Norm(problem.Displacement()), 0.0, label + " zero displacement");
 }
 
+// A relabelled body under a load given by a stress, with the bottom
+// clamped: the equilibrium mapping and the stress load in parallel,
+// against the serial problem.
+void RunRelabelled(int dim, int order, const std::string& label) {
+  auto smesh = MakeBody(dim, 0, dim == 2 ? 4 : 2);
+  auto bottom = Marker(smesh, 1);
+  auto none = Marker(smesh, 0);
+  auto fec = H1_FECollection(order, dim);
+  auto relabelling = InteriorRelabelling(dim, 0.08);
+  auto material = RelabelledMaterial(dim, relabelling);
+  auto no_traction_value = Vector(dim);
+  no_traction_value = 0.0;
+  auto no_traction = VectorConstantCoefficient(no_traction_value);
+  auto load = MatrixFunctionCoefficient(dim, [](const Vector& x,
+                                                DenseMatrix& M) {
+    SmoothGradient(x, M, 0.02, 0.9);
+  });
+
+  auto sfes = FiniteElementSpace(&smesh, &fec, dim);
+  auto serial = NonlinearClampedProblem(&sfes, material.cubic, bottom,
+                                        no_traction, none, nullptr,
+                                        &relabelling);
+  serial.SetStressLoad(load);
+  Check(serial.Solve() ? 0.0 : 1.0, 0.0, label + " serial solve");
+  const auto u_ref = L2Norm(serial.Displacement());
+  const auto energy_ref = serial.Energy();
+
+  auto pmesh = ParMesh(MPI_COMM_WORLD, smesh);
+  auto fes = ParFiniteElementSpace(&pmesh, &fec, dim);
+  auto problem = NonlinearClampedProblem(&fes, material.cubic, bottom,
+                                         no_traction, none, nullptr,
+                                         &relabelling);
+  problem.SetStressLoad(load);
+  Check(problem.Solve() ? 0.0 : 1.0, 0.0, label + " solve");
+  Check(u_ref > 1e-4 ? 0.0 : 1.0, 0.0, label + " a displacement");
+  Check(RelErr(L2Norm(problem.Displacement()), u_ref), 1e-8, label + " |u|");
+  Check(RelErr(problem.Energy(), energy_ref), 1e-8, label + " energy");
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -228,6 +268,8 @@ int main(int argc, char* argv[]) {
   RunAffinePatch(3, 1, 0, "3d-o1-tet patch");
   RunNoLoad(2, 2, 0, "2d-o2-tri no load");
   RunNoLoad(3, 1, 1, "3d-o1-hex no load");
+  RunRelabelled(2, 2, "2d-o2-tri relabelled");
+  RunRelabelled(3, 1, "3d-o1-tet relabelled");
 
   if (Mpi::Root()) {
     std::cout << num_checks - num_fails << " of " << num_checks

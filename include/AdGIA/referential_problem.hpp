@@ -716,8 +716,69 @@ u@f$ columns CONJUGATED
   const PoissonDtNOperator& DtN() const { return *dtn_; }
   mfem::real_t GravitationalConstant() const { return G_; }
 
+  /**
+   * @brief One quadrature rule for every gravity form of the class: the
+   * mapped Laplacian of the potential, the coupling and the
+   * gravity-gravity term of the displacement block, on the body and in
+   * the buffer, in place of each integrator's own rule.
+   *
+   * The three are the second variations of one energy,
+   * @f$(1/8\pi G)\int\langle a(F)\nabla\zeta,\nabla\zeta\rangle@f$,
+   * in which @f$a@f$ is a rational function of the mapping's gradient:
+   * on a mapped body no rule integrates them exactly, and with one rule
+   * for all of them the assembled blocks are the second variations of
+   * the energy as that rule integrates it. The finite-strain problem,
+   * whose residual is read from these blocks, needs that. For a mesh of
+   * one element type. Call it first: before
+   * SetPrescribedVacuumExtension() and any border; the potential's
+   * operators, the background potential and the coupling are made
+   * again. Not built with fluid regions. @p rule is not owned.
+   */
+  void SetGravityIntegrationRule(const mfem::IntegrationRule& rule);
+
+  /** @brief The load of the potential row as AssembleForce() and
+   * AddPotentialForce() left it, on the potential's true dofs. */
+  const mfem::Vector& PotentialForce() const { return B_zeta_; }
+
+  /** @brief Superpose a dual vector on the potential row, on the
+   * potential's true dofs; after AssembleForce(), which resets it. */
+  void AddPotentialForce(const mfem::Vector& f);
+
   /** @brief Iterations of the outer solver in the last Solve(). */
   int LastOuterIterations() const { return outer_its_; }
+
+  /**
+   * @brief Precondition the block solve through the change of variables
+   * to the Eulerian potential (on by default).
+   *
+   * The referential potential increment and the Eulerian one are related
+   * by @f$\zeta = \phi\circ\varphi_e + u\cdot\nabla_x\Phi_0@f$, with
+   * @f$\nabla_x\Phi_0 = F_e^{-T}\nabla\zeta^0@f$. In @f$(u, \zeta)@f$
+   * the coupling of the two unknowns pairs first derivatives with first
+   * derivatives; in @f$(u, \phi)@f$ it is of lower order, and a block
+   * diagonal preconditioner is the better for it. With @f$G@f$ the
+   * nodal map @f$u \mapsto u_{\mathrm{ext}}\cdot\nabla_x\Phi_0@f$
+   * on the potential's nodes (the body's own, the buffer's through the
+   * prescribed vacuum extension, an eliminated fluid's through the
+   * potential glue) and @f$S = [I\ 0;\ G\ I]@f$, the preconditioner
+   * applied is @f$S\,D^{-1}S^T@f$, @f$D@f$ the block diagonal of the
+   * displacement and potential preconditioners. Off, @f$D^{-1}@f$ alone
+   * is applied. The operator and the solution are the same either way.
+   *
+   * The slipping subclass has its own solvers and does not use it.
+   */
+  void SetEulerianPotentialPreconditioner(bool on = true);
+  bool EulerianPotentialPreconditioner() const { return eulerian_prec_; }
+
+  /**
+   * @brief Build the displacement block's preconditioner on the block
+   * with the folds of the vacuum extension and of an eliminated fluid
+   * (off by default: it is built on the block without them, which is a
+   * fraction of the size and as good a preconditioner). The Krylov
+   * operator carries the folds either way.
+   */
+  void SetPreconditionerOnFold(bool on = true);
+  bool PreconditionerOnFold() const { return prec_on_fold_; }
 
   /** @brief Rigid-body modes (orthonormal, true dofs): translations, then
    * rotations of the *mapped* positions @f$W\varphi_e@f$. */
@@ -967,6 +1028,32 @@ u@f$ columns CONJUGATED
   // 2-D compatibility (as in the Eulerian class)
   mfem::Vector ones_, L_outer_;
   mfem::real_t outer_length_ = 0.0;
+
+  // SetGravityIntegrationRule: the rule, and the background the
+  // constructor was given, for making the forms again.
+  const mfem::IntegrationRule* gravity_rule_ = nullptr;
+  mfem::Coefficient* background_given_ = nullptr;
+  template <class Integrator>
+  Integrator* WithGravityRule(Integrator* integrator) const {
+    if (gravity_rule_) {
+      integrator->SetIntRule(gravity_rule_);
+    }
+    return integrator;
+  }
+
+  // The Eulerian-potential preconditioner
+  // (SetEulerianPotentialPreconditioner): the nodal map G on the
+  // potential's dofs, the buffer's rows of it kept from
+  // SetPrescribedVacuumExtension(), and the solver S D^-1 S^T.
+  bool eulerian_prec_ = true;
+  bool prec_on_fold_ = false;
+  std::unique_ptr<mfem::SparseMatrix> cov_G_, cov_G_buffer_;
+#ifdef MFEM_USE_MPI
+  std::unique_ptr<mfem::HypreParMatrix> pcov_G_, pcov_G_buffer_;
+#endif
+  std::unique_ptr<mfem::Solver> cov_prec_;
+  /** @brief The map G, assembled at first use. */
+  const mfem::Operator& PotentialChangeOfVariables();
 
   // null space and solver
   std::unique_ptr<NullSpaceProjector> projector_u_, projector_block_;

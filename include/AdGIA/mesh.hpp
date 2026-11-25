@@ -297,6 +297,21 @@ mfem::Vector MeshCentroid(mfem::ParMesh* mesh, int order = 1);
 #endif
 
 /**
+ * @brief The value of a scalar field at a point of its mesh, given by
+ * its physical coordinates.
+ *
+ * The element holding the point is found by mfem's point location; on a
+ * parallel mesh the one rank that holds it evaluates, and every rank
+ * returns that value. Aborts if no element holds the point. Meant for a
+ * handful of points: each call searches the mesh.
+ *
+ * @param field A scalar GridFunction (a ParGridFunction in parallel).
+ * @param point The point, of the mesh's space dimension.
+ */
+mfem::real_t ValueAtPoint(const mfem::GridFunction& field,
+                          const mfem::Vector& point);
+
+/**
  * @brief Struct providing utilities for a mesh with a spherical external
  * boundary.
  *

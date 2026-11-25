@@ -300,6 +300,141 @@ TEST_P(NonlinearClampedTest, ReferenceIsASolutionWithoutLoads) {
   EXPECT_EQ(L2Norm(problem.Displacement()), 0.0);
 }
 
+// A manufactured solution. With u* a smooth displacement, the dead load
+// given by the stress P(F*) - S0 and u* prescribed on the clamped part,
+// the solution is u*: the residual at u* is int (P(F*) - S0 - M) : grad v
+// for every v, with M the load. The error of the discrete solution then
+// falls at the rate of the interpolation, order + 1 in L2.
+//
+// With u* prescribed on the whole boundary, at strains of a tenth. And
+// with the bottom alone clamped, where the load's action on the free
+// boundary is its traction, at strains of a hundredth: at the larger
+// amplitude that body under that dead load is not stable (the iteration
+// wanders), which is the body's and not the method's.
+real_t ManufacturedRate(int dim, int order, int type, real_t amplitude,
+                        bool all_prescribed, real_t* finest = nullptr) {
+  auto exact = SmoothConfiguration(dim, amplitude, 0.3);
+  auto u_exact = VectorFunctionCoefficient(
+      dim, [amplitude](const Vector& x, Vector& u) {
+        SmoothField(x, u, amplitude, 0.3);
+      });
+  auto identity = IdentityDiffeomorphism(dim);
+  auto errors = std::vector<real_t>();
+  for (const auto n :
+       dim == 2 ? std::vector<int>{4, 8} : std::vector<int>{2, 4}) {
+    auto body = Body(dim, order, type, n);
+    auto load = FirstPiolaKirchhoffStressCoefficient(body.material.cubic,
+                                                     exact, &identity);
+    auto no_traction_value = Vector(dim);
+    no_traction_value = 0.0;
+    auto no_traction = VectorConstantCoefficient(no_traction_value);
+    auto problem = NonlinearClampedProblem(
+        &body.fes, body.material.cubic,
+        all_prescribed ? body.all : body.bottom, no_traction, body.none,
+        &u_exact);
+    problem.SetStressLoad(load);
+    problem.Options().refresh_contraction = 0.0;
+    EXPECT_TRUE(problem.Solve());
+    errors.push_back(problem.Displacement().ComputeL2Error(u_exact));
+  }
+  if (finest) {
+    *finest = errors[1];
+  }
+  return std::log2(errors[0] / errors[1]);
+}
+
+TEST(NonlinearClampedManufactured, ConvergesAtTheOptimalRate) {
+  for (const auto& [dim, order, type] :
+       {Param{2, 1, 0}, Param{2, 1, 1}, Param{2, 2, 0}, Param{2, 2, 1},
+        Param{3, 1, 0}}) {
+    auto finest = real_t{0};
+    const auto rate = ManufacturedRate(dim, order, type, 0.03, true, &finest);
+    EXPECT_GT(rate, order + 0.8)
+        << "dim " << dim << " order " << order << " type " << type;
+    EXPECT_LT(finest, dim == 3 ? 6e-3 : (order == 1 ? 1e-3 : 2e-5));
+  }
+}
+
+TEST(NonlinearClampedManufactured, WithAFreeBoundary) {
+  for (const auto type : {0, 1}) {
+    EXPECT_GT(ManufacturedRate(2, 2, type, 0.003, false), 2.8)
+        << "type " << type;
+  }
+}
+
+// The same body described from a relabelled reference: the mesh is taken
+// to the body by a mapping that moves its interior and leaves its
+// boundary, the material is the body's at the image of each point, and
+// the load is on the boundary. The displacement of a point of the body is
+// then the same; compared through the mean displacement of the top and
+// the integral of its square over the body, which fall together as the
+// mesh is refined.
+TEST(NonlinearClampedRelabelled, SameBodyThroughAnotherMapping) {
+  for (const auto dim : {2, 3}) {
+    const auto order = 2;
+    auto relabelling = InteriorRelabelling(dim, 0.08);
+    auto traction = VectorConstantCoefficient(TopTraction(dim, 0.05));
+    auto differences = std::vector<real_t>();
+    for (const auto n : dim == 2 ? std::vector<int>{4, 8}
+                                 : std::vector<int>{2, 4}) {
+      auto body = Body(dim, order, 0, n);
+      auto measure = [&](NonlinearClampedProblem& problem, Coefficient& J) {
+        auto values = std::vector<real_t>();
+        // The mean displacement of the top, component by component.
+        for (auto i = 0; i < dim; i++) {
+          auto e = Vector(dim);
+          e = 0.0;
+          e[i] = 1.0;
+          auto e_c = VectorConstantCoefficient(e);
+          auto top = LinearForm(&body.fes);
+          top.AddBoundaryIntegrator(new VectorBoundaryLFIntegrator(e_c),
+                                    body.top);
+          top.Assemble();
+          values.push_back(top(problem.Displacement()));
+        }
+        // int |u|^2 over the body, the mesh's volume element times J.
+        auto square = real_t{0};
+        auto u = Vector();
+        for (auto e = 0; e < body.mesh.GetNE(); e++) {
+          auto* T = body.mesh.GetElementTransformation(e);
+          const auto& rule = IntRules.Get(T->GetGeometryType(), 2 * order + 4);
+          for (auto q = 0; q < rule.GetNPoints(); q++) {
+            const auto& ip = rule.IntPoint(q);
+            T->SetIntPoint(&ip);
+            problem.Displacement().GetVectorValue(*T, ip, u);
+            square += ip.weight * T->Weight() * J.Eval(*T, ip) * (u * u);
+          }
+        }
+        values.push_back(std::sqrt(square));
+        return values;
+      };
+
+      auto one = ConstantCoefficient(1.0);
+      auto plain = NonlinearClampedProblem(&body.fes, body.material.cubic,
+                                           body.bottom, traction, body.top);
+      EXPECT_TRUE(plain.Solve());
+      const auto a = measure(plain, one);
+
+      auto material = RelabelledMaterial(dim, relabelling);
+      auto jacobian = JacobianCoefficient(relabelling);
+      auto relabelled =
+          NonlinearClampedProblem(&body.fes, material.cubic, body.bottom,
+                                  traction, body.top, nullptr, &relabelling);
+      EXPECT_TRUE(relabelled.Solve());
+      const auto b = measure(relabelled, jacobian);
+
+      auto worst = real_t{0};
+      for (auto k = 0u; k < a.size(); k++) {
+        worst = std::max(worst, std::abs(a[k] - b[k]) / a.back());
+      }
+      differences.push_back(worst);
+    }
+    EXPECT_LT(differences[1], 0.5 * differences[0])
+        << "dim " << dim << ": " << differences[0] << ", " << differences[1];
+    EXPECT_LT(differences[1], dim == 2 ? 2e-4 : 2e-3);
+  }
+}
+
 INSTANTIATE_TEST_SUITE_P(
     NonlinearClamped, NonlinearClampedTest,
     testing::Values(Param{2, 1, 0}, Param{2, 2, 1}, Param{2, 3, 0},

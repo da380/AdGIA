@@ -13,6 +13,9 @@
   bulk modulus is (1 + delta) times the neutral value -rho^2 / rho', so
   that delta is the excess of the Bullen parameter over one: delta = 0 is
   a neutral core, delta > 0 a stably stratified one.
+  With a knot radius the excess is delta below it and zero above: a
+  core that is a stack of a stratified and a neutral layer, whose
+  boundary is inside the elements.
 
   The level border (SetLevelBorder) solves the primal form of the same
   closure with a different discretisation, so the two agree to
@@ -48,11 +51,16 @@ struct Case {
   IsotropicElasticRheology rheology;
   FunctionCoefficient rho_f{CoreDensity}, rho_prime{CoreDensityGradient};
   double delta;
-  FunctionCoefficient kappa_f;
+  double knot;  // the excess is delta below this radius; everywhere if < 0
+  FunctionCoefficient kappa_f, excess;
   std::vector<FluidRegion> fluids;
   Array<int> surface;
 
-  Case(int order, double delta_)
+  double Excess(const Vector& x) const {
+    return knot < 0.0 || x.Norml2() < knot ? delta : 0.0;
+  }
+
+  Case(int order, double delta_, double knot_ = -1.0)
       : parent(TwoLayerMeshFile(3).c_str(), 1, 1),
         solid_attr({2}),
         body(SubMesh::CreateFromDomain(parent, solid_attr)),
@@ -61,10 +69,12 @@ struct Case {
         fes_phi(&parent, &fec),
         rheology(3, kappa, mu),
         delta(delta_),
+        knot(knot_),
         kappa_f([this](const Vector& x) {
           const double r = CoreDensity(x);
-          return -(1.0 + delta) * r * r / CoreDensityGradient(x);
-        }) {
+          return -(1.0 + Excess(x)) * r * r / CoreDensityGradient(x);
+        }),
+        excess([this](const Vector& x) { return Excess(x); }) {
     FluidRegion core;
     core.attributes = Array<int>({1});
     core.density = &rho_f;
@@ -191,39 +201,48 @@ TEST(ProfileBorder, PolynomialDegree) {
 // the wall sweeps out, int rho (m . u) dS with m the solid's outward
 // normal. Evaluated here from the solution, independently of the
 // border's rows.
+// The two sides of the conservation of the region's mass, from a
+// solution: int (rho' phi - d(rho gamma)/dc) dV over the fluid, and the
+// mass the wall sweeps out.
+std::pair<double, double> MassChangeAndSwept(
+    Case& c, const LinearQuasiStaticMixedSelfGravitatingProblem& p) {
+  const auto& B = p.ProfileBorderData(0);
+  LinearForm wall(&c.fes_u);
+  wall.AddBoundaryIntegrator(new VectorBoundaryFluxLFIntegrator(c.rho_f),
+                             c.fluids[0].interface_marker);
+  wall.Assemble();
+  const double swept = wall(p.Displacement());
+  const GridFunction& phi = p.Potential();
+  const GridFunction& phi0 = p.BackgroundPotential();
+  const int qorder = 2 * c.fes_phi.GetMaxElementOrder() + 2;
+  double dm = 0.0;
+  Vector b, db;
+  for (int e = 0; e < c.parent.GetNE(); e++) {
+    if (c.parent.GetAttribute(e) != 1) {
+      continue;
+    }
+    ElementTransformation* T = c.parent.GetElementTransformation(e);
+    const IntegrationRule& ir = IntRules.Get(T->GetGeometryType(), qorder);
+    for (int q = 0; q < ir.GetNPoints(); q++) {
+      const IntegrationPoint& ip = ir.IntPoint(q);
+      T->SetIntPoint(&ip);
+      B.Basis(phi0.GetValue(*T, ip), b, db);
+      const double gamma = b * B.y, dgamma = db * B.y;
+      const double rho = c.rho_f.Eval(*T, ip);
+      const double rp = c.rho_prime.Eval(*T, ip);
+      dm += ip.weight * T->Weight() *
+            (rp * phi.GetValue(*T, ip) - rp * gamma - rho * dgamma);
+    }
+  }
+  return {dm, swept};
+}
+
 TEST(ProfileBorder, MassOfTheRegionIsConserved) {
   for (double delta : {0.0, 0.5}) {
     Case c(1, delta);
     ConstantCoefficient sigma(0.02);
     auto p = c.Solve(2, sigma);
-    const auto& B = p->ProfileBorderData(0);
-    LinearForm wall(&c.fes_u);
-    wall.AddBoundaryIntegrator(new VectorBoundaryFluxLFIntegrator(c.rho_f),
-                               c.fluids[0].interface_marker);
-    wall.Assemble();
-    const double swept = wall(p->Displacement());
-    const GridFunction& phi = p->Potential();
-    const GridFunction& phi0 = p->BackgroundPotential();
-    const int qorder = 2 * c.fes_phi.GetMaxElementOrder() + 2;
-    double dm = 0.0;
-    Vector b, db;
-    for (int e = 0; e < c.parent.GetNE(); e++) {
-      if (c.parent.GetAttribute(e) != 1) {
-        continue;
-      }
-      ElementTransformation* T = c.parent.GetElementTransformation(e);
-      const IntegrationRule& ir = IntRules.Get(T->GetGeometryType(), qorder);
-      for (int q = 0; q < ir.GetNPoints(); q++) {
-        const IntegrationPoint& ip = ir.IntPoint(q);
-        T->SetIntPoint(&ip);
-        B.Basis(phi0.GetValue(*T, ip), b, db);
-        const double gamma = b * B.y, dgamma = db * B.y;
-        const double rho = c.rho_f.Eval(*T, ip);
-        const double rp = c.rho_prime.Eval(*T, ip);
-        dm += ip.weight * T->Weight() *
-              (rp * phi.GetValue(*T, ip) - rp * gamma - rho * dgamma);
-      }
-    }
+    const auto [dm, swept] = MassChangeAndSwept(c, *p);
     EXPECT_GT(std::abs(swept), 1e-6);
     EXPECT_NEAR(dm, swept, 1e-8 * std::abs(swept)) << "delta " << delta;
   }
@@ -311,6 +330,120 @@ TEST(ProfileBorder, UnstableStratification) {
   auto pu = unstable.Solve(2, sigma, false, nullptr, options);
   auto pn = neutral.Solve(2, sigma);
   EXPECT_LT(RelDiff(pu->Displacement(), pn->Displacement()), 1e-10);
+}
+
+// The level of the background potential at a radius, where a model's knot
+// is declared to the border.
+double LevelAt(const LinearQuasiStaticMixedSelfGravitatingProblem& p,
+               double radius) {
+  Vector x(3);
+  x = 0.0;
+  x[2] = radius;
+  return ValueAtPoint(p.BackgroundPotential(), x);
+}
+
+TEST(ProfileBorder, ValueAtPointIsTheFieldThere) {
+  Case c(2, 0.0);
+  GridFunction f(&c.fes_phi);
+  FunctionCoefficient quadratic(
+      [](const Vector& x) { return 1.0 + x[0] - 2.0 * x[1] + x[2] * x[2]; });
+  f.ProjectCoefficient(quadratic);
+  Vector x(3);
+  x[0] = 0.11;
+  x[1] = -0.23;
+  x[2] = 0.31;
+  EXPECT_NEAR(ValueAtPoint(f, x), 1.0 + 0.11 + 0.46 + 0.31 * 0.31, 2e-3);
+  x = 0.0;
+  x[2] = 1e3;
+  EXPECT_DEATH(ValueAtPoint(f, x), "no element");
+}
+
+// A core stratified below a knot and neutral above it. With the knot's
+// level declared the border's layers are the two the model has, the
+// boundary at that level; left to the survey the boundary is at an edge
+// of a bin. The mass of the region is conserved and the two routes agree
+// as on any other stack.
+TEST(ProfileBorder, DeclaredLayers) {
+  const double knot = 0.6 * kMeshRCmb;
+  ConstantCoefficient sigma(0.02);
+  Case c(1, 0.5, knot);
+  c.fluids[0].stratification = &c.excess;
+  auto surveyed = c.Solve(2, sigma);
+  const double level = LevelAt(*surveyed, knot);
+  ProfileBorderOptions options;
+  options.breaks = {level};
+  auto declared = c.Solve(2, sigma, false, nullptr, options);
+
+  const auto& S = surveyed->ProfileBorderData(0);
+  const auto& D = declared->ProfileBorderData(0);
+  EXPECT_FALSE(S.declared);
+  EXPECT_TRUE(D.declared);
+  ASSERT_EQ(D.layers.size(), 2u);
+  EXPECT_FALSE(D.layers[0].neutral);
+  EXPECT_TRUE(D.layers[1].neutral);
+  EXPECT_EQ(D.layers[0].c1, level);
+  EXPECT_EQ(D.layers[1].c0, level);
+  EXPECT_EQ(D.layers[0].degree, options.degree);
+  EXPECT_EQ(D.size, 1 + options.degree);
+  ASSERT_EQ(S.layers.size(), 2u);
+  const double bin = (S.layers[1].c1 - S.layers[0].c0) / ProfileBorderOptions{}.bins;
+  EXPECT_NE(S.layers[0].c1, level);
+  EXPECT_LT(std::abs(S.layers[0].c1 - level), 2.0 * bin);
+
+  const auto [dm, swept] = MassChangeAndSwept(c, *declared);
+  EXPECT_GT(std::abs(swept), 1e-6);
+  EXPECT_NEAR(dm, swept, 1e-8 * std::abs(swept));
+  auto monolithic = c.Solve(2, sigma, true, nullptr, options);
+  EXPECT_LT(RelDiff(monolithic->Displacement(), declared->Displacement()),
+            1e-7);
+  EXPECT_LT(RelDiff(monolithic->Potential(), declared->Potential()), 1e-7);
+
+  // The two closures of the same stack. Measured at order 1: the declared
+  // layers are 3e-4 from the level border in the displacement, the
+  // survey's 7e-3.
+  auto level_border = c.Solve(1, sigma);
+  const double declared_off =
+      RelDiff(declared->Displacement(), level_border->Displacement());
+  const double surveyed_off =
+      RelDiff(surveyed->Displacement(), level_border->Displacement());
+  EXPECT_LT(declared_off, 1e-3);
+  EXPECT_LT(declared_off, 0.2 * surveyed_off);
+}
+
+// Breaks where the model has no change. Inside a uniformly stratified
+// core a break makes two stratified layers, gamma a piecewise polynomial
+// with a knot there, and the answer is the one layer's to the accuracy
+// of either (measured 4e-7). Inside a neutral core the two intervals are one layer. A
+// break outside the region's range is not the region's.
+TEST(ProfileBorder, BreaksWhereNothingChanges) {
+  ConstantCoefficient sigma(0.02);
+  Case stratified(1, 0.5), neutral(1, 0.0);
+  auto one = stratified.Solve(2, sigma);
+  const auto& range = one->ProfileBorderData(0).layers;
+  const double c0 = range.front().c0, c1 = range.back().c1;
+  ProfileBorderOptions inside;
+  inside.breaks = {0.5 * (c0 + c1)};
+  auto two = stratified.Solve(2, sigma, false, nullptr, inside);
+  ASSERT_EQ(two->ProfileBorderData(0).layers.size(), 2u);
+  EXPECT_EQ(two->ProfileBorderData(0).size, 1 + 2 * inside.degree);
+  EXPECT_LT(RelDiff(two->Displacement(), one->Displacement()), 1e-5);
+
+  auto plain = neutral.Solve(2, sigma);
+  auto split = neutral.Solve(2, sigma, false, nullptr, inside);
+  EXPECT_EQ(split->ProfileBorderData(0).layers.size(), 1u);
+  EXPECT_EQ(split->ProfileBorderData(0).size, 1);
+  EXPECT_LT(RelDiff(split->Displacement(), plain->Displacement()), 1e-10);
+
+  ProfileBorderOptions outside;
+  outside.breaks = {c1 + 1.0, c0 - 1.0};
+  auto same = stratified.Solve(2, sigma, false, nullptr, outside);
+  EXPECT_FALSE(same->ProfileBorderData(0).declared);
+  EXPECT_LT(RelDiff(same->Displacement(), one->Displacement()), 1e-10);
+
+  ProfileBorderOptions twice;
+  twice.breaks = {0.5 * (c0 + c1), 0.5 * (c0 + c1)};
+  EXPECT_DEATH(stratified.Solve(2, sigma, false, nullptr, twice),
+               "given twice");
 }
 
 }  // namespace

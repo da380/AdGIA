@@ -116,6 +116,10 @@ std::vector<ProfileBorder> BuildProfileBorders(
   MFEM_VERIFY(opt.bins >= 1, "SetProfileBorder: at least one level bin.");
   MFEM_VERIFY(opt.neutral_tol > 0.0,
               "SetProfileBorder: a positive neutral tolerance.");
+  std::vector<real_t> breaks(opt.breaks);
+  std::sort(breaks.begin(), breaks.end());
+  MFEM_VERIFY(std::adjacent_find(breaks.begin(), breaks.end()) == breaks.end(),
+              "SetProfileBorder: a break is given twice.");
   std::vector<ProfileBorder> borders;
   Mesh* ms = ctx.fes_u->GetMesh();    // the solid SubMesh
   Mesh* mp = ctx.fes_pot->GetMesh();  // the parent ball
@@ -302,22 +306,104 @@ std::vector<ProfileBorder> BuildProfileBorders(
       return (1.0 - t) * tab_e[i - 1] + t * tab_e[i];
     };
 
-    // 3. The layers, by merging neighbouring bins of one kind, and the
-    // numbering of the unknowns: the end values first (the two ends of a
-    // neutral layer are one unknown), then the interior modes.
-    for (int b = 0; b < nb;) {
-      int e = b, filled = 0;
-      while (e < nb && kind[e] == kind[b]) {
-        filled += s_ref[e] > 0.0 ? 1 : 0;
-        e++;
+    // 3. The layers, and the numbering of the unknowns: the end values
+    // first (the two ends of a neutral layer are one unknown), then the
+    // interior modes. With breaks inside the region's range the layers
+    // are the intervals between them; otherwise neighbouring bins of one
+    // kind are merged.
+    std::vector<real_t> edges{cmin};
+    {
+      const real_t margin = 1e-10 * (cmax - cmin);
+      for (const real_t c : breaks) {
+        if (c > cmin + margin && c < cmax - margin) {
+          edges.push_back(c);
+        }
       }
-      ProfileBorder::Layer L;
-      L.c0 = cmin + b * hb;
-      L.c1 = e == nb ? cmax : cmin + e * hb;
-      L.neutral = kind[b] == 0;
-      L.degree = L.neutral ? 0 : std::max(1, std::min(opt.degree, filled));
-      B.layers.push_back(L);
-      b = e;
+      edges.push_back(cmax);
+    }
+    B.declared = edges.size() > 2;
+    // The mean excess of the stratified fluid of each declared layer.
+    std::vector<real_t> layer_excess;
+    if (B.declared) {
+      const int ni = static_cast<int>(edges.size()) - 1;
+      auto interval_of = [&](real_t c) {
+        return static_cast<int>(
+            std::upper_bound(edges.begin() + 1, edges.end() - 1, c) -
+            (edges.begin() + 1));
+      };
+      // An interval is stratified when most of its fluid is, by the
+      // weight rho^2 / kappa, point by point, and not by its mean: where
+      // a break is inside elements the levels of the discrete background
+      // put a sliver of the fluid of one side on the other, and a mean
+      // would take a sliver of stratified fluid for a stratified layer.
+      Vector i_ref(ni), i_strat(ni), i_excess(ni);
+      i_ref = 0.0;
+      i_strat = 0.0;
+      i_excess = 0.0;
+      for_each_fluid_point(
+          [&](ElementTransformation& T, const IntegrationPoint& ip, real_t w) {
+            const real_t rho = f.density->Eval(T, ip);
+            const real_t ref = rho * rho / f.bulk_modulus->Eval(T, ip);
+            const real_t excess = f.stratification
+                                      ? f.stratification->Eval(T, ip)
+                                      : -(rp_coef->Eval(T, ip) + ref) / ref;
+            const int j = interval_of(pot_parent(T, ip));
+            i_ref[j] += w * ref;
+            if (excess > opt.neutral_tol) {
+              i_strat[j] += w * ref;
+              i_excess[j] += w * ref * excess;
+            }
+          });
+      allreduce(i_ref.GetData(), ni, MPI_SUM);
+      allreduce(i_strat.GetData(), ni, MPI_SUM);
+      allreduce(i_excess.GetData(), ni, MPI_SUM);
+      // An interval without a quadrature point takes the kind of the one
+      // below it (above, for the lowest).
+      std::vector<int> ikind(ni, -1);
+      for (int j = 0; j < ni; j++) {
+        if (i_ref[j] > 0.0) {
+          ikind[j] = i_strat[j] > 0.5 * i_ref[j] ? 1 : 0;
+        }
+      }
+      for (int j = 1; j < ni; j++) {
+        if (ikind[j] < 0) {
+          ikind[j] = ikind[j - 1];
+        }
+      }
+      for (int j = ni - 2; j >= 0; j--) {
+        if (ikind[j] < 0) {
+          ikind[j] = ikind[j + 1];
+        }
+      }
+      for (int j = 0; j < ni; j++) {
+        if (ikind[j] == 0 && !B.layers.empty() && B.layers.back().neutral) {
+          B.layers.back().c1 = edges[j + 1];
+          continue;
+        }
+        ProfileBorder::Layer L;
+        L.c0 = edges[j];
+        L.c1 = edges[j + 1];
+        L.neutral = ikind[j] == 0;
+        L.degree = L.neutral ? 0 : opt.degree;
+        B.layers.push_back(L);
+        layer_excess.push_back(
+            i_strat[j] > 0.0 ? i_excess[j] / i_strat[j] : opt.neutral_tol);
+      }
+    } else {
+      for (int b = 0; b < nb;) {
+        int e = b, filled = 0;
+        while (e < nb && kind[e] == kind[b]) {
+          filled += s_ref[e] > 0.0 ? 1 : 0;
+          e++;
+        }
+        ProfileBorder::Layer L;
+        L.c0 = cmin + b * hb;
+        L.c1 = e == nb ? cmax : cmin + e * hb;
+        L.neutral = kind[b] == 0;
+        L.degree = L.neutral ? 0 : std::max(1, std::min(opt.degree, filled));
+        B.layers.push_back(L);
+        b = e;
+      }
     }
     int next = 0;
     for (size_t j = 0; j < B.layers.size(); j++) {
@@ -366,13 +452,19 @@ std::vector<ProfileBorder> BuildProfileBorders(
           const real_t rho = f.density->Eval(*T, ip);
           const real_t rp = rp_coef->Eval(*T, ip);
           const real_t ref = rho * rho / f.bulk_modulus->Eval(*T, ip);
-          const bool neutral = B.layers[LocateLayer(B.layers, c)].neutral;
+          const int layer = LocateLayer(B.layers, c);
+          const bool neutral = B.layers[layer].neutral;
           // Within a stratified layer the stratification is the
           // region's own where it supplies one and the level mean of the
-          // survey otherwise, kept above the neutral tolerance.
-          const real_t excess = f.stratification
-                                    ? f.stratification->Eval(*T, ip)
-                                    : mean_excess(c);
+          // survey otherwise, kept above the neutral tolerance. A point
+          // of neutral fluid in a declared stratified layer is of the
+          // sliver that the discrete levels put on the wrong side of a
+          // break, and takes the layer's mean.
+          real_t excess = f.stratification ? f.stratification->Eval(*T, ip)
+                                           : mean_excess(c);
+          if (B.declared && excess <= opt.neutral_tol) {
+            excess = layer_excess[layer];
+          }
           const real_t beta = std::max(excess, opt.neutral_tol) * ref;
           RawBasis(B.layers, m, c, b, db);
           fe->CalcShape(ip, shape);
@@ -437,7 +529,8 @@ std::vector<ProfileBorder> BuildProfileBorders(
 
     if (root) {
       std::cout << "Profile border, region " << r << ": " << m
-                << " unknowns on " << B.layers.size() << " layer"
+                << " unknowns on " << B.layers.size()
+                << (B.declared ? " declared" : "") << " layer"
                 << (B.layers.size() == 1 ? "" : "s") << " (";
       for (size_t j = 0; j < B.layers.size(); j++) {
         const auto& L = B.layers[j];
