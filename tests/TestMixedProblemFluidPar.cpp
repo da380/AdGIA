@@ -103,6 +103,10 @@ void RunCase(int dim, int order, const std::string& label) {
   Setup par(fes_u, fes_phi, solid);
   auto& p = *par.problem;
   Check(p.IsParallel() ? 0.0 : 1.0, 0.0, label + " parallel spaces");
+  // The solid SubMesh leaves the fluid out, so an edge of a fluid-solid
+  // interface shared by three ranks joins a smaller group on it: the
+  // case in which mfem can pair shared entities wrongly.
+  Check(SharedEntityMismatch(solid), 1e-12, label + " shared entities matched");
   Check(p.HasFluidRegions() ? 0.0 : 1.0, 0.0, label + " fluid regions");
 
   Check(RelErr(L2Norm(p.BackgroundPotential()), phi0_ref), 1e-9,

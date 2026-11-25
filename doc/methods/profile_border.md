@@ -133,7 +133,7 @@ ball with a fluid core of density `rho_c - a r^2` and bulk modulus
 - the refusal of an unstable region, and the declared stratification.
 
 The degree-0 load Love number against the radial reference
-(`benchmarks/love_numbers`, method `dahlen`, order 3, 32 ranks; signed
+(`benchmarks/love_numbers`, method `dahlen`, order 3; signed
 relative error of h'_0 at element sizes 0.3, 0.2, 0.15 and 0.1, each
 model's stratification read from its case):
 
@@ -143,24 +143,24 @@ model's stratification read from its case):
 | `bullen_core_weak` | excess 0.02 | -2.2e-4, -6.9e-5, +2.2e-5, +1.2e-5 | -3.1e-5, +4.0e-4, +8.0e-4, +8.5e-4 |
 | `bullen_core_strong` | excess 0.5 | -2.5e-4, -9.3e-5, +1.5e-5, +9.2e-6 | -3.3e-5, +2.7e-4, +5.6e-4, +5.7e-4 |
 | `bullen_mantle` | excess 0.02 | -2.8e-4, -1.2e-4, -2.9e-5, -4.5e-6 | -6.4e-5, +4.0e-4, +8.2e-4, +9.2e-4 |
-| `inner_core` | neutral, a shell between two walls | -2.2e-4, -5.2e-5, +2.0e-5, +8.4e-6 | -9.5e-4, -9.6e-4, -1.9e-4, +8.0e-5 |
+| `inner_core` | neutral, a shell between two walls | -2.2e-4, -6.5e-5, +2.0e-5, +8.4e-6 | -9.5e-4, -9.7e-4, -1.9e-4, +8.0e-5 |
 | `bullen_mantle_stacked` | excess 0.02 below half the core's radius, neutral above | -3.3e-4, -1.7e-4, -9.1e-5, -6.1e-5 | -5.6e-5, +4.0e-4, +8.2e-4, +9.3e-4 |
-| `prem_4` | PREM's outer core made stable: four layers | +7.5e-4, +5.6e-4, +4.4e-4, +4.0e-4 | +2.4e-4, -1.3e-4, +2.3e-4, +5.4e-4 |
+| `prem_4` | PREM's outer core made stable: four layers | +7.5e-4, +5.1e-4, +4.5e-4, +4.0e-4 | +2.4e-4, -1.9e-4, +2.3e-4, +5.4e-4 |
 
 On the first five the profile border's error falls with the mesh and is
 the same at degree 10 as at degree 6; the level border's does not fall
 and depends on its number of nodes. At an element size of 0.07 the
-profile border gives +5.9e-6 on `aw_core` and -1.3e-6 on
+profile border gives +5.9e-6 on `aw_core` and -1.2e-6 on
 `bullen_mantle`, the level border +8.7e-4 and +9.3e-4. At order 2 the
 profile border's error on `bullen_mantle` is -1.9e-3, -1.9e-3, -1.4e-3
 and -3.7e-4 on the four meshes.
 
 On `bullen_mantle_stacked` the error falls more slowly and depends on
-the degree (degree 10: -3.0e-4, -1.4e-4, -5.7e-5, -2.8e-5): the layers
+the degree (degree 10: -3.0e-4, -1.4e-4, -5.7e-5, -2.9e-5): the layers
 are bins of the survey, so the border's boundary between the stratified
 and the neutral layer is at an edge of a bin and not at the knot of the
 model, and within the bin that holds the knot the stratified layer runs
-on into neutral fluid. On `prem_4` every degree is at 2e-4 to 1.2e-3 on
+on into neutral fluid. On `prem_4` degrees 3, 6 and 10 are at 4e-4 to 8e-4 on
 these meshes, which do not resolve the model; the border finds the four
 layers of the stabilised core, the thinner of the stratified ones at
 degree 3.
@@ -168,10 +168,10 @@ degree 3.
 The profile border has fewer column solves than the level border: one
 for a neutral region and `degree + 1` for a stratified layer, against one
 for each node of the level border. For degrees 0 to 6 at an element size
-of 0.1 on 32 ranks the runs above took 18 to 26 s with the profile
-border at degree 6 and 38 to 40 s with the level border at 16 nodes on
-the models with a core to the centre, and 24 s against 61 s on
-`inner_core`.
+of 0.1 the runs above took 18 to 27 s with the profile border at degree
+6 and 39 to 42 s with the level border at 16 nodes on the models with a
+core to the centre, on 32 ranks, and 29 s against 68 s on `inner_core`,
+on 24.
 
 ## 5. Limits
 

@@ -686,6 +686,7 @@ class Case {
     }
     solid = std::make_unique<ParSubMesh>(
         ParSubMesh::CreateFromDomain(*parent, u_attributes));
+    VerifySharedEntities(*solid, "the displacement's layers");
     rho_solid_ = OnSolid(*rho);
     kappa_solid_ = OnSolid(*kappa);
     mu_solid_ = OnSolid(*mu);
@@ -1517,6 +1518,7 @@ class Case {
                 "The referential methods need the buffer shell.");
     buffer_sub_ = std::make_unique<ParSubMesh>(
         ParSubMesh::CreateFromDomain(*parent, buffer_attributes));
+    VerifySharedEntities(*buffer_sub_, "the buffer shell");
     fes_buffer_ = std::make_unique<ParFiniteElementSpace>(
         buffer_sub_.get(), fec_.get(), dim);
     Vector bb_min, bb_max;
@@ -1666,6 +1668,7 @@ class Case {
           "shell (nested shells are not supported).");
       fluid_sub_ = std::make_unique<ParSubMesh>(
           ParSubMesh::CreateFromDomain(*parent, fluid_attributes));
+      VerifySharedEntities(*fluid_sub_, "the fluid layers");
       fes_f_ = std::make_unique<ParFiniteElementSpace>(fluid_sub_.get(),
                                                        fec_.get(), dim);
     }
@@ -1751,6 +1754,7 @@ class Case {
         const auto& itf = manifest.Interfaces()[blist[0] - first];
         fluid_sub_ = std::make_unique<ParSubMesh>(
             ParSubMesh::CreateFromDomain(*parent, fluid_attributes));
+        VerifySharedEntities(*fluid_sub_, "the fluid layers");
         fes_f_ = std::make_unique<ParFiniteElementSpace>(fluid_sub_.get(),
                                                          fec_.get(), dim);
         Ef_ = NewRadialFluidExtension(*fes_u, *fes_f_, itf.radius);
@@ -1908,6 +1912,7 @@ class Case {
         outer_attributes.Sort();
         outer_sub_ = std::make_unique<ParSubMesh>(
             ParSubMesh::CreateFromDomain(*parent, outer_attributes));
+        VerifySharedEntities(*outer_sub_, "the layers outside the fluid");
         if (xi_interp_) {
           xi_interp_->AddMesh(*outer_sub_);
         }
