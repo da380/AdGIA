@@ -36,6 +36,20 @@ With `--partition` each case is cut into the parts of the ranks beforehand
 it every rank reads the whole mesh, which is simpler and costs each the
 memory of the whole.
 
+mfem can pair the entities that a `ParSubMesh` shares between ranks
+wrongly when the mesh is read from parts, on some partitions
+(`SharedEntityMismatch()` in `AdGIA/submesh.hpp`). `check_submesh` says
+whether a mesh and its parts are affected:
+
+```
+mpiexec -np 32 ../bin/check_submesh -p runs/inner_core/h0.3/parts_32
+```
+
+`run --partition` runs it on the parts it has had written and leaves a
+case out whose parts are mismatched; the drivers check each SubMesh they
+make and refuse to go on with one. Another number of ranks is the way
+round it.
+
 `--launcher-args` passes the MPI launcher further arguments (binding, host
 files), `--mpiexec` names another launcher than the build's,
 `--program-args` passes further options to the drivers (e.g.

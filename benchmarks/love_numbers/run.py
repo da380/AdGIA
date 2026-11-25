@@ -68,6 +68,7 @@ import argparse
 import json
 import os
 import shlex
+import subprocess
 import sys
 from pathlib import Path
 
@@ -116,6 +117,18 @@ PROFILE_DEGREE = 6
 
 #: The node count of the referential closure where none is asked for.
 LEVEL_NODES = 16
+
+
+def parts_matched(command: list[str]) -> bool:
+    """Whether the parts of a case give matched SubMeshes: check_submesh
+    over every set of the mesh's layers. A mesh of more layers than it
+    takes without being told the sets is not checked here; the drivers
+    check the SubMeshes they make."""
+    print("  $ " + shlex.join(command), flush=True)
+    done = subprocess.run(command, capture_output=True, text=True)
+    for line in done.stdout.splitlines():
+        print("    " + line, flush=True)
+    return done.returncode != 1
 
 
 def closures_for(method: str, cmb: str, fluid: bool,
@@ -293,6 +306,12 @@ def main() -> None:
                      log=None, dry_run=args.dry_run)
             if not ok:
                 failures.append(f"{case}: partition_case")
+                continue
+            if not args.dry_run and not parts_matched(
+                    [*launch, str(programs / "check_submesh"),
+                     "-p", str(parts)]):
+                failures.append(f"{case}: the parts for {args.np} ranks "
+                                "give a mismatched SubMesh (check_submesh)")
                 continue
         methods = list(args.method)
         fluid = has_fluid_layer(name)

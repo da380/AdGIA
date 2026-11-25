@@ -180,9 +180,16 @@ std::unique_ptr<mfem::HypreParMatrix> NewSubMeshPairingTrueDofMatrix(
  * groups of the parent join one group of the SubMesh, mfem lists them in
  * the order of each rank's own numbering of the parent's groups, which
  * need not agree between ranks; the shared dofs of every space on the
- * SubMesh are then paired wrongly, without an error. It depends on the
- * partition and is rare. A SubMesh that takes in every element about an
- * edge is not affected.
+ * SubMesh are then paired wrongly, without an error. A SubMesh that
+ * takes in every element about an edge is not affected.
+ *
+ * Seen with a ParMesh read from parts that mfem's MeshPartitioner wrote,
+ * on some partitions; not with a ParMesh made from a serial mesh and a
+ * partitioning, whose ranks number the groups alike. The problem classes
+ * do not check: a program that makes a ParSubMesh of part of a ParMesh
+ * read from parts calls VerifySharedEntities() once on it, and
+ * benchmarks/love_numbers/check_submesh.cpp checks the parts of a mesh
+ * beforehand.
  */
 inline mfem::real_t SharedEntityMismatch(mfem::ParSubMesh& submesh,
                                          int order = 3) {
@@ -210,13 +217,24 @@ inline mfem::real_t SharedEntityMismatch(mfem::ParSubMesh& submesh,
   return global;
 }
 
-/** @brief Abort, naming @p what, if the shared entities of a ParSubMesh
- * are not matched across ranks (SharedEntityMismatch()). */
-inline void VerifySharedEntities(mfem::ParSubMesh& submesh, const char* what) {
+/** @brief Whether the shared entities of a ParSubMesh are matched across
+ * ranks: SharedEntityMismatch() against the size of its elements. */
+inline bool SharedEntitiesMatch(mfem::ParSubMesh& submesh,
+                                mfem::real_t* mismatch = nullptr) {
   auto h = mfem::real_t{0}, h_max = h, kappa_min = h, kappa_max = h;
   submesh.GetCharacteristics(h, h_max, kappa_min, kappa_max);
-  const auto mismatch = SharedEntityMismatch(submesh);
-  MFEM_VERIFY(mismatch <= 1e-8 * (h_max > 0.0 ? h_max : 1.0),
+  const auto change = SharedEntityMismatch(submesh);
+  if (mismatch) {
+    *mismatch = change;
+  }
+  return change <= 1e-8 * (h_max > 0.0 ? h_max : 1.0);
+}
+
+/** @brief Abort, naming @p what, if the shared entities of a ParSubMesh
+ * are not matched across ranks (SharedEntitiesMatch()). */
+inline void VerifySharedEntities(mfem::ParSubMesh& submesh, const char* what) {
+  auto mismatch = mfem::real_t{0};
+  MFEM_VERIFY(SharedEntitiesMatch(submesh, &mismatch),
               "The ParSubMesh of " << what << " on " << submesh.GetNRanks()
               << " ranks pairs entities that it shares between ranks "
                  "wrongly (a linear function changes by " << mismatch

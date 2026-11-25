@@ -75,6 +75,8 @@ if(USE_MPI)
     target_link_libraries(TestSubMeshMixedBilinearFormPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestQuasiStaticProblemPar TestQuasiStaticProblemPar.cpp)
     target_link_libraries(TestQuasiStaticProblemPar PRIVATE AdGIA MPI::MPI_CXX)
+    add_executable(TestSharedEntitiesPar TestSharedEntitiesPar.cpp)
+    target_link_libraries(TestSharedEntitiesPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestNonlinearClampedPar TestNonlinearClampedPar.cpp)
     target_link_libraries(TestNonlinearClampedPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestFaultProblemPar TestFaultProblemPar.cpp)
@@ -144,6 +146,10 @@ if(USE_MPI)
     target_link_libraries(TestDiscreteSecondOrderPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestAdjointFingerprintPar TestAdjointFingerprintPar.cpp)
     target_link_libraries(TestAdjointFingerprintPar PRIVATE AdGIA MPI::MPI_CXX)
+    # Its arrangement of ranks needs four.
+    add_test(NAME TestSharedEntitiesPar_np4
+             COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 4
+                     $<TARGET_FILE:TestSharedEntitiesPar>)
     foreach(np 1 2 4)
         # First, so a broken launcher fails the batch at its first test.
         add_test(NAME TestMpiWorldPar_np${np}

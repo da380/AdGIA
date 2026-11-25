@@ -13,6 +13,9 @@
 // and the fields in serial on every rank when there is none, which is
 // simpler and costs each rank the memory of the whole mesh.
 //
+// check_submesh.cpp says whether the parts written are ones on which
+// mfem's ParSubMesh pairs its shared entities rightly.
+//
 // Sample run:
 //    ./partition_case -c cases/inner_core/case.json -np 128
 // ============================================================================

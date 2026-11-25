@@ -73,7 +73,8 @@ set(BENCHMARK_LAUNCHER_ARGUMENTS
 
 # --- Love numbers -----------------------------------------------------------
 
-foreach(driver love_benchmark field_benchmark partition_case stability_probe)
+foreach(driver love_benchmark field_benchmark partition_case check_submesh
+        stability_probe)
     benchmark_driver(love_numbers ${driver})
 endforeach()
 benchmark_launcher(love_numbers love_numbers run
