@@ -278,7 +278,7 @@ from a linear problem made at the state. For that to be the derivative
 of one discrete energy, every gravity form of that problem, the elastic
 stiffness, the elastic residual and the energy are integrated with one
 rule on each element, of order `2 p + w`
-(`SetGravityIntegrationRule` of the linear class does it for the gravity
+(the linear class takes the rule at construction for the gravity
 forms: `a(F)` is a rational function of `F`, no rule integrates the
 three exactly on a deformed body, and their own rules differ).
 

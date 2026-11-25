@@ -477,13 +477,14 @@ NonlinearSelfGravitatingProblem::NewLinear(bool reference) {
   auto linear =
       std::make_unique<LinearQuasiStaticReferentialSelfGravitatingProblem>(
           fes_u_, fes_zeta_, *rheology_, *rho_, G_, dtn_degree_,
-          reference ? nullptr : zeta_c_.get());
-  // One rule for the elastic stiffness and for every gravity form, the
-  // rule of the elastic residual and energy: the operator is then the
-  // second variation of the energy as that rule integrates it, and the
-  // gravity terms of the residual, read from the operator, its first.
+          reference ? nullptr : zeta_c_.get(), std::vector<FluidRegion>{},
+          rule_);
+  // One rule for every gravity form, given above, and for the elastic
+  // stiffness: the rule of the elastic residual and energy. The operator
+  // is then the second variation of the energy as that rule integrates
+  // it, and the gravity terms of the residual, read from the operator,
+  // its first.
   if (rule_) {
-    linear->SetGravityIntegrationRule(*rule_);
     for (auto* integrator : *linear->StiffnessIntegrators().GetDBFI()) {
       if (dynamic_cast<MaterialStiffnessIntegrator*>(integrator) ||
           dynamic_cast<GeometricStiffnessIntegrator*>(integrator)) {

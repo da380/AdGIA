@@ -398,13 +398,26 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
    * seam") — are assembled by SetFluidPotentialGlue() and
    * SetLevelBorder(); Solve() refuses a fluid region without the glue.
    * Empty for a solid body.
+   * @param gravity_rule One quadrature rule for every gravity form of
+   * the class (the mapped Laplacian of the potential, the coupling and
+   * the gravity-gravity term of the displacement block, on the body and
+   * in the buffer) in place of each integrator's own; null keeps their
+   * own. The three are the second variations of one energy,
+   * @f$(1/8\pi G)\int\langle a(F)\nabla\zeta,\nabla\zeta\rangle@f$,
+   * in which @f$a@f$ is a rational function of the mapping's gradient:
+   * on a mapped body no rule integrates them exactly, and with one rule
+   * for all of them the assembled blocks are the second variations of
+   * the energy as that rule integrates it, which the finite-strain
+   * problem, whose residual is read from these blocks, needs. For a mesh
+   * of one element type; not built with fluid regions; not owned.
    */
   LinearQuasiStaticReferentialSelfGravitatingProblem(
       mfem::FiniteElementSpace* fes_u, mfem::FiniteElementSpace* fes_zeta,
       const ReferentialElasticRheology& rheology, mfem::Coefficient& density,
       mfem::real_t gravitational_constant, int dtn_degree,
       mfem::Coefficient* background_zeta0 = nullptr,
-      const std::vector<FluidRegion>& fluids = {});
+      const std::vector<FluidRegion>& fluids = {},
+      const mfem::IntegrationRule* gravity_rule = nullptr);
 
   /** @brief Surface mass load @f$\sigma@f$ per referential area
    * (registered as time-dependent) on the marked boundary attributes of
@@ -583,6 +596,41 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
 #endif
 
   /**
+   * @brief SubMesh mode: the vacuum in the Eulerian potential, in place
+   * of an extension of the displacement.
+   *
+   * The potential's unknown stays one continuous field on the ball: the
+   * referential increment @f$\zeta^1@f$ in the body and on its surface,
+   * and at the buffer's nodes off the surface the Eulerian increment
+   * @f$\phi@f$, which in a vacuum is harmonic and knows of no extension.
+   * On the surface @f$\phi = \zeta^1 - \mathbf u\cdot\mathbf g_0@f$. The
+   * referential functional's integral over the vacuum is then
+   * @f[
+   *   \frac{1}{8\pi G}\int_V|\nabla\phi|^2\,dV
+   *   + b(\mathbf u, \phi) + \tfrac12 a_s(\mathbf u, \mathbf u),
+   * @f]
+   * with the surface forms of VacuumSurfaceCouplingIntegrator and
+   * VacuumSurfaceGravityIntegrator, for any extension: nothing of one is
+   * made. The buffer's Laplacian is taken through the nodal map
+   * @f$\mathbf u\mapsto\mathbf u\cdot\mathbf g_0@f$ at the surface's
+   * nodes, and the surface forms are assembled on the body's boundary.
+   * The answer does not depend on how the buffer is meshed beyond what
+   * a harmonic potential asks.
+   *
+   * Requirements: the equilibrium mapping the identity on the surface
+   * and through the buffer; the body's surface free (vacuum outside it);
+   * no fluid regions, water or rotation (not built with them). In place
+   * of SetPrescribedVacuumExtension(); once, before the first Solve().
+   *
+   * @param buffer_marker The attributes of the ball's mesh that are the
+   * vacuum.
+   * @param surface_marker The boundary attributes of the body's mesh
+   * that are its surface.
+   */
+  void SetEulerianVacuum(const mfem::Array<int>& buffer_marker,
+                         const mfem::Array<int>& surface_marker);
+
+  /**
    * @brief The eliminated-fluid potential glue — steps (ii) and (iii) of
    * the referential closure (doc/theory/dahlen_closure.tex, "Implementation",
    * the referential variant): a DISCRETE change of variables. The fluid
@@ -715,26 +763,6 @@ u@f$ columns CONJUGATED
 
   const PoissonDtNOperator& DtN() const { return *dtn_; }
   mfem::real_t GravitationalConstant() const { return G_; }
-
-  /**
-   * @brief One quadrature rule for every gravity form of the class: the
-   * mapped Laplacian of the potential, the coupling and the
-   * gravity-gravity term of the displacement block, on the body and in
-   * the buffer, in place of each integrator's own rule.
-   *
-   * The three are the second variations of one energy,
-   * @f$(1/8\pi G)\int\langle a(F)\nabla\zeta,\nabla\zeta\rangle@f$,
-   * in which @f$a@f$ is a rational function of the mapping's gradient:
-   * on a mapped body no rule integrates them exactly, and with one rule
-   * for all of them the assembled blocks are the second variations of
-   * the energy as that rule integrates it. The finite-strain problem,
-   * whose residual is read from these blocks, needs that. For a mesh of
-   * one element type. Call it first: before
-   * SetPrescribedVacuumExtension() and any border; the potential's
-   * operators, the background potential and the coupling are made
-   * again. Not built with fluid regions. @p rule is not owned.
-   */
-  void SetGravityIntegrationRule(const mfem::IntegrationRule& rule);
 
   /** @brief The load of the potential row as AssembleForce() and
    * AddPotentialForce() left it, on the potential's true dofs. */
@@ -946,6 +974,21 @@ u@f$ columns CONJUGATED
   std::unique_ptr<mfem::HypreParMatrix> pext_EtGE_, pext_C_total_,
       pext_Ct_total_;
 #endif
+  // The fold E^T G_V E of the extension's gravity-gravity block, kept as
+  // its factors; (p)ext_EtGE_ above holds the product once
+  // AssembleExtensionFold() has been asked for it (the eliminated
+  // fluid's glue, a preconditioner on the fold, the slipping subclass).
+  // Otherwise the solver takes it as an operator.
+  bool ext_set_ = false;
+  bool eulerian_vacuum_ = false;  // SetEulerianVacuum
+  std::unique_ptr<mfem::GridFunction> g0_nodal_;  // g0 on the body's nodes
+  std::unique_ptr<mfem::SparseMatrix> ext_Gv_, ext_E_;
+#ifdef MFEM_USE_MPI
+  std::unique_ptr<mfem::HypreParMatrix> pext_Gv_, pext_E_;
+#endif
+  std::unique_ptr<mfem::Operator> ext_fold_op_;
+  std::unique_ptr<mfem::SumOperator> A_fold_op_;
+  void AssembleExtensionFold();
   mfem::OperatorHandle A_aug_;
   mfem::OperatorHandle A_aug_clean_;  // clean-A augmentation of the
                                       // SetGaugePreconditionerOnly mode
@@ -1029,10 +1072,9 @@ u@f$ columns CONJUGATED
   mfem::Vector ones_, L_outer_;
   mfem::real_t outer_length_ = 0.0;
 
-  // SetGravityIntegrationRule: the rule, and the background the
-  // constructor was given, for making the forms again.
+  // The one rule of the gravity forms, where the constructor was given
+  // one.
   const mfem::IntegrationRule* gravity_rule_ = nullptr;
-  mfem::Coefficient* background_given_ = nullptr;
   template <class Integrator>
   Integrator* WithGravityRule(Integrator* integrator) const {
     if (gravity_rule_) {

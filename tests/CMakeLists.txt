@@ -346,6 +346,10 @@ add_executable(TestNonlinearSelfGravitating TestNonlinearSelfGravitating.cpp)
 target_link_libraries(TestNonlinearSelfGravitating PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestNonlinearSelfGravitating)
 
+add_executable(TestVacuumSurface TestVacuumSurface.cpp)
+target_link_libraries(TestVacuumSurface PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestVacuumSurface)
+
 add_executable(TestFaultProblem TestFaultProblem.cpp)
 target_link_libraries(TestFaultProblem PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestFaultProblem)

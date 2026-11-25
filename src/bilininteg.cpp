@@ -1510,6 +1510,152 @@ void BoundaryNormalSurfaceDivergenceIntegrator::AssembleElementMatrix(
   }
 }
 
+namespace {
+
+// On a boundary element at the point Trans is set to: the shape functions,
+// their gradients along the surface (dof by space dimension) and the unit
+// normal, which for a boundary element points out of the mesh.
+void SurfaceShapes(const mfem::FiniteElement& el,
+                   mfem::ElementTransformation& Trans,
+                   const mfem::IntegrationPoint& ip, mfem::Vector& shape,
+                   mfem::DenseMatrix& dshape, mfem::DenseMatrix& gshape,
+                   mfem::Vector& normal, mfem::DenseMatrix& JtJ,
+                   mfem::DenseMatrix& Jp) {
+  using namespace mfem;
+  const auto dim = Trans.GetSpaceDim();
+  const auto sdim = el.GetDim();
+  const auto dof = el.GetDof();
+  shape.SetSize(dof);
+  dshape.SetSize(dof, sdim);
+  gshape.SetSize(dof, dim);
+  el.CalcShape(ip, shape);
+  el.CalcDShape(ip, dshape);
+  // grad_s N = dN (J^T J)^-1 J^T, J the dim by (dim - 1) Jacobian.
+  const DenseMatrix& J = Trans.Jacobian();
+  JtJ.SetSize(sdim);
+  MultAtB(J, J, JtJ);
+  JtJ.Invert();
+  Jp.SetSize(sdim, dim);
+  MultABt(JtJ, J, Jp);
+  Mult(dshape, Jp, gshape);
+  normal.SetSize(dim);
+  CalcOrtho(J, normal);
+  normal /= normal.Norml2();
+}
+
+// +1 where a boundary element's own normal points out of the element
+// behind it, -1 where into it: a SubMesh inherits the boundary elements
+// of an interface with the parent's orientation.
+mfem::real_t OutwardSign(mfem::Mesh& mesh, int be) {
+  using namespace mfem;
+  const auto dim = mesh.SpaceDimension();
+  int el, info;
+  mesh.GetBdrElementAdjacentElement(be, el, info);
+  IsoparametricTransformation bt, et;
+  mesh.GetBdrElementTransformation(be, &bt);
+  mesh.GetElementTransformation(el, &et);
+  const auto& bip = Geometries.GetCenter(mesh.GetBdrElementGeometry(be));
+  bt.SetIntPoint(&bip);
+  Vector nor(dim), fc(dim), ec(dim);
+  CalcOrtho(bt.Jacobian(), nor);
+  bt.Transform(bip, fc);
+  et.Transform(Geometries.GetCenter(mesh.GetElementGeometry(el)), ec);
+  fc -= ec;
+  return (nor * fc) >= 0.0 ? 1.0 : -1.0;
+}
+
+}  // namespace
+
+void VacuumSurfaceCouplingIntegrator::AssembleElementMatrix2(
+    const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
+    mfem::ElementTransformation& Trans, mfem::DenseMatrix& elmat) {
+  using namespace mfem;
+  MFEM_VERIFY(&trial_fe == &test_fe ||
+                  trial_fe.GetDof() == test_fe.GetDof(),
+              "VacuumSurfaceCouplingIntegrator: the potential's and the "
+              "displacement's elements must be the same.");
+  const auto dim = Trans.GetSpaceDim();
+  const auto dof = test_fe.GetDof();
+  elmat.SetSize(dim * dof, dof);
+  elmat = 0.0;
+  const auto& ir = IntRule ? *IntRule
+                           : IntRules.Get(test_fe.GetGeomType(),
+                                          2 * test_fe.GetOrder() +
+                                              Trans.OrderW() + 2);
+  gs_.SetSize(dof);
+  const auto sign = OutwardSign(*g0_->FESpace()->GetMesh(), Trans.ElementNo);
+  for (auto q = 0; q < ir.GetNPoints(); q++) {
+    const auto& ip = ir.IntPoint(q);
+    Trans.SetIntPoint(&ip);
+    SurfaceShapes(test_fe, Trans, ip, shape_, dshape_, gshape_, normal_, JtJ_,
+                  Jp_);
+    normal_ *= sign;
+    g0_->GetVectorValue(Trans, ip, g_);
+    const auto gn = g_ * normal_;
+    gshape_.Mult(g_, gs_);  // g0 . grad_s N_b
+    const auto w = scale_ * ip.weight * Trans.Weight();
+    // w(N_a e_k) . grad_s N_b = N_a [(g0.n) d_k N_b - n_k (g0 . grad_s N_b)]
+    for (auto k = 0; k < dim; k++) {
+      for (auto a = 0; a < dof; a++) {
+        for (auto b = 0; b < dof; b++) {
+          elmat(a + k * dof, b) +=
+              w * shape_[a] * (gn * gshape_(b, k) - normal_[k] * gs_[b]);
+        }
+      }
+    }
+  }
+}
+
+void VacuumSurfaceGravityIntegrator::AssembleElementMatrix(
+    const mfem::FiniteElement& el, mfem::ElementTransformation& Trans,
+    mfem::DenseMatrix& elmat) {
+  using namespace mfem;
+  const auto dim = Trans.GetSpaceDim();
+  const auto dof = el.GetDof();
+  elmat.SetSize(dim * dof);
+  elmat = 0.0;
+  const auto& ir = IntRule ? *IntRule
+                           : IntRules.Get(el.GetGeomType(),
+                                          2 * el.GetOrder() + Trans.OrderW() +
+                                              2);
+  Hg_.SetSize(dim);
+  const auto sign = OutwardSign(*g0_->FESpace()->GetMesh(), Trans.ElementNo);
+  for (auto q = 0; q < ir.GetNPoints(); q++) {
+    const auto& ip = ir.IntPoint(q);
+    Trans.SetIntPoint(&ip);
+    SurfaceShapes(el, Trans, ip, shape_, dshape_, gshape_, normal_, JtJ_, Jp_);
+    normal_ *= sign;
+    g0_->GetVectorValue(Trans, ip, g_);
+    // H_ki = d_i g_k, from the element behind the boundary element; only
+    // its action on tangent vectors is used.
+    g0_->GetVectorGradient(Trans, H_);
+    Trans.SetIntPoint(&ip);
+    const auto gn = g_ * normal_;
+    const auto g2 = g_ * g_;
+    H_.Mult(g_, Hg_);
+    const auto w = scale_ * ip.weight * Trans.Weight();
+    for (auto k = 0; k < dim; k++) {
+      for (auto l = 0; l < dim; l++) {
+        // u . (w(v) . grad) g0 for u = N_a e_k, v = N_b e_l, over N_a N_b.
+        const auto first = gn * H_(k, l) - normal_[l] * Hg_[k];
+        const auto second = gn * H_(l, k) - normal_[k] * Hg_[l];
+        for (auto a = 0; a < dof; a++) {
+          for (auto b = 0; b < dof; b++) {
+            // D(u, v) = N_a (n_k d_l N_b - n_l d_k N_b), and D(v, u).
+            const auto D_uv = shape_[a] * (normal_[k] * gshape_(b, l) -
+                                           normal_[l] * gshape_(b, k));
+            const auto D_vu = shape_[b] * (normal_[l] * gshape_(a, k) -
+                                           normal_[k] * gshape_(a, l));
+            elmat(a + k * dof, b + l * dof) +=
+                w * (shape_[a] * shape_[b] * (first + second) -
+                     0.5 * g2 * (D_uv + D_vu));
+          }
+        }
+      }
+    }
+  }
+}
+
 void SlipInterfacePressureIntegrator::AssembleElementMatrix(
     const mfem::FiniteElement& el, mfem::ElementTransformation& Trans,
     mfem::DenseMatrix& elmat) {

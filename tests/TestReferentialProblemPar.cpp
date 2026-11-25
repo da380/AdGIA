@@ -193,6 +193,30 @@ void RunCase(int order, const std::string& label) {
         label + " displacement norm");
   Check(RelErr(L2Norm(problem.Potential()), z_ref), 1e-5,
         label + " potential norm");
+
+  // The vacuum in the Eulerian potential, in place of the extension: the
+  // same displacement to the accuracy of the mesh.
+  LinearQuasiStaticReferentialSelfGravitatingProblem eulerian(
+      &fes_u, &fes_zeta, rheology, rho, kG, kDtNDegree);
+  Array<int> buffer_marker(pmesh.attributes.Max());
+  buffer_marker = 0;
+  buffer_marker[1] = 1;
+  eulerian.SetEulerianVacuum(buffer_marker, surface);
+  FunctionCoefficient sigma3(SurfaceLoad);
+  eulerian.SetSurfaceLoad(sigma3, surface);
+  eulerian.SetRelTol(1e-11);
+  eulerian.AssembleForce(0.0);
+  Check(eulerian.Solve() ? 0.0 : 1.0, 0.0, label + " Eulerian vacuum solve");
+  const auto u_eulerian = L2Norm(eulerian.Displacement());
+  // Measured: 3.6e-2 at order 1, 9e-4 at order 2.
+  Check(RelErr(u_eulerian, u_ref), order == 1 ? 5e-2 : 2e-3,
+        label + " Eulerian vacuum against the extension");
+  if (Mpi::Root()) {
+    std::cout << label << ": |u| " << u_ref << " with the extension, "
+              << u_eulerian
+              << " with the Eulerian vacuum, "
+              << eulerian.LastOuterIterations() << " iterations\n";
+  }
 }
 
 // Eliminated fluid regions, the construction step of the referential
