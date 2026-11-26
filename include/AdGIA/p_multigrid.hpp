@@ -117,4 +117,86 @@ class PMultigridPreconditioner : public mfem::Solver {
   std::unique_ptr<mfem::Multigrid> cycle_;
 };
 
+/**
+ * @brief A p-multigrid V-cycle with no matrix above the coarsest level: a
+ * preconditioner for forms applied by partial assembly.
+ *
+ * The levels are H1 spaces on the same mesh of the orders of
+ * PMultigridOrders(), with the vector dimension, ordering and basis of
+ * the given space. On every level the form is made again from its
+ * integrators (given as a function that adds them to a form): by partial
+ * assembly above the coarsest level, as a matrix on the coarsest. The
+ * levels are therefore discretisations of the form at their orders, not
+ * Galerkin products. Between levels mfem's transfer of the space
+ * hierarchy, applied with no matrix on tensor-product elements.
+ *
+ * One cycle is a Chebyshev step about the form's diagonal
+ * (Options::smoothing_order) on each level going down, a solve on the
+ * coarsest and a Chebyshev step on each level going up. The coarsest
+ * level's solver comes from the factory given: by default one BoomerAMG
+ * cycle in parallel (with Chebyshev smoothing when hypre runs on a
+ * device, where its own default is l1-Jacobi) and Options::coarse_sweeps
+ * symmetric Gauss-Seidel sweeps in serial.
+ *
+ * Essential dofs are those of the boundary attributes marked, on every
+ * level. The integrators must support partial assembly and its diagonal
+ * on the mesh's elements (for ElasticTensorIntegrator: hexahedra). Above
+ * the coarsest level everything runs on the configured mfem::Device.
+ *
+ * The space and what the integrators refer to are not owned and must
+ * outlive the preconditioner.
+ */
+class MatrixFreePMultigrid : public mfem::Solver {
+ public:
+  struct Options {
+    int coarse_order = 2;     ///< order of the coarsest level
+    int smoothing_order = 2;  ///< order of the Chebyshev smoother
+    int coarse_sweeps = 4;    ///< serial default coarse solver: its sweeps
+  };
+
+  /// Adds the form's integrators to the form of a level.
+  using Integrators = std::function<void(mfem::BilinearForm&)>;
+
+  using CoarseSolverFactory = PMultigridPreconditioner::CoarseSolverFactory;
+
+  /**
+   * @param fes The H1 space of the problem, of one order, above
+   * Options::coarse_order; serial or parallel.
+   * @param ess_bdr Marker of the essential boundary attributes; empty or
+   * all zero for none.
+   * @param integrators Adds the form's integrators to a level's form.
+   */
+  MatrixFreePMultigrid(mfem::FiniteElementSpace& fes,
+                       const mfem::Array<int>& ess_bdr,
+                       Integrators integrators, Options options,
+                       CoarseSolverFactory coarse = {});
+
+  ~MatrixFreePMultigrid() override;
+
+  /// The forms are made at construction: not to be reset.
+  void SetOperator(const mfem::Operator& op) override;
+
+  /// One V-cycle from a zero start.
+  void Mult(const mfem::Vector& x, mfem::Vector& y) const override;
+
+  /// The orders of the levels, coarsest first.
+  const std::vector<int>& Orders() const { return orders_; }
+
+  /// The operator of the finest level on the true dofs, essential rows
+  /// and columns eliminated: the form of @p fes by partial assembly.
+  const mfem::Operator& FineOperator() const;
+
+  /// The essential true dofs of the finest level.
+  const mfem::Array<int>& FineEssentialTrueDofs() const;
+
+ private:
+  class Cycle;
+  std::vector<int> orders_;
+  std::vector<std::unique_ptr<mfem::FiniteElementCollection>> collections_;
+  std::unique_ptr<mfem::FiniteElementSpaceHierarchy> hierarchy_;
+  std::unique_ptr<mfem::Operator> coarse_matrix_;
+  std::unique_ptr<mfem::Solver> coarse_solver_;
+  std::unique_ptr<Cycle> cycle_;
+};
+
 }  // namespace AdGIA

@@ -1162,6 +1162,31 @@ class ElasticTensorIntegrator : public mfem::BilinearFormIntegrator {
    */
   static void StrainDisplacementMatrix(int dim, const mfem::DenseMatrix& gshape,
                                        mfem::DenseMatrix& B);
+
+  /**
+   * @name Partial assembly
+   * The form applied element by element with no matrix
+   * (`mfem::AssemblyLevel::PARTIAL`), for hexahedra with a tensor basis
+   * in 3-D. AssemblePA evaluates the tensor, the geometry and the mapping
+   * once at the quadrature points, on the host; AddMultPA and
+   * AssembleDiagonalPA run on the configured `mfem::Device`. The rule is
+   * that of the element matrices, so both assemblies give one operator.
+   * An IsotropicElasticTensorCoefficient is kept as its two moduli, any
+   * other tensor as its 21 components.
+   */
+  ///@{
+  void AssemblePA(const mfem::FiniteElementSpace& fes) override;
+  void AddMultPA(const mfem::Vector& x, mfem::Vector& y) const override;
+  void AddMultTransposePA(const mfem::Vector& x,
+                          mfem::Vector& y) const override;
+  void AssembleDiagonalPA(mfem::Vector& diag) override;
+  ///@}
+
+ private:
+  const mfem::DofToQuad* pa_maps_ = nullptr; /**< 1-D basis at the points. */
+  mfem::Vector pa_data_; /**< Data at the quadrature points. */
+  int pa_ne_ = 0;        /**< Elements of the space. */
+  bool pa_isotropic_ = false; /**< The tensor is kept as two moduli. */
 };
 
 /**

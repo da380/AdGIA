@@ -29,6 +29,19 @@ else()
     find_package(mfem CONFIG REQUIRED NAMES MFEM)
 endif()
 message(STATUS "Found mfem config in: ${mfem_DIR} (version ${MFEM_VERSION})")
+
+# With an mfem built for CUDA, the sources that hold device kernels are
+# compiled by the CUDA compiler (src/CMakeLists.txt marks them); the rest
+# of the library is host code and is compiled as always.
+if(MFEM_USE_CUDA)
+    if(NOT CMAKE_CUDA_HOST_COMPILER)
+        set(CMAKE_CUDA_HOST_COMPILER ${CMAKE_CXX_COMPILER})
+    endif()
+    enable_language(CUDA)
+    # The CUDA compiler's newest dialect; the sources it compiles keep to it.
+    set(CMAKE_CUDA_STANDARD 20)
+    set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+endif()
 # v4.10 is the reference version (CI); v4.9 is the oldest known to pass the
 # full test suite (see README, Installation).
 if(MFEM_VERSION VERSION_LESS 4.9)

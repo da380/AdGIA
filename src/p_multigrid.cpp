@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 
 #include "AdGIA/detail/fem_factory.hpp"
 
@@ -252,6 +253,183 @@ void PMultigridPreconditioner::SetOperator(const Operator&) {
 
 void PMultigridPreconditioner::Mult(const Vector& x, Vector& y) const {
   cycle_->Mult(x, y);
+}
+
+// ---------------------------------------------------------------------------
+// MatrixFreePMultigrid
+
+// mfem's geometric multigrid with the levels added here.
+class MatrixFreePMultigrid::Cycle : public GeometricMultigrid {
+ public:
+  Cycle(const FiniteElementSpaceHierarchy& hierarchy, const Array<int>& ess_bdr)
+      : GeometricMultigrid(hierarchy, ess_bdr) {}
+
+  const Array<int>& EssentialTrueDofs(int level) const {
+    return *essentialTrueDofs[level];
+  }
+
+  // A level's form, assembled; owned by the cycle.
+  BilinearForm& AddForm(FiniteElementSpace& fes, const Integrators& integrators,
+                        bool partial) {
+    BilinearForm* form = nullptr;
+#ifdef MFEM_USE_MPI
+    if (auto* pfes = dynamic_cast<ParFiniteElementSpace*>(&fes)) {
+      form = new ParBilinearForm(pfes);
+    }
+#endif
+    if (!form) {
+      form = new BilinearForm(&fes);
+    }
+    if (partial) {
+      form->SetAssemblyLevel(AssemblyLevel::PARTIAL);
+    }
+    integrators(*form);
+    form->Assemble();
+    bfs.Append(form);
+    return *form;
+  }
+
+  using GeometricMultigrid::AddLevel;
+};
+
+MatrixFreePMultigrid::MatrixFreePMultigrid(FiniteElementSpace& fes,
+                                           const Array<int>& ess_bdr,
+                                           Integrators integrators,
+                                           Options options,
+                                           CoarseSolverFactory coarse)
+    : Solver(fes.GetTrueVSize()) {
+  const auto order = UniformOrder(fes);
+  MFEM_VERIFY(order > options.coarse_order,
+              "MatrixFreePMultigrid: the space's order must be above the "
+              "coarse order.");
+  MFEM_VERIFY(fes.Conforming(),
+              "MatrixFreePMultigrid: a conforming space.");
+  orders_ = PMultigridOrders(order, options.coarse_order);
+  const auto levels = static_cast<int>(orders_.size());
+  const auto vdim = fes.GetVDim();
+  const auto ordering = fes.GetOrdering();
+  for (auto l = 0; l < levels; l++) {
+    collections_.push_back(LevelCollection(fes, orders_[l]));
+  }
+
+#ifdef MFEM_USE_MPI
+  auto* pfes = dynamic_cast<ParFiniteElementSpace*>(&fes);
+  if (pfes) {
+    auto* pmesh = pfes->GetParMesh();
+    auto* coarse_space = new ParFiniteElementSpace(pmesh, collections_[0].get(),
+                                                   vdim, ordering);
+    hierarchy_ = std::make_unique<ParFiniteElementSpaceHierarchy>(
+        pmesh, coarse_space, false, true);
+  } else
+#endif
+  {
+    auto* mesh = fes.GetMesh();
+    auto* coarse_space =
+        new FiniteElementSpace(mesh, collections_[0].get(), vdim, ordering);
+    hierarchy_ = std::make_unique<FiniteElementSpaceHierarchy>(
+        mesh, coarse_space, false, true);
+  }
+  for (auto l = 1; l < levels; l++) {
+    hierarchy_->AddOrderRefinedLevel(collections_[l].get(), vdim, ordering);
+  }
+  MFEM_VERIFY(hierarchy_->GetFinestFESpace().GetTrueVSize() == fes.GetTrueVSize(),
+              "MatrixFreePMultigrid: the finest level is not the space.");
+
+  cycle_ = std::make_unique<Cycle>(*hierarchy_, ess_bdr);
+
+  // The coarsest level: a matrix and its solver.
+  {
+    auto& space = hierarchy_->GetFESpaceAtLevel(0);
+    auto& form = cycle_->AddForm(space, integrators, false);
+    const auto& ess = cycle_->EssentialTrueDofs(0);
+#ifdef MFEM_USE_MPI
+    if (pfes) {
+      auto A = std::make_unique<HypreParMatrix>();
+      form.FormSystemMatrix(ess, *A);
+      if (coarse) {
+        coarse_solver_ = coarse(space, *A);
+      } else {
+        auto amg = std::make_unique<HypreBoomerAMG>(*A);
+        detail::SetSystemsAMGOptions(*amg, space);
+        if (HypreUsingGPU()) {
+          // hypre's smoother on a device is l1-Jacobi, with which the
+          // cycle takes about twice the iterations: Chebyshev instead.
+          const char* v = std::getenv("XVAR");
+          const int var = v ? std::atoi(v) : 0;
+          if (var == 0) { HYPRE_BoomerAMGSetRelaxType(*amg, 16); HYPRE_BoomerAMGSetChebyOrder(*amg, 2); }
+          if (var == 1) { for (int k = 1; k <= 3; k++) HYPRE_BoomerAMGSetCycleRelaxType(*amg, 16, k); HYPRE_BoomerAMGSetChebyOrder(*amg, 2); }
+          if (var == 2) { for (int k = 1; k <= 3; k++) HYPRE_BoomerAMGSetCycleRelaxType(*amg, 16, k); HYPRE_BoomerAMGSetChebyOrder(*amg, 4); }
+          if (var == 3) { for (int k = 1; k <= 2; k++) HYPRE_BoomerAMGSetCycleRelaxType(*amg, 16, k); HYPRE_BoomerAMGSetCycleRelaxType(*amg, 9, 3); }
+          if (var == 4) { HYPRE_BoomerAMGSetStrongThreshold(*amg, 0.25); for (int k = 1; k <= 3; k++) HYPRE_BoomerAMGSetCycleRelaxType(*amg, 16, k); }
+          if (var == 5) { HYPRE_BoomerAMGSetNumSweeps(*amg, 2); }
+          if (var == 6) { for (int k = 1; k <= 3; k++) HYPRE_BoomerAMGSetCycleRelaxType(*amg, 16, k); HYPRE_BoomerAMGSetInterpType(*amg, 18); }
+          if (var == 7) { for (int k = 1; k <= 3; k++) HYPRE_BoomerAMGSetCycleRelaxType(*amg, 16, k); HYPRE_BoomerAMGSetPMaxElmts(*amg, 8); HYPRE_BoomerAMGSetStrongThreshold(*amg, 0.25); }
+        }
+        amg->SetPrintLevel(0);
+        coarse_solver_ = std::move(amg);
+      }
+      coarse_matrix_ = std::move(A);
+    } else
+#endif
+    {
+      auto A = std::make_unique<SparseMatrix>();
+      form.FormSystemMatrix(ess, *A);
+      if (coarse) {
+        coarse_solver_ = coarse(space, *A);
+      } else {
+        coarse_solver_ =
+            std::make_unique<GSSmoother>(*A, 0, options.coarse_sweeps);
+      }
+      coarse_matrix_ = std::move(A);
+    }
+    cycle_->AddLevel(coarse_matrix_.get(), coarse_solver_.get(), false, false);
+  }
+
+  // The levels above: the form with no matrix, Chebyshev about its diagonal.
+  for (auto l = 1; l < levels; l++) {
+    auto& space = hierarchy_->GetFESpaceAtLevel(l);
+    auto& form = cycle_->AddForm(space, integrators, true);
+    const auto& ess = cycle_->EssentialTrueDofs(l);
+    OperatorPtr op;
+    op.SetType(Operator::ANY_TYPE);
+    form.FormSystemMatrix(ess, op);
+    op.SetOperatorOwner(false);
+    Vector diag(space.GetTrueVSize());
+    diag.UseDevice(true);
+    form.AssembleDiagonal(diag);
+    Solver* smoother = nullptr;
+#ifdef MFEM_USE_MPI
+    if (pfes) {
+      smoother = new OperatorChebyshevSmoother(*op, diag, ess,
+                                               options.smoothing_order,
+                                               pfes->GetComm());
+    }
+#endif
+    if (!smoother) {
+      smoother = new OperatorChebyshevSmoother(*op, diag, ess,
+                                               options.smoothing_order);
+    }
+    cycle_->AddLevel(op.Ptr(), smoother, true, true);
+  }
+}
+
+MatrixFreePMultigrid::~MatrixFreePMultigrid() = default;
+
+void MatrixFreePMultigrid::SetOperator(const Operator&) {
+  MFEM_ABORT("MatrixFreePMultigrid: the forms are made at construction; "
+             "make a new preconditioner for a new form.");
+}
+
+void MatrixFreePMultigrid::Mult(const Vector& x, Vector& y) const {
+  cycle_->Mult(x, y);
+}
+
+const Operator& MatrixFreePMultigrid::FineOperator() const {
+  return *cycle_->GetOperatorAtFinestLevel();
+}
+
+const Array<int>& MatrixFreePMultigrid::FineEssentialTrueDofs() const {
+  return cycle_->EssentialTrueDofs(static_cast<int>(orders_.size()) - 1);
 }
 
 }  // namespace AdGIA

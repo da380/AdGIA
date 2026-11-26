@@ -58,6 +58,10 @@ add_executable(TestElasticTensorIntegrator TestElasticTensorIntegrator.cpp)
 target_link_libraries(TestElasticTensorIntegrator PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestElasticTensorIntegrator)
 
+add_executable(TestElasticTensorPartialAssembly TestElasticTensorPartialAssembly.cpp)
+target_link_libraries(TestElasticTensorPartialAssembly PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestElasticTensorPartialAssembly)
+
 add_executable(TestBoundaryNormalIntegrators TestBoundaryNormalIntegrators.cpp)
 target_link_libraries(TestBoundaryNormalIntegrators PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestBoundaryNormalIntegrators)
@@ -79,6 +83,8 @@ if(USE_MPI)
     target_link_libraries(TestSharedEntitiesPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestPMultigridPar TestPMultigridPar.cpp)
     target_link_libraries(TestPMultigridPar PRIVATE AdGIA MPI::MPI_CXX)
+    add_executable(TestMatrixFreePMultigridPar TestMatrixFreePMultigridPar.cpp)
+    target_link_libraries(TestMatrixFreePMultigridPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestNonlinearClampedPar TestNonlinearClampedPar.cpp)
     target_link_libraries(TestNonlinearClampedPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestNonlinearSelfGravitatingPar TestNonlinearSelfGravitatingPar.cpp)
@@ -168,6 +174,9 @@ if(USE_MPI)
         add_test(NAME TestPMultigridPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestPMultigridPar>)
+        add_test(NAME TestMatrixFreePMultigridPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestMatrixFreePMultigridPar>)
         add_test(NAME TestNonlinearClampedPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestNonlinearClampedPar>)
@@ -354,6 +363,10 @@ gtest_discover_tests(TestNonlinearSelfGravitating)
 add_executable(TestPMultigrid TestPMultigrid.cpp)
 target_link_libraries(TestPMultigrid PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestPMultigrid)
+
+add_executable(TestMatrixFreePMultigrid TestMatrixFreePMultigrid.cpp)
+target_link_libraries(TestMatrixFreePMultigrid PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestMatrixFreePMultigrid)
 
 add_executable(TestLocatePoints TestLocatePoints.cpp)
 target_link_libraries(TestLocatePoints PRIVATE AdGIA gtest_main)

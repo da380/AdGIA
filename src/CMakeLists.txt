@@ -5,6 +5,8 @@ target_sources(${PROJECT_NAME} PRIVATE null_space.cpp
                                        riesz.cpp
                                        descent.cpp
                                        bilininteg.cpp
+                                       bilininteg_pa.cpp
+                                       kernels/elastic_tensor_kernels.cpp
                                        coefficient.cpp
                                        lininteg.cpp
                                        mappings.cpp
@@ -37,3 +39,13 @@ target_sources(${PROJECT_NAME} PRIVATE null_space.cpp
                                        sea_level.cpp
                                        submesh.cpp
                                        )
+
+# The sources with device kernels (mfem::forall bodies), in kernels/. They
+# include mfem and AdGIA/detail/pa_kernels.hpp alone, so the CUDA compiler's
+# dialect (CMAKE_CUDA_STANDARD, top level) binds nothing else.
+if(MFEM_USE_CUDA)
+    set_source_files_properties(kernels/elastic_tensor_kernels.cpp
+        TARGET_DIRECTORY ${PROJECT_NAME} PROPERTIES
+        LANGUAGE CUDA
+        COMPILE_OPTIONS "--expt-extended-lambda;--expt-relaxed-constexpr")
+endif()
