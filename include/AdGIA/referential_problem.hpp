@@ -582,19 +582,21 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
    * gauge); no extra unknowns and no penalty. @p fes_buffer must live on
    * a (Sub)Mesh of the ball sharing this space's collection; @p E maps
    * body vdofs to buffer vdofs (NewRadialVacuumExtension). Serial. Call
-   * once, before the first Solve().
+   * once, before the first Solve(). The folds @f$E^TG_VE@f$ and
+   * @f$C + E^TC_V@f$ are applied as the products of their factors, and
+   * assembled only where a matrix is needed (the eliminated fluid's
+   * glue, the slipping subclass). The buffer's gravity-gravity block is
+   * assembled when the solver is first set up, so @p fes_buffer is kept
+   * and must outlive the problem.
    */
   void SetPrescribedVacuumExtension(mfem::FiniteElementSpace& fes_buffer,
                                     const mfem::SparseMatrix& E);
 
 #ifdef MFEM_USE_MPI
   /** @brief Parallel overload: @p E on true dofs
-   * (NewRadialVacuumExtension parallel overload). The folds
-   * @f$E^TG_VE@f$ and @f$C + E^TC_V@f$ are applied as the products of
-   * their factors, and assembled (hypre RAP/ParMult) only where a
-   * matrix is needed: a preconditioner on the fold, the eliminated
-   * fluid's glue, the slipping subclass. @p fes_buffer is kept and must
-   * outlive the problem. */
+   * (NewRadialVacuumExtension parallel overload). As in serial; the
+   * matrices, where needed (also for a preconditioner on the fold), are
+   * hypre's RAP and ParMult. */
   void SetPrescribedVacuumExtension(mfem::ParFiniteElementSpace& fes_buffer,
                                     const mfem::HypreParMatrix& E);
 #endif
@@ -800,6 +802,16 @@ u@f$ columns CONJUGATED
                           const mfem::Vector& z_true, mfem::Vector& r_u,
                           mfem::Vector& r_z);
 
+  /** @brief The potential's column of the block operator applied to a
+   * potential (true dofs): the coupling, into the displacement's row,
+   * and the potential's own block. The displacement's block is not
+   * assembled for it, nor a solver set up. On a problem with the
+   * prescribed vacuum extension the coupling is the folded one. Not
+   * built with the water load, rotation, a level border or an
+   * eliminated fluid's glue. */
+  void ApplyPotentialColumn(const mfem::Vector& z_true, mfem::Vector& r_u,
+                            mfem::Vector& r_z) const;
+
   /**
    * @brief Diagnostic: @f$\|A_{\mathrm{blk}} n\| / \|A\|_{\max}@f$ for
    * each rigid null pair @f$(u_r, 0)@f$ under the full block operator.
@@ -920,7 +932,8 @@ u@f$ columns CONJUGATED
   mfem::OperatorHandle K_zeta_, K_shift_;
   std::unique_ptr<mfem::SumOperator> A_zeta_op_;
   const mfem::Operator* A_zeta_ = nullptr;
-  std::unique_ptr<mfem::Solver> prec_zeta_;
+  std::unique_ptr<mfem::Solver> prec_zeta_;  // made when first applied
+  std::unique_ptr<mfem::Solver> MakePotentialPreconditioner();
   std::unique_ptr<mfem::CGSolver> cg_zeta_;
   std::unique_ptr<NullSpaceProjector> projector_c_;
   std::unique_ptr<ProjectedOperator> projected_zeta_op_;
@@ -947,10 +960,10 @@ u@f$ columns CONJUGATED
   // its factors; (p)ext_EtGE_ above holds the product once
   // AssembleExtensionFold() has been asked for it (the eliminated
   // fluid's glue, a preconditioner on the fold, the slipping subclass).
-  // Otherwise the solver takes it as an operator. In parallel the folded
-  // coupling C + E^T C_V is kept and assembled in the same way.
+  // Otherwise the solver takes it as an operator. The folded coupling
+  // C + E^T C_V is kept and assembled in the same way.
   bool ext_set_ = false;
-  std::unique_ptr<mfem::SparseMatrix> ext_Gv_, ext_E_;
+  std::unique_ptr<mfem::SparseMatrix> ext_Gv_, ext_Cv_, ext_E_;
 #ifdef MFEM_USE_MPI
   // In parallel G_V and C_V are held as each rank's own matrix, applied
   // between the spaces' prolongations.
@@ -964,6 +977,10 @@ u@f$ columns CONJUGATED
   std::unique_ptr<mfem::Operator> ext_fold_op_;
   std::unique_ptr<mfem::SumOperator> A_fold_op_;
   void AssembleExtensionFold();
+  // G_V, the buffer's gravity-gravity block: assembled once, when the
+  // solver is set up or the fold is asked for as a matrix.
+  void AssembleExtensionGravity();
+  mfem::FiniteElementSpace* ext_buffer_fes_ = nullptr;
   mfem::OperatorHandle A_aug_;
   mfem::OperatorHandle A_aug_clean_;  // clean-A augmentation of the
                                       // SetGaugePreconditionerOnly mode

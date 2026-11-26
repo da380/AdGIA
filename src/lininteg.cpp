@@ -78,7 +78,7 @@ void DomainLFDeformationGradientIntegrator::AssembleRHSElementVect(
     const auto& ip = ir->IntPoint(i);
     Trans.SetIntPoint(&ip);
     auto factor = Trans.Weight() * ip.weight;
-    el.CalcPhysDShape(Trans, dshape);
+    Mult(gradients_.At(el, ip), Trans.InverseJacobian(), dshape);
     M_.Eval(m, Trans, ip);
     MultABt(dshape, m, vm);
     elvect.Add(factor, v);

@@ -309,6 +309,7 @@ struct CaseOptions {
   bool block_minres = false; // force MINRES (default: the class's choice)
   bool eulerian_prec = true; // referential: the Eulerian-potential preconditioner
   bool prec_on_fold = false; // referential: AMG on the folded displacement block
+  bool pmg = false;          // p-multigrid on the displacement block
   const char* method = "dahlen";
   real_t slip_theta = 1e2;
   real_t gs_scale = 1.0;
@@ -468,6 +469,11 @@ struct CaseOptions {
                    "Method referential: precondition through the change of "
                    "variables to the Eulerian potential (the class's "
                    "default); off, the block diagonal alone.");
+    args.AddOption(&pmg, "-pmg", "--p-multigrid", "-no-pmg",
+                   "--no-p-multigrid",
+                   "Methods dahlen and referential: the displacement block's "
+                   "preconditioner as a p-multigrid with the AMG on its "
+                   "coarsest level (SetPreconditionerPMultigrid).");
     args.AddOption(&prec_on_fold, "-prec-on-fold", "--prec-on-fold",
                    "-no-prec-on-fold", "--no-prec-on-fold",
                    "Method referential: build the displacement block's AMG "
@@ -980,6 +986,7 @@ class Case {
                     << ").\n";
         }
       }
+      problem->SetPreconditionerPMultigrid(options.pmg);
       if (options.prec_full == 0.0) {
         problem->SetPreconditionerFullOperator(false);
       } else if (options.prec_full > 0.0) {
@@ -1833,6 +1840,7 @@ class Case {
                   << extension_seconds << " s, its forms "
                   << Seconds(t_forms) << " s\n";
       }
+      ref_problem->SetPreconditionerPMultigrid(options.pmg);
       if (options.prec_full == 0.0) {
         ref_problem->SetPreconditionerFullOperator(false);
       } else if (options.prec_full > 0.0) {

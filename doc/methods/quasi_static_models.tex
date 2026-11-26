@@ -561,6 +561,22 @@ stays within a factor (default 2) of the count recorded when it was built;
 past that it is rebuilt. The matrix is always the current one, so only the
 convergence rate, never the solution, depends on the lag.
 
+\paragraph{A p-multigrid above order two.} On simplices the cost of an AMG
+cycle on the assembled matrix, and the number of cycles needed, grow with
+the element order. \code{SetPreconditionerPMultigrid} (off by default)
+replaces the cycle on the same matrix by a V-cycle over the orders
+$2 = p_0 < \dots < p_L = p$, each about half the next
+(\code{PMultigridPreconditioner}): the prolongation between two levels is
+the interpolation of the lower order's functions in the higher's basis,
+the coarse matrices are the Galerkin products $P^TAP$, each level above the
+coarsest has a symmetric smoother (Chebyshev about the diagonal in
+parallel, a symmetric Gauss--Seidel sweep in serial), and the coarsest has
+the AMG with the settings above (Gauss--Seidel sweeps in serial). At
+essential dofs the prolongation is cut, so the coarse spaces satisfy the
+homogeneous condition. The cycle is symmetric positive definite where the
+AMG's is, and takes its place in the block preconditioners of the
+gravitating classes. At order two and below the switch has no effect.
+
 \subsection{Rigid modes and projected Krylov solvers}
 \label{sec:projected}
 

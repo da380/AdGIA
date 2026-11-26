@@ -140,6 +140,7 @@ class DomainVectorScalarIntegrator : public mfem::BilinearFormIntegrator {
  */
 class DomainVectorGradScalarIntegrator : public mfem::BilinearFormIntegrator {
  private:
+  detail::ReferenceGradients gradients_;
   mfem::Coefficient* Q = nullptr; /**< Pointer to a scalar coefficient. If not
                                      null, \f$q_{ij} = Q \delta_{ij}\f$. */
   mfem::VectorCoefficient* QV = nullptr; /**< Pointer to a vector coefficient.
@@ -292,6 +293,7 @@ class DomainVectorGradScalarIntegrator : public mfem::BilinearFormIntegrator {
  */
 class DomainDivVectorScalarIntegrator : public mfem::BilinearFormIntegrator {
  private:
+  detail::ReferenceGradients gradients_;
   mfem::Coefficient* Q = nullptr; /**< Pointer to the scalar coefficient \f$q\f$. */
   Diffeomorphism* map_ = nullptr; /**< Optional mapping (pull-back form). */
 
@@ -396,6 +398,7 @@ class DomainDivVectorScalarIntegrator : public mfem::BilinearFormIntegrator {
  */
 class DomainDivVectorDivVectorIntegrator : public mfem::BilinearFormIntegrator {
  private:
+  detail::ReferenceGradients gradients_;
   mfem::Coefficient* Q =
       nullptr; /**< Pointer to the scalar coefficient \f$q\f$. */
   Diffeomorphism* map_ = nullptr; /**< Optional mapping (pull-back form). */
@@ -535,6 +538,7 @@ class DomainDivVectorDivVectorIntegrator : public mfem::BilinearFormIntegrator {
  */
 class DomainVectorGradVectorIntegrator : public mfem::BilinearFormIntegrator {
  private:
+  detail::ReferenceGradients gradients_;
   mfem::Coefficient* Q =
       nullptr; /**< Pointer to the scalar coefficient \f$q\f$. */
   mfem::VectorCoefficient* QV =
@@ -670,6 +674,7 @@ class DomainVectorGradVectorIntegrator : public mfem::BilinearFormIntegrator {
  */
 class DomainVectorDivVectorIntegrator : public mfem::BilinearFormIntegrator {
  private:
+  detail::ReferenceGradients gradients_;
   mfem::VectorCoefficient* QV =
       nullptr; /**< Pointer to the vector coefficient \f$\bvec{q}\f$. */
   Diffeomorphism* map_ = nullptr; /**< Optional mapping (pull-back form). */
@@ -777,6 +782,7 @@ class DomainVectorDivVectorIntegrator : public mfem::BilinearFormIntegrator {
 class DomainMatrixDeformationGradientIntegrator
     : public mfem::BilinearFormIntegrator {
  private:
+  detail::ReferenceGradients gradients_;
   mfem::Coefficient* Q =
       nullptr; /**< Pointer to the scalar coefficient \f$q\f$. */
 
@@ -877,6 +883,7 @@ class DomainMatrixDeformationGradientIntegrator
 class DomainSymmetricMatrixStrainIntegrator
     : public mfem::BilinearFormIntegrator {
  private:
+  detail::ReferenceGradients gradients_;
   mfem::Coefficient* Q = nullptr; /**< Pointer to the scalar coefficient \f$q\f$. */
 
 #ifndef MFEM_THREAD_SAFE
@@ -981,6 +988,7 @@ class DomainSymmetricMatrixStrainIntegrator
 class DomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator
     : public mfem::BilinearFormIntegrator {
  private:
+  detail::ReferenceGradients gradients_;
   mfem::Coefficient* Q = nullptr; /**< Pointer to the scalar coefficient \f$q\f$. */
 
 #ifndef MFEM_THREAD_SAFE
@@ -1098,6 +1106,7 @@ class DomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator
  */
 class ElasticTensorIntegrator : public mfem::BilinearFormIntegrator {
  private:
+  detail::ReferenceGradients gradients_;
   mfem::MatrixCoefficient* C_; /**< Pointer to the elasticity tensor
                                   coefficient in Mandel form. */
   Diffeomorphism* map_ = nullptr; /**< Optional mapping (pull-back form). */
@@ -1176,6 +1185,7 @@ class ElasticTensorIntegrator : public mfem::BilinearFormIntegrator {
  */
 class GeometricStiffnessIntegrator : public mfem::BilinearFormIntegrator {
  private:
+  detail::ReferenceGradients gradients_;
   mfem::MatrixCoefficient* S_;
   Diffeomorphism* map_ = nullptr;
 
@@ -1234,6 +1244,7 @@ class GeometricStiffnessIntegrator : public mfem::BilinearFormIntegrator {
  */
 class MaterialStiffnessIntegrator : public mfem::BilinearFormIntegrator {
  private:
+  detail::ReferenceGradients gradients_;
   mfem::MatrixCoefficient* C_;
   Diffeomorphism* map_;
 
@@ -1610,6 +1621,7 @@ and intermediate matrices during integration. */
  */
 class DeformationGradientInterpolator : public mfem::DiscreteInterpolator {
  private:
+  detail::ReferenceGradients gradients_;
 #ifndef MFEM_THREAD_SAFE
   mfem::DenseMatrix
       dshape; /**< Internal buffer for derivative shape functions. */
@@ -1670,6 +1682,7 @@ class DeformationGradientInterpolator : public mfem::DiscreteInterpolator {
  */
 class StrainInterpolator : public mfem::DiscreteInterpolator {
  private:
+  detail::ReferenceGradients gradients_;
 #ifndef MFEM_THREAD_SAFE
   mfem::DenseMatrix
       dshape; /**< Internal buffer for derivative shape functions. */
@@ -1725,6 +1738,7 @@ class StrainInterpolator : public mfem::DiscreteInterpolator {
  */
 class DeviatoricStrainInterpolator : public mfem::DiscreteInterpolator {
  private:
+  detail::ReferenceGradients gradients_;
 #ifndef MFEM_THREAD_SAFE
   mfem::DenseMatrix
       dshape; /**< Internal buffer for derivative shape functions. */

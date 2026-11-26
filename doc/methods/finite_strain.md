@@ -287,7 +287,12 @@ three exactly on a deformed body, and their own rules differ).
 `Solve()` is the iteration of §3 on the pair: a linear problem is made at
 each state for the residual; it becomes the tangent at the first
 iteration and whenever the kept tangent stops contracting by
-`refresh_contraction`.
+`refresh_contraction`. The residual takes the potential's column of that
+problem's operator (`ApplyPotentialColumn`): the coupling and the
+potential's own block. The displacement's block, the buffer's
+gravity-gravity block and the preconditioners are assembled only when
+the problem is solved, so a problem made for a residual alone does not
+pay for them.
 
 ### Verification
 
@@ -343,8 +348,8 @@ and prints the linear and nonlinear displacements.
   surface and through the buffer, where the vacuum extension is given in
   the mesh's coordinates.
 - A linear problem is made at every state at which the residual is
-  wanted, with its preconditioner, also where a kept tangent then does
-  the solve.
+  wanted, also where a kept tangent then does the solve: its coupling
+  and its potential block are assembled as matrices to be applied once.
 - A mesh of one element type.
 - The buffer has to resolve the extension: the potential there depends
   on it.

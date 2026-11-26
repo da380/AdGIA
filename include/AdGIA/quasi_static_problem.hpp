@@ -46,6 +46,7 @@
 #include "mfem.hpp"
 #include "AdGIA/rheology.hpp"
 #include "AdGIA/null_space.hpp"
+#include "AdGIA/p_multigrid.hpp"
 
 namespace AdGIA {
 
@@ -807,6 +808,26 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
     prec_stale_ = true;
     MarkOperatorDirty();
   }
+  /**
+   * @brief The displacement block's preconditioner as a p-multigrid
+   * (PMultigridPreconditioner) on the matrix the default preconditioner
+   * is built on, in place of the AMG (parallel) or the Gauss-Seidel
+   * sweep (serial) on that matrix.
+   *
+   * In parallel the coarsest level has the AMG with the settings of the
+   * default. Taken where the space's order is above
+   * @p options.coarse_order; at or below it the default stands.
+   * Measured on Love-number runs at orders 3 to 5, 16 ranks: a fifth to
+   * a quarter off a solve, the iterations the same or fewer.
+   */
+  void SetPreconditionerPMultigrid(
+      bool on, PMultigridPreconditioner::Options options = {}) {
+    prec_pmg_ = on;
+    prec_pmg_options_ = options;
+    prec_stale_ = true;
+    MarkOperatorDirty();
+  }
+  bool PreconditionerPMultigrid() const { return prec_pmg_; }
   /** @brief Flexible GMRES(200) instead of MINRES for the gravitating
    * classes' block solves (no SPD requirement on the preconditioner; the
    * tolerance is rel_tol on the true residual instead of MINRES's
@@ -1092,6 +1113,8 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   // (the public setters are unconditional, and the serial block solves
   // take the same Krylov choice); only the AMG matrices above are MPI-only.
   bool prec_full_operator_ = true;   // SetPreconditionerFullOperator
+  bool prec_pmg_ = false;            // SetPreconditionerPMultigrid
+  PMultigridPreconditioner::Options prec_pmg_options_;
   mfem::real_t prec_full_shift_ = 100.0;
   bool block_gmres_ = false;         // SetBlockGMRES
   /** @brief MINRES, or FGMRES with SetBlockGMRES(), for a block solve. */

@@ -1230,20 +1230,35 @@ void LinearQuasiStaticProblemBase::SetupDefaultPreconditioner(
             *Amat, prec_full_operator_ ? prec_full_shift_ : 1.0);
         Amat = prec_shift_mat_.get();
       }
-      auto amg = std::make_unique<HypreBoomerAMG>(*Amat);
       // Unknown-based systems AMG; see SetSystemsAMGOptions for why
       // nodal coarsening is not used. The coarsest level gets one
       // l1-Gauss-Seidel sweep instead of hypre's default Gaussian
       // elimination (which SetRelaxType installs): free-body and fluid
       // operators are singular, and a direct solve on a singular coarse
       // grid makes the V-cycle indefinite (MINRES then breaks down).
-      detail::SetSystemsAMGOptions(*amg, *pfes_);
-      HYPRE_BoomerAMGSetCycleRelaxType(*amg, 8, 3);
-      amg->SetPrintLevel(0);
-      prec_ = std::move(amg);
+      const auto make_amg = [](FiniteElementSpace& space, Operator& matrix) {
+        auto amg = std::make_unique<HypreBoomerAMG>(
+            static_cast<HypreParMatrix&>(matrix));
+        detail::SetSystemsAMGOptions(*amg, space);
+        HYPRE_BoomerAMGSetCycleRelaxType(*amg, 8, 3);
+        amg->SetPrintLevel(0);
+        return std::unique_ptr<Solver>(std::move(amg));
+      };
+      if (prec_pmg_ &&
+          pfes_->GetMaxElementOrder() > prec_pmg_options_.coarse_order) {
+        // The AMG on the coarsest level of a p-multigrid on the matrix.
+        prec_ = std::make_unique<PMultigridPreconditioner>(
+            *pfes_, *Amat, ess_tdof_list_, prec_pmg_options_, make_amg);
+      } else {
+        prec_ = make_amg(*pfes_, *Amat);
+      }
     } else
 #endif
-    {
+    if (prec_pmg_ &&
+        fes_->GetMaxElementOrder() > prec_pmg_options_.coarse_order) {
+      prec_ = std::make_unique<PMultigridPreconditioner>(
+          *fes_, *A.As<SparseMatrix>(), ess_tdof_list_, prec_pmg_options_);
+    } else {
       prec_ = std::make_unique<GSSmoother>(*A.As<SparseMatrix>());
     }
     prec_form_.reset();

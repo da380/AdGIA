@@ -77,6 +77,8 @@ if(USE_MPI)
     target_link_libraries(TestQuasiStaticProblemPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestSharedEntitiesPar TestSharedEntitiesPar.cpp)
     target_link_libraries(TestSharedEntitiesPar PRIVATE AdGIA MPI::MPI_CXX)
+    add_executable(TestPMultigridPar TestPMultigridPar.cpp)
+    target_link_libraries(TestPMultigridPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestNonlinearClampedPar TestNonlinearClampedPar.cpp)
     target_link_libraries(TestNonlinearClampedPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestNonlinearSelfGravitatingPar TestNonlinearSelfGravitatingPar.cpp)
@@ -163,6 +165,9 @@ if(USE_MPI)
         add_test(NAME TestSubMeshMixedBilinearFormPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestSubMeshMixedBilinearFormPar>)
+        add_test(NAME TestPMultigridPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestPMultigridPar>)
         add_test(NAME TestNonlinearClampedPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestNonlinearClampedPar>)
@@ -345,6 +350,10 @@ gtest_discover_tests(TestNonlinearClamped)
 add_executable(TestNonlinearSelfGravitating TestNonlinearSelfGravitating.cpp)
 target_link_libraries(TestNonlinearSelfGravitating PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestNonlinearSelfGravitating)
+
+add_executable(TestPMultigrid TestPMultigrid.cpp)
+target_link_libraries(TestPMultigrid PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestPMultigrid)
 
 add_executable(TestLocatePoints TestLocatePoints.cpp)
 target_link_libraries(TestLocatePoints PRIVATE AdGIA gtest_main)

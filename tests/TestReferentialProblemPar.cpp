@@ -119,6 +119,35 @@ void CheckPreconditioners(
         label + " no more iterations than the block diagonal");
 }
 
+// The potential's column applied by itself (ApplyPotentialColumn) is the
+// block operator applied to a potential with no displacement.
+void CheckPotentialColumn(
+    LinearQuasiStaticReferentialSelfGravitatingProblem& problem,
+    const std::string& label) {
+  Vector z;
+  problem.Potential().GetTrueDofs(z);
+  Vector none(problem.Displacement().FESpace()->GetTrueVSize());
+  none = 0.0;
+  Vector c_block, a_block, c_column, a_column;
+  problem.ApplyBlockOperator(none, z, c_block, a_block);
+  problem.ApplyPotentialColumn(z, c_column, a_column);
+  // A serial problem's vectors are whole on every rank.
+  const bool parallel = problem.IsParallel();
+  const auto norm = [parallel](const Vector& v) {
+    double local = v * v, global = local;
+    if (parallel) {
+      MPI_Allreduce(&local, &global, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    }
+    return std::sqrt(global);
+  };
+  const double nc = norm(c_block), na = norm(a_block);
+  c_column -= c_block;
+  a_column -= a_block;
+  Check(nc > 0.0 && na > 0.0 ? 0.0 : 1.0, 0.0, label + " column is not zero");
+  Check(norm(c_column) / nc, 1e-13, label + " coupling of the column");
+  Check(norm(a_column) / na, 1e-13, label + " potential row of the column");
+}
+
 void RunCase(int order, const std::string& label) {
   const char* mesh_file = "../data/disc_buffer_2d.msh";
   Mesh smesh(mesh_file, 1, 1);
@@ -165,6 +194,7 @@ void RunCase(int order, const std::string& label) {
     problem.SetRelTol(1e-11);
     problem.AssembleForce(0.0);
     Check(problem.Solve() ? 0.0 : 1.0, 0.0, label + " serial solve");
+    CheckPotentialColumn(problem, label + " serial");
     u_ref = L2Norm(problem.Displacement());
     z_ref = L2Norm(problem.Potential());
   }
@@ -188,11 +218,32 @@ void RunCase(int order, const std::string& label) {
   problem.SetRelTol(1e-11);
   problem.AssembleForce(0.0);
   Check(problem.Solve() ? 0.0 : 1.0, 0.0, label + " parallel solve");
+  CheckPotentialColumn(problem, label + " parallel");
   CheckPreconditioners(problem, label);
   Check(RelErr(L2Norm(problem.Displacement()), u_ref), 1e-5,
         label + " displacement norm");
   Check(RelErr(L2Norm(problem.Potential()), z_ref), 1e-5,
         label + " potential norm");
+
+  // With the p-multigrid on the displacement block (it acts above order
+  // 2; below, the default stands).
+  LinearQuasiStaticReferentialSelfGravitatingProblem with_pmg(
+      &fes_u, &fes_zeta, rheology, rho, kG, kDtNDegree);
+  with_pmg.SetPrescribedVacuumExtension(fes_buffer, *E);
+  FunctionCoefficient sigma3(SurfaceLoad);
+  with_pmg.SetSurfaceLoad(sigma3, surface);
+  with_pmg.SetPreconditionerPMultigrid(true);
+  with_pmg.SetRelTol(1e-11);
+  with_pmg.AssembleForce(0.0);
+  Check(with_pmg.Solve() ? 0.0 : 1.0, 0.0, label + " p-multigrid solve");
+  Check(RelErr(L2Norm(with_pmg.Displacement()), u_ref), 1e-5,
+        label + " displacement norm with the p-multigrid");
+  Check(RelErr(L2Norm(with_pmg.Potential()), z_ref), 1e-5,
+        label + " potential norm with the p-multigrid");
+  if (Mpi::Root()) {
+    std::cout << label << ": " << with_pmg.LastOuterIterations()
+              << " iterations with the p-multigrid\n";
+  }
 }
 
 // Eliminated fluid regions, the construction step of the referential
@@ -782,6 +833,7 @@ int main(int argc, char* argv[]) {
 
   RunCase(1, "o1");
   RunCase(2, "o2");
+  RunCase(3, "o3");
   RunFluidCoreBackgroundCase(2, "fluid bg 2d");
   RunFluidCoreBackgroundCase(3, "fluid bg 3d");
   RunFluidCoreGlueCase(1, "glue o1");

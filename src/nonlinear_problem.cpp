@@ -557,11 +557,9 @@ void NonlinearSelfGravitatingProblem::EnsureReference() {
   }
   *zeta0_ = reference->BackgroundPotential();
   *zeta_ = *zeta0_;
-  auto none = Vector(fes_u_->GetTrueVSize());
-  none = 0.0;
   auto zeta0 = Vector(fes_zeta_->GetTrueVSize());
   zeta0_->GetTrueDofs(zeta0);
-  reference->ApplyBlockOperator(none, zeta0, reference_u_, reference_zeta_);
+  reference->ApplyPotentialColumn(zeta0, reference_u_, reference_zeta_);
   reference_u_ *= 0.5;
   *u_ = u_kept;
   reference_ready_ = true;
@@ -574,12 +572,10 @@ void NonlinearSelfGravitatingProblem::StateResidual(
   // applied to the potential is twice the first variation of the gravity
   // energy in the displacement, and its potential row applied to the
   // potential the first variation in the potential.
-  auto none = Vector(fes_u_->GetTrueVSize());
-  none = 0.0;
   auto zeta = Vector(fes_zeta_->GetTrueVSize());
   zeta_->GetTrueDofs(zeta);
   auto coupling = Vector();
-  at.ApplyBlockOperator(none, zeta, coupling, r_zeta);
+  at.ApplyPotentialColumn(zeta, coupling, r_zeta);
   if (a_zeta) {
     *a_zeta = r_zeta;
   }

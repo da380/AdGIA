@@ -233,8 +233,9 @@ class NonlinearClampedProblem {
  * and the current potential its background; its block solve gives the
  * corrections of both unknowns. A new object of that class is made at
  * each state at which the residual is wanted, and the gravity terms of
- * the residual are read from its operator, so that the tangent is the
- * derivative of the residual as assembled. Solve() keeps or refreshes
+ * the residual are read from the potential's column of its operator, so
+ * that the tangent is the derivative of the residual as assembled; what
+ * only a solve needs is assembled only where the object is solved. Solve() keeps or refreshes
  * the tangent as NonlinearClampedProblem does (NewtonOptions).
  *
  * Built for a solid body (no fluid regions). Serial or parallel by the
