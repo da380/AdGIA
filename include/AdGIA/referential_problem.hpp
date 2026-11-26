@@ -600,41 +600,6 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
 #endif
 
   /**
-   * @brief SubMesh mode: the vacuum in the Eulerian potential, in place
-   * of an extension of the displacement.
-   *
-   * The potential's unknown stays one continuous field on the ball: the
-   * referential increment @f$\zeta^1@f$ in the body and on its surface,
-   * and at the buffer's nodes off the surface the Eulerian increment
-   * @f$\phi@f$, which in a vacuum is harmonic and knows of no extension.
-   * On the surface @f$\phi = \zeta^1 - \mathbf u\cdot\mathbf g_0@f$. The
-   * referential functional's integral over the vacuum is then
-   * @f[
-   *   \frac{1}{8\pi G}\int_V|\nabla\phi|^2\,dV
-   *   + b(\mathbf u, \phi) + \tfrac12 a_s(\mathbf u, \mathbf u),
-   * @f]
-   * with the surface forms of VacuumSurfaceCouplingIntegrator and
-   * VacuumSurfaceGravityIntegrator, for any extension: nothing of one is
-   * made. The buffer's Laplacian is taken through the nodal map
-   * @f$\mathbf u\mapsto\mathbf u\cdot\mathbf g_0@f$ at the surface's
-   * nodes, and the surface forms are assembled on the body's boundary.
-   * The answer does not depend on how the buffer is meshed beyond what
-   * a harmonic potential asks.
-   *
-   * Requirements: the equilibrium mapping the identity on the surface
-   * and through the buffer; the body's surface free (vacuum outside it);
-   * no fluid regions, water or rotation (not built with them). In place
-   * of SetPrescribedVacuumExtension(); once, before the first Solve().
-   *
-   * @param buffer_marker The attributes of the ball's mesh that are the
-   * vacuum.
-   * @param surface_marker The boundary attributes of the body's mesh
-   * that are its surface.
-   */
-  void SetEulerianVacuum(const mfem::Array<int>& buffer_marker,
-                         const mfem::Array<int>& surface_marker);
-
-  /**
    * @brief The eliminated-fluid potential glue — steps (ii) and (iii) of
    * the referential closure (doc/theory/dahlen_closure.tex, "Implementation",
    * the referential variant): a DISCRETE change of variables. The fluid
@@ -985,8 +950,6 @@ u@f$ columns CONJUGATED
   // Otherwise the solver takes it as an operator. In parallel the folded
   // coupling C + E^T C_V is kept and assembled in the same way.
   bool ext_set_ = false;
-  bool eulerian_vacuum_ = false;  // SetEulerianVacuum
-  std::unique_ptr<mfem::GridFunction> g0_nodal_;  // g0 on the body's nodes
   std::unique_ptr<mfem::SparseMatrix> ext_Gv_, ext_E_;
 #ifdef MFEM_USE_MPI
   // In parallel G_V and C_V are held as each rank's own matrix, applied

@@ -350,10 +350,6 @@ add_executable(TestLocatePoints TestLocatePoints.cpp)
 target_link_libraries(TestLocatePoints PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestLocatePoints)
 
-add_executable(TestVacuumSurface TestVacuumSurface.cpp)
-target_link_libraries(TestVacuumSurface PRIVATE AdGIA gtest_main)
-gtest_discover_tests(TestVacuumSurface)
-
 add_executable(TestFaultProblem TestFaultProblem.cpp)
 target_link_libraries(TestFaultProblem PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestFaultProblem)

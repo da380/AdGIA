@@ -2259,8 +2259,6 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetFluidPotentialGlue(
               "SetFluidPotentialGlue: exactly one fluid region (the radial "
               "fluid extension is one-sided).");
   MFEM_VERIFY(!glue_set_, "SetFluidPotentialGlue: already set.");
-  MFEM_VERIFY(!eulerian_vacuum_,
-              "SetFluidPotentialGlue: not built with the Eulerian vacuum.");
   AssembleExtensionFold();
   MFEM_VERIFY(ext_EtGE_ != nullptr,
               "SetFluidPotentialGlue: call SetPrescribedVacuumExtension "
@@ -2443,8 +2441,6 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetFluidPotentialGlue(
               "SetFluidPotentialGlue: exactly one fluid region (the radial "
               "fluid extension is one-sided).");
   MFEM_VERIFY(!glue_set_, "SetFluidPotentialGlue: already set.");
-  MFEM_VERIFY(!eulerian_vacuum_,
-              "SetFluidPotentialGlue: not built with the Eulerian vacuum.");
   AssembleExtensionFold();
   MFEM_VERIFY(pext_EtGE_ != nullptr,
               "SetFluidPotentialGlue: call SetPrescribedVacuumExtension "
@@ -2939,175 +2935,8 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::OnFlavorRelease(
   }
 }
 
-void LinearQuasiStaticReferentialSelfGravitatingProblem::SetEulerianVacuum(
-    const Array<int>& buffer_marker, const Array<int>& surface_marker) {
-  MFEM_VERIFY(!ball_wide_,
-              "SetEulerianVacuum: the displacement must be on a SubMesh of "
-              "the ball.");
-  MFEM_VERIFY(!ext_set_, "SetEulerianVacuum: the vacuum is set already.");
-  MFEM_VERIFY(fluids_.empty() && !sea_enabled_ && !rot_enabled_,
-              "SetEulerianVacuum: not built with fluid regions, water or "
-              "rotation.");
-  auto& map = *ref_rheology_->EquilibriumMapping();
-  {
-    auto marker = surface_marker;
-    MFEM_VERIFY(map.IsIdentity() ||
-                    MaxIdentityDeviation(map, *fes_->GetMesh(), marker) <
-                        1e-12,
-                "SetEulerianVacuum: the equilibrium mapping must be the "
-                "identity on the body's surface.");
-  }
-  const real_t c = 1.0 / four_pi_G_;
-
-  // g0 on the body's nodes, averaged over the elements about each.
-  g0_nodal_ = detail::MakeGridFunction(fes_);
-  g0_nodal_->ProjectDiscCoefficient(*grad_zeta0_shadow_,
-                                    GridFunction::ARITHMETIC);
-  VectorGridFunctionCoefficient g0_c(g0_nodal_.get());
-  Array<int> empty;
-  auto buffer = buffer_marker;
-  auto surface = surface_marker;
-  ConstantCoefficient scale(c);
-
-#ifdef MFEM_USE_MPI
-  if (pfes_) {
-    auto* shadow_p = static_cast<ParFiniteElementSpace*>(shadow_zeta_.get());
-    // G_s: the nodal map u -> u . g0 at the surface's nodes, the body's
-    // potential nodes that the buffer shares.
-    auto dot = NewNodalDotMatrix(*pfes_, *shadow_p, g0_c);
-    auto Pi = injection_->NewTrueDofMatrix();
-    std::unique_ptr<HypreParMatrix> G(ParMult(Pi.get(), dot.get()));
-    {
-      // The potential's dofs that an element of the buffer holds, on
-      // whichever rank.
-      Vector held(pfes_zeta_->GetVSize());
-      held = 0.0;
-      Array<int> dofs;
-      for (int e = 0; e < pfes_zeta_->GetNE(); e++) {
-        if (buffer[pfes_zeta_->GetAttribute(e) - 1]) {
-          pfes_zeta_->GetElementDofs(e, dofs);
-          for (const int d : dofs) {
-            held[d >= 0 ? d : -1 - d] = 1.0;
-          }
-        }
-      }
-      Vector mask(pfes_zeta_->GetTrueVSize());
-      pfes_zeta_->GetProlongationMatrix()->MultTranspose(held, mask);
-      for (int i = 0; i < mask.Size(); i++) {
-        mask[i] = mask[i] > 0.0 ? 1.0 : 0.0;
-      }
-      G->ScaleRows(mask);
-    }
-    // K_V: the buffer's Laplacian over 4 pi G.
-    ParBilinearForm k_form(pfes_zeta_);
-    k_form.AddDomainIntegrator(new DiffusionIntegrator(scale), buffer);
-    k_form.Assemble();
-    k_form.Finalize();
-    OperatorHandle K(Operator::Hypre_ParCSR);
-    k_form.FormSystemMatrix(empty, K);
-    auto* K_V = K.As<HypreParMatrix>();
-    // b: displacement rows, the ball's potential columns.
-    ParMixedBilinearForm b_form(shadow_p, pfes_);
-    b_form.AddBoundaryIntegrator(
-        new VacuumSurfaceCouplingIntegrator(*g0_nodal_, c), surface);
-    b_form.Assemble();
-    b_form.Finalize();
-    std::unique_ptr<HypreParMatrix> b_body(b_form.ParallelAssemble());
-    std::unique_ptr<HypreParMatrix> Pit(Pi->Transpose());
-    std::unique_ptr<HypreParMatrix> B(ParMult(b_body.get(), Pit.get()));
-    // a_s.
-    ParBilinearForm a_form(pfes_);
-    a_form.AddBoundaryIntegrator(
-        new VacuumSurfaceGravityIntegrator(*g0_nodal_, 0.5 * c), surface);
-    a_form.Assemble();
-    a_form.Finalize();
-    std::unique_ptr<HypreParMatrix> A_s(a_form.ParallelAssemble());
-
-    // With phi = zeta - G u: the displacement block gains
-    // G^T K_V G + a_s - (B G + (B G)^T) and the coupling B - G^T K_V.
-    std::unique_ptr<HypreParMatrix> GtKG(mfem::RAP(K_V, G.get()));
-    std::unique_ptr<HypreParMatrix> BG(ParMult(B.get(), G.get()));
-    std::unique_ptr<HypreParMatrix> BGt(BG->Transpose());
-    *BG *= -1.0;
-    *BGt *= -1.0;
-    std::unique_ptr<HypreParMatrix> x1(ParAdd(GtKG.get(), A_s.get()));
-    std::unique_ptr<HypreParMatrix> x2(ParAdd(x1.get(), BG.get()));
-    pext_EtGE_.reset(ParAdd(x2.get(), BGt.get()));
-    std::unique_ptr<HypreParMatrix> Gt(G->Transpose());
-    std::unique_ptr<HypreParMatrix> GtK(ParMult(Gt.get(), K_V));
-    *GtK *= -1.0;
-    std::unique_ptr<HypreParMatrix> y1(ParAdd(B.get(), GtK.get()));
-    pext_C_total_.reset(ParAdd(C_.As<HypreParMatrix>(), y1.get()));
-    pext_Ct_total_.reset(pext_C_total_->Transpose());
-    C_op_ = pext_C_total_.get();
-    Ct_op_ = pext_Ct_total_.get();
-  } else
-#endif
-  {
-    auto dot = NewNodalDotMatrix(*fes_, *shadow_zeta_, g0_c);
-    auto G = injection_->RemapRows(*dot);
-    {
-      Array<int> held(fes_zeta_->GetVSize());
-      held = 0;
-      Array<int> dofs;
-      for (int e = 0; e < fes_zeta_->GetNE(); e++) {
-        if (buffer[fes_zeta_->GetAttribute(e) - 1]) {
-          fes_zeta_->GetElementDofs(e, dofs);
-          for (const int d : dofs) {
-            held[d >= 0 ? d : -1 - d] = 1;
-          }
-        }
-      }
-      for (int i = 0; i < held.Size(); i++) {
-        if (!held[i]) {
-          G->ScaleRow(i, 0.0);
-        }
-      }
-    }
-    BilinearForm k_form(fes_zeta_);
-    k_form.AddDomainIntegrator(new DiffusionIntegrator(scale), buffer);
-    k_form.Assemble();
-    k_form.Finalize();
-    const SparseMatrix& K_V = k_form.SpMat();
-    MixedBilinearForm b_form(shadow_zeta_.get(), fes_);
-    b_form.AddBoundaryIntegrator(
-        new VacuumSurfaceCouplingIntegrator(*g0_nodal_, c), surface);
-    b_form.Assemble();
-    b_form.Finalize();
-    auto B = injection_->RemapColumns(b_form.SpMat());
-    BilinearForm a_form(fes_);
-    a_form.AddBoundaryIntegrator(
-        new VacuumSurfaceGravityIntegrator(*g0_nodal_, 0.5 * c), surface);
-    a_form.Assemble();
-    a_form.Finalize();
-
-    std::unique_ptr<SparseMatrix> Gt(Transpose(*G));
-    std::unique_ptr<SparseMatrix> KG(mfem::Mult(K_V, *G));
-    std::unique_ptr<SparseMatrix> GtKG(mfem::Mult(*Gt, *KG));
-    std::unique_ptr<SparseMatrix> BG(mfem::Mult(*B, *G));
-    std::unique_ptr<SparseMatrix> BGt(Transpose(*BG));
-    std::unique_ptr<SparseMatrix> x1(Add(1.0, *GtKG, 1.0, a_form.SpMat()));
-    std::unique_ptr<SparseMatrix> x2(Add(1.0, *x1, -1.0, *BG));
-    ext_EtGE_.reset(Add(1.0, *x2, -1.0, *BGt));
-    std::unique_ptr<SparseMatrix> GtK(mfem::Mult(*Gt, K_V));
-    std::unique_ptr<SparseMatrix> y1(Add(1.0, *B, -1.0, *GtK));
-    ext_C_total_.reset(Add(*C_.As<SparseMatrix>(), *y1));
-    ext_Ct_total_.reset(Transpose(*ext_C_total_));
-    C_op_ = ext_C_total_.get();
-    Ct_op_ = ext_Ct_total_.get();
-  }
-  ext_set_ = true;
-  eulerian_vacuum_ = true;
-  cov_G_.reset();
-#ifdef MFEM_USE_MPI
-  pcov_G_.reset();
-#endif
-  MarkOperatorDirty();
-}
-
 void LinearQuasiStaticReferentialSelfGravitatingProblem::AssembleExtensionFold() {
-  // The Eulerian vacuum's blocks are matrices from the start.
-  if (!ext_set_ || eulerian_vacuum_) {
+  if (!ext_set_) {
     return;
   }
 #ifdef MFEM_USE_MPI

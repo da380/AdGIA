@@ -309,7 +309,6 @@ struct CaseOptions {
   bool block_minres = false; // force MINRES (default: the class's choice)
   bool eulerian_prec = true; // referential: the Eulerian-potential preconditioner
   bool prec_on_fold = false; // referential: AMG on the folded displacement block
-  bool eulerian_vacuum = false; // referential: the vacuum in the Eulerian potential
   const char* method = "dahlen";
   real_t slip_theta = 1e2;
   real_t gs_scale = 1.0;
@@ -474,11 +473,6 @@ struct CaseOptions {
                    "Method referential: build the displacement block's AMG "
                    "on the block with the folds of the vacuum extension and "
                    "the eliminated fluid (off is the class's default).");
-    args.AddOption(&eulerian_vacuum, "-eulerian-vacuum", "--eulerian-vacuum",
-                   "-no-eulerian-vacuum", "--no-eulerian-vacuum",
-                   "Method referential, solid bodies: the vacuum in the "
-                   "Eulerian potential (SetEulerianVacuum) in place of the "
-                   "prescribed extension of the displacement.");
     args.AddOption(&block_minres, "-minres", "--block-minres", "-no-minres",
                    "--no-block-minres",
                    "MINRES for the gravitating block solves (the mixed "
@@ -1829,41 +1823,15 @@ class Case {
         std::cout << "Referential setup: the problem " << Seconds(t_problem)
                   << " s\n";
       }
-      if (options.eulerian_vacuum) {
-        MFEM_VERIFY(fluids.empty() && !mapped,
-                    "-eulerian-vacuum: solid bodies at the identity mapping.");
-        Array<int> buffer_marker(parent->attributes.Max());
-        buffer_marker = 0;
-        for (const int a : buffer_attributes) {
-          buffer_marker[a - 1] = 1;
-        }
-        // The body's surface: the interface with the buffer above it.
-        Array<int> surface_marker(solid->bdr_attributes.Max());
-        surface_marker = 0;
-        for (const auto& itf : manifest.Interfaces()) {
-          if (buffer_attributes.Find(itf.AboveAttribute()) >= 0 &&
-              buffer_attributes.Find(itf.BelowAttribute()) < 0) {
-            surface_marker[itf.attribute - 1] = 1;
-          }
-        }
-        MFEM_VERIFY(surface_marker.Sum() > 0,
-                    "-eulerian-vacuum: no interface of the body with the "
-                    "buffer found.");
-        ref_problem->SetEulerianVacuum(buffer_marker, surface_marker);
-        if (root) {
-          std::cout << "Referential: the vacuum in the Eulerian potential.\n";
-        }
-      } else {
-        const auto t_extension = Clock::now();
-        Evac_ = NewRadialVacuumExtension(*fes_u, *fes_buffer_, radius, r_out);
-        const auto extension_seconds = Seconds(t_extension);
-        const auto t_forms = Clock::now();
-        ref_problem->SetPrescribedVacuumExtension(*fes_buffer_, *Evac_);
-        if (root) {
-          std::cout << "Referential setup: the vacuum extension "
-                    << extension_seconds << " s, its forms "
-                    << Seconds(t_forms) << " s\n";
-        }
+      const auto t_extension = Clock::now();
+      Evac_ = NewRadialVacuumExtension(*fes_u, *fes_buffer_, radius, r_out);
+      const auto extension_seconds = Seconds(t_extension);
+      const auto t_forms = Clock::now();
+      ref_problem->SetPrescribedVacuumExtension(*fes_buffer_, *Evac_);
+      if (root) {
+        std::cout << "Referential setup: the vacuum extension "
+                  << extension_seconds << " s, its forms "
+                  << Seconds(t_forms) << " s\n";
       }
       if (options.prec_full == 0.0) {
         ref_problem->SetPreconditionerFullOperator(false);
