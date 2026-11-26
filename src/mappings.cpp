@@ -271,9 +271,30 @@ void GridFunctionDiffeomorphism::EvalGradient(DenseMatrix& F,
     EvalGradient(F, T1, T1.GetIntPoint());
     return;
   }
-  T.SetIntPoint(&ip);
+  // An integrand has set the point already: setting it again would
+  // have the transformation make its Jacobian again.
+  if (&T.GetIntPoint() != &ip) {
+    T.SetIntPoint(&ip);
+  }
   F.SetSize(vdim);
-  h_->GetVectorGradient(T, F);
+  const auto* fes = h_->FESpace();
+  if (T.ElementNo != cached_element_ ||
+      fes->GetSequence() != cached_sequence_) {
+    cached_plain_ = fes->GetElementVDofs(T.ElementNo, vdofs_) == nullptr;
+    cached_element_ = T.ElementNo;
+    cached_sequence_ = fes->GetSequence();
+  }
+  if (!cached_plain_) {
+    h_->GetVectorGradient(T, F);
+  } else {
+    const auto* fe = fes->GetFE(T.ElementNo);
+    const auto& dshape = gradients_.At(*fe, ip);
+    h_->GetSubVector(vdofs_, values_);
+    const auto values = DenseMatrix(values_.GetData(), fe->GetDof(), vdim);
+    reference_gradient_.SetSize(vdim, fe->GetDim());
+    MultAtB(values, dshape, reference_gradient_);
+    Mult(reference_gradient_, T.InverseJacobian(), F);
+  }
   for (int i = 0; i < vdim; i++) {
     F(i, i) += 1.0;
   }

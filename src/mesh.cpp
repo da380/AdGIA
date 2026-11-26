@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <vector>
 
 namespace AdGIA {
 
@@ -466,6 +467,134 @@ std::tuple<MPI_Comm, bool, int> SplitBoundaryCommunicator(mfem::ParMesh* mesh) {
 }
 
 #endif
+
+int LocatePoints(mfem::Mesh& mesh, const mfem::DenseMatrix& points,
+                 mfem::Array<int>& elements,
+                 mfem::Array<mfem::IntegrationPoint>& ips) {
+  using namespace mfem;
+  const auto dim = mesh.SpaceDimension();
+  const auto n_points = points.Width();
+  const auto n_elements = mesh.GetNE();
+  MFEM_VERIFY(points.Height() == dim || n_points == 0,
+              "LocatePoints: the points must have the mesh's space "
+              "dimension.");
+  elements.SetSize(n_points);
+  elements = -1;
+  ips.SetSize(n_points);
+  if (n_points == 0 || n_elements == 0) {
+    return 0;
+  }
+
+  // The elements' boxes, from their nodes and a little larger: a curved
+  // element can bulge past its nodes.
+  auto lo = DenseMatrix(dim, n_elements), hi = DenseMatrix(dim, n_elements);
+  auto all_lo = Vector(dim), all_hi = Vector(dim);
+  all_lo = infinity();
+  all_hi = -infinity();
+  auto T = IsoparametricTransformation();
+  for (auto e = 0; e < n_elements; e++) {
+    mesh.GetElementTransformation(e, &T);
+    const auto& nodes = T.GetPointMat();
+    for (auto d = 0; d < dim; d++) {
+      auto a = infinity(), b = -infinity();
+      for (auto j = 0; j < nodes.Width(); j++) {
+        a = std::min(a, nodes(d, j));
+        b = std::max(b, nodes(d, j));
+      }
+      lo(d, e) = a;
+      hi(d, e) = b;
+    }
+    auto size = real_t{0};
+    for (auto d = 0; d < dim; d++) {
+      size = std::max(size, hi(d, e) - lo(d, e));
+    }
+    for (auto d = 0; d < dim; d++) {
+      lo(d, e) -= 0.05 * size;
+      hi(d, e) += 0.05 * size;
+      all_lo[d] = std::min(all_lo[d], lo(d, e));
+      all_hi[d] = std::max(all_hi[d], hi(d, e));
+    }
+  }
+
+  // The grid, and each cell's elements (compressed rows).
+  const auto per_side = std::max(
+      1, static_cast<int>(std::floor(std::pow(n_elements, 1.0 / dim))));
+  auto width = Vector(dim);
+  for (auto d = 0; d < dim; d++) {
+    width[d] = std::max((all_hi[d] - all_lo[d]) / per_side,
+                        std::numeric_limits<real_t>::min());
+  }
+  const auto cell_of = [&](real_t x, int d) {
+    const auto c = static_cast<int>(std::floor((x - all_lo[d]) / width[d]));
+    return std::min(per_side - 1, std::max(0, c));
+  };
+  auto n_cells = 1;
+  for (auto d = 0; d < dim; d++) {
+    n_cells *= per_side;
+  }
+  const auto for_cells_of = [&](int e, const auto& visit) {
+    int c0[3] = {0, 0, 0}, c1[3] = {0, 0, 0};
+    for (auto d = 0; d < dim; d++) {
+      c0[d] = cell_of(lo(d, e), d);
+      c1[d] = cell_of(hi(d, e), d);
+    }
+    for (auto k = c0[2]; k <= c1[2]; k++) {
+      for (auto j = c0[1]; j <= c1[1]; j++) {
+        for (auto i = c0[0]; i <= c1[0]; i++) {
+          visit(i + per_side * (j + per_side * k));
+        }
+      }
+    }
+  };
+  auto start = std::vector<int>(n_cells + 1, 0);
+  for (auto e = 0; e < n_elements; e++) {
+    for_cells_of(e, [&](int c) { start[c + 1]++; });
+  }
+  for (auto c = 0; c < n_cells; c++) {
+    start[c + 1] += start[c];
+  }
+  auto held = std::vector<int>(start[n_cells]);
+  auto fill = std::vector<int>(start.begin(), start.end() - 1);
+  for (auto e = 0; e < n_elements; e++) {
+    for_cells_of(e, [&](int c) { held[fill[c]++] = e; });
+  }
+
+  auto found = 0;
+  auto x = Vector(dim);
+  for (auto p = 0; p < n_points; p++) {
+    points.GetColumn(p, x);
+    auto outside = false;
+    auto cell = 0, stride = 1;
+    for (auto d = 0; d < dim; d++) {
+      outside = outside || x[d] < all_lo[d] || x[d] > all_hi[d];
+      cell += stride * cell_of(x[d], d);
+      stride *= per_side;
+    }
+    if (outside) {
+      continue;
+    }
+    for (auto k = start[cell]; k < start[cell + 1]; k++) {
+      const auto e = held[k];
+      auto in_box = true;
+      for (auto d = 0; d < dim; d++) {
+        in_box = in_box && x[d] >= lo(d, e) && x[d] <= hi(d, e);
+      }
+      if (!in_box) {
+        continue;
+      }
+      mesh.GetElementTransformation(e, &T);
+      auto inverse = InverseElementTransformation(&T);
+      // A point on a face is inside both of its elements to this.
+      inverse.SetElementTol(1e-10);
+      if (inverse.Transform(x, ips[p]) == InverseElementTransformation::Inside) {
+        elements[p] = e;
+        found++;
+        break;
+      }
+    }
+  }
+  return found;
+}
 
 mfem::real_t ValueAtPoint(const mfem::GridFunction& field,
                           const mfem::Vector& point) {

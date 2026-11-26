@@ -1819,11 +1819,16 @@ class Case {
         dim, *C_final, *S_final, *phi_e);
 
     if (!slip) {
+      const auto t_problem = Clock::now();
       ref_problem = std::make_unique<LinearQuasiStaticReferentialSelfGravitatingProblem>(
           fes_u.get(), fes_phi.get(), *ref_rheology_, *rho_use, G,
           options.dtn_degree, nullptr, ref_eliminated
                                            ? fluids
                                            : std::vector<FluidRegion>{});
+      if (root) {
+        std::cout << "Referential setup: the problem " << Seconds(t_problem)
+                  << " s\n";
+      }
       if (options.eulerian_vacuum) {
         MFEM_VERIFY(fluids.empty() && !mapped,
                     "-eulerian-vacuum: solid bodies at the identity mapping.");
@@ -1849,8 +1854,16 @@ class Case {
           std::cout << "Referential: the vacuum in the Eulerian potential.\n";
         }
       } else {
+        const auto t_extension = Clock::now();
         Evac_ = NewRadialVacuumExtension(*fes_u, *fes_buffer_, radius, r_out);
+        const auto extension_seconds = Seconds(t_extension);
+        const auto t_forms = Clock::now();
         ref_problem->SetPrescribedVacuumExtension(*fes_buffer_, *Evac_);
+        if (root) {
+          std::cout << "Referential setup: the vacuum extension "
+                    << extension_seconds << " s, its forms "
+                    << Seconds(t_forms) << " s\n";
+        }
       }
       if (options.prec_full == 0.0) {
         ref_problem->SetPreconditionerFullOperator(false);

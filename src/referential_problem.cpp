@@ -222,7 +222,7 @@ std::unique_ptr<mfem::SparseMatrix> NewRadialVacuumExtension(
   Array<int> elem;
   Array<IntegrationPoint> ips;
   if (pts.Width() > 0) {
-    body->FindPoints(pts, elem, ips);
+    LocatePoints(*body, pts, elem, ips);
     // Retry unfound projections deeper inside the body (the curved
     // discrete boundary can dip below the nominal radius); the interior
     // rule is a gauge choice, so the retreat costs nothing.
@@ -249,7 +249,7 @@ std::unique_ptr<mfem::SparseMatrix> NewRadialVacuumExtension(
       }
       Array<int> elem2;
       Array<IntegrationPoint> ips2;
-      body->FindPoints(retry, elem2, ips2);
+      LocatePoints(*body, retry, elem2, ips2);
       for (std::size_t j = 0; j < which.size(); j++) {
         if (elem2[j] >= 0) {
           elem[which[j]] = elem2[j];
@@ -412,7 +412,7 @@ std::unique_ptr<mfem::SparseMatrix> NewRadialFluidExtension(
   Array<int> elem;
   Array<IntegrationPoint> ips;
   if (pts.Width() > 0) {
-    solid->FindPoints(pts, elem, ips);
+    LocatePoints(*solid, pts, elem, ips);
     // Retry unfound projections deeper inside the solid (further out).
     for (real_t factor : {1.01, 1.03, 1.1}) {
       int missing = 0;
@@ -437,7 +437,7 @@ std::unique_ptr<mfem::SparseMatrix> NewRadialFluidExtension(
       }
       Array<int> elem2;
       Array<IntegrationPoint> ips2;
-      solid->FindPoints(retry, elem2, ips2);
+      LocatePoints(*solid, retry, elem2, ips2);
       for (std::size_t j = 0; j < which.size(); j++) {
         if (elem2[j] >= 0) {
           elem[which[j]] = elem2[j];
@@ -635,7 +635,7 @@ std::unique_ptr<mfem::HypreParMatrix> NewRadialFluidExtension(
     }
     Array<int> elem;
     Array<IntegrationPoint> ips;
-    solid_sub->Mesh::FindPoints(pts, elem, ips, false);
+    LocatePoints(*solid_sub, pts, elem, ips);
 
     std::vector<int> r_meta;
     std::vector<HYPRE_BigInt> r_cols;
@@ -977,7 +977,7 @@ std::unique_ptr<mfem::HypreParMatrix> NewRadialVacuumExtension(
     }
     Array<int> elem;
     Array<IntegrationPoint> ips;
-    body_sub->Mesh::FindPoints(pts, elem, ips, false);
+    LocatePoints(*body_sub, pts, elem, ips);
 
     // Replies: (global point index, nsh) + global columns + values,
     // shared with every rank; the owner keeps the first reply per point.
@@ -1264,7 +1264,7 @@ LinearQuasiStaticReferentialSelfGravitatingProblem::LinearQuasiStaticReferential
     *zeta0_shadow_ = 0.0;
     *zeta_shadow_ = 0.0;
   }
-  grad_zeta0_shadow_ = std::make_unique<GradientGridFunctionCoefficient>(
+  grad_zeta0_shadow_ = std::make_unique<ElementGradientCoefficient>(
       ball_wide_ ? zeta0_.get() : zeta0_shadow_.get());
   Zeta_true_.SetSize(fes_zeta_->GetTrueVSize());
   Zeta_true_ = 0.0;
@@ -2111,7 +2111,7 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetPrescribedVacuumExte
   zeta0_buffer_ = detail::MakeGridFunction(shadow_zeta_buffer_.get());
   inj.MultTranspose(*zeta0_, *zeta0_buffer_);
   grad_zeta0_buffer_ =
-      std::make_unique<GradientGridFunctionCoefficient>(zeta0_buffer_.get());
+      std::make_unique<ElementGradientCoefficient>(zeta0_buffer_.get());
 
   // The buffer's gravity-gravity block, folded: E^T G_V E.
   BilinearForm g_form(&fes_buffer);
@@ -2169,19 +2169,22 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetPrescribedVacuumExte
   zeta0_buffer_ = detail::MakeGridFunction(shadow_zeta_buffer_.get());
   inj.MultTranspose(*zeta0_, *zeta0_buffer_);
   grad_zeta0_buffer_ =
-      std::make_unique<GradientGridFunctionCoefficient>(zeta0_buffer_.get());
+      std::make_unique<ElementGradientCoefficient>(zeta0_buffer_.get());
 
   ParBilinearForm g_form(&fes_buffer);
   g_form.AddDomainIntegrator(WithGravityRule(new ReferentialGravityIntegrator(
       map, *grad_zeta0_buffer_, 1.0 / (2.0 * four_pi_G_))));
   g_form.Assemble();
   g_form.Finalize();
-  OperatorHandle Gv(Operator::Hypre_ParCSR);
-  Array<int> empty;
-  g_form.FormSystemMatrix(empty, Gv);
-  // Kept as its factors: the product is assembled only where a matrix
-  // is asked of it (AssembleExtensionFold).
-  pext_Gv_ = std::make_unique<HypreParMatrix>(*Gv.As<HypreParMatrix>());
+  // Kept as its factors, and G_V as the rank's own matrix between the
+  // buffer space's prolongation and its transpose: the products are
+  // assembled only where a matrix is asked of them
+  // (AssembleExtensionFold).
+  pext_buffer_fes_ = &fes_buffer;
+  pext_Gv_local_.reset(g_form.LoseMat());
+  const auto* P_buffer = fes_buffer.GetProlongationMatrix();
+  pext_Gv_op_ = std::make_unique<RAPOperator>(*P_buffer, *pext_Gv_local_,
+                                              *P_buffer);
   pext_E_ = std::make_unique<HypreParMatrix>(E);
   ext_set_ = true;
 
@@ -2189,16 +2192,23 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetPrescribedVacuumExte
   c_form.AddDomainIntegrator(WithGravityRule(new ReferentialGravityCouplingIntegrator(
       map, *grad_zeta0_buffer_, 1.0 / four_pi_G_)));
   c_form.Assemble();
-  OperatorHandle Cv(Operator::Hypre_ParCSR);
-  c_form.FormRectangularSystemMatrix(empty, empty, Cv);
-  std::unique_ptr<HypreParMatrix> Et(
-      const_cast<HypreParMatrix&>(E).Transpose());
-  std::unique_ptr<HypreParMatrix> EtCv(
-      ParMult(Et.get(), Cv.As<HypreParMatrix>()));
-  pext_C_total_.reset(ParAdd(C_.As<HypreParMatrix>(), EtCv.get()));
-  pext_Ct_total_.reset(pext_C_total_->Transpose());
-  C_op_ = pext_C_total_.get();
-  Ct_op_ = pext_Ct_total_.get();
+  c_form.Finalize();
+  // The coupling with the buffer's folded onto the body's rows,
+  // C + E^T C_V, likewise as its factors.
+  pext_Cv_local_.reset(c_form.LoseMat());
+  ext_C_ops_.clear();
+  auto keep = [this](Operator* op) {
+    ext_C_ops_.emplace_back(op);
+    return op;
+  };
+  auto* Cv = keep(new RAPOperator(*P_buffer, *pext_Cv_local_,
+                                  *pfes_zeta_->GetProlongationMatrix()));
+  auto* Et = keep(new TransposeOperator(*pext_E_));
+  auto* EtCv = keep(new ProductOperator(Et, Cv, false, false));
+  C_op_ = keep(new SumOperator(C_.Ptr(), 1.0, EtCv, 1.0, false, false));
+  auto* Cvt = keep(new TransposeOperator(Cv));
+  auto* CvtE = keep(new ProductOperator(Cvt, pext_E_.get(), false, false));
+  Ct_op_ = keep(new SumOperator(Ct_owned_.get(), 1.0, CvtE, 1.0, false, false));
 
   // The buffer's rows of the nodal map of the Eulerian-potential
   // preconditioner, as in serial.
@@ -3102,8 +3112,27 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::AssembleExtensionFold()
   }
 #ifdef MFEM_USE_MPI
   if (pext_E_) {
+    auto* buffer = pext_buffer_fes_;
     if (!pext_EtGE_) {
-      pext_EtGE_.reset(mfem::RAP(pext_Gv_.get(), pext_E_.get()));
+      HypreParMatrix local(buffer->GetComm(), buffer->GlobalVSize(),
+                           buffer->GetDofOffsets(), pext_Gv_local_.get());
+      std::unique_ptr<HypreParMatrix> Gv(
+          mfem::RAP(&local, buffer->Dof_TrueDof_Matrix()));
+      pext_EtGE_.reset(mfem::RAP(Gv.get(), pext_E_.get()));
+    }
+    if (!pext_C_total_) {
+      HypreParMatrix local(buffer->GetComm(), buffer->GlobalVSize(),
+                           pfes_zeta_->GlobalVSize(), buffer->GetDofOffsets(),
+                           pfes_zeta_->GetDofOffsets(), pext_Cv_local_.get());
+      std::unique_ptr<HypreParMatrix> Cv(
+          mfem::RAP(buffer->Dof_TrueDof_Matrix(), &local,
+                    pfes_zeta_->Dof_TrueDof_Matrix()));
+      std::unique_ptr<HypreParMatrix> Et(pext_E_->Transpose());
+      std::unique_ptr<HypreParMatrix> EtCv(ParMult(Et.get(), Cv.get()));
+      pext_C_total_.reset(ParAdd(C_.As<HypreParMatrix>(), EtCv.get()));
+      pext_Ct_total_.reset(pext_C_total_->Transpose());
+      C_op_ = pext_C_total_.get();
+      Ct_op_ = pext_Ct_total_.get();
     }
     return;
   }
@@ -3236,7 +3265,7 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetupSolver(OperatorHan
 #ifdef MFEM_USE_MPI
     if (pext_E_) {
       ext_fold_op_ =
-          std::make_unique<RAPOperator>(*pext_E_, *pext_Gv_, *pext_E_);
+          std::make_unique<RAPOperator>(*pext_E_, *pext_Gv_op_, *pext_E_);
     } else
 #endif
     {

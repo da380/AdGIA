@@ -577,8 +577,8 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
    * *prescribed* extension @f$u_{\mathrm{ext}} = E\,u@f$ on a buffer
    * displacement space (option (b) of doc/theory/gravitating_elasticity.md
    * §3.1, the accurate route): the buffer's gravity-gravity block and
-   * coupling are assembled on @p fes_buffer and folded through @f$E@f$
-   * by sparse products. Exact for any smooth extension (the choice is
+   * coupling are assembled on @p fes_buffer and folded through @f$E@f$.
+   * Exact for any smooth extension (the choice is
    * gauge); no extra unknowns and no penalty. @p fes_buffer must live on
    * a (Sub)Mesh of the ball sharing this space's collection; @p E maps
    * body vdofs to buffer vdofs (NewRadialVacuumExtension). Serial. Call
@@ -589,8 +589,12 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
 
 #ifdef MFEM_USE_MPI
   /** @brief Parallel overload: @p E on true dofs
-   * (NewRadialVacuumExtension parallel overload); the folds run through
-   * hypre RAP/ParMult. */
+   * (NewRadialVacuumExtension parallel overload). The folds
+   * @f$E^TG_VE@f$ and @f$C + E^TC_V@f$ are applied as the products of
+   * their factors, and assembled (hypre RAP/ParMult) only where a
+   * matrix is needed: a preconditioner on the fold, the eliminated
+   * fluid's glue, the slipping subclass. @p fes_buffer is kept and must
+   * outlive the problem. */
   void SetPrescribedVacuumExtension(mfem::ParFiniteElementSpace& fes_buffer,
                                     const mfem::HypreParMatrix& E);
 #endif
@@ -938,7 +942,7 @@ u@f$ columns CONJUGATED
   // potential fields
   std::unique_ptr<mfem::GridFunction> zeta0_, zeta0_shadow_, zeta_,
       zeta_shadow_;
-  std::unique_ptr<mfem::GradientGridFunctionCoefficient> grad_zeta0_shadow_;
+  std::unique_ptr<ElementGradientCoefficient> grad_zeta0_shadow_;
   mfem::Vector Zeta_true_;
 
   // potential operators: A_zeta = (K_a + DtN)/4piG
@@ -968,7 +972,7 @@ u@f$ columns CONJUGATED
   // prescribed vacuum extension (SubMesh mode, serial)
   std::unique_ptr<mfem::FiniteElementSpace> shadow_zeta_buffer_;
   std::unique_ptr<mfem::GridFunction> zeta0_buffer_;
-  std::unique_ptr<mfem::GradientGridFunctionCoefficient> grad_zeta0_buffer_;
+  std::unique_ptr<ElementGradientCoefficient> grad_zeta0_buffer_;
   std::unique_ptr<mfem::SparseMatrix> ext_EtGE_, ext_C_total_, ext_Ct_total_;
 #ifdef MFEM_USE_MPI
   std::unique_ptr<mfem::HypreParMatrix> pext_EtGE_, pext_C_total_,
@@ -978,14 +982,22 @@ u@f$ columns CONJUGATED
   // its factors; (p)ext_EtGE_ above holds the product once
   // AssembleExtensionFold() has been asked for it (the eliminated
   // fluid's glue, a preconditioner on the fold, the slipping subclass).
-  // Otherwise the solver takes it as an operator.
+  // Otherwise the solver takes it as an operator. In parallel the folded
+  // coupling C + E^T C_V is kept and assembled in the same way.
   bool ext_set_ = false;
   bool eulerian_vacuum_ = false;  // SetEulerianVacuum
   std::unique_ptr<mfem::GridFunction> g0_nodal_;  // g0 on the body's nodes
   std::unique_ptr<mfem::SparseMatrix> ext_Gv_, ext_E_;
 #ifdef MFEM_USE_MPI
-  std::unique_ptr<mfem::HypreParMatrix> pext_Gv_, pext_E_;
+  // In parallel G_V and C_V are held as each rank's own matrix, applied
+  // between the spaces' prolongations.
+  std::unique_ptr<mfem::HypreParMatrix> pext_E_;
+  std::unique_ptr<mfem::SparseMatrix> pext_Gv_local_, pext_Cv_local_;
+  std::unique_ptr<mfem::Operator> pext_Gv_op_;
+  mfem::ParFiniteElementSpace* pext_buffer_fes_ = nullptr;
 #endif
+  // The operators of C + E^T C_V and its transpose, from the factors.
+  std::vector<std::unique_ptr<mfem::Operator>> ext_C_ops_;
   std::unique_ptr<mfem::Operator> ext_fold_op_;
   std::unique_ptr<mfem::SumOperator> A_fold_op_;
   void AssembleExtensionFold();

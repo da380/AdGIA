@@ -312,6 +312,28 @@ mfem::real_t ValueAtPoint(const mfem::GridFunction& field,
                           const mfem::Vector& point);
 
 /**
+ * @brief The elements of a mesh that hold given points, for many points.
+ *
+ * The elements are sorted into a uniform grid of cells by their bounding
+ * boxes, and a point is tried only against the elements of its cell, so
+ * the work is proportional to the number of points and not to the number
+ * of points times the size of the mesh (as mfem's Mesh::FindPoints is).
+ * On a parallel mesh the search is over the rank's own elements.
+ *
+ * @param mesh The mesh.
+ * @param points The points, one a column, of the mesh's space dimension.
+ * @param elements On return, for each point an element that holds it, or
+ * -1 if none does. A point on the face between two elements is given to
+ * one of them.
+ * @param ips On return, the point's reference coordinates in that
+ * element.
+ * @return The number of points found.
+ */
+int LocatePoints(mfem::Mesh& mesh, const mfem::DenseMatrix& points,
+                 mfem::Array<int>& elements,
+                 mfem::Array<mfem::IntegrationPoint>& ips);
+
+/**
  * @brief Struct providing utilities for a mesh with a spherical external
  * boundary.
  *

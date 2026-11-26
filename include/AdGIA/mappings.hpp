@@ -31,6 +31,7 @@
 #include <memory>
 #include <vector>
 
+#include "AdGIA/detail/reference_gradients.hpp"
 #include "mfem.hpp"
 
 namespace AdGIA {
@@ -300,6 +301,16 @@ class GridFunctionDiffeomorphism : public Diffeomorphism {
   std::unique_ptr<mfem::GridFunction> owned_h_;
   const mfem::GridFunction* h_;
   mfem::Vector x_;
+
+  // Kept between calls of EvalGradient: the dofs of the element last
+  // asked for. The displacement's values are read afresh at every call.
+  int cached_element_ = -1;
+  long cached_sequence_ = -1;
+  bool cached_plain_ = false;
+  mfem::Array<int> vdofs_;
+  mfem::Vector values_;
+  mfem::DenseMatrix reference_gradient_;
+  detail::ReferenceGradients gradients_;
 };
 
 /**

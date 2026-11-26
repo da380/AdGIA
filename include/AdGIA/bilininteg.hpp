@@ -13,6 +13,7 @@
 
 #include <array>
 
+#include "AdGIA/detail/reference_gradients.hpp"
 #include "mfem.hpp"
 #include "AdGIA/index.hpp"
 #include "AdGIA/mappings.hpp"
@@ -1294,8 +1295,10 @@ class ReferentialGravityIntegrator : public mfem::BilinearFormIntegrator {
   mfem::VectorCoefficient* g0_;
   mfem::real_t scale_;
 
+  detail::ReferenceGradients gradients_;
+
 #ifndef MFEM_THREAD_SAFE
-  mfem::DenseMatrix dshape_, gshape_, F_, a_, M_, P_, ag_;
+  mfem::DenseMatrix dshape_, gshape_, F_, a_, M_, P_, ag_, B_, N_;
   mfem::Vector g0v_, w_, beta_, gamma_;
 #endif
 
@@ -1343,6 +1346,8 @@ class ReferentialGravityCouplingIntegrator
   Diffeomorphism* map_;
   mfem::VectorCoefficient* g0_;
   mfem::real_t scale_;
+
+  detail::ReferenceGradients gradients_;
 
 #ifndef MFEM_THREAD_SAFE
   mfem::DenseMatrix dshape_u_, gshape_u_, dshape_p_, gshape_p_, F_, a_, M_,
@@ -1467,6 +1472,7 @@ class BoundaryNormalSurfaceDivergenceIntegrator
  */
 class TransformedDiffusionIntegrator : public mfem::BilinearFormIntegrator {
  private:
+  detail::ReferenceGradients gradients_;
   mfem::Coefficient* Q =
       nullptr; /**< Scalar part \f$f\f$ of a radial mapping. */
   mfem::VectorCoefficient* QV =

@@ -17,6 +17,7 @@
 #include <functional>
 #include <memory>
 
+#include "AdGIA/detail/reference_gradients.hpp"
 #include "mfem.hpp"
 
 namespace AdGIA {
@@ -202,6 +203,66 @@ class MatrixDeltaCoefficient : public mfem::MatrixCoefficient {
  private:
   mfem::DenseMatrix M_;
   mfem::DeltaCoefficient d_;
+};
+
+/**
+ * @brief The gradient of a scalar grid function as a vector coefficient,
+ * for use under element integrals of the function's own mesh.
+ *
+ * The values of mfem::GradientGridFunctionCoefficient, at less cost: the
+ * dofs of the element last asked for are kept, and the reference
+ * gradients of the shape functions are kept by quadrature point
+ * (detail::ReferenceGradients). The function's values are read afresh at
+ * every call, so the coefficient follows a function that changes. On a
+ * transformation that is not an element of the function's mesh it is
+ * mfem's coefficient.
+ */
+class ElementGradientCoefficient : public mfem::VectorCoefficient {
+ public:
+  explicit ElementGradientCoefficient(const mfem::GridFunction* f)
+      : mfem::VectorCoefficient(f->FESpace()->GetMesh()->SpaceDimension()),
+        f_(f),
+        general_(f) {}
+
+  void Eval(mfem::Vector& V, mfem::ElementTransformation& T,
+            const mfem::IntegrationPoint& ip) override {
+    const auto& fes = *f_->FESpace();
+    if (T.ElementType != mfem::ElementTransformation::ELEMENT ||
+        T.mesh != fes.GetMesh()) {
+      general_.Eval(V, T, ip);
+      return;
+    }
+    if (T.ElementNo != cached_element_ ||
+        fes.GetSequence() != cached_sequence_) {
+      cached_plain_ = fes.GetElementDofs(T.ElementNo, dofs_) == nullptr;
+      cached_element_ = T.ElementNo;
+      cached_sequence_ = fes.GetSequence();
+    }
+    if (!cached_plain_) {
+      general_.Eval(V, T, ip);
+      return;
+    }
+    if (&T.GetIntPoint() != &ip) {
+      T.SetIntPoint(&ip);
+    }
+    const auto* fe = fes.GetFE(T.ElementNo);
+    const auto& dshape = gradients_.At(*fe, ip);
+    f_->GetSubVector(dofs_, values_);
+    reference_.SetSize(fe->GetDim());
+    dshape.MultTranspose(values_, reference_);
+    V.SetSize(vdim);
+    T.InverseJacobian().MultTranspose(reference_, V);
+  }
+
+ private:
+  const mfem::GridFunction* f_;
+  mfem::GradientGridFunctionCoefficient general_;
+  int cached_element_ = -1;
+  long cached_sequence_ = -1;
+  bool cached_plain_ = false;
+  mfem::Array<int> dofs_;
+  mfem::Vector values_, reference_;
+  detail::ReferenceGradients gradients_;
 };
 
 /**
