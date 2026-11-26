@@ -12,6 +12,7 @@
 #pragma once
 
 #include <array>
+#include <memory>
 
 #include "AdGIA/detail/reference_gradients.hpp"
 #include "mfem.hpp"
@@ -1173,6 +1174,11 @@ class ElasticTensorIntegrator : public mfem::BilinearFormIntegrator {
    * that of the element matrices, so both assemblies give one operator.
    * An IsotropicElasticTensorCoefficient is kept as its two moduli, any
    * other tensor as its 21 components.
+   *
+   * On a device that uses libCEED (mfem built with MFEM_USE_CEED; e.g.
+   * `ceed-cpu`, `ceed-cuda:/gpu/cuda/gen`) the form is a libCEED operator
+   * in place of the library's own kernels, and tetrahedra are taken as
+   * well as hexahedra.
    */
   ///@{
   void AssemblePA(const mfem::FiniteElementSpace& fes) override;
@@ -1187,6 +1193,8 @@ class ElasticTensorIntegrator : public mfem::BilinearFormIntegrator {
   mfem::Vector pa_data_; /**< Data at the quadrature points. */
   int pa_ne_ = 0;        /**< Elements of the space. */
   bool pa_isotropic_ = false; /**< The tensor is kept as two moduli. */
+  std::unique_ptr<mfem::ceed::Operator> pa_ceed_; /**< The form through
+                                         libCEED, on a device that uses it. */
 };
 
 /**

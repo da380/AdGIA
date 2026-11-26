@@ -16,7 +16,9 @@
     and with a given one;
   - the diagonal equals the assembled matrix's.
 
-  Set ADGIA_TEST_DEVICE (e.g. to cuda) to run the kernels on a device.
+  Set ADGIA_TEST_DEVICE (e.g. to cuda) to run the kernels on a device. On a
+  device that uses libCEED (e.g. ceed-cpu, ceed-cuda:/gpu/cuda/gen) the
+  form is a libCEED operator, and is tested on tetrahedra as well.
 */
 
 namespace {
@@ -153,6 +155,32 @@ TEST_P(ElasticTensorPartialAssembly, Mapped) {
   TransverselyIsotropicElasticTensorCoefficient ti(3, A, Cc, F, L, N, axis);
   const IntegrationRule& ir = IntRules.Get(Geometry::CUBE, 2 * order + 3);
   Compare(fes, [&]() { return new ElasticTensorIntegrator(ti, xi, &ir); });
+}
+
+// Through libCEED the form is taken on tetrahedra too.
+TEST(ElasticTensorPartialAssemblyCeed, Tetrahedra) {
+  if (!DeviceCanUseCeed()) {
+    GTEST_SKIP() << "the device does not use libCEED";
+  }
+  for (int order = 1; order <= 3; order++) {
+    auto mesh = Mesh::MakeCartesian3D(2, 2, 2, Element::TETRAHEDRON);
+    mesh.SetCurvature(2);
+    mesh.Transform(Jiggle);
+    H1_FECollection fec(order, 3);
+    FiniteElementSpace fes(&mesh, &fec, 3);
+    FunctionCoefficient lambda(
+        [](const Vector& x) { return 1.3 + 0.4 * std::sin(2.0 * x[0] + x[2]); });
+    FunctionCoefficient mu(
+        [](const Vector& x) { return 0.8 + 0.3 * x[1] * x[1]; });
+    IsotropicElasticTensorCoefficient iso(3, lambda, mu);
+    Compare(fes, [&]() { return new ElasticTensorIntegrator(iso); });
+    ConstantCoefficient A(3.1), Cc(2.7), F(1.1), L(0.9), N(1.2);
+    Vector x0(3);
+    x0 = -0.3;
+    RadialUnitVectorCoefficient axis(3, x0);
+    TransverselyIsotropicElasticTensorCoefficient ti(3, A, Cc, F, L, N, axis);
+    Compare(fes, [&]() { return new ElasticTensorIntegrator(ti); });
+  }
 }
 
 INSTANTIATE_TEST_SUITE_P(Orders, ElasticTensorPartialAssembly,

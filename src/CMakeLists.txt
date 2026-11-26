@@ -7,6 +7,7 @@ target_sources(${PROJECT_NAME} PRIVATE null_space.cpp
                                        bilininteg.cpp
                                        bilininteg_pa.cpp
                                        kernels/elastic_tensor_kernels.cpp
+                                       ceed/elastic_tensor_ceed.cpp
                                        coefficient.cpp
                                        lininteg.cpp
                                        mappings.cpp
@@ -49,3 +50,12 @@ if(MFEM_USE_CUDA)
         LANGUAGE CUDA
         COMPILE_OPTIONS "--expt-extended-lambda;--expt-relaxed-constexpr")
 endif()
+
+# With libCEED in mfem (MFEM_USE_CEED) the forms are also libCEED operators
+# (ceed/). Their QFunction sources are read again at run time by libCEED's
+# code-generating backends, from this directory.
+set(ADGIA_CEED_QFUNCTION_DIR "${CMAKE_CURRENT_SOURCE_DIR}/ceed" CACHE PATH
+    "Where libCEED finds AdGIA's QFunction sources at run time")
+set_source_files_properties(ceed/elastic_tensor_ceed.cpp
+    TARGET_DIRECTORY ${PROJECT_NAME} PROPERTIES
+    COMPILE_DEFINITIONS "ADGIA_CEED_QFUNCTION_DIR=\"${ADGIA_CEED_QFUNCTION_DIR}\"")

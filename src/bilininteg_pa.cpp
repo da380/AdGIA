@@ -3,6 +3,7 @@
 // element matrix. Here the data are made, on the host; the kernels that
 // apply them are in src/kernels/.
 #include "AdGIA/bilininteg.hpp"
+#include "AdGIA/detail/ceed_operators.hpp"
 #include "AdGIA/detail/pa_kernels.hpp"
 #include "AdGIA/elastic_tensor.hpp"
 
@@ -14,13 +15,18 @@ void ElasticTensorIntegrator::AssemblePA(const mfem::FiniteElementSpace& fes) {
   MFEM_VERIFY(mesh.Dimension() == 3 && mesh.SpaceDimension() == 3 &&
                   fes.GetVDim() == 3,
               "ElasticTensorIntegrator: partial assembly is for 3-D.");
+  // libCEED takes any one element geometry; the library's own kernels
+  // hexahedra.
+  const bool use_ceed = DeviceCanUseCeed();
   Array<Geometry::Type> geoms;
   mesh.GetGeometries(3, geoms);
-  MFEM_VERIFY(geoms.Size() == 0 ||
-                  (geoms.Size() == 1 && geoms[0] == Geometry::CUBE &&
-                   UsesTensorBasis(fes)),
-              "ElasticTensorIntegrator: partial assembly is for hexahedra "
-              "with a tensor basis.");
+  MFEM_VERIFY(geoms.Size() <= 1,
+              "ElasticTensorIntegrator: partial assembly is for meshes of "
+              "one element geometry.");
+  MFEM_VERIFY(use_ceed || geoms.Size() == 0 ||
+                  (geoms[0] == Geometry::CUBE && UsesTensorBasis(fes)),
+              "ElasticTensorIntegrator: without libCEED, partial assembly "
+              "is for hexahedra with a tensor basis.");
   MFEM_VERIFY(C_->GetHeight() == 6 && C_->GetWidth() == 6,
               "ElasticTensorIntegrator: the tensor coefficient must be "
               "6 x 6.");
@@ -32,7 +38,8 @@ void ElasticTensorIntegrator::AssemblePA(const mfem::FiniteElementSpace& fes) {
     ElementTransformation& T0 = *mesh.GetTypicalElementTransformation();
     ir = &IntRules.Get(el.GetGeomType(), 2 * T0.OrderGrad(&el));
   }
-  pa_maps_ = &el.GetDofToQuad(*ir, DofToQuad::TENSOR);
+  pa_ceed_.reset();
+  pa_maps_ = use_ceed ? nullptr : &el.GetDofToQuad(*ir, DofToQuad::TENSOR);
   pa_ne_ = fes.GetNE();
   pa_isotropic_ =
       dynamic_cast<IsotropicElasticTensorCoefficient*>(C_) != nullptr;
@@ -84,14 +91,24 @@ void ElasticTensorIntegrator::AssemblePA(const mfem::FiniteElementSpace& fes) {
       }
     }
   }
+
+  if (use_ceed && pa_ne_ > 0) {
+    pa_ceed_ = detail::MakeElasticTensorCeedOperator(fes, *ir, pa_data_,
+                                                     pa_isotropic_);
+    pa_data_.Destroy();  // libCEED holds its copy
+  }
 }
 
 void ElasticTensorIntegrator::AddMultPA(const mfem::Vector& x,
                                         mfem::Vector& y) const {
-  MFEM_VERIFY(pa_maps_, "ElasticTensorIntegrator: AssemblePA not called.");
+  if (pa_ceed_) {
+    pa_ceed_->AddMult(x, y);  // on the space's local vectors
+    return;
+  }
   if (pa_ne_ == 0) {
     return;
   }
+  MFEM_VERIFY(pa_maps_, "ElasticTensorIntegrator: AssemblePA not called.");
   detail::pa::ApplyElasticTensor(pa_isotropic_, pa_ne_, *pa_maps_, pa_data_, x,
                                  y);
 }
@@ -102,10 +119,14 @@ void ElasticTensorIntegrator::AddMultTransposePA(const mfem::Vector& x,
 }
 
 void ElasticTensorIntegrator::AssembleDiagonalPA(mfem::Vector& diag) {
-  MFEM_VERIFY(pa_maps_, "ElasticTensorIntegrator: AssemblePA not called.");
+  if (pa_ceed_) {
+    pa_ceed_->GetDiagonal(diag);
+    return;
+  }
   if (pa_ne_ == 0) {
     return;
   }
+  MFEM_VERIFY(pa_maps_, "ElasticTensorIntegrator: AssemblePA not called.");
   detail::pa::DiagonalElasticTensor(pa_isotropic_, pa_ne_, *pa_maps_,
                                     pa_data_, diag);
 }

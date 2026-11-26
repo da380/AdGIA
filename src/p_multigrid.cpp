@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdlib>
 
 #include "AdGIA/detail/fem_factory.hpp"
 
@@ -354,16 +353,10 @@ MatrixFreePMultigrid::MatrixFreePMultigrid(FiniteElementSpace& fes,
         if (HypreUsingGPU()) {
           // hypre's smoother on a device is l1-Jacobi, with which the
           // cycle takes about twice the iterations: Chebyshev instead.
-          const char* v = std::getenv("XVAR");
-          const int var = v ? std::atoi(v) : 0;
-          if (var == 0) { HYPRE_BoomerAMGSetRelaxType(*amg, 16); HYPRE_BoomerAMGSetChebyOrder(*amg, 2); }
-          if (var == 1) { for (int k = 1; k <= 3; k++) HYPRE_BoomerAMGSetCycleRelaxType(*amg, 16, k); HYPRE_BoomerAMGSetChebyOrder(*amg, 2); }
-          if (var == 2) { for (int k = 1; k <= 3; k++) HYPRE_BoomerAMGSetCycleRelaxType(*amg, 16, k); HYPRE_BoomerAMGSetChebyOrder(*amg, 4); }
-          if (var == 3) { for (int k = 1; k <= 2; k++) HYPRE_BoomerAMGSetCycleRelaxType(*amg, 16, k); HYPRE_BoomerAMGSetCycleRelaxType(*amg, 9, 3); }
-          if (var == 4) { HYPRE_BoomerAMGSetStrongThreshold(*amg, 0.25); for (int k = 1; k <= 3; k++) HYPRE_BoomerAMGSetCycleRelaxType(*amg, 16, k); }
-          if (var == 5) { HYPRE_BoomerAMGSetNumSweeps(*amg, 2); }
-          if (var == 6) { for (int k = 1; k <= 3; k++) HYPRE_BoomerAMGSetCycleRelaxType(*amg, 16, k); HYPRE_BoomerAMGSetInterpType(*amg, 18); }
-          if (var == 7) { for (int k = 1; k <= 3; k++) HYPRE_BoomerAMGSetCycleRelaxType(*amg, 16, k); HYPRE_BoomerAMGSetPMaxElmts(*amg, 8); HYPRE_BoomerAMGSetStrongThreshold(*amg, 0.25); }
+          for (auto k = 1; k <= 3; k++) {  // down, up and coarsest
+            HYPRE_BoomerAMGSetCycleRelaxType(*amg, 16, k);
+          }
+          HYPRE_BoomerAMGSetChebyOrder(*amg, 2);
         }
         amg->SetPrintLevel(0);
         coarse_solver_ = std::move(amg);
