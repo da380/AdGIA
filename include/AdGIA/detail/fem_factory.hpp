@@ -85,17 +85,30 @@ inline void SetSystemsAMGOptions(mfem::HypreBoomerAMG& amg,
 #endif
 
 #ifdef MFEM_USE_MPI
-/// Where hypre runs on a device, gives @p amg Chebyshev smoothing (down,
-/// up and on the coarsest level); elsewhere nothing. hypre has no
-/// Gauss-Seidel on a device and its own choice there is l1-Jacobi, with
-/// which these problems take about twice the iterations. Call it last,
-/// after the settings it replaces.
-inline void SetDeviceAMGOptions(mfem::HypreBoomerAMG& amg) {
+/// Where hypre runs on a device, gives @p amg Chebyshev smoothing going
+/// down and up; elsewhere nothing. hypre has no Gauss-Seidel on a device
+/// and its own choice there is l1-Jacobi, with which these problems take
+/// about twice the iterations. The coarsest level is left as hypre has
+/// it, unless @p singular_coarse says the caller has put Gauss-Seidel
+/// there because the matrix may be singular (a free or fluid body with no
+/// shift): then l1-Jacobi in its place. Two things not to do on the
+/// coarsest level, both tried on a device in parallel: Chebyshev,
+/// which made the cycle indefinite, and asking for hypre's Gaussian
+/// elimination by name, which changed nothing. Call it last, after the
+/// settings it replaces.
+///
+/// With or without these settings, hypre's AMG for systems
+/// (SetSystemsAMGOptions) on a device and more than one rank is symmetric
+/// to about 1e-5 only; for a scalar matrix, and on one rank, to rounding.
+inline void SetDeviceAMGOptions(mfem::HypreBoomerAMG& amg,
+                                bool singular_coarse = false) {
   if (mfem::HypreUsingGPU()) {
-    for (int k = 1; k <= 3; k++) {
-      HYPRE_BoomerAMGSetCycleRelaxType(amg, 16, k);
-    }
+    HYPRE_BoomerAMGSetCycleRelaxType(amg, 16, 1);
+    HYPRE_BoomerAMGSetCycleRelaxType(amg, 16, 2);
     HYPRE_BoomerAMGSetChebyOrder(amg, 2);
+    if (singular_coarse) {
+      HYPRE_BoomerAMGSetCycleRelaxType(amg, 18, 3);
+    }
   }
 }
 #endif

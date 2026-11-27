@@ -450,7 +450,10 @@ void LinearQuasiStaticProblemBase::SetupMatrixFreePreconditioner() {
   // diagonals.
   constexpr real_t kMassShift = 1e-2;
   {
-    const auto trace = [&](BilinearFormIntegrator* integrator) {
+    // The trace of the elastic form with a mass term of coefficient s.
+    const auto trace = [&](Coefficient* s) {
+      auto* integrator = new GravitatingElasticityIntegrator(C);
+      integrator->SetMassTerm(s);
       auto form = detail::MakeBilinearForm(fes_);
       form->SetAssemblyLevel(AssemblyLevel::PARTIAL);
       form->AddDomainIntegrator(integrator);
@@ -469,8 +472,9 @@ void LinearQuasiStaticProblemBase::SetupMatrixFreePreconditioner() {
 #endif
       return sum;
     };
-    const real_t trace_a = trace(new ElasticTensorIntegrator(C));
-    const real_t trace_m = trace(new VectorMassIntegrator);
+    ConstantCoefficient unit(1.0);
+    const real_t trace_a = trace(nullptr);
+    const real_t trace_m = trace(&unit) - trace_a;
     real_t nodes = static_cast<real_t>(fes_->GetTrueVSize()) / fes_->GetVDim();
 #ifdef MFEM_USE_MPI
     if (pfes_) {
@@ -485,11 +489,10 @@ void LinearQuasiStaticProblemBase::SetupMatrixFreePreconditioner() {
   prec_ = std::make_unique<MatrixFreePMultigrid>(
       *fes_, no_essential_boundary,
       [&](BilinearForm& form) {
-        form.AddDomainIntegrator(new ElasticTensorIntegrator(C));
-        if (matrix_free_shift_) {
-          form.AddDomainIntegrator(
-              new VectorMassIntegrator(*matrix_free_shift_));
-        }
+        // The elastic form and the shift in one pass.
+        auto* integrator = new GravitatingElasticityIntegrator(C);
+        integrator->SetMassTerm(matrix_free_shift_.get());
+        form.AddDomainIntegrator(integrator);
       },
       matrix_free_options_);
 }
@@ -1375,7 +1378,7 @@ void LinearQuasiStaticProblemBase::SetupDefaultPreconditioner(
             static_cast<HypreParMatrix&>(matrix));
         detail::SetSystemsAMGOptions(*amg, space);
         HYPRE_BoomerAMGSetCycleRelaxType(*amg, 8, 3);
-        detail::SetDeviceAMGOptions(*amg);
+        detail::SetDeviceAMGOptions(*amg, true);
         amg->SetPrintLevel(0);
         return std::unique_ptr<Solver>(std::move(amg));
       };
@@ -1756,7 +1759,7 @@ void LinearQuasiStaticProblemBase::AssemblePressureSplitBlocks() {
     // The systems settings of SetupDefaultPreconditioner.
     detail::SetSystemsAMGOptions(*amg, *pfes_);
     HYPRE_BoomerAMGSetCycleRelaxType(*amg, 8, 3);
-    detail::SetDeviceAMGOptions(*amg);
+    detail::SetDeviceAMGOptions(*amg, true);
     amg->SetPrintLevel(0);
     psplit_amg_ = std::move(amg);
     if (psplit_cheb_order_ > 0) {

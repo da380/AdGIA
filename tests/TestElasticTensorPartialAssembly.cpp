@@ -5,8 +5,9 @@
 #include "TestCommon.hpp"
 
 /*
-  ElasticTensorIntegrator's partial assembly (hexahedra, 3-D) against its
-  element matrices, which the other tests of the integrator cover:
+  ElasticTensorIntegrator's partial assembly (3-D; sum-factorised on
+  hexahedra, dense in the element on tetrahedra) against its element
+  matrices, which the other tests of the integrator cover:
 
   - the action of the form with no matrix equals the assembled matrix's,
     for an isotropic tensor with varying moduli (kept as two moduli), a
@@ -16,9 +17,11 @@
     and with a given one;
   - the diagonal equals the assembled matrix's.
 
+  - the same on tetrahedra, at orders 1 to 3.
+
   Set ADGIA_TEST_DEVICE (e.g. to cuda) to run the kernels on a device. On a
   device that uses libCEED (e.g. ceed-cpu, ceed-cuda:/gpu/cuda/gen) the
-  form is a libCEED operator, and is tested on tetrahedra as well.
+  form is a libCEED operator in place of the library's kernels.
 */
 
 namespace {
@@ -157,11 +160,8 @@ TEST_P(ElasticTensorPartialAssembly, Mapped) {
   Compare(fes, [&]() { return new ElasticTensorIntegrator(ti, xi, &ir); });
 }
 
-// Through libCEED the form is taken on tetrahedra too.
-TEST(ElasticTensorPartialAssemblyCeed, Tetrahedra) {
-  if (!DeviceCanUseCeed()) {
-    GTEST_SKIP() << "the device does not use libCEED";
-  }
+// Tetrahedra: the kernel dense in the element, or libCEED's.
+TEST(ElasticTensorPartialAssemblyDense, Tetrahedra) {
   for (int order = 1; order <= 3; order++) {
     auto mesh = Mesh::MakeCartesian3D(2, 2, 2, Element::TETRAHEDRON);
     mesh.SetCurvature(2);

@@ -6,8 +6,7 @@ target_sources(${PROJECT_NAME} PRIVATE null_space.cpp
                                        descent.cpp
                                        bilininteg.cpp
                                        bilininteg_pa.cpp
-                                       gravitating_elasticity.cpp
-                                       kernels/elastic_tensor_kernels.cpp
+                                       kernels/block_kernels.cpp
                                        ceed/ceed_operators.cpp
                                        coefficient.cpp
                                        lininteg.cpp
@@ -46,10 +45,25 @@ target_sources(${PROJECT_NAME} PRIVATE null_space.cpp
 # include mfem and AdGIA/detail/pa_kernels.hpp alone, so the CUDA compiler's
 # dialect (CMAKE_CUDA_STANDARD, top level) binds nothing else.
 if(MFEM_USE_CUDA)
-    set_source_files_properties(kernels/elastic_tensor_kernels.cpp
+    set_source_files_properties(kernels/block_kernels.cpp
         TARGET_DIRECTORY ${PROJECT_NAME} PROPERTIES
         LANGUAGE CUDA
         COMPILE_OPTIONS "--expt-extended-lambda;--expt-relaxed-constexpr")
+endif()
+
+# The host's own vector instructions for the kernels (off by default: the
+# library then runs on any machine of the architecture). On, the kernel
+# sources alone are compiled with -march=native, and the dense kernel takes
+# its vector form where that gives AVX2 or AVX-512: two to three times
+# the speed on tetrahedra. The binaries then need the machine they were
+# built on, or one like it.
+option(ADGIA_NATIVE_KERNELS
+       "Compile the kernels in src/kernels/ for this machine (-march=native)"
+       OFF)
+if(ADGIA_NATIVE_KERNELS AND NOT MFEM_USE_CUDA)
+    set_source_files_properties(kernels/block_kernels.cpp
+        TARGET_DIRECTORY ${PROJECT_NAME} PROPERTIES
+        COMPILE_OPTIONS "-march=native")
 endif()
 
 # With libCEED in mfem (MFEM_USE_CEED) the forms are also libCEED operators

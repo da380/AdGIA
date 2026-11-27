@@ -588,15 +588,18 @@ the coarsest level, of order two, has a matrix and the AMG. The levels are
 therefore discretisations and not Galerkin products. For the
 self-gravitating mixed class the operator is the elastic form and the
 gravity terms in one pass (\code{GravitatingElasticityIntegrator}), and
-the potential's preconditioner is the same construction on its shifted
-Laplacian; the couplings and the potential's own operator keep their
-matrices. The switch is for a rheology that is isotropic or a single
+the potential's preconditioner can be the same construction on its
+shifted Laplacian (\code{SetPotentialPreconditionerMatrixFree}, off by
+default: fewer iterations and no less time); the couplings and the
+potential's own operator keep their matrices. The switch is for a rheology that is isotropic or a single
 elastic tensor form on the whole body, with no mapping, no essential
-dofs and no fluid region. The elastic form alone is applied by kernels of
-the library's own on hexahedra; with libCEED in mfem and a device that
-uses it (\code{ceed-cpu}, \code{ceed-cuda:/gpu/cuda/gen}) every form is
-a libCEED operator, on tetrahedra as on hexahedra, and the gravity terms
-need it. The answers are those of the default route to the solver's
+dofs and no fluid region. The forms are applied by kernels of the
+library's own, sum-factorised on hexahedra and dense in the element on
+tetrahedra, so the switch needs nothing beyond mfem; the dense kernel is
+two to three times faster where the library is compiled for the machine
+(\code{ADGIA\_NATIVE\_KERNELS}). With libCEED in mfem and a device that
+uses it (\code{ceed-cpu}, \code{ceed-cuda:/gpu/cuda/gen}) the forms are
+libCEED operators in their place. The answers are those of the default route to the solver's
 tolerance.
 
 \subsection{Rigid modes and projected Krylov solvers}

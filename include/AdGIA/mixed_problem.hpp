@@ -952,6 +952,20 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
                               GaugePenalty form,
                               Diffeomorphism* map) override;
 
+ public:
+  /**
+   * @brief With SetMatrixFree(): the potential's preconditioner as a
+   * MatrixFreePMultigrid of its shifted Laplacian (DiffusionMassIntegrator)
+   * in place of the AMG on that matrix. Off by default: measured on
+   * Love-number runs at orders 3 to 5 it takes a tenth fewer iterations
+   * and no less time, and more time where the kernels are not compiled
+   * for the machine; what it saves is the matrix. 3-D.
+   */
+  void SetPotentialPreconditionerMatrixFree(bool on) {
+    potential_matrix_free_ = on;
+    MarkOperatorDirty();
+  }
+
  protected:
   void SetupSolver(mfem::OperatorHandle& A) override;
   /// The elastic tensor form and the gravity terms as one integrator
@@ -1048,8 +1062,10 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   // order.
   mfem::real_t shift_ = 1e-3;
   mfem::ConstantCoefficient one_, inv_four_pi_G_, shift_coef_;
-  // SetMatrixFree() as it stood when the potential's preconditioner was
-  // made: SetupSolver() makes it again when the two differ.
+  // SetPotentialPreconditionerMatrixFree(), and whether the potential's
+  // preconditioner as it stands was made with no matrix: SetupSolver()
+  // makes it again when the choice has changed.
+  bool potential_matrix_free_ = false;
   bool potential_prec_matrix_free_ = false;
   std::unique_ptr<mfem::ProductCoefficient> half_rho_, minus_half_rho_;
   std::unique_ptr<mfem::ScalarVectorProductCoefficient> minus_half_rho_grad_;

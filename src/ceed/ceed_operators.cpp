@@ -10,10 +10,9 @@
 
 #include <string>
 
-#include "elastic_tensor_qf.h"
+#include "displacement_block_qf.h"
 #include "fem/ceed/interface/basis.hpp"
 #include "fem/ceed/interface/restriction.hpp"
-#include "gravitating_elasticity_qf.h"
 
 #define ADGIA_CEED_CHECK(call) \
   MFEM_VERIFY((call) == CEED_ERROR_SUCCESS, "AdGIA: a libCEED call failed.")
@@ -116,50 +115,43 @@ class PointDataCeedOperator : public mfem::ceed::Operator {
   CeedElemRestriction data_restriction_ = nullptr;
 };
 
-int ElasticDataSize(bool isotropic) {
-  return 9 + (isotropic ? pa::kIsotropicTensorSize : pa::kGeneralTensorSize);
-}
-
 }  // namespace
 
-std::unique_ptr<mfem::ceed::Operator> MakeElasticTensorCeedOperator(
+std::unique_ptr<mfem::ceed::Operator> MakeDisplacementBlockCeedOperator(
     const mfem::FiniteElementSpace& fes, const mfem::IntegrationRule& ir,
-    const mfem::Vector& data, bool isotropic) {
+    const mfem::Vector& data, bool isotropic, int extras) {
+  CeedQFunctionUser function = nullptr;
+  const char* source = nullptr;
+#define ADGIA_QFUNCTION(name)            \
+  {                                      \
+    function = name;                     \
+    source = "displacement_block_qf.h:" #name; \
+  }
+  if (extras == pa::kNoExtras) {
+    if (isotropic) ADGIA_QFUNCTION(AdGIAElasticIsotropic)
+    else ADGIA_QFUNCTION(AdGIAElasticGeneral)
+  } else if (extras == pa::kMassExtras) {
+    if (isotropic) ADGIA_QFUNCTION(AdGIAElasticMassIsotropic)
+    else ADGIA_QFUNCTION(AdGIAElasticMassGeneral)
+  } else if (extras == pa::kGravityExtras) {
+    if (isotropic) ADGIA_QFUNCTION(AdGIAElasticGravityIsotropic)
+    else ADGIA_QFUNCTION(AdGIAElasticGravityGeneral)
+  } else {
+    MFEM_ABORT("MakeDisplacementBlockCeedOperator: extras.");
+  }
+#undef ADGIA_QFUNCTION
   return std::make_unique<PointDataCeedOperator>(
-      fes, ir, data, ElasticDataSize(isotropic),
-      isotropic ? AdGIAElasticTensorIsotropic : AdGIAElasticTensorGeneral,
-      isotropic ? "elastic_tensor_qf.h:AdGIAElasticTensorIsotropic"
-                : "elastic_tensor_qf.h:AdGIAElasticTensorGeneral",
-      false);
-}
-
-std::unique_ptr<mfem::ceed::Operator> MakeGravitatingElasticityCeedOperator(
-    const mfem::FiniteElementSpace& fes, const mfem::IntegrationRule& ir,
-    const mfem::Vector& data, bool isotropic) {
-  return std::make_unique<PointDataCeedOperator>(
-      fes, ir, data, ElasticDataSize(isotropic) + kGravityDataSize,
-      isotropic ? AdGIAGravitatingElasticityIsotropic
-                : AdGIAGravitatingElasticityGeneral,
-      isotropic
-          ? "gravitating_elasticity_qf.h:AdGIAGravitatingElasticityIsotropic"
-          : "gravitating_elasticity_qf.h:AdGIAGravitatingElasticityGeneral",
-      true);
+      fes, ir, data, pa::DataSize(isotropic, extras), function, source,
+      extras != pa::kNoExtras);
 }
 
 #else
 
 bool HasCeed() { return false; }
 
-std::unique_ptr<mfem::ceed::Operator> MakeElasticTensorCeedOperator(
+std::unique_ptr<mfem::ceed::Operator> MakeDisplacementBlockCeedOperator(
     const mfem::FiniteElementSpace&, const mfem::IntegrationRule&,
-    const mfem::Vector&, bool) {
-  MFEM_ABORT("AdGIA: mfem was built without libCEED (MFEM_USE_CEED).");
-  return nullptr;
-}
-
-std::unique_ptr<mfem::ceed::Operator> MakeGravitatingElasticityCeedOperator(
-    const mfem::FiniteElementSpace&, const mfem::IntegrationRule&,
-    const mfem::Vector&, bool) {
+    const mfem::Vector&, bool, int) {
   MFEM_ABORT("AdGIA: mfem was built without libCEED (MFEM_USE_CEED).");
   return nullptr;
 }

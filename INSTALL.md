@@ -31,10 +31,17 @@ then the `MFEM_DIR` below. By hand, the minimum is:
 MFEM v4.10 is the reference (what the CI tests against); v4.9 is also
 known to work — the full test suite passes on both.
 
-### Optional: libCEED, and MFEM for CUDA
+### Optional: kernels for this machine, libCEED, and MFEM for CUDA
 
-Neither is needed. With either, operators applied with no matrix
-(`SetMatrixFree`, the integrators' partial assembly) gain routes:
+None is needed: operators applied with no matrix (`SetMatrixFree`, the
+integrators' partial assembly) run with MFEM alone, by kernels in
+`src/kernels/`. Each of these adds to that:
+
+- **`-DADGIA_NATIVE_KERNELS=ON`** — the kernel sources alone are compiled
+  with `-march=native`. On a machine with AVX2 or AVX-512 the kernel for
+  tetrahedra then works on a block of elements as one vector and is two
+  to three times faster. The binaries need the machine they were built
+  on, or one like it; off by default.
 
 - **libCEED** — MFEM configured with `-DMFEM_USE_CEED=YES
   -DCEED_DIR=<libCEED>`. AdGIA finds it through MFEM and then applies its

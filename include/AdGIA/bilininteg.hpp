@@ -14,6 +14,7 @@
 #include <array>
 #include <memory>
 
+#include "AdGIA/detail/displacement_block_pa.hpp"
 #include "AdGIA/detail/reference_gradients.hpp"
 #include "mfem.hpp"
 #include "AdGIA/index.hpp"
@@ -1172,18 +1173,19 @@ class ElasticTensorIntegrator : public mfem::BilinearFormIntegrator {
   /**
    * @name Partial assembly
    * The form applied element by element with no matrix
-   * (`mfem::AssemblyLevel::PARTIAL`), for hexahedra with a tensor basis
-   * in 3-D. AssemblePA evaluates the tensor, the geometry and the mapping
-   * once at the quadrature points, on the host; AddMultPA and
+   * (`mfem::AssemblyLevel::PARTIAL`), in 3-D, on a mesh of one element
+   * geometry. AssemblePA evaluates the tensor, the geometry and the
+   * mapping once at the quadrature points, on the host; AddMultPA and
    * AssembleDiagonalPA run on the configured `mfem::Device`. The rule is
    * that of the element matrices, so both assemblies give one operator.
    * An IsotropicElasticTensorCoefficient is kept as its two moduli, any
    * other tensor as its 21 components.
    *
-   * On a device that uses libCEED (mfem built with MFEM_USE_CEED; e.g.
+   * The kernels are the library's own: sum-factorised on hexahedra with a
+   * tensor basis, dense in the element on any other (tetrahedra). On a
+   * device that uses libCEED (mfem built with MFEM_USE_CEED; e.g.
    * `ceed-cpu`, `ceed-cuda:/gpu/cuda/gen`) the form is a libCEED operator
-   * in place of the library's own kernels, and tetrahedra are taken as
-   * well as hexahedra.
+   * in their place.
    */
   ///@{
   void AssemblePA(const mfem::FiniteElementSpace& fes) override;
@@ -1194,12 +1196,7 @@ class ElasticTensorIntegrator : public mfem::BilinearFormIntegrator {
   ///@}
 
  private:
-  const mfem::DofToQuad* pa_maps_ = nullptr; /**< 1-D basis at the points. */
-  mfem::Vector pa_data_; /**< Data at the quadrature points. */
-  int pa_ne_ = 0;        /**< Elements of the space. */
-  bool pa_isotropic_ = false; /**< The tensor is kept as two moduli. */
-  std::unique_ptr<mfem::ceed::Operator> pa_ceed_; /**< The form through
-                                         libCEED, on a device that uses it. */
+  detail::DisplacementBlockPA pa_; /**< Its partial assembly. */
 };
 
 /**
@@ -2168,7 +2165,9 @@ class BoundaryVectorScalarIntegrator : public mfem::BilinearFormIntegrator {
  *   + s\,u\cdot v ,
  * @f]
  * with @f$g = \nabla\Phi^0@f$ and the gradients of @f$g\cdot u@f$ by the
- * product rule with the Hessian of @f$\Phi^0@f$ given.
+ * product rule with the Hessian of @f$\Phi^0@f$ given. Constructed from
+ * the tensor alone it has no gravity terms: the elastic form with,
+ * optionally, the mass term.
  *
  * Its element matrix is the sum of the element matrices of
  * ElasticTensorIntegrator, DomainVectorGradVectorIntegrator (with its
@@ -2176,13 +2175,23 @@ class BoundaryVectorScalarIntegrator : public mfem::BilinearFormIntegrator {
  * transposes, and mfem's VectorMassIntegrator, all on one integration
  * rule (that of ElasticTensorIntegrator by default): it adds nothing to
  * them. What it adds is partial assembly, in which the whole block is
- * applied in one pass over the mesh. That needs a device that uses
- * libCEED (ElasticTensorIntegrator's partial assembly says which), and
- * takes tetrahedra and hexahedra. No mapping.
+ * applied in one pass over the mesh: by the library's own kernels
+ * (sum-factorised on hexahedra, dense in the element on tetrahedra), or
+ * by a libCEED operator on a device that uses libCEED
+ * (ElasticTensorIntegrator's partial assembly says more). No mapping.
  */
 class GravitatingElasticityIntegrator : public mfem::BilinearFormIntegrator {
  public:
   /**
+   * @brief The elastic tensor form, for use with SetMassTerm().
+   * @param C The Mandel-form elasticity tensor coefficient.
+   * @param ir An optional integration rule, for every term.
+   */
+  explicit GravitatingElasticityIntegrator(
+      mfem::MatrixCoefficient& C, const mfem::IntegrationRule* ir = nullptr);
+
+  /**
+   * @brief The elastic tensor form and the gravity terms.
    * @param C The Mandel-form elasticity tensor coefficient.
    * @param rho The density.
    * @param grad_phi0 The gradient of the background potential.
@@ -2211,22 +2220,75 @@ class GravitatingElasticityIntegrator : public mfem::BilinearFormIntegrator {
 
  private:
   mfem::MatrixCoefficient* C_;
-  mfem::Coefficient* rho_;
-  mfem::VectorCoefficient* grad_phi0_;
-  mfem::MatrixCoefficient* hessian_phi0_;
+  mfem::Coefficient* rho_ = nullptr;
+  mfem::VectorCoefficient* grad_phi0_ = nullptr;
+  mfem::MatrixCoefficient* hessian_phi0_ = nullptr;
   mfem::Coefficient* mass_coefficient_ = nullptr;
 
   // The terms as the integrators they are, for the element matrix.
-  mfem::ProductCoefficient half_rho_, minus_half_rho_;
-  mfem::ScalarVectorProductCoefficient minus_half_rho_grad_;
+  std::unique_ptr<mfem::ProductCoefficient> half_rho_, minus_half_rho_;
+  std::unique_ptr<mfem::ScalarVectorProductCoefficient> minus_half_rho_grad_;
   ElasticTensorIntegrator elastic_;
-  DomainVectorGradVectorIntegrator gradient_;
-  DomainVectorDivVectorIntegrator divergence_;
+  std::unique_ptr<DomainVectorGradVectorIntegrator> gradient_;
+  std::unique_ptr<DomainVectorDivVectorIntegrator> divergence_;
   std::unique_ptr<mfem::VectorMassIntegrator> mass_;
   mfem::DenseMatrix part_;
 
-  std::unique_ptr<mfem::ceed::Operator> pa_ceed_; /**< The block through
-                                                     libCEED. */
+  detail::DisplacementBlockPA pa_; /**< Its partial assembly. */
 };
+
+/**
+ * @brief A diffusion form and a mass term on a scalar space in one
+ * integrator,
+ * @f[
+ *   (\phi, \psi) \mapsto \int k\,\nabla\phi\cdot\nabla\psi
+ *   + s\,\phi\,\psi .
+ * @f]
+ *
+ * Its element matrix is the sum of those of mfem's DiffusionIntegrator
+ * and MassIntegrator on one integration rule (the mass term's by
+ * default): it adds nothing to them. What it adds is partial assembly in
+ * 3-D on any one element geometry, in one pass, by kernels of the
+ * library's own (sum-factorised on hexahedra, dense in the element on
+ * tetrahedra), where mfem's own partial assembly of the two forms is
+ * for tensor-product elements. On a device that uses libCEED the two
+ * mfem integrators are used as they are.
+ */
+class DiffusionMassIntegrator : public mfem::BilinearFormIntegrator {
+ public:
+  /**
+   * @param k The diffusion coefficient.
+   * @param s The mass term's coefficient; nullptr for none.
+   * @param ir An optional integration rule, for both terms.
+   */
+  DiffusionMassIntegrator(mfem::Coefficient& k, mfem::Coefficient* s = nullptr,
+                          const mfem::IntegrationRule* ir = nullptr);
+
+  void AssembleElementMatrix(const mfem::FiniteElement& el,
+                             mfem::ElementTransformation& Trans,
+                             mfem::DenseMatrix& elmat) override;
+
+  void AssemblePA(const mfem::FiniteElementSpace& fes) override;
+  void AddMultPA(const mfem::Vector& x, mfem::Vector& y) const override;
+  void AddMultTransposePA(const mfem::Vector& x,
+                          mfem::Vector& y) const override;
+  void AssembleDiagonalPA(mfem::Vector& diag) override;
+
+ private:
+  const mfem::IntegrationRule& Rule(const mfem::FiniteElement& el,
+                                    mfem::ElementTransformation& Trans) const;
+
+  mfem::Coefficient* k_;
+  mfem::Coefficient* s_;
+  mutable mfem::DiffusionIntegrator diffusion_;
+  std::unique_ptr<mfem::MassIntegrator> mass_;
+  mfem::DenseMatrix part_;
+
+  const mfem::DofToQuad* pa_maps_ = nullptr; /**< The basis at the points. */
+  mfem::Vector pa_data_; /**< Data at the quadrature points. */
+  int pa_ne_ = 0;        /**< Elements of the space. */
+  bool pa_ceed_ = false; /**< mfem's integrators, through libCEED. */
+};
+
 
 }  // namespace AdGIA

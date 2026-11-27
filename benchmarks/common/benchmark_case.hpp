@@ -311,6 +311,7 @@ struct CaseOptions {
   bool prec_on_fold = false; // referential: AMG on the folded displacement block
   bool pmg = false;          // p-multigrid on the displacement block
   bool matrix_free = false;  // the displacement block with no matrix
+  bool matrix_free_potential = false;  // and the potential's preconditioner
   const char* method = "dahlen";
   real_t slip_theta = 1e2;
   real_t gs_scale = 1.0;
@@ -475,6 +476,11 @@ struct CaseOptions {
                    "Method dahlen: the displacement block with no matrix "
                    "(SetMatrixFree); solid bodies, and a device that the "
                    "forms' partial assembly takes (-d ceed-cpu).");
+    args.AddOption(&matrix_free_potential, "-mf-phi",
+                   "--matrix-free-potential", "-no-mf-phi",
+                   "--no-matrix-free-potential",
+                   "With -mf: the potential's preconditioner with no matrix "
+                   "as well (SetPotentialPreconditionerMatrixFree).");
     args.AddOption(&pmg, "-pmg", "--p-multigrid", "-no-pmg",
                    "--no-p-multigrid",
                    "Methods dahlen and referential: the displacement block's "
@@ -995,6 +1001,8 @@ class Case {
       problem->SetPreconditionerPMultigrid(options.pmg);
       if (options.matrix_free) {
         problem->SetMatrixFree(true);
+        problem->SetPotentialPreconditionerMatrixFree(
+            options.matrix_free_potential);
       }
       if (options.prec_full == 0.0) {
         problem->SetPreconditionerFullOperator(false);

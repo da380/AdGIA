@@ -319,18 +319,20 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetupPotentialPreconditioner(
   // exists, is rebuilt on it by the caller through SetupPotentialSolver().
   Array<int> empty;
   shift_coef_.constant = shift_ / four_pi_G_;
-  potential_prec_matrix_free_ = MatrixFree();
-  if (MatrixFree() &&
+  const bool matrix_free = MatrixFree() && potential_matrix_free_;
+  potential_prec_matrix_free_ = matrix_free;
+  if (matrix_free && dim_ == 3 &&
       fes_phi_->GetMaxElementOrder() > MatrixFreeOptions().coarse_order) {
-    // SetMatrixFree(): the same shifted Laplacian with no matrix above
-    // the coarsest level of a p-multigrid.
+    // SetPotentialPreconditionerMatrixFree(): the same shifted Laplacian
+    // with no matrix above the coarsest level of a p-multigrid.
     k_shift_form_.reset();
     K_shift_.Clear();
     prec_phi_ = std::make_unique<MatrixFreePMultigrid>(
         *fes_phi_, empty,
         [this](BilinearForm& form) {
-          form.AddDomainIntegrator(new DiffusionIntegrator(inv_four_pi_G_));
-          form.AddDomainIntegrator(new MassIntegrator(shift_coef_));
+          // The two terms in one pass.
+          form.AddDomainIntegrator(
+              new DiffusionMassIntegrator(inv_four_pi_G_, &shift_coef_));
         },
         MatrixFreeOptions());
     if (cg_phi_) {
@@ -1404,7 +1406,7 @@ LinearQuasiStaticMixedSelfGravitatingProblem::SchurEigenvalues(
   HypreBoomerAMG amg(*Ashift);
   detail::SetSystemsAMGOptions(amg, *pfes_);
   HYPRE_BoomerAMGSetCycleRelaxType(amg, 8, 3);
-  detail::SetDeviceAMGOptions(amg);
+  detail::SetDeviceAMGOptions(amg, true);
   amg.SetPrintLevel(0);
   SchurOperator schur(*this, *A.Ptr());
   HypreLOBPCG lobpcg(comm);
@@ -1639,7 +1641,8 @@ LinearQuasiStaticMixedSelfGravitatingProblem::MakeMatrixFreeStiffness() {
 }
 
 void LinearQuasiStaticMixedSelfGravitatingProblem::SetupSolver(OperatorHandle& A) {
-  if (MatrixFree() != potential_prec_matrix_free_) {
+  if ((MatrixFree() && potential_matrix_free_) !=
+      potential_prec_matrix_free_) {
     SetupPotentialPreconditioner();
   }
   if (!inner_tol_set_) {

@@ -11,9 +11,11 @@
   - Its element matrices assemble to the matrix of the integrators it
     stands for (the elastic tensor form, the two gravity forms with their
     transposes, a mass term), on tetrahedra and hexahedra.
-  - On a device that uses libCEED (ADGIA_TEST_DEVICE, e.g. ceed-cpu or
-    ceed-cuda:/gpu/cuda/gen), its partial assembly applies that matrix
-    and gives its diagonal; skipped on other devices.
+  - Its partial assembly applies that matrix and gives its diagonal: by
+    the library's kernels, or by libCEED on a device that uses it
+    (ADGIA_TEST_DEVICE, e.g. cuda, ceed-cpu, ceed-cuda:/gpu/cuda/gen).
+  - Without the gravity terms (the elastic form and a mass term), the
+    same.
 */
 
 namespace {
@@ -146,10 +148,7 @@ TEST_P(GravitatingElasticity, IsTheSumOfItsTerms) {
   EXPECT_LT(D->MaxNorm(), 1e-12 * b.SpMat().MaxNorm());
 }
 
-TEST_P(GravitatingElasticity, PartialAssemblyThroughLibCeed) {
-  if (!DeviceCanUseCeed()) {
-    GTEST_SKIP() << "the device does not use libCEED";
-  }
+TEST_P(GravitatingElasticity, PartialAssembly) {
   const auto [hexahedra, order, isotropic, mass] = GetParam();
   auto mesh = CurvedMesh(hexahedra);
   H1_FECollection fec(order, 3);
@@ -184,6 +183,58 @@ TEST_P(GravitatingElasticity, PartialAssemblyThroughLibCeed) {
     db -= da;
     EXPECT_LT(db.Normlinf(), 1e-11 * scale);
   }
+}
+
+// The elastic form and a mass term alone: the constructor from the tensor.
+TEST_P(GravitatingElasticity, WithoutGravity) {
+  const auto [hexahedra, order, isotropic, mass] = GetParam();
+  auto mesh = CurvedMesh(hexahedra);
+  H1_FECollection fec(order, 3);
+  FiniteElementSpace fes(&mesh, &fec, 3);
+  const IntegrationRule& ir =
+      IntRules.Get(mesh.GetTypicalElementGeometry(), 2 * order + 2);
+  const auto make = [&]() {
+    auto* integ = new GravitatingElasticityIntegrator(Tensor(), &ir);
+    if (mass) {
+      integ->SetMassTerm(&f.shift);
+    }
+    return integ;
+  };
+  BilinearForm a(&fes);
+  a.AddDomainIntegrator(new ElasticTensorIntegrator(Tensor(), &ir));
+  if (mass) {
+    auto* m = new VectorMassIntegrator(f.shift);
+    m->SetIntRule(&ir);
+    a.AddDomainIntegrator(m);
+  }
+  a.Assemble();
+  a.Finalize();
+
+  BilinearForm b(&fes);
+  b.AddDomainIntegrator(make());
+  b.Assemble();
+  b.Finalize();
+  std::unique_ptr<SparseMatrix> D(Add(1.0, a.SpMat(), -1.0, b.SpMat()));
+  const double scale = a.SpMat().MaxNorm();
+  EXPECT_LT(D->MaxNorm(), 1e-12 * scale);
+
+  BilinearForm c(&fes);
+  c.SetAssemblyLevel(AssemblyLevel::PARTIAL);
+  c.AddDomainIntegrator(make());
+  c.Assemble();
+  for (int trial = 0; trial < 3; trial++) {
+    auto x = RandomVector(fes.GetVSize());
+    Vector ya(x.Size()), yc(x.Size());
+    a.SpMat().Mult(x, ya);
+    c.Mult(x, yc);
+    yc -= ya;
+    EXPECT_LT(yc.Normlinf(), 1e-11 * scale * x.Normlinf());
+  }
+  Vector da, dc(fes.GetVSize());
+  a.SpMat().GetDiag(da);
+  c.AssembleDiagonal(dc);
+  dc -= da;
+  EXPECT_LT(dc.Normlinf(), 1e-11 * scale);
 }
 
 INSTANTIATE_TEST_SUITE_P(
