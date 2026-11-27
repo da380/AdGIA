@@ -9,6 +9,7 @@
 #include "AdGIA/elastic_tensor.hpp"
 #include "AdGIA/equilibrium_figures.hpp"
 #include "AdGIA/fault_problem.hpp"
+#include "AdGIA/gradient_coupling.hpp"
 #include "AdGIA/index.hpp"
 #include "AdGIA/lininteg.hpp"
 #include "AdGIA/manifest.hpp"

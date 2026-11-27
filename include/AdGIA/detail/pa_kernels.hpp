@@ -88,4 +88,25 @@ void DiagonalPotentialBlock(int ne, const mfem::DofToQuad& maps,
                             const mfem::Vector& data, mfem::Vector& diag);
 ///@}
 
+/**
+ * @name The coupling of a scalar's gradient to a vector's value
+ * @f$(\\phi, v)\\mapsto\\int c\\,\\nabla\\phi\\cdot v@f$
+ * (GradientCouplingOperator) and its transpose, in 3-D, between a scalar
+ * space and a vector space that share the quadrature rule and may differ
+ * in order; sum-factorised where both maps are TENSOR, dense in the
+ * element otherwise. The data at a point: @f$c\\,w\\,J^{-1}@f$, entry
+ * (a, j) at 3 a + j.
+ */
+///@{
+inline constexpr int kCouplingDataSize = 9;
+
+/// y += C x (the scalar's element vector to the vector's), or with
+/// @p transpose y += C^T x (the vector's to the scalar's).
+void ApplyGradientCoupling(bool transpose, int ne,
+                           const mfem::DofToQuad& scalar_maps,
+                           const mfem::DofToQuad& vector_maps,
+                           const mfem::Vector& data, const mfem::Vector& x,
+                           mfem::Vector& y);
+///@}
+
 }  // namespace AdGIA::detail::pa

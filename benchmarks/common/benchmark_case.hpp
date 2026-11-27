@@ -312,6 +312,8 @@ struct CaseOptions {
   bool pmg = false;          // p-multigrid on the displacement block
   bool matrix_free = false;  // the displacement block with no matrix
   bool matrix_free_potential = false;  // and the potential's preconditioner
+  bool matrix_free_operators = false;  // nothing of the fine spaces assembled
+  int matrix_free_quadrature = -1;     // the rule of those operators
   const char* method = "dahlen";
   real_t slip_theta = 1e2;
   real_t gs_scale = 1.0;
@@ -481,6 +483,15 @@ struct CaseOptions {
                    "--no-matrix-free-potential",
                    "With -mf: the potential's preconditioner with no matrix "
                    "as well (SetPotentialPreconditionerMatrixFree).");
+    args.AddOption(&matrix_free_operators, "-mf-all", "--matrix-free-all",
+                   "-no-mf-all", "--no-matrix-free-all",
+                   "Method dahlen: the potential's operator and the "
+                   "couplings with no matrix as well as -mf and -mf-phi "
+                   "(MixedProblemConstruction::matrix_free).");
+    args.AddOption(&matrix_free_quadrature, "-mf-q", "--matrix-free-quadrature",
+                   "With -mf-all: the order of the integration rule of the "
+                   "potential's operator and the couplings (negative: the "
+                   "assembled forms' own).");
     args.AddOption(&pmg, "-pmg", "--p-multigrid", "-no-pmg",
                    "--no-p-multigrid",
                    "Methods dahlen and referential: the displacement block's "
@@ -941,7 +952,11 @@ class Case {
                                           chosen ? *chosen : *rheology_,
                                           *rho_c_, G,
                                           options.dtn_degree, nullptr,
-                                          fluids);
+                                          fluids,
+                                          MixedProblemConstruction{
+                                              options.matrix_free_operators,
+                                              {},
+                                              options.matrix_free_quadrature});
       if (options.level_border > 0 && method == "dahlen" && !fluids.empty()) {
         problem->SetLevelBorder(options.level_border);
         if (options.level_monolithic) {
@@ -999,7 +1014,7 @@ class Case {
         }
       }
       problem->SetPreconditionerPMultigrid(options.pmg);
-      if (options.matrix_free) {
+      if (options.matrix_free && !options.matrix_free_operators) {
         problem->SetMatrixFree(true);
         problem->SetPotentialPreconditionerMatrixFree(
             options.matrix_free_potential);

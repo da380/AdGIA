@@ -106,16 +106,24 @@ void GravitatingBody() {
     const std::string name =
         type == Problem::SolverType::BlockMINRES ? ", minres" : ", schur";
     // 0: the default; 1: no matrix for the displacement; 2: nor for the
-    // potential's preconditioner.
-    double u[3], phi[3];
-    long its[3];
-    for (const int mf : {0, 1, 2}) {
-      Problem p(&fes_u, &fes_phi, rheology, rho, kG, kDtNDegree);
+    // potential's preconditioner; 3: nor for the potential's operator and
+    // the couplings.
+    double u[4], phi[4];
+    long its[4];
+    for (const int mf : {0, 1, 2, 3}) {
+      MixedProblemConstruction construction;
+      construction.matrix_free = (mf == 3);
+      Problem p(&fes_u, &fes_phi, rheology, rho, kG, kDtNDegree, nullptr, {},
+                construction);
+      Check(p.OperatorsMatrixFree() == (mf == 3) ? 0.0 : 1.0, 0.0,
+            label + name + ": the operators as asked");
       p.SetSurfaceLoad(sigma, surface);
       p.SetRelTol(1e-11);
       p.SetSolverType(type);
-      p.SetMatrixFree(mf >= 1);
-      p.SetPotentialPreconditionerMatrixFree(mf == 2);
+      if (mf < 3) {
+        p.SetMatrixFree(mf >= 1);
+        p.SetPotentialPreconditionerMatrixFree(mf == 2);
+      }
       p.AssembleForce(0.0);
       const auto before = p.TotalIterations();
       Check(p.Solve() ? 0.0 : 1.0, 0.0,
@@ -130,6 +138,9 @@ void GravitatingBody() {
           label + name + ": |u|, the potential's preconditioner too");
     Check(RelErr(phi[2], phi[0]), 1e-7,
           label + name + ": |phi|, the potential's preconditioner too");
+    Check(RelErr(u[3], u[0]), 1e-7, label + name + ": |u|, nothing assembled");
+    Check(RelErr(phi[3], phi[0]), 1e-7,
+          label + name + ": |phi|, nothing assembled");
     if (Mpi::Root()) {
       std::cout << label << name << ": " << its[1]
                 << " iterations with no matrix, " << its[0] << " by default\n";

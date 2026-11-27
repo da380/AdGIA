@@ -3,6 +3,7 @@
  * @brief Implementation of LinearQuasiStaticMixedSelfGravitatingProblem.
  */
 
+#include "AdGIA/gradient_coupling.hpp"
 #include "AdGIA/mixed_problem.hpp"
 
 #include <algorithm>
@@ -24,6 +25,65 @@ using namespace mfem;
 namespace {
 constexpr real_t kPi = std::numbers::pi_v<real_t>;
 constexpr real_t kMinInnerRelTol = 1e-13;
+
+// The coupling between true dofs with no matrix: the potential on the
+// ball to its shadow on the body, the form there, and back to the
+// displacement's true dofs.
+class MatrixFreeCoupling : public Operator {
+ public:
+  MatrixFreeCoupling(FiniteElementSpace& fes_phi,
+                     const SubMeshDofInjection& injection,
+                     FiniteElementSpace& shadow_phi, FiniteElementSpace& fes_u,
+                     Coefficient& rho, const IntegrationRule* ir)
+      : Operator(fes_u.GetTrueVSize(), fes_phi.GetTrueVSize()),
+        P_phi_(fes_phi.GetProlongationMatrix()),
+        P_u_(fes_u.GetProlongationMatrix()),
+        injection_(&injection),
+        form_(shadow_phi, fes_u, rho, ir),
+        phi_(fes_phi.GetVSize()),
+        shadow_(shadow_phi.GetVSize()),
+        u_(fes_u.GetVSize()) {
+    shadow_.UseDevice(true);
+    u_.UseDevice(true);
+  }
+
+  void Mult(const Vector& x, Vector& y) const override {
+    const Vector* phi = &x;
+    if (P_phi_) {
+      P_phi_->Mult(x, phi_);
+      phi = &phi_;
+    }
+    injection_->MultTranspose(*phi, shadow_);
+    if (P_u_) {
+      form_.Mult(shadow_, u_);
+      P_u_->MultTranspose(u_, y);
+    } else {
+      form_.Mult(shadow_, y);
+    }
+  }
+
+  void MultTranspose(const Vector& x, Vector& y) const override {
+    const Vector* u = &x;
+    if (P_u_) {
+      P_u_->Mult(x, u_);
+      u = &u_;
+    }
+    form_.MultTranspose(*u, shadow_);
+    if (P_phi_) {
+      injection_->Mult(shadow_, phi_);
+      P_phi_->MultTranspose(phi_, y);
+    } else {
+      injection_->Mult(shadow_, y);
+    }
+  }
+
+ private:
+  const Operator* P_phi_;
+  const Operator* P_u_;
+  const SubMeshDofInjection* injection_;
+  GradientCouplingOperator form_;
+  mutable Vector phi_, shadow_, u_;
+};
 }
 
 // ---------------------------------------------------------------------------
@@ -35,7 +95,8 @@ LinearQuasiStaticMixedSelfGravitatingProblem::
         const AdGIA::Rheology& rheology, Coefficient& density,
         real_t gravitational_constant, int dtn_degree,
         Coefficient* background_potential,
-        const std::vector<FluidRegion>& fluids)
+        const std::vector<FluidRegion>& fluids,
+        const MixedProblemConstruction& construction)
     : LinearQuasiStaticProblemBase(fes_u, rheology),
       dim_(fes_u->GetMesh()->Dimension()),
       fes_phi_(fes_phi),
@@ -211,6 +272,20 @@ LinearQuasiStaticMixedSelfGravitatingProblem::
         "LinearQuasiStaticMixedSelfGravitatingProblem: empty outer boundary.");
   }
 
+  if (construction.matrix_free) {
+    Array<Geometry::Type> geoms;
+    fes_phi_->GetMesh()->GetGeometries(dim_, geoms);
+    MFEM_VERIFY(dim_ == 3 && fluids_.empty() && geoms.Size() == 1,
+                "MixedProblemConstruction::matrix_free: a solid body in 3-D "
+                "on a mesh of one element geometry.");
+    operators_matrix_free_ = true;
+    if (construction.quadrature_order >= 0) {
+      operators_rule_ = &IntRules.Get(geoms[0], construction.quadrature_order);
+    }
+    SetMatrixFree(true, construction.multigrid);
+    potential_matrix_free_ = true;
+  }
+
   SetupPotentialOperators();
   phi0_coef_ = background_potential;
   ComputeBackgroundPotential(background_potential);
@@ -249,7 +324,20 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetupPotentialOperators() {
 
   // K = (grad phi, grad psi) on the ball; A_phiphi = (K + DtN) / (4 pi G).
   k_phi_form_ = detail::MakeBilinearForm(fes_phi_);
-  k_phi_form_->AddDomainIntegrator(new DiffusionIntegrator(one_));
+  if (operators_matrix_free_) {
+    // The same form with no matrix, on the rule of mfem's unless one was
+    // asked for.
+    const FiniteElement& fe = *fes_phi_->GetTypicalFE();
+    const IntegrationRule* ir =
+        operators_rule_
+            ? operators_rule_
+            : &DiffusionIntegrator::GetRule(fe, fe);
+    k_phi_form_->SetAssemblyLevel(AssemblyLevel::PARTIAL);
+    k_phi_form_->AddDomainIntegrator(
+        new DiffusionMassIntegrator(one_, nullptr, ir));
+  } else {
+    k_phi_form_->AddDomainIntegrator(new DiffusionIntegrator(one_));
+  }
   k_phi_form_->Assemble();
   k_phi_form_->FormSystemMatrix(empty, K_phi_);
   const real_t c = 1.0 / four_pi_G_;
@@ -569,6 +657,15 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetupCoupling() {
   // C = int_{M_S} rho grad phi . v  -  sum_F int_{Sigma_F} rho_F phi (m.v),
   // trial phi on B, test v on M_S; C^T by transposition.
   Array<int> empty;
+  if (operators_matrix_free_) {
+    // The domain term with no matrix; a solid body has no other.
+    C_owned_ = std::make_unique<MatrixFreeCoupling>(
+        *fes_phi_, *injection_, *shadow_phi_, *fes_, *rho_, operators_rule_);
+    Ct_owned_ = std::make_unique<TransposeOperator>(C_owned_.get());
+    C_op_ = C_owned_.get();
+    Ct_op_ = Ct_owned_.get();
+    return;
+  }
   auto add_interfaces = [&](MixedBilinearForm& form) {
     for (auto& f : fluids_) {
       if (!f.interface_potential_coupling) {

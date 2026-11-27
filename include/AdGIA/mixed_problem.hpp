@@ -201,6 +201,32 @@ class DomainVectorGradVectorIntegrator;
  * Earth rho g R ~ kappa). The primal route is the production one for
  * gravitating problems.
  */
+/**
+ * @brief What a LinearQuasiStaticMixedSelfGravitatingProblem must be told
+ * as it is made, because its constructor builds the operators concerned.
+ */
+struct MixedProblemConstruction {
+  /**
+   * The potential's operator and the two couplings as operators with no
+   * matrix (DiffusionMassIntegrator with partial assembly;
+   * GradientCouplingOperator), and SetMatrixFree() and
+   * SetPotentialPreconditionerMatrixFree() switched on, so that nothing
+   * of the fine spaces is assembled. For a solid body in 3-D on a mesh
+   * of one element geometry. The setters may be used afterwards as
+   * usual; the operator and the couplings stay as made.
+   */
+  bool matrix_free = false;
+  /// The options SetMatrixFree() is given.
+  MatrixFreePMultigrid::Options multigrid = {};
+  /**
+   * The order of the integration rule of the potential's operator and
+   * the couplings where they have no matrix; negative for the rules of
+   * the forms they replace (mfem's DiffusionIntegrator and
+   * GradientIntegrator), with which they are the same operators.
+   */
+  int quadrature_order = -1;
+};
+
 class LinearQuasiStaticMixedSelfGravitatingProblem
     : public LinearQuasiStaticProblemBase,
       public PotentialForceSlot,
@@ -264,13 +290,19 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
    * @p fes_phi); solved from the densities when null.
    * @param fluids Fluid regions (copied); their coefficients must outlive
    * the problem. Empty for a solid body.
+   * @param construction What must be known here (MixedProblemConstruction).
    */
   LinearQuasiStaticMixedSelfGravitatingProblem(
       mfem::FiniteElementSpace* fes_u, mfem::FiniteElementSpace* fes_phi,
       const AdGIA::Rheology& rheology, mfem::Coefficient& density,
       mfem::real_t gravitational_constant, int dtn_degree,
       mfem::Coefficient* background_potential = nullptr,
-      const std::vector<FluidRegion>& fluids = {});
+      const std::vector<FluidRegion>& fluids = {},
+      const MixedProblemConstruction& construction = {});
+
+  /// Whether the potential's operator and the couplings have no matrix
+  /// (MixedProblemConstruction::matrix_free).
+  bool OperatorsMatrixFree() const { return operators_matrix_free_; }
 
   // --- loads ----------------------------------------------------------------
 
@@ -1066,6 +1098,9 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   // preconditioner as it stands was made with no matrix: SetupSolver()
   // makes it again when the choice has changed.
   bool potential_matrix_free_ = false;
+  bool operators_matrix_free_ = false;
+  // The rule of the operators with no matrix; null for the forms' own.
+  const mfem::IntegrationRule* operators_rule_ = nullptr;
   bool potential_prec_matrix_free_ = false;
   std::unique_ptr<mfem::ProductCoefficient> half_rho_, minus_half_rho_;
   std::unique_ptr<mfem::ScalarVectorProductCoefficient> minus_half_rho_grad_;
@@ -1111,7 +1146,7 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   // coupling C (trial phi on B, test u on M) and its transpose, true dofs
   std::unique_ptr<mfem::MixedBilinearForm> c_form_;
   mfem::OperatorHandle C_;
-  std::unique_ptr<mfem::Operator> Ct_owned_;
+  std::unique_ptr<mfem::Operator> C_owned_, Ct_owned_;
   const mfem::Operator* C_op_ = nullptr;
   const mfem::Operator* Ct_op_ = nullptr;
 

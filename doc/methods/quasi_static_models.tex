@@ -590,8 +590,15 @@ self-gravitating mixed class the operator is the elastic form and the
 gravity terms in one pass (\code{GravitatingElasticityIntegrator}), and
 the potential's preconditioner can be the same construction on its
 shifted Laplacian (\code{SetPotentialPreconditionerMatrixFree}, off by
-default: fewer iterations and no less time); the couplings and the
-potential's own operator keep their matrices. The switch is for a rheology that is isotropic or a single
+default: fewer iterations and no less time). The couplings and the
+potential's own operator are built by the class's constructor, and so
+have no matrix only where it is told so
+(\code{MixedProblemConstruction::matrix\_free}, which turns the other
+two switches on as well: \code{GradientCouplingOperator} and the
+diffusion form with partial assembly, on the rules of the forms they
+replace unless another is asked for). Nothing of the fine spaces is then
+assembled, and the cost of making the problem no longer grows with the
+order as the matrices' does. The switch is for a rheology that is isotropic or a single
 elastic tensor form on the whole body, with no mapping, no essential
 dofs and no fluid region. The forms are applied by kernels of the
 library's own, sum-factorised on hexahedra and dense in the element on

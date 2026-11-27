@@ -772,7 +772,363 @@ void Diagonal(int ne, const mfem::DofToQuad& maps, const mfem::Vector& data,
   }
 }
 
+// ---------------------------------------------------------------------------
+// The coupling of a scalar's gradient to a vector's value,
+// (phi, v) -> int v . g(phi), g_c = sum_a d[3 a + c] d phi / d xi_a,
+// and its transpose. The two spaces may differ in order; they share the
+// quadrature rule.
+
+/// The most quadrature points of an element the dense coupling takes.
+constexpr int kMaxCouplingPoints = 1200;
+
+void GradientCouplingDense(const bool transpose, const int NE,
+                           const mfem::DofToQuad& sm,
+                           const mfem::DofToQuad& vm,
+                           const mfem::Vector& data_, const mfem::Vector& x_,
+                           mfem::Vector& y_) {
+  const int NS = sm.ndof, NV = vm.ndof, NQ = sm.nqpt;
+  MFEM_VERIFY(NQ <= kMaxCouplingPoints,
+              "gradient coupling kernel: too many quadrature points in an "
+              "element (" << NQ << ").");
+  // Points fastest (B, G) to go to the points, dofs fastest (Bt, Gt) to
+  // come back: the innermost loops add a multiple of one contiguous row
+  // to another.
+  const auto Gs = mfem::Reshape(sm.G.Read(), NQ, 3, NS);
+  const auto Gst = mfem::Reshape(sm.Gt.Read(), NS, NQ, 3);
+  const auto Bv = mfem::Reshape(vm.B.Read(), NQ, NV);
+  const auto Bvt = mfem::Reshape(vm.Bt.Read(), NV, NQ);
+  const auto d = mfem::Reshape(data_.Read(), 9, NQ, NE);
+  if (!transpose) {
+    const auto X = mfem::Reshape(x_.Read(), NS, NE);
+    auto Y = mfem::Reshape(y_.ReadWrite(), NV, 3, NE);
+    mfem::forall(NE, [=] MFEM_HOST_DEVICE(int e) {
+      real_t w[3][kMaxCouplingPoints];
+      for (int a = 0; a < 3; a++) {
+        for (int q = 0; q < NQ; q++) {
+          w[a][q] = 0.0;
+        }
+      }
+      for (int i = 0; i < NS; i++) {
+        const real_t x = X(i, e);
+        for (int a = 0; a < 3; a++) {
+          const real_t* g = &Gs(0, a, i);
+          real_t* wa = w[a];
+          for (int q = 0; q < NQ; q++) {
+            wa[q] += g[q] * x;
+          }
+        }
+      }
+      for (int q = 0; q < NQ; q++) {
+        const real_t h0 = w[0][q], h1 = w[1][q], h2 = w[2][q];
+        for (int c = 0; c < 3; c++) {
+          w[c][q] = d(c, q, e) * h0 + d(3 + c, q, e) * h1 + d(6 + c, q, e) * h2;
+        }
+      }
+      for (int q = 0; q < NQ; q++) {
+        const real_t* b = &Bvt(0, q);
+        for (int c = 0; c < 3; c++) {
+          const real_t f = w[c][q];
+          real_t* y = &Y(0, c, e);
+          for (int i = 0; i < NV; i++) {
+            y[i] += b[i] * f;
+          }
+        }
+      }
+    });
+  } else {
+    const auto X = mfem::Reshape(x_.Read(), NV, 3, NE);
+    auto Y = mfem::Reshape(y_.ReadWrite(), NS, NE);
+    mfem::forall(NE, [=] MFEM_HOST_DEVICE(int e) {
+      real_t w[3][kMaxCouplingPoints];
+      for (int c = 0; c < 3; c++) {
+        for (int q = 0; q < NQ; q++) {
+          w[c][q] = 0.0;
+        }
+      }
+      for (int i = 0; i < NV; i++) {
+        const real_t* b = &Bv(0, i);
+        for (int c = 0; c < 3; c++) {
+          const real_t x = X(i, c, e);
+          real_t* wc = w[c];
+          for (int q = 0; q < NQ; q++) {
+            wc[q] += b[q] * x;
+          }
+        }
+      }
+      for (int q = 0; q < NQ; q++) {
+        const real_t u0 = w[0][q], u1 = w[1][q], u2 = w[2][q];
+        for (int a = 0; a < 3; a++) {
+          w[a][q] = d(3 * a, q, e) * u0 + d(3 * a + 1, q, e) * u1 +
+                    d(3 * a + 2, q, e) * u2;
+        }
+      }
+      for (int q = 0; q < NQ; q++) {
+        const real_t t0 = w[0][q], t1 = w[1][q], t2 = w[2][q];
+        const real_t* g0 = &Gst(0, q, 0);
+        const real_t* g1 = &Gst(0, q, 1);
+        const real_t* g2 = &Gst(0, q, 2);
+        real_t* y = &Y(0, e);
+        for (int i = 0; i < NS; i++) {
+          y[i] += g0[i] * t0 + g1[i] * t1 + g2[i] * t2;
+        }
+      }
+    });
+  }
+}
+
+void GradientCouplingTensor(const bool transpose, const int NE,
+                            const mfem::DofToQuad& sm,
+                            const mfem::DofToQuad& vm,
+                            const mfem::Vector& data_, const mfem::Vector& x_,
+                            mfem::Vector& y_) {
+  const int DS = sm.ndof, DV = vm.ndof, Q = sm.nqpt;
+  constexpr int MD = mfem::DofQuadLimits::MAX_D1D;
+  constexpr int MQ = mfem::DofQuadLimits::MAX_Q1D;
+  MFEM_VERIFY(DS <= MD && DV <= MD && Q <= MQ,
+              "gradient coupling kernel: order too high.");
+  const auto Bs = mfem::Reshape(sm.B.Read(), Q, DS);
+  const auto Gs = mfem::Reshape(sm.G.Read(), Q, DS);
+  const auto Bv = mfem::Reshape(vm.B.Read(), Q, DV);
+  const auto d = mfem::Reshape(data_.Read(), 9, Q * Q * Q, NE);
+  if (!transpose) {
+    const auto X = mfem::Reshape(x_.Read(), DS, DS, DS, NE);
+    auto Y = mfem::Reshape(y_.ReadWrite(), DV, DV, DV, 3, NE);
+    mfem::forall(NE, [=] MFEM_HOST_DEVICE(int e) {
+      real_t w[MQ][MQ][MQ][3];
+      for (int qz = 0; qz < Q; qz++) {
+        for (int qy = 0; qy < Q; qy++) {
+          for (int qx = 0; qx < Q; qx++) {
+            w[qz][qy][qx][0] = 0.0;
+            w[qz][qy][qx][1] = 0.0;
+            w[qz][qy][qx][2] = 0.0;
+          }
+        }
+      }
+      // The scalar's reference gradient at the points.
+      for (int dz = 0; dz < DS; dz++) {
+        real_t gXY[MQ][MQ][3];
+        for (int qy = 0; qy < Q; qy++) {
+          for (int qx = 0; qx < Q; qx++) {
+            gXY[qy][qx][0] = 0.0;
+            gXY[qy][qx][1] = 0.0;
+            gXY[qy][qx][2] = 0.0;
+          }
+        }
+        for (int dy = 0; dy < DS; dy++) {
+          real_t gX[MQ][2];
+          for (int qx = 0; qx < Q; qx++) {
+            gX[qx][0] = 0.0;
+            gX[qx][1] = 0.0;
+          }
+          for (int dx = 0; dx < DS; dx++) {
+            const real_t s = X(dx, dy, dz, e);
+            for (int qx = 0; qx < Q; qx++) {
+              gX[qx][0] += s * Bs(qx, dx);
+              gX[qx][1] += s * Gs(qx, dx);
+            }
+          }
+          for (int qy = 0; qy < Q; qy++) {
+            const real_t wy = Bs(qy, dy), wDy = Gs(qy, dy);
+            for (int qx = 0; qx < Q; qx++) {
+              gXY[qy][qx][0] += gX[qx][1] * wy;
+              gXY[qy][qx][1] += gX[qx][0] * wDy;
+              gXY[qy][qx][2] += gX[qx][0] * wy;
+            }
+          }
+        }
+        for (int qz = 0; qz < Q; qz++) {
+          const real_t wz = Bs(qz, dz), wDz = Gs(qz, dz);
+          for (int qy = 0; qy < Q; qy++) {
+            for (int qx = 0; qx < Q; qx++) {
+              w[qz][qy][qx][0] += gXY[qy][qx][0] * wz;
+              w[qz][qy][qx][1] += gXY[qy][qx][1] * wz;
+              w[qz][qy][qx][2] += gXY[qy][qx][2] * wDz;
+            }
+          }
+        }
+      }
+      for (int qz = 0; qz < Q; qz++) {
+        for (int qy = 0; qy < Q; qy++) {
+          for (int qx = 0; qx < Q; qx++) {
+            const int q = qx + Q * (qy + Q * qz);
+            real_t* t = w[qz][qy][qx];
+            const real_t h0 = t[0], h1 = t[1], h2 = t[2];
+            for (int c = 0; c < 3; c++) {
+              t[c] = d(c, q, e) * h0 + d(3 + c, q, e) * h1 +
+                     d(6 + c, q, e) * h2;
+            }
+          }
+        }
+      }
+      // Back to the vector's dofs, by values.
+      for (int c = 0; c < 3; c++) {
+        for (int qz = 0; qz < Q; qz++) {
+          real_t fXY[MD][MD];
+          for (int dy = 0; dy < DV; dy++) {
+            for (int dx = 0; dx < DV; dx++) {
+              fXY[dy][dx] = 0.0;
+            }
+          }
+          for (int qy = 0; qy < Q; qy++) {
+            real_t fX[MD];
+            for (int dx = 0; dx < DV; dx++) {
+              fX[dx] = 0.0;
+            }
+            for (int qx = 0; qx < Q; qx++) {
+              const real_t f = w[qz][qy][qx][c];
+              for (int dx = 0; dx < DV; dx++) {
+                fX[dx] += f * Bv(qx, dx);
+              }
+            }
+            for (int dy = 0; dy < DV; dy++) {
+              const real_t wy = Bv(qy, dy);
+              for (int dx = 0; dx < DV; dx++) {
+                fXY[dy][dx] += fX[dx] * wy;
+              }
+            }
+          }
+          for (int dz = 0; dz < DV; dz++) {
+            const real_t wz = Bv(qz, dz);
+            for (int dy = 0; dy < DV; dy++) {
+              for (int dx = 0; dx < DV; dx++) {
+                Y(dx, dy, dz, c, e) += fXY[dy][dx] * wz;
+              }
+            }
+          }
+        }
+      }
+    });
+  } else {
+    const auto X = mfem::Reshape(x_.Read(), DV, DV, DV, 3, NE);
+    auto Y = mfem::Reshape(y_.ReadWrite(), DS, DS, DS, NE);
+    mfem::forall(NE, [=] MFEM_HOST_DEVICE(int e) {
+      real_t w[MQ][MQ][MQ][3];
+      for (int qz = 0; qz < Q; qz++) {
+        for (int qy = 0; qy < Q; qy++) {
+          for (int qx = 0; qx < Q; qx++) {
+            w[qz][qy][qx][0] = 0.0;
+            w[qz][qy][qx][1] = 0.0;
+            w[qz][qy][qx][2] = 0.0;
+          }
+        }
+      }
+      // The vector's values at the points.
+      for (int c = 0; c < 3; c++) {
+        for (int dz = 0; dz < DV; dz++) {
+          real_t vXY[MQ][MQ];
+          for (int qy = 0; qy < Q; qy++) {
+            for (int qx = 0; qx < Q; qx++) {
+              vXY[qy][qx] = 0.0;
+            }
+          }
+          for (int dy = 0; dy < DV; dy++) {
+            real_t vX[MQ];
+            for (int qx = 0; qx < Q; qx++) {
+              vX[qx] = 0.0;
+            }
+            for (int dx = 0; dx < DV; dx++) {
+              const real_t s = X(dx, dy, dz, c, e);
+              for (int qx = 0; qx < Q; qx++) {
+                vX[qx] += s * Bv(qx, dx);
+              }
+            }
+            for (int qy = 0; qy < Q; qy++) {
+              const real_t wy = Bv(qy, dy);
+              for (int qx = 0; qx < Q; qx++) {
+                vXY[qy][qx] += vX[qx] * wy;
+              }
+            }
+          }
+          for (int qz = 0; qz < Q; qz++) {
+            const real_t wz = Bv(qz, dz);
+            for (int qy = 0; qy < Q; qy++) {
+              for (int qx = 0; qx < Q; qx++) {
+                w[qz][qy][qx][c] += vXY[qy][qx] * wz;
+              }
+            }
+          }
+        }
+      }
+      for (int qz = 0; qz < Q; qz++) {
+        for (int qy = 0; qy < Q; qy++) {
+          for (int qx = 0; qx < Q; qx++) {
+            const int q = qx + Q * (qy + Q * qz);
+            real_t* t = w[qz][qy][qx];
+            const real_t u0 = t[0], u1 = t[1], u2 = t[2];
+            for (int a = 0; a < 3; a++) {
+              t[a] = d(3 * a, q, e) * u0 + d(3 * a + 1, q, e) * u1 +
+                     d(3 * a + 2, q, e) * u2;
+            }
+          }
+        }
+      }
+      // Back to the scalar's dofs, by reference gradients.
+      for (int qz = 0; qz < Q; qz++) {
+        real_t gXY[MD][MD][3];
+        for (int dy = 0; dy < DS; dy++) {
+          for (int dx = 0; dx < DS; dx++) {
+            gXY[dy][dx][0] = 0.0;
+            gXY[dy][dx][1] = 0.0;
+            gXY[dy][dx][2] = 0.0;
+          }
+        }
+        for (int qy = 0; qy < Q; qy++) {
+          real_t gX[MD][3];
+          for (int dx = 0; dx < DS; dx++) {
+            gX[dx][0] = 0.0;
+            gX[dx][1] = 0.0;
+            gX[dx][2] = 0.0;
+          }
+          for (int qx = 0; qx < Q; qx++) {
+            const real_t t0 = w[qz][qy][qx][0], t1 = w[qz][qy][qx][1],
+                         t2 = w[qz][qy][qx][2];
+            for (int dx = 0; dx < DS; dx++) {
+              const real_t wx = Bs(qx, dx), wDx = Gs(qx, dx);
+              gX[dx][0] += t0 * wDx;
+              gX[dx][1] += t1 * wx;
+              gX[dx][2] += t2 * wx;
+            }
+          }
+          for (int dy = 0; dy < DS; dy++) {
+            const real_t wy = Bs(qy, dy), wDy = Gs(qy, dy);
+            for (int dx = 0; dx < DS; dx++) {
+              gXY[dy][dx][0] += gX[dx][0] * wy;
+              gXY[dy][dx][1] += gX[dx][1] * wDy;
+              gXY[dy][dx][2] += gX[dx][2] * wy;
+            }
+          }
+        }
+        for (int dz = 0; dz < DS; dz++) {
+          const real_t wz = Bs(qz, dz), wDz = Gs(qz, dz);
+          for (int dy = 0; dy < DS; dy++) {
+            for (int dx = 0; dx < DS; dx++) {
+              Y(dx, dy, dz, e) += (gXY[dy][dx][0] + gXY[dy][dx][1]) * wz +
+                                  gXY[dy][dx][2] * wDz;
+            }
+          }
+        }
+      }
+    });
+  }
+}
+
 }  // namespace
+
+void ApplyGradientCoupling(bool transpose, int ne,
+                           const mfem::DofToQuad& scalar_maps,
+                           const mfem::DofToQuad& vector_maps,
+                           const mfem::Vector& data, const mfem::Vector& x,
+                           mfem::Vector& y) {
+  MFEM_VERIFY(scalar_maps.nqpt == vector_maps.nqpt &&
+                  scalar_maps.mode == vector_maps.mode,
+              "gradient coupling kernel: the two spaces' maps differ in "
+              "rule or kind.");
+  if (scalar_maps.mode == mfem::DofToQuad::TENSOR) {
+    GradientCouplingTensor(transpose, ne, scalar_maps, vector_maps, data, x, y);
+  } else {
+    GradientCouplingDense(transpose, ne, scalar_maps, vector_maps, data, x, y);
+  }
+}
 
 void ApplyDisplacementBlock(bool isotropic, int extras, int ne,
                             const mfem::DofToQuad& maps,

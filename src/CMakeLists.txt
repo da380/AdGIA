@@ -6,6 +6,7 @@ target_sources(${PROJECT_NAME} PRIVATE null_space.cpp
                                        descent.cpp
                                        bilininteg.cpp
                                        bilininteg_pa.cpp
+                                       gradient_coupling.cpp
                                        kernels/block_kernels.cpp
                                        ceed/ceed_operators.cpp
                                        coefficient.cpp

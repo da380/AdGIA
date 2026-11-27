@@ -70,6 +70,10 @@ add_executable(TestDiffusionMassIntegrator TestDiffusionMassIntegrator.cpp)
 target_link_libraries(TestDiffusionMassIntegrator PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestDiffusionMassIntegrator)
 
+add_executable(TestGradientCouplingOperator TestGradientCouplingOperator.cpp)
+target_link_libraries(TestGradientCouplingOperator PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestGradientCouplingOperator)
+
 add_executable(TestBoundaryNormalIntegrators TestBoundaryNormalIntegrators.cpp)
 target_link_libraries(TestBoundaryNormalIntegrators PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestBoundaryNormalIntegrators)
