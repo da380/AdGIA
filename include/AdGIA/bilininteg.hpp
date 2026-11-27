@@ -1164,6 +1164,11 @@ class ElasticTensorIntegrator : public mfem::BilinearFormIntegrator {
   static void StrainDisplacementMatrix(int dim, const mfem::DenseMatrix& gshape,
                                        mfem::DenseMatrix& B);
 
+  /// The tensor coefficient.
+  mfem::MatrixCoefficient& Tensor() const { return *C_; }
+  /// True for the pull-back of the form through a mapping.
+  bool HasMapping() const { return map_ != nullptr; }
+
   /**
    * @name Partial assembly
    * The form applied element by element with no matrix
@@ -2150,6 +2155,78 @@ class BoundaryVectorScalarIntegrator : public mfem::BilinearFormIntegrator {
                               const mfem::FiniteElement& test_fe,
                               mfem::ElementTransformation& Trans,
                               mfem::DenseMatrix& elmat) override;
+};
+
+/**
+ * @brief The displacement block of the self-gravitating problem in one
+ * integrator: the elastic tensor form, the symmetrised gravity terms of
+ * the mixed formulation, and optionally a mass term,
+ * @f[
+ *   (u, v) \mapsto \int \nabla v : C : \nabla u
+ *   + \tfrac{1}{2}\rho\,[\,v\cdot\nabla(g\cdot u) + u\cdot\nabla(g\cdot v)
+ *   - (g\cdot v)\,\nabla\cdot u - (g\cdot u)\,\nabla\cdot v\,]
+ *   + s\,u\cdot v ,
+ * @f]
+ * with @f$g = \nabla\Phi^0@f$ and the gradients of @f$g\cdot u@f$ by the
+ * product rule with the Hessian of @f$\Phi^0@f$ given.
+ *
+ * Its element matrix is the sum of the element matrices of
+ * ElasticTensorIntegrator, DomainVectorGradVectorIntegrator (with its
+ * gradient set) and DomainVectorDivVectorIntegrator with their
+ * transposes, and mfem's VectorMassIntegrator, all on one integration
+ * rule (that of ElasticTensorIntegrator by default): it adds nothing to
+ * them. What it adds is partial assembly, in which the whole block is
+ * applied in one pass over the mesh. That needs a device that uses
+ * libCEED (ElasticTensorIntegrator's partial assembly says which), and
+ * takes tetrahedra and hexahedra. No mapping.
+ */
+class GravitatingElasticityIntegrator : public mfem::BilinearFormIntegrator {
+ public:
+  /**
+   * @param C The Mandel-form elasticity tensor coefficient.
+   * @param rho The density.
+   * @param grad_phi0 The gradient of the background potential.
+   * @param hessian_phi0 Its gradient in turn, @f$H_{kl} = \partial_k
+   * \partial_l \Phi^0@f$.
+   * @param ir An optional integration rule, for every term.
+   */
+  GravitatingElasticityIntegrator(mfem::MatrixCoefficient& C,
+                                  mfem::Coefficient& rho,
+                                  mfem::VectorCoefficient& grad_phi0,
+                                  mfem::MatrixCoefficient& hessian_phi0,
+                                  const mfem::IntegrationRule* ir = nullptr);
+
+  /// The coefficient of the mass term; nullptr (the default) for none.
+  void SetMassTerm(mfem::Coefficient* s);
+
+  void AssembleElementMatrix(const mfem::FiniteElement& el,
+                             mfem::ElementTransformation& Trans,
+                             mfem::DenseMatrix& elmat) override;
+
+  void AssemblePA(const mfem::FiniteElementSpace& fes) override;
+  void AddMultPA(const mfem::Vector& x, mfem::Vector& y) const override;
+  void AddMultTransposePA(const mfem::Vector& x,
+                          mfem::Vector& y) const override;
+  void AssembleDiagonalPA(mfem::Vector& diag) override;
+
+ private:
+  mfem::MatrixCoefficient* C_;
+  mfem::Coefficient* rho_;
+  mfem::VectorCoefficient* grad_phi0_;
+  mfem::MatrixCoefficient* hessian_phi0_;
+  mfem::Coefficient* mass_coefficient_ = nullptr;
+
+  // The terms as the integrators they are, for the element matrix.
+  mfem::ProductCoefficient half_rho_, minus_half_rho_;
+  mfem::ScalarVectorProductCoefficient minus_half_rho_grad_;
+  ElasticTensorIntegrator elastic_;
+  DomainVectorGradVectorIntegrator gradient_;
+  DomainVectorDivVectorIntegrator divergence_;
+  std::unique_ptr<mfem::VectorMassIntegrator> mass_;
+  mfem::DenseMatrix part_;
+
+  std::unique_ptr<mfem::ceed::Operator> pa_ceed_; /**< The block through
+                                                     libCEED. */
 };
 
 }  // namespace AdGIA

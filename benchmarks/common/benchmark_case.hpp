@@ -242,9 +242,9 @@ inline Vector RadialFunction(ParMesh& mesh, int attribute, real_t r_inner,
       }
     }
   }
-  MPI_Allreduce(MPI_IN_PLACE, A.GetData(), modes * modes,
+  MPI_Allreduce(MPI_IN_PLACE, A.HostReadWrite(), modes * modes,
                 MPITypeMap<real_t>::mpi_type, MPI_SUM, mesh.GetComm());
-  MPI_Allreduce(MPI_IN_PLACE, b.GetData(), modes,
+  MPI_Allreduce(MPI_IN_PLACE, b.HostReadWrite(), modes,
                 MPITypeMap<real_t>::mpi_type, MPI_SUM, mesh.GetComm());
   Vector values(radii.Size());
   values = 0.0;
@@ -310,6 +310,7 @@ struct CaseOptions {
   bool eulerian_prec = true; // referential: the Eulerian-potential preconditioner
   bool prec_on_fold = false; // referential: AMG on the folded displacement block
   bool pmg = false;          // p-multigrid on the displacement block
+  bool matrix_free = false;  // the displacement block with no matrix
   const char* method = "dahlen";
   real_t slip_theta = 1e2;
   real_t gs_scale = 1.0;
@@ -469,6 +470,11 @@ struct CaseOptions {
                    "Method referential: precondition through the change of "
                    "variables to the Eulerian potential (the class's "
                    "default); off, the block diagonal alone.");
+    args.AddOption(&matrix_free, "-mf", "--matrix-free", "-no-mf",
+                   "--no-matrix-free",
+                   "Method dahlen: the displacement block with no matrix "
+                   "(SetMatrixFree); solid bodies, and a device that the "
+                   "forms' partial assembly takes (-d ceed-cpu).");
     args.AddOption(&pmg, "-pmg", "--p-multigrid", "-no-pmg",
                    "--no-p-multigrid",
                    "Methods dahlen and referential: the displacement block's "
@@ -987,6 +993,9 @@ class Case {
         }
       }
       problem->SetPreconditionerPMultigrid(options.pmg);
+      if (options.matrix_free) {
+        problem->SetMatrixFree(true);
+      }
       if (options.prec_full == 0.0) {
         problem->SetPreconditionerFullOperator(false);
       } else if (options.prec_full > 0.0) {
@@ -1123,7 +1132,7 @@ class Case {
         m.Assemble();
         local[attribute - 1] = m.Sum();
       }
-      MPI_Allreduce(local.GetData(), layer_mass.GetData(), n_layers,
+      MPI_Allreduce(local.HostReadWrite(), layer_mass.HostReadWrite(), n_layers,
                     MPITypeMap<real_t>::mpi_type, MPI_SUM, MPI_COMM_WORLD);
       for (auto& an : analyses) {
         real_t within = 0.0;

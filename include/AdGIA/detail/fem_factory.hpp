@@ -84,6 +84,22 @@ inline void SetSystemsAMGOptions(mfem::HypreBoomerAMG& amg,
 }
 #endif
 
+#ifdef MFEM_USE_MPI
+/// Where hypre runs on a device, gives @p amg Chebyshev smoothing (down,
+/// up and on the coarsest level); elsewhere nothing. hypre has no
+/// Gauss-Seidel on a device and its own choice there is l1-Jacobi, with
+/// which these problems take about twice the iterations. Call it last,
+/// after the settings it replaces.
+inline void SetDeviceAMGOptions(mfem::HypreBoomerAMG& amg) {
+  if (mfem::HypreUsingGPU()) {
+    for (int k = 1; k <= 3; k++) {
+      HYPRE_BoomerAMGSetCycleRelaxType(amg, 16, k);
+    }
+    HYPRE_BoomerAMGSetChebyOrder(amg, 2);
+  }
+}
+#endif
+
 /// A GS (serial) or AMG (parallel) preconditioner for an assembled
 /// operator handle.
 inline std::unique_ptr<mfem::Solver> MakePreconditioner(

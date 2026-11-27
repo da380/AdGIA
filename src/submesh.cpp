@@ -98,6 +98,9 @@ SubMeshDofInjection::MakeShadowSpace(
 
 void SubMeshDofInjection::Mult(const mfem::Vector& x, mfem::Vector& y) const {
   y = 0.0;
+  // A host loop: the vectors may have been left on a device.
+  x.HostRead();
+  y.HostReadWrite();
   for (int i = 0; i < width; i++) {
     y[parent_vdof_[i]] = sign_[i] * x[i];
   }
@@ -105,6 +108,8 @@ void SubMeshDofInjection::Mult(const mfem::Vector& x, mfem::Vector& y) const {
 
 void SubMeshDofInjection::MultTranspose(const mfem::Vector& x,
                                         mfem::Vector& y) const {
+  x.HostRead();
+  y.HostWrite();
   for (int i = 0; i < width; i++) {
     y[i] = sign_[i] * x[parent_vdof_[i]];
   }

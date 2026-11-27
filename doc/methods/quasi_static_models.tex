@@ -577,6 +577,28 @@ homogeneous condition. The cycle is symmetric positive definite where the
 AMG's is, and takes its place in the block preconditioners of the
 gravitating classes. At order two and below the switch has no effect.
 
+\paragraph{The stiffness with no matrix.} \code{SetMatrixFree} (off by
+default) holds the stiffness operator as a form applied element by element
+from data kept at the quadrature points (mfem's partial assembly), with no
+matrix assembled, and preconditions it by a p-multigrid of the same kind
+(\code{MatrixFreePMultigrid}): each level is the elastic form
+discretised again at its order, with the mass shift of the default
+preconditioner; the smoother is Chebyshev about the form's diagonal; only
+the coarsest level, of order two, has a matrix and the AMG. The levels are
+therefore discretisations and not Galerkin products. For the
+self-gravitating mixed class the operator is the elastic form and the
+gravity terms in one pass (\code{GravitatingElasticityIntegrator}), and
+the potential's preconditioner is the same construction on its shifted
+Laplacian; the couplings and the potential's own operator keep their
+matrices. The switch is for a rheology that is isotropic or a single
+elastic tensor form on the whole body, with no mapping, no essential
+dofs and no fluid region. The elastic form alone is applied by kernels of
+the library's own on hexahedra; with libCEED in mfem and a device that
+uses it (\code{ceed-cpu}, \code{ceed-cuda:/gpu/cuda/gen}) every form is
+a libCEED operator, on tetrahedra as on hexahedra, and the gravity terms
+need it. The answers are those of the default route to the solver's
+tolerance.
+
 \subsection{Rigid modes and projected Krylov solvers}
 \label{sec:projected}
 

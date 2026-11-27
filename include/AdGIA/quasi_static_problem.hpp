@@ -828,6 +828,32 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
     MarkOperatorDirty();
   }
   bool PreconditionerPMultigrid() const { return prec_pmg_; }
+  /**
+   * @brief Hold the stiffness operator with no matrix: the form applied
+   * by partial assembly, preconditioned by a MatrixFreePMultigrid of the
+   * elastic tensor form (with the mass shift of the default
+   * preconditioner where the body is free). Off by default.
+   *
+   * For an isotropic rheology, or one of a single elastic tensor form,
+   * on the whole body with no mapping, no essential dofs and no gauged
+   * fluid; the classes that
+   * add forms to the stiffness say which of theirs are taken
+   * (MakeMatrixFreeStiffness()). The space's order must be above
+   * @p options.coarse_order. What the forms' partial assembly needs of
+   * the mesh and the device is the integrators' to say: with libCEED in
+   * mfem and a device that uses it (`ceed-cpu`, ...), tetrahedra and
+   * hexahedra.
+   */
+  void SetMatrixFree(bool on, MatrixFreePMultigrid::Options options = {}) {
+    matrix_free_ = on;
+    matrix_free_options_ = options;
+    prec_stale_ = true;
+    MarkOperatorDirty();
+  }
+  bool MatrixFree() const { return matrix_free_; }
+  const MatrixFreePMultigrid::Options& MatrixFreeOptions() const {
+    return matrix_free_options_;
+  }
   /** @brief Flexible GMRES(200) instead of MINRES for the gravitating
    * classes' block solves (no SPD requirement on the preconditioner; the
    * tolerance is rel_tol on the true residual instead of MINRES's
@@ -937,6 +963,20 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   /** @brief Build/refresh preconditioner and solver for a new operator.
    * Default: SetupDefaultCG(). */
   virtual void SetupSolver(mfem::OperatorHandle& A);
+
+  /** @brief The whole stiffness form as one integrator with partial
+   * assembly, for SetMatrixFree(). Default: the rheology's elastic
+   * tensor form, and a refusal if anything else has been added. */
+  virtual std::unique_ptr<mfem::BilinearFormIntegrator>
+  MakeMatrixFreeStiffness();
+
+  /** @brief The rheology's tensor as it now stands, for an isotropic
+   * rheology or one of a single elastic tensor form, on the whole body
+   * with no mapping; a refusal else. */
+  mfem::MatrixCoefficient& MatrixFreeTensor();
+
+  /// The rheology's domain forms among the stiffness integrators.
+  int NumRheologyDomainForms() const { return n_rheology_domain_; }
 
   /** @brief Solve A X = B with the solver from SetupSolver(); return
    * convergence. Default: warm-started preconditioned CG. */
@@ -1115,6 +1155,12 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   bool prec_full_operator_ = true;   // SetPreconditionerFullOperator
   bool prec_pmg_ = false;            // SetPreconditionerPMultigrid
   PMultigridPreconditioner::Options prec_pmg_options_;
+  bool matrix_free_ = false;         // SetMatrixFree
+  MatrixFreePMultigrid::Options matrix_free_options_;
+  std::unique_ptr<mfem::ConstantCoefficient> matrix_free_shift_;
+  std::unique_ptr<mfem::MatrixCoefficient> matrix_free_tensor_;
+  void AssembleOperatorMatrixFree();
+  void SetupMatrixFreePreconditioner();
   mfem::real_t prec_full_shift_ = 100.0;
   bool block_gmres_ = false;         // SetBlockGMRES
   /** @brief MINRES, or FGMRES with SetBlockGMRES(), for a block solve. */

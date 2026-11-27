@@ -6,8 +6,9 @@ target_sources(${PROJECT_NAME} PRIVATE null_space.cpp
                                        descent.cpp
                                        bilininteg.cpp
                                        bilininteg_pa.cpp
+                                       gravitating_elasticity.cpp
                                        kernels/elastic_tensor_kernels.cpp
-                                       ceed/elastic_tensor_ceed.cpp
+                                       ceed/ceed_operators.cpp
                                        coefficient.cpp
                                        lininteg.cpp
                                        mappings.cpp
@@ -56,6 +57,6 @@ endif()
 # code-generating backends, from this directory.
 set(ADGIA_CEED_QFUNCTION_DIR "${CMAKE_CURRENT_SOURCE_DIR}/ceed" CACHE PATH
     "Where libCEED finds AdGIA's QFunction sources at run time")
-set_source_files_properties(ceed/elastic_tensor_ceed.cpp
+set_source_files_properties(ceed/ceed_operators.cpp
     TARGET_DIRECTORY ${PROJECT_NAME} PROPERTIES
     COMPILE_DEFINITIONS "ADGIA_CEED_QFUNCTION_DIR=\"${ADGIA_CEED_QFUNCTION_DIR}\"")

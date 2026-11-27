@@ -15,6 +15,9 @@
     level's operator reaches the solution of the assembled system in a
     bounded number of iterations.
 
+  - A problem class with SetMatrixFree gives the displacement it gives by
+    default.
+
   Set ADGIA_TEST_DEVICE (e.g. to cuda) to run on a device.
 */
 
@@ -140,6 +143,38 @@ TEST_P(MatrixFreePMultigridTest, PreconditionsTheForm) {
   EXPECT_LT(u.Norml2(), 1e-7 * u_ref.Norml2());
   std::cout << "  order " << order << (clamped ? ", clamped: " : ", free: ")
             << cg.GetNumIterations() << " iterations\n";
+}
+
+// A problem class with its stiffness held with no matrix (SetMatrixFree):
+// a free elastic body under traction, the displacement of the default.
+TEST(MatrixFreeProblem, GivesTheDisplacementOfTheDefault) {
+  auto mesh = Mesh::MakeCartesian3D(3, 3, 3, Element::HEXAHEDRON);
+  H1_FECollection fec(3, 3);
+  FiniteElementSpace fes(&mesh, &fec, 3);
+  ConstantCoefficient kappa(2.0), mu(1.0);
+  IsotropicElasticRheology rheology(3, kappa, mu);
+  VectorFunctionCoefficient pull(3, [](const Vector& x, Vector& t) {
+    t = 0.0;
+    if (std::abs(x[0] - 0.5) > 0.49) {
+      t[0] = 2.0 * x[0] - 1.0;
+    }
+  });
+  Array<int> all(mesh.bdr_attributes.Max());
+  all = 1;
+  Vector zero(3);
+  zero = 0.0;
+  VectorConstantCoefficient z(zero);
+  double norm[2];
+  for (const int mf : {0, 1}) {
+    LinearQuasiStaticTractionProblem problem(&fes, rheology, pull, all);
+    problem.SetMatrixFree(mf == 1);
+    problem.SetRelTol(1e-11);
+    problem.AssembleForce(0.0);
+    EXPECT_TRUE(problem.Solve());
+    norm[mf] = problem.Displacement().ComputeL2Error(z);
+  }
+  EXPECT_GT(norm[0], 0.0);
+  EXPECT_LT(std::abs(norm[1] - norm[0]), 1e-8 * norm[0]);
 }
 
 INSTANTIATE_TEST_SUITE_P(Cases, MatrixFreePMultigridTest,

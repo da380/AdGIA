@@ -232,8 +232,8 @@ std::vector<ProfileBorder> BuildProfileBorders(
                                 : -(rp_coef->Eval(T, ip) + ref));
           s_ref[b] += w * ref;
         });
-    allreduce(s_beta.GetData(), nb, MPI_SUM);
-    allreduce(s_ref.GetData(), nb, MPI_SUM);
+    allreduce(s_beta.HostReadWrite(), nb, MPI_SUM);
+    allreduce(s_ref.HostReadWrite(), nb, MPI_SUM);
     B.bin_level.SetSize(nb);
     B.bin_excess.SetSize(nb);
     // The kind of each bin: 0 neutral, 1 stratified; a bin without fluid
@@ -354,9 +354,9 @@ std::vector<ProfileBorder> BuildProfileBorders(
               i_excess[j] += w * ref * excess;
             }
           });
-      allreduce(i_ref.GetData(), ni, MPI_SUM);
-      allreduce(i_strat.GetData(), ni, MPI_SUM);
-      allreduce(i_excess.GetData(), ni, MPI_SUM);
+      allreduce(i_ref.HostReadWrite(), ni, MPI_SUM);
+      allreduce(i_strat.HostReadWrite(), ni, MPI_SUM);
+      allreduce(i_excess.HostReadWrite(), ni, MPI_SUM);
       // An interval without a quadrature point takes the kind of the one
       // below it (above, for the lowest).
       std::vector<int> ikind(ni, -1);

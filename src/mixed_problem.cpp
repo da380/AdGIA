@@ -319,6 +319,25 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetupPotentialPreconditioner(
   // exists, is rebuilt on it by the caller through SetupPotentialSolver().
   Array<int> empty;
   shift_coef_.constant = shift_ / four_pi_G_;
+  potential_prec_matrix_free_ = MatrixFree();
+  if (MatrixFree() &&
+      fes_phi_->GetMaxElementOrder() > MatrixFreeOptions().coarse_order) {
+    // SetMatrixFree(): the same shifted Laplacian with no matrix above
+    // the coarsest level of a p-multigrid.
+    k_shift_form_.reset();
+    K_shift_.Clear();
+    prec_phi_ = std::make_unique<MatrixFreePMultigrid>(
+        *fes_phi_, empty,
+        [this](BilinearForm& form) {
+          form.AddDomainIntegrator(new DiffusionIntegrator(inv_four_pi_G_));
+          form.AddDomainIntegrator(new MassIntegrator(shift_coef_));
+        },
+        MatrixFreeOptions());
+    if (cg_phi_) {
+      SetupPotentialSolver();
+    }
+    return;
+  }
   k_shift_form_ = detail::MakeBilinearForm(fes_phi_);
   k_shift_form_->AddDomainIntegrator(new DiffusionIntegrator(inv_four_pi_G_));
   k_shift_form_->AddDomainIntegrator(new MassIntegrator(shift_coef_));
@@ -327,6 +346,7 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetupPotentialPreconditioner(
 #ifdef MFEM_USE_MPI
   if (pfes_phi_) {
     auto amg = std::make_unique<HypreBoomerAMG>(*K_shift_.As<HypreParMatrix>());
+    detail::SetDeviceAMGOptions(*amg);
     amg->SetPrintLevel(0);
     prec_phi_ = std::move(amg);
   } else
@@ -434,6 +454,10 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::DistributePotential(
     const Vector& Phi) {
   phi_->SetFromTrueDofs(Phi);
   injection_->MultTranspose(*phi_, *phi_shadow_);
+  // What follows a solve is host code.
+  phi_->HostReadWrite();
+  phi_shadow_->HostReadWrite();
+  Phi_true_.HostReadWrite();
 }
 
 void LinearQuasiStaticMixedSelfGravitatingProblem::ComputeBackgroundPotential(
@@ -730,11 +754,13 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetupCoupledNullSpace() {
   for (int i = 0; i < projector_u_->Size(); i++) {
     n.GetBlock(0) = projector_u_->Basis(i);
     n.GetBlock(1) = 0.0;
+    n.SyncFromBlocks();
     projector_block_->Add(n);
   }
   if (dim_ == 2) {
     n.GetBlock(0) = 0.0;
     n.GetBlock(1) = ones_;
+    n.SyncFromBlocks();
     projector_block_->Add(n);
   }
 }
@@ -1378,6 +1404,7 @@ LinearQuasiStaticMixedSelfGravitatingProblem::SchurEigenvalues(
   HypreBoomerAMG amg(*Ashift);
   detail::SetSystemsAMGOptions(amg, *pfes_);
   HYPRE_BoomerAMGSetCycleRelaxType(amg, 8, 3);
+  detail::SetDeviceAMGOptions(amg);
   amg.SetPrintLevel(0);
   SchurOperator schur(*this, *A.Ptr());
   HypreLOBPCG lobpcg(comm);
@@ -1594,7 +1621,27 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SchurOperator::Mult(
   y -= cw_;
 }
 
+std::unique_ptr<BilinearFormIntegrator>
+LinearQuasiStaticMixedSelfGravitatingProblem::MakeMatrixFreeStiffness() {
+  MFEM_VERIFY(fluids_.empty(), "SetMatrixFree: no fluid regions yet.");
+  MFEM_VERIFY(grav_g1_ && grav_g1_->UsesGradient() && hess_phi0_shadow_,
+              "SetMatrixFree: with the Hessian of the discrete background "
+              "potential (the default).");
+  auto& forms = StiffnessIntegrators();
+  MatrixCoefficient& C = MatrixFreeTensor();
+  MFEM_VERIFY(forms.GetDBFI()->Size() == NumRheologyDomainForms() + 4 &&
+                  forms.GetBBFI()->Size() == 0 &&
+                  forms.GetFBFI()->Size() == 0 && forms.GetBFBFI()->Size() == 0,
+              "SetMatrixFree: the problem has forms beside the rheology's "
+              "and the gravity terms.");
+  return std::make_unique<GravitatingElasticityIntegrator>(
+      C, *rho_, *grad_phi0_shadow_, *hess_phi0_shadow_);
+}
+
 void LinearQuasiStaticMixedSelfGravitatingProblem::SetupSolver(OperatorHandle& A) {
+  if (MatrixFree() != potential_prec_matrix_free_) {
+    SetupPotentialPreconditioner();
+  }
   if (!inner_tol_set_) {
     inner_rel_tol_ = std::max<real_t>(kMinInnerRelTol, 1e-2 * rel_tol_);
     cg_phi_->SetRelTol(inner_rel_tol_);
@@ -2519,7 +2566,7 @@ class BorderedBlockOperator : public Operator {
     }
 #ifdef MFEM_USE_MPI
     if (parallel_) {
-      MPI_Bcast(y_.GetData(), nb_, MPITypeMap<real_t>::mpi_type, 0, comm_);
+      MPI_Bcast(y_.HostReadWrite(), nb_, MPITypeMap<real_t>::mpi_type, 0, comm_);
     }
 #endif
     A2_.Mult(x2, out2);
@@ -2529,7 +2576,7 @@ class BorderedBlockOperator : public Operator {
     }
 #ifdef MFEM_USE_MPI
     if (parallel_) {
-      MPI_Allreduce(MPI_IN_PLACE, dots_.GetData(), nb_,
+      MPI_Allreduce(MPI_IN_PLACE, dots_.HostReadWrite(), nb_,
                     MPITypeMap<real_t>::mpi_type, MPI_SUM, comm_);
     }
 #endif
@@ -2843,7 +2890,7 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveBorderedMonolithic(
   }
 #ifdef MFEM_USE_MPI
   if (IsParallel()) {
-    MPI_Bcast(y.GetData(), nb, MPITypeMap<real_t>::mpi_type, 0,
+    MPI_Bcast(y.HostReadWrite(), nb, MPITypeMap<real_t>::mpi_type, 0,
               static_cast<ParFiniteElementSpace*>(fes_)->GetComm());
   }
 #endif
@@ -2943,6 +2990,7 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveUnbordered(
   } else {
     B_block_->GetBlock(0) = B;
     B_block_->GetBlock(1) = B_phi_;
+    B_block_->SyncFromBlocks();
     if (!SetBlockKrylovTolerance(*minres_, *projected_prec_, *B_block_)) {
       X = 0.0;
       Phi_true_ = 0.0;
@@ -2962,6 +3010,7 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveUnbordered(
         outer_its_ = minres_->GetNumIterations();
       }
       NoteIterations(outer_its_);
+      X_block_->SyncToBlocks();
       X = X_block_->GetBlock(0);
       if (mass_gauge_) {
         // The gauge shifted the body by a rigid motion, whose potential

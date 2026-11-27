@@ -164,7 +164,12 @@ int main(int argc, char* argv[]) try {
                  "One solve for the loads of all the degrees together and "
                  "one for the tides, the Love numbers of each degree "
                  "analysed from it; else one solve per degree and forcing.");
+  const char* device_name = "cpu";
+  args.AddOption(&device_name, "-d", "--device",
+                 "The mfem device (cpu, cuda, ceed-cpu, "
+                 "ceed-cuda:/gpu/cuda/gen, ...).");
   args.Parse();
+  Device device(device_name);
   if (!args.Good()) {
     if (root) args.PrintUsage(std::cout);
     return 1;

@@ -208,6 +208,7 @@ PMultigridPreconditioner::PMultigridPreconditioner(
   } else {
     auto amg = std::make_unique<HypreBoomerAMG>(coarse_matrix);
     detail::SetSystemsAMGOptions(*amg, *level_space[0]);
+    detail::SetDeviceAMGOptions(*amg);
     amg->SetPrintLevel(0);
     smoothers_[0] = std::move(amg);
   }
@@ -350,14 +351,7 @@ MatrixFreePMultigrid::MatrixFreePMultigrid(FiniteElementSpace& fes,
       } else {
         auto amg = std::make_unique<HypreBoomerAMG>(*A);
         detail::SetSystemsAMGOptions(*amg, space);
-        if (HypreUsingGPU()) {
-          // hypre's smoother on a device is l1-Jacobi, with which the
-          // cycle takes about twice the iterations: Chebyshev instead.
-          for (auto k = 1; k <= 3; k++) {  // down, up and coarsest
-            HYPRE_BoomerAMGSetCycleRelaxType(*amg, 16, k);
-          }
-          HYPRE_BoomerAMGSetChebyOrder(*amg, 2);
-        }
+        detail::SetDeviceAMGOptions(*amg);
         amg->SetPrintLevel(0);
         coarse_solver_ = std::move(amg);
       }

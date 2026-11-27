@@ -62,6 +62,10 @@ add_executable(TestElasticTensorPartialAssembly TestElasticTensorPartialAssembly
 target_link_libraries(TestElasticTensorPartialAssembly PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestElasticTensorPartialAssembly)
 
+add_executable(TestGravitatingElasticityIntegrator TestGravitatingElasticityIntegrator.cpp)
+target_link_libraries(TestGravitatingElasticityIntegrator PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestGravitatingElasticityIntegrator)
+
 add_executable(TestBoundaryNormalIntegrators TestBoundaryNormalIntegrators.cpp)
 target_link_libraries(TestBoundaryNormalIntegrators PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestBoundaryNormalIntegrators)
@@ -85,6 +89,8 @@ if(USE_MPI)
     target_link_libraries(TestPMultigridPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestMatrixFreePMultigridPar TestMatrixFreePMultigridPar.cpp)
     target_link_libraries(TestMatrixFreePMultigridPar PRIVATE AdGIA MPI::MPI_CXX)
+    add_executable(TestMatrixFreeProblemPar TestMatrixFreeProblemPar.cpp)
+    target_link_libraries(TestMatrixFreeProblemPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestNonlinearClampedPar TestNonlinearClampedPar.cpp)
     target_link_libraries(TestNonlinearClampedPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestNonlinearSelfGravitatingPar TestNonlinearSelfGravitatingPar.cpp)
@@ -177,6 +183,9 @@ if(USE_MPI)
         add_test(NAME TestMatrixFreePMultigridPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestMatrixFreePMultigridPar>)
+        add_test(NAME TestMatrixFreeProblemPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestMatrixFreeProblemPar>)
         add_test(NAME TestNonlinearClampedPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestNonlinearClampedPar>)

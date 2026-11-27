@@ -264,7 +264,7 @@ struct DensityFeasibilityProblem::Impl {
 #ifdef MFEM_USE_MPI
     if (auto* pfes = dynamic_cast<ParFiniteElementSpace*>(fes_phi)) {
       const Vector local(W);
-      MPI_Allreduce(local.GetData(), W.GetData(), W.Size(),
+      MPI_Allreduce(local.HostRead(), W.HostReadWrite(), W.Size(),
                     MPITypeMap<real_t>::mpi_type, MPI_SUM, pfes->GetComm());
     }
 #endif

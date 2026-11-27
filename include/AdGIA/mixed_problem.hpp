@@ -954,6 +954,10 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
 
  protected:
   void SetupSolver(mfem::OperatorHandle& A) override;
+  /// The elastic tensor form and the gravity terms as one integrator
+  /// (GravitatingElasticityIntegrator); solid bodies.
+  std::unique_ptr<mfem::BilinearFormIntegrator> MakeMatrixFreeStiffness()
+      override;
   bool SolveLinearSystem(const mfem::Vector& B, mfem::Vector& X) override;
 
   /** @brief The system solve without the water-load border (the body of
@@ -1044,6 +1048,9 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   // order.
   mfem::real_t shift_ = 1e-3;
   mfem::ConstantCoefficient one_, inv_four_pi_G_, shift_coef_;
+  // SetMatrixFree() as it stood when the potential's preconditioner was
+  // made: SetupSolver() makes it again when the two differ.
+  bool potential_prec_matrix_free_ = false;
   std::unique_ptr<mfem::ProductCoefficient> half_rho_, minus_half_rho_;
   std::unique_ptr<mfem::ScalarVectorProductCoefficient> minus_half_rho_grad_;
 

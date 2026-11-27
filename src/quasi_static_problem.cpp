@@ -387,8 +387,122 @@ void LinearQuasiStaticProblemBase::CapturePreconditionerMatrix(
   src.SetOperatorOwner(false);
 }
 
+MatrixCoefficient& LinearQuasiStaticProblemBase::MatrixFreeTensor() {
+  auto& dom = *integrators_->GetDBFI();
+  auto& markers = *integrators_->GetDBFI_Marker();
+  MFEM_VERIFY(n_rheology_boundary_ == 0 && n_rheology_domain_ >= 1,
+              "SetMatrixFree: for a rheology of domain forms alone.");
+  for (int i = 0; i < n_rheology_domain_; i++) {
+    MFEM_VERIFY(markers[i] == nullptr,
+                "SetMatrixFree: for a rheology on the whole body.");
+  }
+  MFEM_VERIFY(!rheology_->EquilibriumMapping(),
+              "SetMatrixFree: no equilibrium mapping.");
+  // An isotropic rheology: its two moduli as they now stand, kept as
+  // two numbers a point. Any other: its one tensor form's tensor.
+  Coefficient *kappa = nullptr, *mu = nullptr;
+  if (stiffness_->IsotropicSplit(kappa, mu)) {
+    matrix_free_tensor_ = std::make_unique<IsotropicElasticTensorCoefficient>(
+        IsotropicElasticTensorCoefficient::FromBulkModulus(
+            fes_->GetMesh()->Dimension(), *kappa, *mu));
+    return *matrix_free_tensor_;
+  }
+  auto* elastic = n_rheology_domain_ == 1
+                      ? dynamic_cast<ElasticTensorIntegrator*>(dom[0])
+                      : nullptr;
+  MFEM_VERIFY(elastic && !elastic->HasMapping(),
+              "SetMatrixFree: for an isotropic rheology or one of a single "
+              "elastic tensor form, with no mapping.");
+  return elastic->Tensor();
+}
+
+std::unique_ptr<BilinearFormIntegrator>
+LinearQuasiStaticProblemBase::MakeMatrixFreeStiffness() {
+  MFEM_VERIFY(!HasNonElasticIntegrators(),
+              "SetMatrixFree: the problem has forms beside the rheology's "
+              "that this class cannot apply without a matrix.");
+  return std::make_unique<ElasticTensorIntegrator>(MatrixFreeTensor());
+}
+
+void LinearQuasiStaticProblemBase::AssembleOperatorMatrixFree() {
+  MFEM_VERIFY(!HasGaugedFluid(), "SetMatrixFree: no gauged fluid.");
+  MFEM_VERIFY(ess_tdof_list_.Size() == 0,
+              "SetMatrixFree: no essential dofs yet.");
+  // A_ and the solver that points at it go before the form they came
+  // from.
+  A_.Clear();
+  A_.SetType(Operator::ANY_TYPE);
+  a_ = detail::MakeBilinearForm(fes_);
+  a_->SetAssemblyLevel(AssemblyLevel::PARTIAL);
+  a_->AddDomainIntegrator(MakeMatrixFreeStiffness().release());
+  a_->Assemble();
+  a_->FormSystemMatrix(ess_tdof_list_, A_);
+  a_solve_form_.reset();
+  SetupSolver(A_);
+}
+
+void LinearQuasiStaticProblemBase::SetupMatrixFreePreconditioner() {
+  MatrixCoefficient& C = MatrixFreeTensor();
+  matrix_free_shift_.reset();
+  // With no essential dofs (AssembleOperatorMatrixFree) the body is free
+  // and the elastic form singular: the levels carry the mass shift of the
+  // default preconditioner (MassShiftedMatrix), here from the forms'
+  // diagonals.
+  constexpr real_t kMassShift = 1e-2;
+  {
+    const auto trace = [&](BilinearFormIntegrator* integrator) {
+      auto form = detail::MakeBilinearForm(fes_);
+      form->SetAssemblyLevel(AssemblyLevel::PARTIAL);
+      form->AddDomainIntegrator(integrator);
+      form->Assemble();
+      Vector diag(fes_->GetTrueVSize());
+      diag.UseDevice(true);
+      form->AssembleDiagonal(diag);
+      real_t sum = diag.Sum();
+#ifdef MFEM_USE_MPI
+      if (pfes_) {
+        real_t global = 0.0;
+        MPI_Allreduce(&sum, &global, 1, MPITypeMap<real_t>::mpi_type, MPI_SUM,
+                      pfes_->GetComm());
+        sum = global;
+      }
+#endif
+      return sum;
+    };
+    const real_t trace_a = trace(new ElasticTensorIntegrator(C));
+    const real_t trace_m = trace(new VectorMassIntegrator);
+    real_t nodes = static_cast<real_t>(fes_->GetTrueVSize()) / fes_->GetVDim();
+#ifdef MFEM_USE_MPI
+    if (pfes_) {
+      nodes = static_cast<real_t>(pfes_->GlobalTrueVSize()) / pfes_->GetVDim();
+    }
+#endif
+    const int d = fes_->GetMesh()->Dimension();
+    matrix_free_shift_ = std::make_unique<ConstantCoefficient>(
+        kMassShift * trace_a / trace_m * std::pow(nodes, -2.0 / d));
+  }
+  Array<int> no_essential_boundary;
+  prec_ = std::make_unique<MatrixFreePMultigrid>(
+      *fes_, no_essential_boundary,
+      [&](BilinearForm& form) {
+        form.AddDomainIntegrator(new ElasticTensorIntegrator(C));
+        if (matrix_free_shift_) {
+          form.AddDomainIntegrator(
+              new VectorMassIntegrator(*matrix_free_shift_));
+        }
+      },
+      matrix_free_options_);
+}
+
 void LinearQuasiStaticProblemBase::AssembleOperator() {
   operator_version_++;
+  if (matrix_free_) {
+    AssembleOperatorMatrixFree();
+    operator_dirty_ = false;
+    eps_only_dirty_ = false;
+    assemblies_++;
+    return;
+  }
   if (PreconditionerAwaitsCapture()) {
     // The preconditioner was built on the current solver matrix and stays on
     // it: keep that form and matrix alive while the preconditioner is
@@ -526,12 +640,20 @@ bool LinearQuasiStaticProblemBase::Solve() {
   // Fold the boundary data into the reduced system on the scratch copy rhs_,
   // keeping the assembled external load pristine. copy_interior = 1 keeps
   // the interior of u_ in X_ so that solvers in iterative_mode warm start.
-  a_->FormLinearSystem(ess_tdof_list_, *u_, rhs_, A_, X_, B_, 1);
+  if (matrix_free_) {
+    // The operator the solver holds stays: the true-dof vectors alone.
+    OperatorHandle unused;
+    a_->FormLinearSystem(ess_tdof_list_, *u_, rhs_, unused, X_, B_, 1);
+  } else {
+    a_->FormLinearSystem(ess_tdof_list_, *u_, rhs_, A_, X_, B_, 1);
+  }
   bool ok = SolveLinearSystem(B_, X_);
   if (HasGaugedFluid()) {
     ok = GaugeRefine(X_) && ok;
   }
   a_->RecoverFEMSolution(X_, rhs_, *u_);
+  u_->HostReadWrite();  // what follows a solve is host code
+  X_.HostReadWrite();
   return ok;
 }
 
@@ -817,6 +939,8 @@ bool LinearQuasiStaticProblemBase::MaxwellSolve() {
   auto set_operator = [&](real_t eps) {
     if (!first) {
       a_->RecoverFEMSolution(X_, rhs_, *u_);
+  u_->HostReadWrite();  // what follows a solve is host code
+  X_.HostReadWrite();
     }
     const real_t rt = rel_tol_;
     rel_tol_ = rel_tol_base;  // solvers are configured at base tolerance
@@ -1078,6 +1202,8 @@ bool LinearQuasiStaticProblemBase::MaxwellSolve() {
       static_cast<int>(maxwell_report_.t_over_tau.size());
   prec_reuse_ = reuse_saved;
   a_->RecoverFEMSolution(X_, rhs_, *u_);
+  u_->HostReadWrite();  // what follows a solve is host code
+  X_.HostReadWrite();
   return ok;
 }
 
@@ -1200,6 +1326,14 @@ void LinearQuasiStaticProblemBase::SetupDefaultCG(OperatorHandle& A) {
 void LinearQuasiStaticProblemBase::SetupDefaultPreconditioner(
     OperatorHandle& A) {
   const bool rebuild = !prec_ || prec_stale_ || prec_reuse_ <= 1.0;
+  if (matrix_free_) {
+    if (rebuild) {
+      prec_.reset();
+      SetupMatrixFreePreconditioner();
+      prec_stale_ = false;
+    }
+    return;
+  }
   if (rebuild) {
 #ifdef MFEM_USE_MPI
     if (pfes_) {
@@ -1241,6 +1375,7 @@ void LinearQuasiStaticProblemBase::SetupDefaultPreconditioner(
             static_cast<HypreParMatrix&>(matrix));
         detail::SetSystemsAMGOptions(*amg, space);
         HYPRE_BoomerAMGSetCycleRelaxType(*amg, 8, 3);
+        detail::SetDeviceAMGOptions(*amg);
         amg->SetPrintLevel(0);
         return std::unique_ptr<Solver>(std::move(amg));
       };
@@ -1328,7 +1463,7 @@ class CoarseCorrectedSolver : public Solver {
     for (int r = 0; r < R; r++) {
       loc(r) = Z_[r] * x;
     }
-    MPI_Allreduce(loc.GetData(), c.GetData(), R,
+    MPI_Allreduce(loc.HostReadWrite(), c.HostReadWrite(), R,
                   MPITypeMap<real_t>::mpi_type, MPI_SUM, comm_);
     Sc_inv_.Mult(c, d);
     for (int r = 0; r < R; r++) {
@@ -1621,6 +1756,7 @@ void LinearQuasiStaticProblemBase::AssemblePressureSplitBlocks() {
     // The systems settings of SetupDefaultPreconditioner.
     detail::SetSystemsAMGOptions(*amg, *pfes_);
     HYPRE_BoomerAMGSetCycleRelaxType(*amg, 8, 3);
+    detail::SetDeviceAMGOptions(*amg);
     amg->SetPrintLevel(0);
     psplit_amg_ = std::move(amg);
     if (psplit_cheb_order_ > 0) {
