@@ -313,7 +313,7 @@ struct CaseOptions {
   bool matrix_free = false;  // the displacement block with no matrix
   bool matrix_free_potential = false;  // and the potential's preconditioner
   bool matrix_free_operators = false;  // nothing of the fine spaces assembled
-  int matrix_free_quadrature = -1;     // the rule of those operators
+  int matrix_free_quadrature = -1;     // rules of order 2 p + this
   const char* method = "dahlen";
   real_t slip_theta = 1e2;
   real_t gs_scale = 1.0;
@@ -489,9 +489,10 @@ struct CaseOptions {
                    "couplings with no matrix as well as -mf and -mf-phi "
                    "(MixedProblemConstruction::matrix_free).");
     args.AddOption(&matrix_free_quadrature, "-mf-q", "--matrix-free-quadrature",
-                   "With -mf-all: the order of the integration rule of the "
-                   "potential's operator and the couplings (negative: the "
-                   "assembled forms' own).");
+                   "With -mf or -mf-all: integration rules of order 2 p + "
+                   "this for the forms with no matrix "
+                   "(MatrixFreePMultigrid::Options::quadrature_excess; "
+                   "negative: the forms' own).");
     args.AddOption(&pmg, "-pmg", "--p-multigrid", "-no-pmg",
                    "--no-p-multigrid",
                    "Methods dahlen and referential: the displacement block's "
@@ -948,6 +949,8 @@ class Case {
       const Rheology* chosen =
           rheology_factory ? rheology_factory(*solid, *kappa_c_, *mu_c_)
                            : nullptr;
+      MatrixFreePMultigrid::Options matrix_free_options;
+      matrix_free_options.quadrature_excess = options.matrix_free_quadrature;
       problem = std::make_unique<Problem>(fes_u.get(), fes_phi.get(),
                                           chosen ? *chosen : *rheology_,
                                           *rho_c_, G,
@@ -955,8 +958,7 @@ class Case {
                                           fluids,
                                           MixedProblemConstruction{
                                               options.matrix_free_operators,
-                                              {},
-                                              options.matrix_free_quadrature});
+                                              matrix_free_options});
       if (options.level_border > 0 && method == "dahlen" && !fluids.empty()) {
         problem->SetLevelBorder(options.level_border);
         if (options.level_monolithic) {
@@ -1015,7 +1017,7 @@ class Case {
       }
       problem->SetPreconditionerPMultigrid(options.pmg);
       if (options.matrix_free && !options.matrix_free_operators) {
-        problem->SetMatrixFree(true);
+        problem->SetMatrixFree(true, matrix_free_options);
         problem->SetPotentialPreconditionerMatrixFree(
             options.matrix_free_potential);
       }

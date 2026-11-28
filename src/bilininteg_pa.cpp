@@ -314,7 +314,7 @@ void DiffusionMassIntegrator::AssemblePA(const FiniteElementSpace& fes) {
               "one element geometry.");
   pa_maps_ = nullptr;
   pa_data_.Destroy();
-  pa_ceed_ = false;
+  pa_ceed_.reset();
   pa_ne_ = fes.GetNE();
   if (pa_ne_ == 0) {
     return;
@@ -322,17 +322,6 @@ void DiffusionMassIntegrator::AssemblePA(const FiniteElementSpace& fes) {
   const FiniteElement& el = *fes.GetTypicalFE();
   const IntegrationRule& ir =
       Rule(el, *mesh.GetTypicalElementTransformation());
-  if (DeviceCanUseCeed()) {
-    // mfem's own forms are libCEED operators there.
-    pa_ceed_ = true;
-    diffusion_.SetIntRule(&ir);
-    diffusion_.AssemblePA(fes);
-    if (mass_) {
-      mass_->SetIntRule(&ir);
-      mass_->AssemblePA(fes);
-    }
-    return;
-  }
   const int nq = ir.GetNPoints();
   const int n = detail::pa::kPotentialDataSize;
   pa_data_.SetSize(n * nq * pa_ne_);
@@ -358,16 +347,18 @@ void DiffusionMassIntegrator::AssemblePA(const FiniteElementSpace& fes) {
       p[6] = s_ ? w * s_->Eval(T, ip) : 0.0;
     }
   }
+  if (DeviceCanUseCeed()) {
+    pa_ceed_ = detail::MakePotentialBlockCeedOperator(fes, ir, pa_data_);
+    pa_data_.Destroy();  // libCEED holds its copy
+    return;
+  }
   pa_maps_ = &el.GetDofToQuad(ir, UsesTensorBasis(fes) ? DofToQuad::TENSOR
                                                        : DofToQuad::FULL);
 }
 
 void DiffusionMassIntegrator::AddMultPA(const Vector& x, Vector& y) const {
   if (pa_ceed_) {
-    diffusion_.AddMultPA(x, y);
-    if (mass_) {
-      mass_->AddMultPA(x, y);
-    }
+    pa_ceed_->AddMult(x, y);
   } else if (pa_ne_ > 0) {
     MFEM_VERIFY(pa_maps_, "DiffusionMassIntegrator: AssemblePA not called.");
     detail::pa::ApplyPotentialBlock(pa_ne_, *pa_maps_, pa_data_, x, y);
@@ -381,10 +372,7 @@ void DiffusionMassIntegrator::AddMultTransposePA(const Vector& x,
 
 void DiffusionMassIntegrator::AssembleDiagonalPA(Vector& diag) {
   if (pa_ceed_) {
-    diffusion_.AssembleDiagonalPA(diag);
-    if (mass_) {
-      mass_->AssembleDiagonalPA(diag);
-    }
+    pa_ceed_->GetDiagonal(diag);
   } else if (pa_ne_ > 0) {
     MFEM_VERIFY(pa_maps_, "DiffusionMassIntegrator: AssemblePA not called.");
     detail::pa::DiagonalPotentialBlock(pa_ne_, *pa_maps_, pa_data_, diag);

@@ -270,7 +270,7 @@ class MatrixFreePMultigrid::Cycle : public GeometricMultigrid {
 
   // A level's form, assembled; owned by the cycle.
   BilinearForm& AddForm(FiniteElementSpace& fes, const Integrators& integrators,
-                        bool partial) {
+                        bool partial, int quadrature_excess) {
     BilinearForm* form = nullptr;
 #ifdef MFEM_USE_MPI
     if (auto* pfes = dynamic_cast<ParFiniteElementSpace*>(&fes)) {
@@ -284,6 +284,7 @@ class MatrixFreePMultigrid::Cycle : public GeometricMultigrid {
       form->SetAssemblyLevel(AssemblyLevel::PARTIAL);
     }
     integrators(*form);
+    MatrixFreePMultigrid::SetQuadrature(*form, quadrature_excess);
     form->Assemble();
     bfs.Append(form);
     return *form;
@@ -291,6 +292,21 @@ class MatrixFreePMultigrid::Cycle : public GeometricMultigrid {
 
   using GeometricMultigrid::AddLevel;
 };
+
+void MatrixFreePMultigrid::SetQuadrature(BilinearForm& form, int excess) {
+  FiniteElementSpace& fes = *form.FESpace();
+  if (excess < 0 || fes.GetNE() == 0) {
+    return;
+  }
+  const IntegrationRule& ir =
+      IntRules.Get(fes.GetMesh()->GetTypicalElementGeometry(),
+                   2 * fes.GetMaxElementOrder() + excess);
+  for (auto* integrator : *form.GetDBFI()) {
+    if (integrator->GetIntegrationRule() == nullptr) {
+      integrator->SetIntRule(&ir);
+    }
+  }
+}
 
 MatrixFreePMultigrid::MatrixFreePMultigrid(FiniteElementSpace& fes,
                                            const Array<int>& ess_bdr,
@@ -340,7 +356,8 @@ MatrixFreePMultigrid::MatrixFreePMultigrid(FiniteElementSpace& fes,
   // The coarsest level: a matrix and its solver.
   {
     auto& space = hierarchy_->GetFESpaceAtLevel(0);
-    auto& form = cycle_->AddForm(space, integrators, false);
+    auto& form = cycle_->AddForm(space, integrators, false,
+                                 options.quadrature_excess);
     const auto& ess = cycle_->EssentialTrueDofs(0);
 #ifdef MFEM_USE_MPI
     if (pfes) {
@@ -375,7 +392,8 @@ MatrixFreePMultigrid::MatrixFreePMultigrid(FiniteElementSpace& fes,
   // The levels above: the form with no matrix, Chebyshev about its diagonal.
   for (auto l = 1; l < levels; l++) {
     auto& space = hierarchy_->GetFESpaceAtLevel(l);
-    auto& form = cycle_->AddForm(space, integrators, true);
+    auto& form = cycle_->AddForm(space, integrators, true,
+                                 options.quadrature_excess);
     const auto& ess = cycle_->EssentialTrueDofs(l);
     OperatorPtr op;
     op.SetType(Operator::ANY_TYPE);

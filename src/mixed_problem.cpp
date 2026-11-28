@@ -279,9 +279,7 @@ LinearQuasiStaticMixedSelfGravitatingProblem::
                 "MixedProblemConstruction::matrix_free: a solid body in 3-D "
                 "on a mesh of one element geometry.");
     operators_matrix_free_ = true;
-    if (construction.quadrature_order >= 0) {
-      operators_rule_ = &IntRules.Get(geoms[0], construction.quadrature_order);
-    }
+    operators_quadrature_excess_ = construction.multigrid.quadrature_excess;
     SetMatrixFree(true, construction.multigrid);
     potential_matrix_free_ = true;
   }
@@ -325,16 +323,17 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetupPotentialOperators() {
   // K = (grad phi, grad psi) on the ball; A_phiphi = (K + DtN) / (4 pi G).
   k_phi_form_ = detail::MakeBilinearForm(fes_phi_);
   if (operators_matrix_free_) {
-    // The same form with no matrix, on the rule of mfem's unless one was
-    // asked for.
+    // The same form with no matrix, on the rule of mfem's unless another
+    // was asked for.
     const FiniteElement& fe = *fes_phi_->GetTypicalFE();
-    const IntegrationRule* ir =
-        operators_rule_
-            ? operators_rule_
-            : &DiffusionIntegrator::GetRule(fe, fe);
     k_phi_form_->SetAssemblyLevel(AssemblyLevel::PARTIAL);
-    k_phi_form_->AddDomainIntegrator(
-        new DiffusionMassIntegrator(one_, nullptr, ir));
+    k_phi_form_->AddDomainIntegrator(new DiffusionMassIntegrator(
+        one_, nullptr,
+        operators_quadrature_excess_ >= 0
+            ? nullptr
+            : &DiffusionIntegrator::GetRule(fe, fe)));
+    MatrixFreePMultigrid::SetQuadrature(*k_phi_form_,
+                                        operators_quadrature_excess_);
   } else {
     k_phi_form_->AddDomainIntegrator(new DiffusionIntegrator(one_));
   }
@@ -659,8 +658,15 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetupCoupling() {
   Array<int> empty;
   if (operators_matrix_free_) {
     // The domain term with no matrix; a solid body has no other.
+    const IntegrationRule* ir = nullptr;
+    if (operators_quadrature_excess_ >= 0 && fes_->GetNE() > 0) {
+      ir = &IntRules.Get(fes_->GetMesh()->GetTypicalElementGeometry(),
+                         shadow_phi_->GetMaxElementOrder() +
+                             fes_->GetMaxElementOrder() +
+                             operators_quadrature_excess_);
+    }
     C_owned_ = std::make_unique<MatrixFreeCoupling>(
-        *fes_phi_, *injection_, *shadow_phi_, *fes_, *rho_, operators_rule_);
+        *fes_phi_, *injection_, *shadow_phi_, *fes_, *rho_, ir);
     Ct_owned_ = std::make_unique<TransposeOperator>(C_owned_.get());
     C_op_ = C_owned_.get();
     Ct_op_ = Ct_owned_.get();

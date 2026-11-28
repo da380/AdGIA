@@ -598,7 +598,14 @@ two switches on as well: \code{GradientCouplingOperator} and the
 diffusion form with partial assembly, on the rules of the forms they
 replace unless another is asked for). Nothing of the fine spaces is then
 assembled, and the cost of making the problem no longer grows with the
-order as the matrices' does. The switch is for a rheology that is isotropic or a single
+order as the matrices' does. The work of a form with no matrix is in
+proportion to its quadrature points, and an integrator's own rule grows
+with the order of the geometry; \code{quadrature\_excess} in the
+multigrid's options gives every such form the rule of order $2p$ plus
+it on a space of order $p$ instead. That is another discretisation of
+the same problem and so not the default; on a cubed sphere with
+geometry of order four an excess of one gave the same Love numbers and
+a third of the time. The switch is for a rheology that is isotropic or a single
 elastic tensor form on the whole body, with no mapping, no essential
 dofs and no fluid region. The forms are applied by kernels of the
 library's own, sum-factorised on hexahedra and dense in the element on

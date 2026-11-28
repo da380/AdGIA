@@ -216,15 +216,15 @@ struct MixedProblemConstruction {
    * usual; the operator and the couplings stay as made.
    */
   bool matrix_free = false;
-  /// The options SetMatrixFree() is given.
-  MatrixFreePMultigrid::Options multigrid = {};
   /**
-   * The order of the integration rule of the potential's operator and
-   * the couplings where they have no matrix; negative for the rules of
-   * the forms they replace (mfem's DiffusionIntegrator and
-   * GradientIntegrator), with which they are the same operators.
+   * The options SetMatrixFree() is given. Its quadrature_excess is also
+   * that of the potential's operator and the couplings (rules of order
+   * 2 p + excess, p + p' + excess for a coupling between orders p and
+   * p'); negative, they have the rules of the forms they replace
+   * (mfem's DiffusionIntegrator and GradientIntegrator) and are the same
+   * operators.
    */
-  int quadrature_order = -1;
+  MatrixFreePMultigrid::Options multigrid = {};
 };
 
 class LinearQuasiStaticMixedSelfGravitatingProblem
@@ -1099,8 +1099,8 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   // makes it again when the choice has changed.
   bool potential_matrix_free_ = false;
   bool operators_matrix_free_ = false;
-  // The rule of the operators with no matrix; null for the forms' own.
-  const mfem::IntegrationRule* operators_rule_ = nullptr;
+  // Options::quadrature_excess of the operators with no matrix.
+  int operators_quadrature_excess_ = -1;
   bool potential_prec_matrix_free_ = false;
   std::unique_ptr<mfem::ProductCoefficient> half_rho_, minus_half_rho_;
   std::unique_ptr<mfem::ScalarVectorProductCoefficient> minus_half_rho_grad_;

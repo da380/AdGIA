@@ -435,6 +435,8 @@ void LinearQuasiStaticProblemBase::AssembleOperatorMatrixFree() {
   a_ = detail::MakeBilinearForm(fes_);
   a_->SetAssemblyLevel(AssemblyLevel::PARTIAL);
   a_->AddDomainIntegrator(MakeMatrixFreeStiffness().release());
+  MatrixFreePMultigrid::SetQuadrature(*a_,
+                                      matrix_free_options_.quadrature_excess);
   a_->Assemble();
   a_->FormSystemMatrix(ess_tdof_list_, A_);
   a_solve_form_.reset();
@@ -457,6 +459,8 @@ void LinearQuasiStaticProblemBase::SetupMatrixFreePreconditioner() {
       auto form = detail::MakeBilinearForm(fes_);
       form->SetAssemblyLevel(AssemblyLevel::PARTIAL);
       form->AddDomainIntegrator(integrator);
+      MatrixFreePMultigrid::SetQuadrature(
+          *form, matrix_free_options_.quadrature_excess);
       form->Assemble();
       Vector diag(fes_->GetTrueVSize());
       diag.UseDevice(true);

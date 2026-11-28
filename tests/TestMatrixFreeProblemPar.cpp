@@ -100,6 +100,7 @@ void GravitatingBody() {
   FunctionCoefficient sigma(SurfaceLoad);
   Array<int> surface = SurfaceMarker(body);
 
+  constexpr double kQuadratureTol = 1e-4;
   using Problem = LinearQuasiStaticMixedSelfGravitatingProblem;
   for (const auto type :
        {Problem::SolverType::BlockMINRES, Problem::SolverType::SchurCG}) {
@@ -107,15 +108,18 @@ void GravitatingBody() {
         type == Problem::SolverType::BlockMINRES ? ", minres" : ", schur";
     // 0: the default; 1: no matrix for the displacement; 2: nor for the
     // potential's preconditioner; 3: nor for the potential's operator and
-    // the couplings.
-    double u[4], phi[4];
-    long its[4];
-    for (const int mf : {0, 1, 2, 3}) {
+    // the couplings; 4: as 3 with rules of order 2 p + 3 throughout.
+    double u[5], phi[5];
+    long its[5];
+    for (const int mf : {0, 1, 2, 3, 4}) {
       MixedProblemConstruction construction;
-      construction.matrix_free = (mf == 3);
+      construction.matrix_free = (mf >= 3);
+      if (mf == 4) {
+        construction.multigrid.quadrature_excess = 3;
+      }
       Problem p(&fes_u, &fes_phi, rheology, rho, kG, kDtNDegree, nullptr, {},
                 construction);
-      Check(p.OperatorsMatrixFree() == (mf == 3) ? 0.0 : 1.0, 0.0,
+      Check(p.OperatorsMatrixFree() == (mf >= 3) ? 0.0 : 1.0, 0.0,
             label + name + ": the operators as asked");
       p.SetSurfaceLoad(sigma, surface);
       p.SetRelTol(1e-11);
@@ -141,6 +145,16 @@ void GravitatingBody() {
     Check(RelErr(u[3], u[0]), 1e-7, label + name + ": |u|, nothing assembled");
     Check(RelErr(phi[3], phi[0]), 1e-7,
           label + name + ": |phi|, nothing assembled");
+    // Other rules: another discretisation of the same problem.
+    Check(RelErr(u[4], u[0]), kQuadratureTol,
+          label + name + ": |u|, rules of order 2 p + 3");
+    Check(RelErr(phi[4], phi[0]), kQuadratureTol,
+          label + name + ": |phi|, rules of order 2 p + 3");
+    if (Mpi::Root()) {
+      std::cout << label << name << ": rules of order 2 p + 3 change |u| by "
+                << RelErr(u[4], u[0]) << ", |phi| by " << RelErr(phi[4], phi[0])
+                << "\n";
+    }
     if (Mpi::Root()) {
       std::cout << label << name << ": " << its[1]
                 << " iterations with no matrix, " << its[0] << " by default\n";

@@ -152,7 +152,26 @@ class MatrixFreePMultigrid : public mfem::Solver {
     int coarse_order = 2;     ///< order of the coarsest level
     int smoothing_order = 2;  ///< order of the Chebyshev smoother
     int coarse_sweeps = 4;    ///< serial default coarse solver: its sweeps
+    /**
+     * The integration rule of the forms: of order 2 p + this on a level
+     * of order p (Gauss points p + 1 + this / 2 a direction on
+     * hexahedra), on every level and, in the problem classes, on the
+     * operators with no matrix. Negative: each integrator's own rule,
+     * with which the operators are those of the assembled route to
+     * rounding. An integrator's own rule grows with the order of the
+     * geometry (a hexahedron of order 4 and a space of order 6 draw 14
+     * points a direction where this = 1 gives 7), and the work at the
+     * points with it; measured on such meshes, 1 gave the same Love
+     * numbers to the digits compared and a third of the time. It is a
+     * choice of discretisation, so it is not the default.
+     */
+    int quadrature_excess = -1;
   };
+
+  /// With @p excess not negative, give every domain integrator of
+  /// @p form that has no rule the one of order 2 p + excess, p the order
+  /// of the form's space (Options::quadrature_excess).
+  static void SetQuadrature(mfem::BilinearForm& form, int excess);
 
   /// Adds the form's integrators to the form of a level.
   using Integrators = std::function<void(mfem::BilinearForm&)>;

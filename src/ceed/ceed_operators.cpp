@@ -11,6 +11,7 @@
 #include <string>
 
 #include "displacement_block_qf.h"
+#include "potential_block_qf.h"
 #include "fem/ceed/interface/basis.hpp"
 #include "fem/ceed/interface/restriction.hpp"
 
@@ -26,7 +27,7 @@ bool HasCeed() { return true; }
 
 namespace {
 
-// A form on a vector H1 space whose work at the quadrature points is a
+// A form on an H1 space whose work at the quadrature points is a
 // QFunction of the reference gradients, with or without the values, and
 // of data kept at the points.
 class PointDataCeedOperator : public mfem::ceed::Operator {
@@ -145,9 +146,24 @@ std::unique_ptr<mfem::ceed::Operator> MakeDisplacementBlockCeedOperator(
       extras != pa::kNoExtras);
 }
 
+std::unique_ptr<mfem::ceed::Operator> MakePotentialBlockCeedOperator(
+    const mfem::FiniteElementSpace& fes, const mfem::IntegrationRule& ir,
+    const mfem::Vector& data) {
+  return std::make_unique<PointDataCeedOperator>(
+      fes, ir, data, pa::kPotentialDataSize, AdGIAPotential,
+      "potential_block_qf.h:AdGIAPotential", true);
+}
+
 #else
 
 bool HasCeed() { return false; }
+
+std::unique_ptr<mfem::ceed::Operator> MakePotentialBlockCeedOperator(
+    const mfem::FiniteElementSpace&, const mfem::IntegrationRule&,
+    const mfem::Vector&) {
+  MFEM_ABORT("AdGIA: mfem was built without libCEED (MFEM_USE_CEED).");
+  return nullptr;
+}
 
 std::unique_ptr<mfem::ceed::Operator> MakeDisplacementBlockCeedOperator(
     const mfem::FiniteElementSpace&, const mfem::IntegrationRule&,

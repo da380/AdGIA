@@ -745,12 +745,21 @@ void Apply(int ne, const mfem::DofToQuad& maps, const mfem::Vector& data,
     return ApplyDenseRows<Form>(ne, D, Q, maps, data, x, y);
 #endif
   }
-  switch (10 * D + Q) {
-    case 23: return ApplyTensor<Form, 2, 3>(ne, maps.B, maps.G, data, x, y);
-    case 34: return ApplyTensor<Form, 3, 4>(ne, maps.B, maps.G, data, x, y);
-    case 45: return ApplyTensor<Form, 4, 5>(ne, maps.B, maps.G, data, x, y);
-    case 56: return ApplyTensor<Form, 5, 6>(ne, maps.B, maps.G, data, x, y);
-    case 67: return ApplyTensor<Form, 6, 7>(ne, maps.B, maps.G, data, x, y);
+  // Fixed sizes for rules of p + 2 points a direction (orders 1 to 5) and
+  // of p + 1 (orders 2 to 8); anything else at run time.
+  switch (100 * D + Q) {
+    case 203: return ApplyTensor<Form, 2, 3>(ne, maps.B, maps.G, data, x, y);
+    case 303: return ApplyTensor<Form, 3, 3>(ne, maps.B, maps.G, data, x, y);
+    case 304: return ApplyTensor<Form, 3, 4>(ne, maps.B, maps.G, data, x, y);
+    case 404: return ApplyTensor<Form, 4, 4>(ne, maps.B, maps.G, data, x, y);
+    case 405: return ApplyTensor<Form, 4, 5>(ne, maps.B, maps.G, data, x, y);
+    case 505: return ApplyTensor<Form, 5, 5>(ne, maps.B, maps.G, data, x, y);
+    case 506: return ApplyTensor<Form, 5, 6>(ne, maps.B, maps.G, data, x, y);
+    case 606: return ApplyTensor<Form, 6, 6>(ne, maps.B, maps.G, data, x, y);
+    case 607: return ApplyTensor<Form, 6, 7>(ne, maps.B, maps.G, data, x, y);
+    case 707: return ApplyTensor<Form, 7, 7>(ne, maps.B, maps.G, data, x, y);
+    case 808: return ApplyTensor<Form, 8, 8>(ne, maps.B, maps.G, data, x, y);
+    case 909: return ApplyTensor<Form, 9, 9>(ne, maps.B, maps.G, data, x, y);
     default: return ApplyTensor<Form>(ne, maps.B, maps.G, data, x, y, D, Q);
   }
 }
@@ -762,12 +771,21 @@ void Diagonal(int ne, const mfem::DofToQuad& maps, const mfem::Vector& data,
   if (maps.mode != mfem::DofToQuad::TENSOR) {
     return DiagonalDense<Form>(ne, D, Q, maps.Bt, maps.Gt, data, diag);
   }
-  switch (10 * D + Q) {
-    case 23: return DiagonalTensor<Form, 2, 3>(ne, maps.B, maps.G, data, diag);
-    case 34: return DiagonalTensor<Form, 3, 4>(ne, maps.B, maps.G, data, diag);
-    case 45: return DiagonalTensor<Form, 4, 5>(ne, maps.B, maps.G, data, diag);
-    case 56: return DiagonalTensor<Form, 5, 6>(ne, maps.B, maps.G, data, diag);
-    case 67: return DiagonalTensor<Form, 6, 7>(ne, maps.B, maps.G, data, diag);
+  // Fixed sizes for rules of p + 2 points a direction (orders 1 to 5) and
+  // of p + 1 (orders 2 to 8); anything else at run time.
+  switch (100 * D + Q) {
+    case 203: return DiagonalTensor<Form, 2, 3>(ne, maps.B, maps.G, data, diag);
+    case 303: return DiagonalTensor<Form, 3, 3>(ne, maps.B, maps.G, data, diag);
+    case 304: return DiagonalTensor<Form, 3, 4>(ne, maps.B, maps.G, data, diag);
+    case 404: return DiagonalTensor<Form, 4, 4>(ne, maps.B, maps.G, data, diag);
+    case 405: return DiagonalTensor<Form, 4, 5>(ne, maps.B, maps.G, data, diag);
+    case 505: return DiagonalTensor<Form, 5, 5>(ne, maps.B, maps.G, data, diag);
+    case 506: return DiagonalTensor<Form, 5, 6>(ne, maps.B, maps.G, data, diag);
+    case 606: return DiagonalTensor<Form, 6, 6>(ne, maps.B, maps.G, data, diag);
+    case 607: return DiagonalTensor<Form, 6, 7>(ne, maps.B, maps.G, data, diag);
+    case 707: return DiagonalTensor<Form, 7, 7>(ne, maps.B, maps.G, data, diag);
+    case 808: return DiagonalTensor<Form, 8, 8>(ne, maps.B, maps.G, data, diag);
+    case 909: return DiagonalTensor<Form, 9, 9>(ne, maps.B, maps.G, data, diag);
     default: return DiagonalTensor<Form>(ne, maps.B, maps.G, data, diag, D, Q);
   }
 }

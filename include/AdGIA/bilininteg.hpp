@@ -2251,8 +2251,9 @@ class GravitatingElasticityIntegrator : public mfem::BilinearFormIntegrator {
  * 3-D on any one element geometry, in one pass, by kernels of the
  * library's own (sum-factorised on hexahedra, dense in the element on
  * tetrahedra), where mfem's own partial assembly of the two forms is
- * for tensor-product elements. On a device that uses libCEED the two
- * mfem integrators are used as they are.
+ * for tensor-product elements. On a device that uses libCEED the form
+ * is a libCEED operator of the library's own, from the same data at the
+ * points (detail/ceed_operators.hpp).
  */
 class DiffusionMassIntegrator : public mfem::BilinearFormIntegrator {
  public:
@@ -2287,7 +2288,8 @@ class DiffusionMassIntegrator : public mfem::BilinearFormIntegrator {
   const mfem::DofToQuad* pa_maps_ = nullptr; /**< The basis at the points. */
   mfem::Vector pa_data_; /**< Data at the quadrature points. */
   int pa_ne_ = 0;        /**< Elements of the space. */
-  bool pa_ceed_ = false; /**< mfem's integrators, through libCEED. */
+  /** The form as a libCEED operator, on a device that uses it. */
+  std::unique_ptr<mfem::ceed::Operator> pa_ceed_;
 };
 
 

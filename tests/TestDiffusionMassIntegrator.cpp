@@ -44,16 +44,23 @@ void Jiggle(const Vector& x, Vector& y) {
   y[2] += s * std::sin(kPi * x[2]) * std::cos(kPi * x[0]);
 }
 
-using Param = std::tuple<bool, int, bool>;  // hexahedra, order, mass
+// hexahedra, order, mass, the geometry's order
+using Param = std::tuple<bool, int, bool, int>;
 
 class DiffusionMass : public testing::TestWithParam<Param> {};
 
 TEST_P(DiffusionMass, MatchesMfemAndItsPartialAssembly) {
-  const auto [hexahedra, order, mass] = GetParam();
+  const auto [hexahedra, order, mass, geometry_order] = GetParam();
+  if (!hexahedra && geometry_order > 2) {
+    // The default rule of such a tetrahedron has more points than
+    // libCEED's GPU backends take in a simplex (256); hexahedra are
+    // where the geometry's order matters here.
+    GTEST_SKIP();
+  }
   auto mesh = Mesh::MakeCartesian3D(2, 2, 2,
                                     hexahedra ? Element::HEXAHEDRON
                                               : Element::TETRAHEDRON);
-  mesh.SetCurvature(2);
+  mesh.SetCurvature(geometry_order);
   mesh.Transform(Jiggle);
   H1_FECollection fec(order, 3);
   FiniteElementSpace fes(&mesh, &fec);
@@ -61,10 +68,14 @@ TEST_P(DiffusionMass, MatchesMfemAndItsPartialAssembly) {
       [](const Vector& x) { return 1.3 + 0.4 * std::sin(2.0 * x[0] + x[2]); });
   FunctionCoefficient s([](const Vector& x) { return 0.7 + 0.2 * x[1]; });
 
-  for (const bool given_rule : {false, true}) {
+  // No rule given, then two: the second, on a geometry of order 4 and
+  // hexahedra of order 3 or less, has fewer points a direction than the
+  // mesh has nodes.
+  for (const int excess : {-1, 2, 1}) {
+    const bool given_rule = excess >= 0;
     const IntegrationRule* ir =
         given_rule ? &IntRules.Get(mesh.GetTypicalElementGeometry(),
-                                   2 * order + 2)
+                                   2 * order + excess)
                    : nullptr;
     const auto make = [&]() {
       return new DiffusionMassIntegrator(k, mass ? &s : nullptr, ir);
@@ -114,6 +125,7 @@ TEST_P(DiffusionMass, MatchesMfemAndItsPartialAssembly) {
 INSTANTIATE_TEST_SUITE_P(Cases, DiffusionMass,
                          testing::Combine(testing::Bool(),
                                           testing::Values(1, 2, 3, 4),
-                                          testing::Bool()));
+                                          testing::Bool(),
+                                          testing::Values(2, 4)));
 
 }  // namespace
