@@ -561,6 +561,61 @@ stays within a factor (default 2) of the count recorded when it was built;
 past that it is rebuilt. The matrix is always the current one, so only the
 convergence rate, never the solution, depends on the lag.
 
+\paragraph{A p-multigrid above order two.} On simplices the cost of an AMG
+cycle on the assembled matrix, and the number of cycles needed, grow with
+the element order. \code{SetPreconditionerPMultigrid} (off by default)
+replaces the cycle on the same matrix by a V-cycle over the orders
+$2 = p_0 < \dots < p_L = p$, each about half the next
+(\code{PMultigridPreconditioner}): the prolongation between two levels is
+the interpolation of the lower order's functions in the higher's basis,
+the coarse matrices are the Galerkin products $P^TAP$, each level above the
+coarsest has a symmetric smoother (Chebyshev about the diagonal in
+parallel, a symmetric Gauss--Seidel sweep in serial), and the coarsest has
+the AMG with the settings above (Gauss--Seidel sweeps in serial). At
+essential dofs the prolongation is cut, so the coarse spaces satisfy the
+homogeneous condition. The cycle is symmetric positive definite where the
+AMG's is, and takes its place in the block preconditioners of the
+gravitating classes. At order two and below the switch has no effect.
+
+\paragraph{The stiffness with no matrix.} \code{SetMatrixFree} (off by
+default) holds the stiffness operator as a form applied element by element
+from data kept at the quadrature points (mfem's partial assembly), with no
+matrix assembled, and preconditions it by a p-multigrid of the same kind
+(\code{MatrixFreePMultigrid}): each level is the elastic form
+discretised again at its order, with the mass shift of the default
+preconditioner; the smoother is Chebyshev about the form's diagonal; only
+the coarsest level, of order two, has a matrix and the AMG. The levels are
+therefore discretisations and not Galerkin products. For the
+self-gravitating mixed class the operator is the elastic form and the
+gravity terms in one pass (\code{GravitatingElasticityIntegrator}), and
+the potential's preconditioner can be the same construction on its
+shifted Laplacian (\code{SetPotentialPreconditionerMatrixFree}, off by
+default: fewer iterations and no less time). The couplings and the
+potential's own operator are built by the class's constructor, and so
+have no matrix only where it is told so
+(\code{MixedProblemConstruction::matrix\_free}, which turns the other
+two switches on as well: \code{GradientCouplingOperator} and the
+diffusion form with partial assembly, on the rules of the forms they
+replace unless another is asked for). Nothing of the fine spaces is then
+assembled, and the cost of making the problem no longer grows with the
+order as the matrices' does. The work of a form with no matrix is in
+proportion to its quadrature points, and an integrator's own rule grows
+with the order of the geometry; \code{quadrature\_excess} in the
+multigrid's options gives every such form the rule of order $2p$ plus
+it on a space of order $p$ instead. That is another discretisation of
+the same problem and so not the default; on a cubed sphere with
+geometry of order four an excess of one gave the same Love numbers and
+a third of the time. The switch is for a rheology that is isotropic or a single
+elastic tensor form on the whole body, with no mapping, no essential
+dofs and no fluid region. The forms are applied by kernels of the
+library's own, sum-factorised on hexahedra and dense in the element on
+tetrahedra, so the switch needs nothing beyond mfem; the dense kernel is
+two to three times faster where the library is compiled for the machine
+(\code{ADGIA\_NATIVE\_KERNELS}). With libCEED in mfem and a device that
+uses it (\code{ceed-cpu}, \code{ceed-cuda:/gpu/cuda/gen}) the forms are
+libCEED operators in their place. The answers are those of the default route to the solver's
+tolerance.
+
 \subsection{Rigid modes and projected Krylov solvers}
 \label{sec:projected}
 
@@ -2398,12 +2453,48 @@ constants, $\phi + \vu\cdot\grad\Phi_0$ is not).
 
 \subsection{Solver and null space}
 
-Block MINRES on the symmetric saddle system with the projected
-block-diagonal preconditioner (AMG/Gauss--Seidel on the displacement block
-and on the shifted \emph{mapped} Laplacian), serial and parallel in one
-class, warm-started (\code{ResetSolution()} zeroes the iterate between
+Flexible GMRES (restart 200; \code{SetBlockGMRES(false)} gives block
+MINRES) on the symmetric saddle system, serial and parallel in one class,
+warm-started (\code{ResetSolution()} zeroes the iterate between
 independent forcings, since the gauge refinement carries the previous
-solution's fluid-gauge component forward).
+solution's fluid-gauge component forward). The preconditioner is projected
+as in \S\ref{sec:mixed}.
+
+\paragraph{The preconditioner, through the Eulerian potential.}
+The referential increment of the potential and the Eulerian one are
+related by
+\[
+  \zeta^1 = \phi^1\circ\varphi_e + \vu\cdot\nabla_x\Phi_0,
+  \qquad \nabla_x\Phi_0 = F_e^{-T}\nabla\zeta^0 .
+\]
+In $(\vu,\zeta^1)$ the coupling of the two unknowns pairs first derivatives
+of each (\S\ref{sec:referential}); in $(\vu,\phi^1)$ it is the
+$\rho\,\nabla\phi\cdot\vu$ of the mixed class, of lower order. A block
+diagonal of the displacement block's AMG (Gauss--Seidel in serial) and the
+shifted \emph{mapped} Laplacian's is therefore a good preconditioner of the
+system in the second pair and a poorer one in the first. Let $G$ be the
+nodal map $\vu\mapsto\vu_{\mathrm{ext}}\cdot\nabla_x\Phi_0$ on the
+potential's nodes: the body's own, the buffer's through the prescribed
+vacuum extension, an eliminated fluid's through the potential glue, which
+is the same map there. With
+\[
+  S = \begin{pmatrix} I & 0\\ G & I\end{pmatrix},
+\]
+the system in $(\vu,\phi^1)$ is $S^TKS$ to discretisation error, and the
+class applies $S\,D^{-1}S^T$, $D$ the block diagonal
+(\code{SetEulerianPotentialPreconditioner}, on by default). It is
+symmetric. The operator and the solution are untouched.
+
+The displacement block of the Krylov operator carries the folds of the
+vacuum extension and of an eliminated fluid, which are several times the
+block itself in entries. The displacement preconditioner is built on the
+block without them (\code{SetPreconditionerOnFold} builds it with them).
+
+On stratified solid bodies and on a body with an eliminated fluid core,
+at orders 2 and 3, the two together take the iterations to those of the
+mixed class on the same body (about half the block diagonal's) and the
+time of a solve to between a third and a sixth, on a mapped body as at
+the identity.
 
 \paragraph{Rigid modes have no potential partners.} $\zeta = \Phi\circ
 \varphi$ is invariant under rigid motions of the body, so the null pairs are

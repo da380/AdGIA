@@ -40,7 +40,8 @@ namespace AdGIA {
  * Cost: a new operator version costs one solve per column, so when the
  * operator changes every few solves (implicit stepping whose dt changes),
  * a monolithic bordered solve is cheaper (the mixed class's
- * SetMonolithicBorder route: 3.3x on fluid_core h 0.3 exptrap).
+ * SetMonolithicBorder route: 3.3x on a body with a uniform fluid core,
+ * h 0.3, exponential-trapezoid stepping).
  */
 class BorderedElimination {
  public:

@@ -1,8 +1,7 @@
 """pyslfp's Maxwell load Love-number histories, as a V1 exchange file.
 
-The time-domain twin of `laplace_reference.py`: the same Heaviside unit
-load, stepped with pyslfp's own viscoelastic operator rather than
-inverted from the Laplace domain.  The stepping rule and the exchange
+The Heaviside unit load of `viscoelastic_love`, stepped with pyslfp's
+own viscoelastic operator.  The stepping rule and the exchange
 layout match sl3dpp's `love_histories` driver exactly — exponential
 trapezoid, equal steps between the love family's 13 geometric output
 times, at least `--steps` of them and none longer than `--dtmax` tau_min
@@ -37,7 +36,7 @@ from pyslfp.love_numbers import Material  # noqa: E402
 from pyslfp.viscoelastic import Rheology, ViscoelasticOperator  # noqa: E402
 
 #: The love family's 13 geometric output times, in units of tau_min,
-#: rounded to six decimals exactly as laplace_reference.py writes them.
+#: rounded to six decimals exactly as viscoelastic_love writes them.
 TIMES = [round(0.011 * 2.0 ** (5.0 * k / 6.0), 6) for k in range(13)]
 
 

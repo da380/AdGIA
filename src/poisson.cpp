@@ -195,7 +195,7 @@ void PoissonDtNOperator::Mult(const mfem::Vector& x, mfem::Vector& y) const {
 #ifdef MFEM_USE_MPI
   if (parallel_) {
     if (has_boundary_) {
-      MPI_Allreduce(MPI_IN_PLACE, c_.GetData(), coeff_dim_, MFEM_MPI_REAL_T,
+      MPI_Allreduce(MPI_IN_PLACE, c_.HostReadWrite(), coeff_dim_, MFEM_MPI_REAL_T,
                     MPI_SUM, bdr_comm_);
     }
   }
@@ -215,7 +215,7 @@ void PoissonDtNOperator::HarmonicCoefficients(const mfem::Vector& x,
 
 #ifdef MFEM_USE_MPI
   if (parallel_) {
-    MPI_Allreduce(MPI_IN_PLACE, y.GetData(), coeff_dim_, MFEM_MPI_REAL_T,
+    MPI_Allreduce(MPI_IN_PLACE, y.HostReadWrite(), coeff_dim_, MFEM_MPI_REAL_T,
                   MPI_SUM, comm_);
   }
 #endif
@@ -359,7 +359,7 @@ void PoissonMultipoleOperator::Mult(const mfem::Vector& x,
 
 #ifdef MFEM_USE_MPI
   if (parallel_) {
-    MPI_Allreduce(MPI_IN_PLACE, c_.GetData(), coeff_dim_, MFEM_MPI_REAL_T,
+    MPI_Allreduce(MPI_IN_PLACE, c_.HostReadWrite(), coeff_dim_, MFEM_MPI_REAL_T,
                   MPI_SUM, comm_);
   }
 #endif
@@ -380,7 +380,7 @@ void PoissonMultipoleOperator::MultTranspose(const mfem::Vector& x,
 
 #ifdef MFEM_USE_MPI
   if (parallel_) {
-    MPI_Allreduce(MPI_IN_PLACE, c_.GetData(), coeff_dim_, MFEM_MPI_REAL_T,
+    MPI_Allreduce(MPI_IN_PLACE, c_.HostReadWrite(), coeff_dim_, MFEM_MPI_REAL_T,
                   MPI_SUM, comm_);
   }
 #endif
@@ -591,7 +591,7 @@ void PoissonLinearisedMultipoleOperator::Mult(const mfem::Vector& x,
 
 #ifdef MFEM_USE_MPI
   if (parallel_) {
-    MPI_Allreduce(MPI_IN_PLACE, c_.GetData(), coeff_dim_, MFEM_MPI_REAL_T,
+    MPI_Allreduce(MPI_IN_PLACE, c_.HostReadWrite(), coeff_dim_, MFEM_MPI_REAL_T,
                   MPI_SUM, comm_);
   }
 #endif
@@ -612,7 +612,7 @@ void PoissonLinearisedMultipoleOperator::MultTranspose(const mfem::Vector& x,
 
 #ifdef MFEM_USE_MPI
   if (parallel_) {
-    MPI_Allreduce(MPI_IN_PLACE, c_.GetData(), coeff_dim_, MFEM_MPI_REAL_T,
+    MPI_Allreduce(MPI_IN_PLACE, c_.HostReadWrite(), coeff_dim_, MFEM_MPI_REAL_T,
                   MPI_SUM, comm_);
   }
 #endif

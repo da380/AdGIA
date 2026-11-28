@@ -9,6 +9,7 @@
 #include "AdGIA/referential_problem.hpp"
 
 #include <cmath>
+#include <functional>
 #include <numbers>
 
 #include "AdGIA/detail/fem_factory.hpp"
@@ -20,6 +21,30 @@ namespace AdGIA {
 using namespace mfem;
 
 namespace {
+
+// A solver made when it is first applied.
+class DeferredSolver : public Solver {
+ public:
+  DeferredSolver(int size, std::function<std::unique_ptr<Solver>()> make)
+      : Solver(size), make_(std::move(make)) {}
+
+  void SetOperator(const Operator&) override {
+    MFEM_ABORT("DeferredSolver: the operator is its maker's.");
+  }
+
+  void Mult(const Vector& x, Vector& y) const override {
+    if (!solver_) {
+      solver_ = make_();
+    }
+    solver_->iterative_mode = iterative_mode;
+    solver_->Mult(x, y);
+  }
+
+ private:
+  std::function<std::unique_ptr<Solver>()> make_;
+  mutable std::unique_ptr<Solver> solver_;
+};
+
 constexpr real_t kPi = std::numbers::pi_v<real_t>;
 
 /// Stiffness of the referential rheology: the total-Lagrangian split,
@@ -222,7 +247,7 @@ std::unique_ptr<mfem::SparseMatrix> NewRadialVacuumExtension(
   Array<int> elem;
   Array<IntegrationPoint> ips;
   if (pts.Width() > 0) {
-    body->FindPoints(pts, elem, ips);
+    LocatePoints(*body, pts, elem, ips);
     // Retry unfound projections deeper inside the body (the curved
     // discrete boundary can dip below the nominal radius); the interior
     // rule is a gauge choice, so the retreat costs nothing.
@@ -249,7 +274,7 @@ std::unique_ptr<mfem::SparseMatrix> NewRadialVacuumExtension(
       }
       Array<int> elem2;
       Array<IntegrationPoint> ips2;
-      body->FindPoints(retry, elem2, ips2);
+      LocatePoints(*body, retry, elem2, ips2);
       for (std::size_t j = 0; j < which.size(); j++) {
         if (elem2[j] >= 0) {
           elem[which[j]] = elem2[j];
@@ -412,7 +437,7 @@ std::unique_ptr<mfem::SparseMatrix> NewRadialFluidExtension(
   Array<int> elem;
   Array<IntegrationPoint> ips;
   if (pts.Width() > 0) {
-    solid->FindPoints(pts, elem, ips);
+    LocatePoints(*solid, pts, elem, ips);
     // Retry unfound projections deeper inside the solid (further out).
     for (real_t factor : {1.01, 1.03, 1.1}) {
       int missing = 0;
@@ -437,7 +462,7 @@ std::unique_ptr<mfem::SparseMatrix> NewRadialFluidExtension(
       }
       Array<int> elem2;
       Array<IntegrationPoint> ips2;
-      solid->FindPoints(retry, elem2, ips2);
+      LocatePoints(*solid, retry, elem2, ips2);
       for (std::size_t j = 0; j < which.size(); j++) {
         if (elem2[j] >= 0) {
           elem[which[j]] = elem2[j];
@@ -635,7 +660,7 @@ std::unique_ptr<mfem::HypreParMatrix> NewRadialFluidExtension(
     }
     Array<int> elem;
     Array<IntegrationPoint> ips;
-    solid_sub->Mesh::FindPoints(pts, elem, ips, false);
+    LocatePoints(*solid_sub, pts, elem, ips);
 
     std::vector<int> r_meta;
     std::vector<HYPRE_BigInt> r_cols;
@@ -977,7 +1002,7 @@ std::unique_ptr<mfem::HypreParMatrix> NewRadialVacuumExtension(
     }
     Array<int> elem;
     Array<IntegrationPoint> ips;
-    body_sub->Mesh::FindPoints(pts, elem, ips, false);
+    LocatePoints(*body_sub, pts, elem, ips);
 
     // Replies: (global point index, nsh) + global columns + values,
     // shared with every rank; the owner keeps the first reply per point.
@@ -1149,13 +1174,15 @@ LinearQuasiStaticReferentialSelfGravitatingProblem::LinearQuasiStaticReferential
     FiniteElementSpace* fes_u, FiniteElementSpace* fes_zeta,
     const ReferentialElasticRheology& rheology, Coefficient& density,
     real_t gravitational_constant, int dtn_degree,
-    Coefficient* background_zeta0, const std::vector<FluidRegion>& fluids)
+    Coefficient* background_zeta0, const std::vector<FluidRegion>& fluids,
+    const IntegrationRule* gravity_rule)
     : LinearQuasiStaticProblemBase(fes_u, rheology),
       dim_(fes_u->GetMesh()->Dimension()),
       fes_zeta_(fes_zeta),
       ref_rheology_(&rheology),
       rho_(&density),
       fluids_(fluids),
+      gravity_rule_(gravity_rule),
       G_(gravitational_constant),
       four_pi_G_(4.0 * kPi * gravitational_constant),
       dtn_degree_(dtn_degree),
@@ -1167,6 +1194,9 @@ LinearQuasiStaticReferentialSelfGravitatingProblem::LinearQuasiStaticReferential
       C_(Operator::MFEM_SPARSEMAT) {
   MFEM_VERIFY(G_ > 0.0,
               "LinearQuasiStaticReferentialSelfGravitatingProblem: G must be positive.");
+  MFEM_VERIFY(!gravity_rule_ || fluids_.empty(),
+              "LinearQuasiStaticReferentialSelfGravitatingProblem: one rule for "
+              "the gravity forms is not built with fluid regions.");
   // FGMRES for the block solve by default (SetBlockGMRES): 15-20% fewer
   // iterations than MINRES on stratified models in the relaxed regime.
   block_gmres_ = true;
@@ -1259,7 +1289,7 @@ LinearQuasiStaticReferentialSelfGravitatingProblem::LinearQuasiStaticReferential
     *zeta0_shadow_ = 0.0;
     *zeta_shadow_ = 0.0;
   }
-  grad_zeta0_shadow_ = std::make_unique<GradientGridFunctionCoefficient>(
+  grad_zeta0_shadow_ = std::make_unique<ElementGradientCoefficient>(
       ball_wide_ ? zeta0_.get() : zeta0_shadow_.get());
   Zeta_true_.SetSize(fes_zeta_->GetTrueVSize());
   Zeta_true_ = 0.0;
@@ -1342,25 +1372,15 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::MakeCompatible(
   B_zeta.Add(-mass / outer_length_, L_outer_);
 }
 
-void LinearQuasiStaticReferentialSelfGravitatingProblem::SetupPotentialOperators() {
+std::unique_ptr<Solver>
+LinearQuasiStaticReferentialSelfGravitatingProblem::MakePotentialPreconditioner() {
   Array<int> empty;
   auto& map = *ref_rheology_->EquilibriumMapping();
-
-  // K_a = <a_e grad zeta, grad chi> on the ball (the mapped Laplacian);
-  // A_zeta = (K_a + DtN) / 4 pi G.
-  k_zeta_form_ = detail::MakeBilinearForm(fes_zeta_);
-  k_zeta_form_->AddDomainIntegrator(new TransformedDiffusionIntegrator(map));
-  k_zeta_form_->Assemble();
-  k_zeta_form_->FormSystemMatrix(empty, K_zeta_);
   const real_t c = 1.0 / four_pi_G_;
-  A_zeta_op_ = std::make_unique<SumOperator>(K_zeta_.Ptr(), c, dtn_op_, c,
-                                             false, false);
-  A_zeta_ = A_zeta_op_.get();
-
-  // Preconditioner: the shifted mapped Laplacian (K_a + eps M) / 4 pi G.
+  std::unique_ptr<Solver> prec;
   shift_coef_.constant = shift_ / four_pi_G_;
   k_shift_form_ = detail::MakeBilinearForm(fes_zeta_);
-  auto* tdi = new TransformedDiffusionIntegrator(map);
+  auto* tdi = WithGravityRule(new TransformedDiffusionIntegrator(map));
   k_shift_form_->AddDomainIntegrator(tdi);
   k_shift_form_->AddDomainIntegrator(new MassIntegrator(shift_coef_));
   k_shift_form_->Assemble();
@@ -1374,14 +1394,37 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetupPotentialOperators
       auto amg =
           std::make_unique<HypreBoomerAMG>(*K_shift_.As<HypreParMatrix>());
       amg->SetPrintLevel(0);
-      prec_zeta_ = std::move(amg);
+      prec = std::move(amg);
     } else
 #endif
     {
       *K_shift_.As<SparseMatrix>() *= c;
-      prec_zeta_ = std::make_unique<GSSmoother>(*K_shift_.As<SparseMatrix>());
+      prec = std::make_unique<GSSmoother>(*K_shift_.As<SparseMatrix>());
     }
   }
+  return prec;
+}
+
+void LinearQuasiStaticReferentialSelfGravitatingProblem::SetupPotentialOperators() {
+  Array<int> empty;
+  auto& map = *ref_rheology_->EquilibriumMapping();
+
+  // K_a = <a_e grad zeta, grad chi> on the ball (the mapped Laplacian);
+  // A_zeta = (K_a + DtN) / 4 pi G.
+  k_zeta_form_ = detail::MakeBilinearForm(fes_zeta_);
+  k_zeta_form_->AddDomainIntegrator(WithGravityRule(new TransformedDiffusionIntegrator(map)));
+  k_zeta_form_->Assemble();
+  k_zeta_form_->FormSystemMatrix(empty, K_zeta_);
+  const real_t c = 1.0 / four_pi_G_;
+  A_zeta_op_ = std::make_unique<SumOperator>(K_zeta_.Ptr(), c, dtn_op_, c,
+                                             false, false);
+  A_zeta_ = A_zeta_op_.get();
+
+  // Preconditioner: the shifted mapped Laplacian (K_a + eps M) / 4 pi G,
+  // made when it is first applied: a problem that is not solved (one
+  // made for its operator's action) does not pay for it.
+  prec_zeta_ = std::make_unique<DeferredSolver>(
+      fes_zeta_->GetTrueVSize(), [this]() { return MakePotentialPreconditioner(); });
 
   // CG on A_zeta for the background solve; in 2-D the constant is
   // projected from both sides.
@@ -1485,8 +1528,8 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetupCoupling() {
 #ifdef MFEM_USE_MPI
     if (pfes_zeta_) {
       auto form = std::make_unique<ParMixedBilinearForm>(pfes_zeta_, pfes_);
-      form->AddDomainIntegrator(new ReferentialGravityCouplingIntegrator(
-          map, *grad_zeta0_shadow_, c));
+      form->AddDomainIntegrator(WithGravityRule(new ReferentialGravityCouplingIntegrator(
+          map, *grad_zeta0_shadow_, c)));
       form->Assemble();
       form->Finalize();
       form->FormRectangularSystemMatrix(empty, empty, C_);
@@ -1496,8 +1539,8 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetupCoupling() {
 #endif
     {
       auto form = std::make_unique<MixedBilinearForm>(fes_zeta_, fes_);
-      form->AddDomainIntegrator(new ReferentialGravityCouplingIntegrator(
-          map, *grad_zeta0_shadow_, c));
+      form->AddDomainIntegrator(WithGravityRule(new ReferentialGravityCouplingIntegrator(
+          map, *grad_zeta0_shadow_, c)));
       form->Assemble();
       form->Finalize();
       form->FormRectangularSystemMatrix(empty, empty, C_);
@@ -1511,8 +1554,8 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetupCoupling() {
 #ifdef MFEM_USE_MPI
   if (pfes_zeta_) {
     auto form = std::make_unique<ParSubMeshMixedBilinearForm>(pfes_zeta_, pfes_);
-    form->AddDomainIntegrator(new ReferentialGravityCouplingIntegrator(
-        map, *grad_zeta0_shadow_, c));
+    form->AddDomainIntegrator(WithGravityRule(new ReferentialGravityCouplingIntegrator(
+        map, *grad_zeta0_shadow_, c)));
     form->Assemble();
     form->FormRectangularSystemMatrix(empty, empty, C_);
     c_form_ = std::move(form);
@@ -1521,8 +1564,8 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetupCoupling() {
 #endif
   {
     auto form = std::make_unique<SubMeshMixedBilinearForm>(fes_zeta_, fes_);
-    form->AddDomainIntegrator(new ReferentialGravityCouplingIntegrator(
-        map, *grad_zeta0_shadow_, c));
+    form->AddDomainIntegrator(WithGravityRule(new ReferentialGravityCouplingIntegrator(
+        map, *grad_zeta0_shadow_, c)));
     form->Assemble();
     form->FormRectangularSystemMatrix(empty, empty, C_);
     c_form_ = std::move(form);
@@ -1534,8 +1577,8 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetupCoupling() {
 
 void LinearQuasiStaticReferentialSelfGravitatingProblem::SetupGravityIntegrators() {
   auto& map = *ref_rheology_->EquilibriumMapping();
-  StiffnessIntegrators().AddDomainIntegrator(new ReferentialGravityIntegrator(
-      map, *grad_zeta0_shadow_, 1.0 / (2.0 * four_pi_G_)));
+  StiffnessIntegrators().AddDomainIntegrator(WithGravityRule(new ReferentialGravityIntegrator(
+      map, *grad_zeta0_shadow_, 1.0 / (2.0 * four_pi_G_))));
 }
 
 void LinearQuasiStaticReferentialSelfGravitatingProblem::SetupRigidModes() {
@@ -1944,6 +1987,142 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::BuildRotationCrossData(
   }
 }
 
+namespace {
+
+// The spatial gradient of the background potential at a point of the
+// reference body, F_e^{-T} grad zeta0, with F_e the gradient of the
+// equilibrium mapping.
+class SpatialGradientCoefficient : public VectorCoefficient {
+ public:
+  SpatialGradientCoefficient(Diffeomorphism& map, VectorCoefficient& grad)
+      : VectorCoefficient(grad.GetVDim()), map_(&map), grad_(&grad) {}
+
+  void Eval(Vector& V, ElementTransformation& T,
+            const IntegrationPoint& ip) override {
+    grad_->Eval(g_, T, ip);
+    V.SetSize(vdim);
+    if (map_->IsIdentity()) {
+      V = g_;
+      return;
+    }
+    map_->EvalGradient(F_, T, ip);
+    F_.Transpose();
+    DenseMatrixInverse inverse(F_);
+    inverse.Mult(g_, V);
+  }
+
+ private:
+  Diffeomorphism* map_;
+  VectorCoefficient* grad_;
+  Vector g_;
+  DenseMatrix F_;
+};
+
+// Interpolates the scalar u . g at the nodes of the range element from a
+// vector field u of the domain element.
+class VectorDotInterpolator : public DiscreteInterpolator {
+ public:
+  explicit VectorDotInterpolator(VectorCoefficient& g) : g_(&g) {}
+
+  void AssembleElementMatrix2(const FiniteElement& dom_fe,
+                              const FiniteElement& ran_fe,
+                              ElementTransformation& Trans,
+                              DenseMatrix& elmat) override {
+    const int nd = dom_fe.GetDof(), nr = ran_fe.GetDof();
+    const int dim = g_->GetVDim();
+    elmat.SetSize(nr, nd * dim);
+    shape_.SetSize(nd);
+    const IntegrationRule& nodes = ran_fe.GetNodes();
+    for (int i = 0; i < nr; i++) {
+      const IntegrationPoint& ip = nodes.IntPoint(i);
+      Trans.SetIntPoint(&ip);
+      dom_fe.CalcShape(ip, shape_);
+      g_->Eval(gv_, Trans, ip);
+      for (int k = 0; k < dim; k++) {
+        for (int j = 0; j < nd; j++) {
+          elmat(i, j + k * nd) = shape_[j] * gv_[k];
+        }
+      }
+    }
+  }
+
+ private:
+  VectorCoefficient* g_;
+  Vector shape_, gv_;
+};
+
+// The nodal map u -> u . g of the change of variables to the Eulerian
+// potential, from the displacement space `dom` to the scalar space `ran`
+// on the same mesh (range vdofs by domain vdofs). The gradient `g` is
+// discontinuous across elements; it is averaged at the nodes of a
+// vector space on `ran`'s collection first, so that the map does not
+// depend on the order in which the elements are met.
+std::unique_ptr<SparseMatrix> NewNodalDotMatrix(FiniteElementSpace& dom,
+                                                FiniteElementSpace& ran,
+                                                VectorCoefficient& g) {
+  FiniteElementSpace gspace(ran.GetMesh(), ran.FEColl(), dom.GetVDim());
+  GridFunction g_nodal(&gspace);
+  g_nodal.ProjectDiscCoefficient(g, GridFunction::ARITHMETIC);
+  VectorGridFunctionCoefficient g_c(&g_nodal);
+  DiscreteLinearOperator dot(&dom, &ran);
+  dot.AddDomainInterpolator(new VectorDotInterpolator(g_c));
+  dot.Assemble();
+  dot.Finalize();
+  return std::unique_ptr<SparseMatrix>(dot.LoseMat());
+}
+
+#ifdef MFEM_USE_MPI
+// Parallel overload: range true dofs by domain true dofs.
+std::unique_ptr<HypreParMatrix> NewNodalDotMatrix(ParFiniteElementSpace& dom,
+                                                  ParFiniteElementSpace& ran,
+                                                  VectorCoefficient& g) {
+  ParFiniteElementSpace gspace(ran.GetParMesh(), ran.FEColl(), dom.GetVDim());
+  ParGridFunction g_nodal(&gspace);
+  g_nodal.ProjectDiscCoefficient(g, GridFunction::ARITHMETIC);
+  VectorGridFunctionCoefficient g_c(&g_nodal);
+  ParDiscreteLinearOperator dot(&dom, &ran);
+  dot.AddDomainInterpolator(new VectorDotInterpolator(g_c));
+  dot.Assemble();
+  dot.Finalize();
+  return std::unique_ptr<HypreParMatrix>(dot.ParallelAssemble());
+}
+#endif
+
+// The block preconditioner of the referential system taken through the
+// change of variables to the Eulerian potential, zeta = phi + G u: with
+// S = [I 0; G I] the system in (u, phi) is S^T K S, to which the block
+// diagonal `inner` is the better preconditioner (the coupling of u to
+// phi is of lower order than that of u to zeta), so that S inner S^T is
+// applied to the system in (u, zeta).
+class PotentialChangeOfVariablesSolver : public Solver {
+ public:
+  PotentialChangeOfVariablesSolver(const Operator& G, Solver& inner,
+                                   const Array<int>& offsets)
+      : Solver(offsets.Last()), G_(&G), inner_(&inner), offsets_(&offsets),
+        t_(offsets), z_(offsets) {}
+
+  void SetOperator(const Operator&) override {}
+
+  void Mult(const Vector& x, Vector& y) const override {
+    static_cast<Vector&>(t_) = x;
+    const BlockVector xb(const_cast<Vector&>(x), *offsets_);
+    G_->AddMultTranspose(xb.GetBlock(1), t_.GetBlock(0));
+    z_ = 0.0;
+    inner_->Mult(t_, z_);
+    y = static_cast<const Vector&>(z_);
+    BlockVector yb(y, *offsets_);
+    G_->AddMult(z_.GetBlock(0), yb.GetBlock(1));
+  }
+
+ private:
+  const Operator* G_;
+  Solver* inner_;
+  const Array<int>* offsets_;
+  mutable BlockVector t_, z_;
+};
+
+}  // namespace
+
 void LinearQuasiStaticReferentialSelfGravitatingProblem::SetPrescribedVacuumExtension(
     FiniteElementSpace& fes_buffer, const SparseMatrix& E) {
   MFEM_VERIFY(!ball_wide_,
@@ -1955,7 +2134,7 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetPrescribedVacuumExte
                   E.Width() == fes_->GetVSize(),
               "SetPrescribedVacuumExtension: E must map body vdofs to "
               "buffer vdofs.");
-  MFEM_VERIFY(!ext_EtGE_, "SetPrescribedVacuumExtension: already set.");
+  MFEM_VERIFY(!ext_set_, "SetPrescribedVacuumExtension: already set.");
 
   auto& map = *ref_rheology_->EquilibriumMapping();
   auto* buffer_sub = dynamic_cast<SubMesh*>(fes_buffer.GetMesh());
@@ -1970,28 +2149,43 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetPrescribedVacuumExte
   zeta0_buffer_ = detail::MakeGridFunction(shadow_zeta_buffer_.get());
   inj.MultTranspose(*zeta0_, *zeta0_buffer_);
   grad_zeta0_buffer_ =
-      std::make_unique<GradientGridFunctionCoefficient>(zeta0_buffer_.get());
+      std::make_unique<ElementGradientCoefficient>(zeta0_buffer_.get());
 
-  // The buffer's gravity-gravity block, folded: E^T G_V E.
-  BilinearForm g_form(&fes_buffer);
-  g_form.AddDomainIntegrator(new ReferentialGravityIntegrator(
-      map, *grad_zeta0_buffer_, 1.0 / (2.0 * four_pi_G_)));
-  g_form.Assemble();
-  g_form.Finalize();
-  std::unique_ptr<SparseMatrix> Et(Transpose(E));
-  std::unique_ptr<SparseMatrix> GE(mfem::Mult(g_form.SpMat(), E));
-  ext_EtGE_.reset(mfem::Mult(*Et, *GE));
+  // The buffer's gravity-gravity block G_V, folded as E^T G_V E, is
+  // assembled when the solver is set up (AssembleExtensionGravity).
+  ext_buffer_fes_ = &fes_buffer;
+  ext_E_ = std::make_unique<SparseMatrix>(E);
+  ext_set_ = true;
 
-  // The buffer's coupling, folded onto the body rows: C_total = C + E^T C_V.
+  // The buffer's coupling, folded onto the body rows, C + E^T C_V, as
+  // its factors: the matrix is assembled only where one is asked of it
+  // (AssembleExtensionFold).
   SubMeshMixedBilinearForm c_form(fes_zeta_, &fes_buffer);
-  c_form.AddDomainIntegrator(new ReferentialGravityCouplingIntegrator(
-      map, *grad_zeta0_buffer_, 1.0 / four_pi_G_));
+  c_form.AddDomainIntegrator(WithGravityRule(new ReferentialGravityCouplingIntegrator(
+      map, *grad_zeta0_buffer_, 1.0 / four_pi_G_)));
   c_form.Assemble();
-  std::unique_ptr<SparseMatrix> EtCv(mfem::Mult(*Et, c_form.SpMat()));
-  ext_C_total_.reset(Add(*C_.As<SparseMatrix>(), *EtCv));
-  ext_Ct_total_.reset(Transpose(*ext_C_total_));
-  C_op_ = ext_C_total_.get();
-  Ct_op_ = ext_Ct_total_.get();
+  ext_Cv_ = std::make_unique<SparseMatrix>(c_form.SpMat());
+  ext_C_ops_.clear();
+  auto keep = [this](Operator* op) {
+    ext_C_ops_.emplace_back(op);
+    return op;
+  };
+  auto* Et = keep(new TransposeOperator(*ext_E_));
+  auto* EtCv = keep(new ProductOperator(Et, ext_Cv_.get(), false, false));
+  C_op_ = keep(new SumOperator(C_.Ptr(), 1.0, EtCv, 1.0, false, false));
+  auto* Cvt = keep(new TransposeOperator(*ext_Cv_));
+  auto* CvtE = keep(new ProductOperator(Cvt, ext_E_.get(), false, false));
+  Ct_op_ = keep(new SumOperator(Ct_owned_.get(), 1.0, CvtE, 1.0, false, false));
+
+  // The buffer's rows of the nodal map of the Eulerian-potential
+  // preconditioner: u -> (E u) . grad_x zeta0 at the buffer's nodes.
+  {
+    SpatialGradientCoefficient gx(map, *grad_zeta0_buffer_);
+    auto dot = NewNodalDotMatrix(fes_buffer, *shadow_zeta_buffer_, gx);
+    std::unique_ptr<SparseMatrix> dotE(mfem::Mult(*dot, E));
+    cov_G_buffer_ = inj.RemapRows(*dotE);
+    cov_G_.reset();
+  }
   MarkOperatorDirty();
 }
 
@@ -2001,7 +2195,7 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetPrescribedVacuumExte
   MFEM_VERIFY(!ball_wide_ && ParallelPotential(),
               "SetPrescribedVacuumExtension(par): parallel SubMesh mode "
               "only.");
-  MFEM_VERIFY(!pext_EtGE_, "SetPrescribedVacuumExtension: already set.");
+  MFEM_VERIFY(!ext_set_, "SetPrescribedVacuumExtension: already set.");
   auto& map = *ref_rheology_->EquilibriumMapping();
   auto* buffer_sub = dynamic_cast<ParSubMesh*>(fes_buffer.GetParMesh());
   MFEM_VERIFY(buffer_sub &&
@@ -2015,33 +2209,50 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetPrescribedVacuumExte
   zeta0_buffer_ = detail::MakeGridFunction(shadow_zeta_buffer_.get());
   inj.MultTranspose(*zeta0_, *zeta0_buffer_);
   grad_zeta0_buffer_ =
-      std::make_unique<GradientGridFunctionCoefficient>(zeta0_buffer_.get());
+      std::make_unique<ElementGradientCoefficient>(zeta0_buffer_.get());
 
-  ParBilinearForm g_form(&fes_buffer);
-  g_form.AddDomainIntegrator(new ReferentialGravityIntegrator(
-      map, *grad_zeta0_buffer_, 1.0 / (2.0 * four_pi_G_)));
-  g_form.Assemble();
-  g_form.Finalize();
-  OperatorHandle Gv(Operator::Hypre_ParCSR);
-  Array<int> empty;
-  g_form.FormSystemMatrix(empty, Gv);
-  pext_EtGE_.reset(
-      mfem::RAP(Gv.As<HypreParMatrix>(), const_cast<HypreParMatrix*>(&E)));
+  // The buffer's gravity-gravity block G_V is assembled when the solver
+  // is set up (AssembleExtensionGravity).
+  pext_buffer_fes_ = &fes_buffer;
+  const auto* P_buffer = fes_buffer.GetProlongationMatrix();
+  pext_E_ = std::make_unique<HypreParMatrix>(E);
+  ext_set_ = true;
 
   ParSubMeshMixedBilinearForm c_form(pfes_zeta_, &fes_buffer);
-  c_form.AddDomainIntegrator(new ReferentialGravityCouplingIntegrator(
-      map, *grad_zeta0_buffer_, 1.0 / four_pi_G_));
+  c_form.AddDomainIntegrator(WithGravityRule(new ReferentialGravityCouplingIntegrator(
+      map, *grad_zeta0_buffer_, 1.0 / four_pi_G_)));
   c_form.Assemble();
-  OperatorHandle Cv(Operator::Hypre_ParCSR);
-  c_form.FormRectangularSystemMatrix(empty, empty, Cv);
-  std::unique_ptr<HypreParMatrix> Et(
-      const_cast<HypreParMatrix&>(E).Transpose());
-  std::unique_ptr<HypreParMatrix> EtCv(
-      ParMult(Et.get(), Cv.As<HypreParMatrix>()));
-  pext_C_total_.reset(ParAdd(C_.As<HypreParMatrix>(), EtCv.get()));
-  pext_Ct_total_.reset(pext_C_total_->Transpose());
-  C_op_ = pext_C_total_.get();
-  Ct_op_ = pext_Ct_total_.get();
+  c_form.Finalize();
+  // The coupling with the buffer's folded onto the body's rows,
+  // C + E^T C_V, likewise as its factors.
+  pext_Cv_local_.reset(c_form.LoseMat());
+  ext_C_ops_.clear();
+  auto keep = [this](Operator* op) {
+    ext_C_ops_.emplace_back(op);
+    return op;
+  };
+  auto* Cv = keep(new RAPOperator(*P_buffer, *pext_Cv_local_,
+                                  *pfes_zeta_->GetProlongationMatrix()));
+  auto* Et = keep(new TransposeOperator(*pext_E_));
+  auto* EtCv = keep(new ProductOperator(Et, Cv, false, false));
+  C_op_ = keep(new SumOperator(C_.Ptr(), 1.0, EtCv, 1.0, false, false));
+  auto* Cvt = keep(new TransposeOperator(Cv));
+  auto* CvtE = keep(new ProductOperator(Cvt, pext_E_.get(), false, false));
+  Ct_op_ = keep(new SumOperator(Ct_owned_.get(), 1.0, CvtE, 1.0, false, false));
+
+  // The buffer's rows of the nodal map of the Eulerian-potential
+  // preconditioner, as in serial.
+  {
+    auto* shadow_p =
+        static_cast<ParFiniteElementSpace*>(shadow_zeta_buffer_.get());
+    SpatialGradientCoefficient gx(map, *grad_zeta0_buffer_);
+    auto dot = NewNodalDotMatrix(fes_buffer, *shadow_p, gx);
+    std::unique_ptr<HypreParMatrix> dotE(
+        ParMult(dot.get(), const_cast<HypreParMatrix*>(&E)));
+    auto Pi = inj.NewTrueDofMatrix();
+    pcov_G_buffer_.reset(ParMult(Pi.get(), dotE.get()));
+    pcov_G_.reset();
+  }
   MarkOperatorDirty();
 }
 #endif
@@ -2078,6 +2289,7 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetFluidPotentialGlue(
               "SetFluidPotentialGlue: exactly one fluid region (the radial "
               "fluid extension is one-sided).");
   MFEM_VERIFY(!glue_set_, "SetFluidPotentialGlue: already set.");
+  AssembleExtensionFold();
   MFEM_VERIFY(ext_EtGE_ != nullptr,
               "SetFluidPotentialGlue: call SetPrescribedVacuumExtension "
               "first (the folds compose onto it).");
@@ -2134,6 +2346,7 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetFluidPotentialGlue(
     S_L.Finalize();
     std::unique_ptr<SparseMatrix> SLE(mfem::Mult(S_L, E));
     glue_S_ = inj_f.RemapRows(*SLE);
+    cov_G_.reset();
   }
 
   // The Eulerian fluid blocks, exactly as the mixed class assembles
@@ -2142,6 +2355,14 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetFluidPotentialGlue(
   Array<int> empty;
   Array<int>& marker = fluid_markers_.front();
   Coefficient* rho_prime = f.density_gradient;
+  if (!rho_prime && f.stratification && f.bulk_modulus) {
+    // The region declares its stratification: the gradient follows from
+    // it, with no derivative taken on the mesh.
+    auto rp = std::make_unique<DeclaredDensityGradientCoefficient>(
+        *f.density, *f.bulk_modulus, *f.stratification);
+    rho_prime = rp.get();
+    fluid_coefs_.push_back(std::move(rp));
+  }
   if (!rho_prime) {
     l2_fec_ = std::make_unique<L2_FECollection>(
         fes_zeta_->GetMaxElementOrder(), dim_);
@@ -2162,7 +2383,7 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetFluidPotentialGlue(
 
   BilinearForm k_f_form(fes_zeta_);
   k_f_form.AddDomainIntegrator(
-      new TransformedDiffusionIntegrator(*ref_rheology_->EquilibriumMapping()),
+      WithGravityRule(new TransformedDiffusionIntegrator(*ref_rheology_->EquilibriumMapping())),
       marker);
   k_f_form.Assemble();
   k_f_form.Finalize();
@@ -2199,8 +2420,8 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetFluidPotentialGlue(
   std::unique_ptr<SparseMatrix> Xc(Add(1.0, C_F, -1.0, *StAF));
   ext_C_total_.reset(Add(*ext_C_total_, *Xc));
 
-  // The gravity half of the wall seam (hybrid_wall_seam.md, "Assembly
-  // map"): W3 the symmetrised gravity kernel +1/2(G_A + G_A^T) into the
+  // The gravity half of the wall seam (doc/theory/dahlen_closure.tex,
+  // "The wall seam"): W3 the symmetrised gravity kernel +1/2(G_A + G_A^T) into the
   // uu fold, W4 the scalar gravity kernel B_s into the coupling and,
   // conjugated through the glue's wall rows, -1/2(B_s S + S^T B_s^T)
   // into the uu fold. The seam uses only the wall trace of S, so it is
@@ -2250,6 +2471,7 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetFluidPotentialGlue(
               "SetFluidPotentialGlue: exactly one fluid region (the radial "
               "fluid extension is one-sided).");
   MFEM_VERIFY(!glue_set_, "SetFluidPotentialGlue: already set.");
+  AssembleExtensionFold();
   MFEM_VERIFY(pext_EtGE_ != nullptr,
               "SetFluidPotentialGlue: call SetPrescribedVacuumExtension "
               "first (the folds compose onto it).");
@@ -2324,6 +2546,7 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetFluidPotentialGlue(
     std::unique_ptr<HypreParMatrix> DgE(
         ParMult(&D_g, const_cast<HypreParMatrix*>(&E)));
     pglue_S_.reset(ParMult(Pi.get(), DgE.get()));
+    pcov_G_.reset();
   }
 
   // The Eulerian fluid blocks, exactly as the mixed class assembles
@@ -2332,6 +2555,14 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetFluidPotentialGlue(
   Array<int> empty;
   Array<int>& marker = fluid_markers_.front();
   Coefficient* rho_prime = f.density_gradient;
+  if (!rho_prime && f.stratification && f.bulk_modulus) {
+    // The region declares its stratification: the gradient follows from
+    // it, with no derivative taken on the mesh.
+    auto rp = std::make_unique<DeclaredDensityGradientCoefficient>(
+        *f.density, *f.bulk_modulus, *f.stratification);
+    rho_prime = rp.get();
+    fluid_coefs_.push_back(std::move(rp));
+  }
   if (!rho_prime) {
     l2_fec_ = std::make_unique<L2_FECollection>(
         fes_zeta_->GetMaxElementOrder(), dim_);
@@ -2352,7 +2583,7 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetFluidPotentialGlue(
 
   ParBilinearForm k_f_form(pfes_zeta_);
   k_f_form.AddDomainIntegrator(
-      new TransformedDiffusionIntegrator(*ref_rheology_->EquilibriumMapping()),
+      WithGravityRule(new TransformedDiffusionIntegrator(*ref_rheology_->EquilibriumMapping())),
       marker);
   k_f_form.Assemble();
   k_f_form.Finalize();
@@ -2690,6 +2921,14 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::AssembleForce(real_t t)
   }
 }
 
+void LinearQuasiStaticReferentialSelfGravitatingProblem::AddPotentialForce(
+    const Vector& f) {
+  MFEM_VERIFY(f.Size() == B_zeta_.Size(),
+              "AddPotentialForce: a vector on the potential's true dofs.");
+  B_zeta_ += f;
+  MakeCompatible(B_zeta_);
+}
+
 void LinearQuasiStaticReferentialSelfGravitatingProblem::RegisterFields(DataCollection& dc) {
   LinearQuasiStaticProblemBase::RegisterFields(dc);
   dc.RegisterField("potential",
@@ -2726,6 +2965,167 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::OnFlavorRelease(
   }
 }
 
+void LinearQuasiStaticReferentialSelfGravitatingProblem::AssembleExtensionGravity() {
+  if (!ext_set_) {
+    return;
+  }
+  auto& map = *ref_rheology_->EquilibriumMapping();
+#ifdef MFEM_USE_MPI
+  if (pext_E_) {
+    if (pext_Gv_local_) {
+      return;
+    }
+    // G_V as the rank's own matrix between the buffer space's
+    // prolongation and its transpose.
+    ParBilinearForm g_form(pext_buffer_fes_);
+    g_form.AddDomainIntegrator(
+        WithGravityRule(new ReferentialGravityIntegrator(
+            map, *grad_zeta0_buffer_, 1.0 / (2.0 * four_pi_G_))));
+    g_form.Assemble();
+    g_form.Finalize();
+    pext_Gv_local_.reset(g_form.LoseMat());
+    const auto* P_buffer = pext_buffer_fes_->GetProlongationMatrix();
+    pext_Gv_op_ = std::make_unique<RAPOperator>(*P_buffer, *pext_Gv_local_,
+                                                *P_buffer);
+    return;
+  }
+#endif
+  if (ext_Gv_) {
+    return;
+  }
+  BilinearForm g_form(ext_buffer_fes_);
+  g_form.AddDomainIntegrator(WithGravityRule(new ReferentialGravityIntegrator(
+      map, *grad_zeta0_buffer_, 1.0 / (2.0 * four_pi_G_))));
+  g_form.Assemble();
+  g_form.Finalize();
+  ext_Gv_ = std::make_unique<SparseMatrix>(g_form.SpMat());
+}
+
+void LinearQuasiStaticReferentialSelfGravitatingProblem::AssembleExtensionFold() {
+  if (!ext_set_) {
+    return;
+  }
+  AssembleExtensionGravity();
+#ifdef MFEM_USE_MPI
+  if (pext_E_) {
+    auto* buffer = pext_buffer_fes_;
+    if (!pext_EtGE_) {
+      HypreParMatrix local(buffer->GetComm(), buffer->GlobalVSize(),
+                           buffer->GetDofOffsets(), pext_Gv_local_.get());
+      std::unique_ptr<HypreParMatrix> Gv(
+          mfem::RAP(&local, buffer->Dof_TrueDof_Matrix()));
+      pext_EtGE_.reset(mfem::RAP(Gv.get(), pext_E_.get()));
+    }
+    if (!pext_C_total_) {
+      HypreParMatrix local(buffer->GetComm(), buffer->GlobalVSize(),
+                           pfes_zeta_->GlobalVSize(), buffer->GetDofOffsets(),
+                           pfes_zeta_->GetDofOffsets(), pext_Cv_local_.get());
+      std::unique_ptr<HypreParMatrix> Cv(
+          mfem::RAP(buffer->Dof_TrueDof_Matrix(), &local,
+                    pfes_zeta_->Dof_TrueDof_Matrix()));
+      std::unique_ptr<HypreParMatrix> Et(pext_E_->Transpose());
+      std::unique_ptr<HypreParMatrix> EtCv(ParMult(Et.get(), Cv.get()));
+      pext_C_total_.reset(ParAdd(C_.As<HypreParMatrix>(), EtCv.get()));
+      pext_Ct_total_.reset(pext_C_total_->Transpose());
+      C_op_ = pext_C_total_.get();
+      Ct_op_ = pext_Ct_total_.get();
+    }
+    return;
+  }
+#endif
+  std::unique_ptr<SparseMatrix> Et(Transpose(*ext_E_));
+  if (!ext_EtGE_) {
+    std::unique_ptr<SparseMatrix> GE(mfem::Mult(*ext_Gv_, *ext_E_));
+    ext_EtGE_.reset(mfem::Mult(*Et, *GE));
+  }
+  if (!ext_C_total_) {
+    std::unique_ptr<SparseMatrix> EtCv(mfem::Mult(*Et, *ext_Cv_));
+    ext_C_total_.reset(Add(*C_.As<SparseMatrix>(), *EtCv));
+    ext_Ct_total_.reset(Transpose(*ext_C_total_));
+    C_op_ = ext_C_total_.get();
+    Ct_op_ = ext_Ct_total_.get();
+  }
+}
+
+void LinearQuasiStaticReferentialSelfGravitatingProblem::
+    SetEulerianPotentialPreconditioner(bool on) {
+  eulerian_prec_ = on;
+  MarkOperatorDirty();
+}
+
+void LinearQuasiStaticReferentialSelfGravitatingProblem::SetPreconditionerOnFold(
+    bool on) {
+  prec_on_fold_ = on;
+  prec_stale_ = true;
+  MarkOperatorDirty();
+}
+
+const Operator&
+LinearQuasiStaticReferentialSelfGravitatingProblem::PotentialChangeOfVariables() {
+  auto& map = *ref_rheology_->EquilibriumMapping();
+#ifdef MFEM_USE_MPI
+  if (pfes_) {
+    if (pcov_G_) {
+      return *pcov_G_;
+    }
+    if (ball_wide_) {
+      GradientGridFunctionCoefficient grad0(zeta0_.get());
+      SpatialGradientCoefficient gx(map, grad0);
+      pcov_G_ = NewNodalDotMatrix(*pfes_, *pfes_zeta_, gx);
+      return *pcov_G_;
+    }
+    auto* shadow_p = static_cast<ParFiniteElementSpace*>(shadow_zeta_.get());
+    SpatialGradientCoefficient gx(map, *grad_zeta0_shadow_);
+    auto dot = NewNodalDotMatrix(*pfes_, *shadow_p, gx);
+    auto Pi = injection_->NewTrueDofMatrix();
+    pcov_G_.reset(ParMult(Pi.get(), dot.get()));
+    // The buffer's and an eliminated fluid's rows, off the nodes they
+    // share with the body, which take the body's.
+    Vector ones(Pi->Width()), off_body(Pi->Height());
+    ones = 1.0;
+    Pi->Mult(ones, off_body);
+    for (int i = 0; i < off_body.Size(); i++) {
+      off_body[i] = off_body[i] != 0.0 ? 0.0 : 1.0;
+    }
+    for (const HypreParMatrix* part : {pcov_G_buffer_.get(), pglue_S_.get()}) {
+      if (part) {
+        HypreParMatrix rows(*part);
+        rows.ScaleRows(off_body);
+        pcov_G_.reset(ParAdd(pcov_G_.get(), &rows));
+      }
+    }
+    return *pcov_G_;
+  }
+#endif
+  if (cov_G_) {
+    return *cov_G_;
+  }
+  if (ball_wide_) {
+    GradientGridFunctionCoefficient grad0(zeta0_.get());
+    SpatialGradientCoefficient gx(map, grad0);
+    cov_G_ = NewNodalDotMatrix(*fes_, *fes_zeta_, gx);
+    return *cov_G_;
+  }
+  SpatialGradientCoefficient gx(map, *grad_zeta0_shadow_);
+  auto dot = NewNodalDotMatrix(*fes_, *shadow_zeta_, gx);
+  cov_G_ = injection_->RemapRows(*dot);
+  Vector ones(shadow_zeta_->GetVSize()), on_body(fes_zeta_->GetVSize());
+  ones = 1.0;
+  injection_->Mult(ones, on_body);
+  for (const SparseMatrix* part : {cov_G_buffer_.get(), glue_S_.get()}) {
+    if (part) {
+      SparseMatrix rows(*part);
+      for (int i = 0; i < on_body.Size(); i++) {
+        if (on_body[i] != 0.0) {
+          rows.ScaleRow(i, 0.0);
+        }
+      }
+      cov_G_.reset(Add(*cov_G_, rows));
+    }
+  }
+  return *cov_G_;
+}
+
 void LinearQuasiStaticReferentialSelfGravitatingProblem::SetupSolver(OperatorHandle& A) {
   // A fluid region without the potential glue would silently drop the
   // fluid's response: refuse (doc/theory/dahlen_closure.tex, "Implementation",
@@ -2746,7 +3146,44 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetupSolver(OperatorHan
   // next preconditioner rebuild (cf. the base class's capture of the
   // unfolded matrix in AssembleOperator).
   const int setups_before = prec_setups_;
-  if ((ext_EtGE_
+  // The fold of the vacuum extension enters the Krylov operator as the
+  // product of its factors, E^T G_V E, where nothing asks for it as a
+  // matrix: it is several times the displacement block in entries, and
+  // its assembly several times the block's. A matrix is wanted by a
+  // preconditioner built on the fold, by the solid-everywhere
+  // preconditioner mode, and by the eliminated fluid's glue, which adds
+  // to it.
+  const bool fold_as_operator =
+      ext_set_ && !prec_on_fold_ && !prec_only && !glue_set_ &&
+      !ext_EtGE_
+#ifdef MFEM_USE_MPI
+      && !pext_EtGE_
+#endif
+      ;
+  ext_fold_op_.reset();
+  A_fold_op_.reset();
+  if (fold_as_operator) {
+    A_aug_.Clear();
+    SetupDefaultPreconditioner(A);
+    AssembleExtensionGravity();
+#ifdef MFEM_USE_MPI
+    if (pext_E_) {
+      ext_fold_op_ =
+          std::make_unique<RAPOperator>(*pext_E_, *pext_Gv_op_, *pext_E_);
+    } else
+#endif
+    {
+      ext_fold_op_ = std::make_unique<RAPOperator>(*ext_E_, *ext_Gv_, *ext_E_);
+    }
+    A_fold_op_ = std::make_unique<SumOperator>(A.Ptr(), 1.0,
+                                               ext_fold_op_.get(), 1.0, false,
+                                               false);
+    A_uu = A_fold_op_.get();
+  } else if (ext_set_) {
+    AssembleExtensionFold();
+  }
+  if (!fold_as_operator &&
+      (ext_EtGE_
 #ifdef MFEM_USE_MPI
        || pext_EtGE_
 #endif
@@ -2757,11 +3194,14 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetupSolver(OperatorHan
     prec_A_aug_.SetOperatorOwner(A_aug_.OwnsOperator());
     A_aug_.SetOperatorOwner(false);
   }
+  if (fold_as_operator) {
+    // Set up above.
+  } else
   if (ext_EtGE_) {
     A_aug_.Clear();
     A_aug_.Reset(Add(*A.As<SparseMatrix>(), *ext_EtGE_), true);
     A_uu = A_aug_.Ptr();
-    SetupDefaultPreconditioner(A_aug_);
+    SetupDefaultPreconditioner(prec_on_fold_ ? A_aug_ : A);
     if (prec_only) {
       A_aug_clean_.Clear();
       A_aug_clean_.Reset(Add(*A_.As<SparseMatrix>(), *ext_EtGE_), true);
@@ -2772,7 +3212,7 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetupSolver(OperatorHan
     A_aug_.Clear();
     A_aug_.Reset(ParAdd(A.As<HypreParMatrix>(), pext_EtGE_.get()), true);
     A_uu = A_aug_.Ptr();
-    SetupDefaultPreconditioner(A_aug_);
+    SetupDefaultPreconditioner(prec_on_fold_ ? A_aug_ : A);
     if (prec_only) {
       A_aug_clean_.Clear();
       A_aug_clean_.Reset(ParAdd(A_.As<HypreParMatrix>(), pext_EtGE_.get()),
@@ -2820,7 +3260,14 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetupSolver(OperatorHan
       std::make_unique<ProjectedOperator>(*block_op_, *projector_block_);
   minres_->SetOperator(*projected_op_);
   projected_prec_ = std::make_unique<ProjectedSolver>(*projector_block_);
-  projected_prec_->SetSolver(*block_prec_);
+  cov_prec_.reset();
+  if (eulerian_prec_) {
+    cov_prec_ = std::make_unique<PotentialChangeOfVariablesSolver>(
+        PotentialChangeOfVariables(), *block_prec_, offsets_);
+    projected_prec_->SetSolver(*cov_prec_);
+  } else {
+    projected_prec_->SetSolver(*block_prec_);
+  }
   minres_->SetPreconditioner(*projected_prec_);
   minres_->SetRelTol(rel_tol_);
   minres_->SetAbsTol(0.0);
@@ -3086,6 +3533,17 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::ApplyBlockOperator(
   block_op_->Mult(n, r);
   r_u = r.GetBlock(0);
   r_z = r.GetBlock(1);
+}
+
+void LinearQuasiStaticReferentialSelfGravitatingProblem::ApplyPotentialColumn(
+    const Vector& z_true, Vector& r_u, Vector& r_z) const {
+  MFEM_VERIFY(!sea_enabled_ && !rot_enabled_ && !level_enabled_ && !glue_set_,
+              "ApplyPotentialColumn: not built with the water load, "
+              "rotation, a level border or an eliminated fluid's glue.");
+  r_u.SetSize(C_op_->Height());
+  r_z.SetSize(A_zeta_->Height());
+  C_op_->Mult(z_true, r_u);
+  A_zeta_->Mult(z_true, r_z);
 }
 
 std::vector<real_t> LinearQuasiStaticReferentialSelfGravitatingProblem::RigidPairResiduals() {
@@ -3735,6 +4193,7 @@ void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::AssembleBrokenBlock
 
   // Physical blocks.
   auto A00 = std::make_unique<SparseMatrix>(*A.As<SparseMatrix>());
+  AssembleExtensionFold();
   if (ext_EtGE_) {
     A00.reset(Add(1.0, *A00, 1.0, *ext_EtGE_));
   }
@@ -3990,6 +4449,7 @@ void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::AssembleBrokenBlock
 
   // Physical blocks.
   auto A00 = std::make_unique<HypreParMatrix>(*A.As<HypreParMatrix>());
+  AssembleExtensionFold();
   if (pext_EtGE_) {
     A00.reset(mfem::Add(1.0, *A00, 1.0, *pext_EtGE_));
   }
@@ -4468,6 +4928,7 @@ void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::AssembleSlipBlocks(
   // interface form.
   {
     auto acc = std::make_unique<SparseMatrix>(*A.As<SparseMatrix>());
+    AssembleExtensionFold();
     if (ext_EtGE_) {
       acc.reset(Add(1.0, *acc, 1.0, *ext_EtGE_));
     }
@@ -4667,6 +5128,7 @@ void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::AssembleSlipBlocksP
   {
     std::unique_ptr<HypreParMatrix> acc(
         mfem::Add(1.0, *A.As<HypreParMatrix>(), 1.0, *EtGfE));
+    AssembleExtensionFold();
     if (pext_EtGE_) {
       acc.reset(mfem::Add(1.0, *acc, 1.0, *pext_EtGE_));
     }

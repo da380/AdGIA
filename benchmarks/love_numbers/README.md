@@ -26,7 +26,7 @@ the figures, for one model or for all of them, with a summary in
 `runs/summary.md`. On a larger machine only the numbers change:
 
 ```
-./run earth_like prem_4 --h 0.1 0.07 0.05 --order 2 3 --np 128 --lmax 10 \
+./run inner_core prem_4 --h 0.1 0.07 0.05 --order 2 3 --np 128 --lmax 10 \
     --field --partition --out /scratch/love
 ./plot /scratch/love
 ```
@@ -35,6 +35,20 @@ With `--partition` each case is cut into the parts of the ranks beforehand
 (`partition_case`, a serial program), and each rank reads its own; without
 it every rank reads the whole mesh, which is simpler and costs each the
 memory of the whole.
+
+mfem can pair the entities that a `ParSubMesh` shares between ranks
+wrongly when the mesh is read from parts, on some partitions
+(`SharedEntityMismatch()` in `AdGIA/submesh.hpp`). `check_submesh` says
+whether a mesh and its parts are affected:
+
+```
+mpiexec -np 32 ../bin/check_submesh -p runs/inner_core/h0.3/parts_32
+```
+
+`run --partition` runs it on the parts it has had written and leaves a
+case out whose parts are mismatched; the drivers check each SubMesh they
+make and refuse to go on with one. Another number of ranks is the way
+round it.
 
 `--launcher-args` passes the MPI launcher further arguments (binding, host
 files), `--mpiexec` names another launcher than the build's,
@@ -70,7 +84,7 @@ solves.
 counts compared in `timing.png` and in the summary:
 
 ```
-./run fluid_core --h 0.3 --order 2 --np 8 \
+./run aw_core --h 0.3 --order 2 --np 8 \
     --method dahlen gauged referential maxwell slip slip_broken --solver 1 0
 ./plot runs
 ```
@@ -78,8 +92,9 @@ counts compared in `timing.png` and in the summary:
 | method | formulation |
 |---|---|
 | `dahlen` | Eulerian, fluid eliminated (`doc/methods/self_gravitation.md`); `--cmb` picks its fluid-interface treatment |
-| `dahlen` + `-level-border <n>` (love_benchmark directly) | the same with the level border of `doc/theory/dahlen_closure.tex`: the degree-0 hole closed on an n-node grid in Phi_0 per fluid region; 16 is right for h 0.3 to 0.2 |
-| `referential` + `-level-border <n>` (love_benchmark directly) | the referential closure: the fluid eliminated through the potential glue with the wall seam and closed by the level border (identity mapping only; no tidal leg). On `fluid_core` h 0.2/o2: h'_0 0.47%, h'_1 0.06% against pyslfp; h'_2 is order-limited by the wall kernels' facet geometry (0.94% at o2, 0.007% at o3) |
+| `dahlen` + `-profile-border <d>` (`run`'s default on the fluid models, d = 6) | the same with the degree-0 hole closed by the profile border (`doc/methods/profile_border.md`): the perturbation of the fluid's pressure profile, one number on a neutral layer and a polynomial of degree d on a stratified one. The stratification of each fluid layer is the model's own, read from the case's model file (`bullen_excess`), and the border's layers end where it goes from neutral to stratified or jumps (`-profile-survey` leaves them to the border's own survey); a layer that states none is refused |
+| `dahlen` + `-level-border <n>` (`run --level-border <n>`) | the same closure in its primal form (`doc/theory/dahlen_closure.tex`), on an n-node grid in Phi_0 per fluid region |
+| `referential` + `-level-border <n>` (love_benchmark directly) | the referential closure: the fluid eliminated through the potential glue with the wall seam and closed by the level border (identity mapping only; no tidal leg) |
 | `gauged` | Eulerian, the fluid in the displacement space with a gauge shear penalty (`doc/methods/gauged_fluid.md`) |
 | `referential` | the welded gauged referential formulation (`doc/theory/gravitating_elasticity.md`): bare moduli from the exported hydrostatic pressure `p0`, equilibrium stress `-p0 I` |
 | `maxwell` | the referential formulation with the fluid by Maxwell relaxation (`SetFluid`'s default treatment, the general method): the core an artificial Maxwell solid relaxed to the secular static state (`doc/theory/static_fluid_core.tex`); `-mxbeta` sets the physical-phase dt/tau |
@@ -98,10 +113,11 @@ the formulations (`-geps`, `-gref`, `-gauge-kkt`, `-theta`, `-al`,
 `-sweep-tol`, `-kkt`, `-kkt-order`) and their defaults are in
 `doc/benchmarks/benchmarks.tex` ("The formulations compared").
 
-On a fluid core that is not neutrally stratified (`fluid_core`'s uniform
-core) the compressible methods differ from the Dahlen/pyslfp response by
-O(N²) at every degree, so converged cross-method ladders split there; at
-h ~ 0.3 the split is below the mesh error (`doc/methods/gauged_fluid.md`). The
+On a fluid core that is not neutrally stratified (the `bullen_core`
+models, `bullen_mantle`, the PREM models) the compressible methods differ
+from the Dahlen/pyslfp response by O(N²) at every degree, so converged
+cross-method ladders split there (`doc/methods/gauged_fluid.md`); `aw_core`,
+exactly neutral, is the model for comparing the methods. The
 Maxwell relaxation resolves the secular limit there; the gauge-penalty
 methods are defined only to the stratification band at N² ≠ 0
 (`doc/theory/static_fluid_core.tex`).
@@ -121,14 +137,10 @@ potential unknowns, against the error relative to the reference and to
 the full treatment on the same mesh (the approximation error alone) —
 into `runs/cmb_summary.md`:
 
-```
-./run fluid_core --h 0.3 --order 2 --np 8 --cmb full nomass uniform winkler
-./cmb_report runs
-```
-
-The treatments coincide on a uniform core (`fluid_core`) and separate on
-the stratified ones (`stratified_core`, `earth_like`, the PREM models);
-the documented comparison runs `prem_4`:
+The upper three treatments coincide on a fluid of uniform density, which
+no model here has (a unit test checks it,
+`tests/TestMixedProblemFluid.cpp`), and separate on every model with a
+fluid layer; the documented comparison runs `prem_4`:
 
 ```
 ./run prem_4 --h 0.2 --order 2 --lmax 5 --np 8 --cmb full nomass uniform winkler
@@ -145,22 +157,30 @@ not change and the gain is solver-side only.
 |---|---|
 | `homogeneous` | one uniform solid |
 | `two_solid` | two uniform solids, every parameter jumping between them |
-| `fluid_core` | a uniform fluid core under a uniform solid mantle |
-| `aw_core` | `fluid_core`'s neutrally stratified twin: a closed-form Adams–Williamson core (N² = 0 exactly), mass-matched under the same mantle — the clean cross-method comparison model, shiftable with every member exactly neutral |
-| `inner_core` | a solid inner core, a fluid outer core and a mantle, each uniform |
+| `aw_core` | a neutrally stratified fluid core, a closed-form Adams–Williamson one (N² = 0 exactly), under a uniform solid mantle: the model for comparing the methods, shiftable with every member exactly neutral |
+| `bullen_core_weak`, `bullen_core_strong` | `aw_core` with the core's bulk modulus raised by 2 % and by 50 %: the same density, gravity and mantle, and a stably stratified core whose Bullen parameter is 1.02 or 1.5 throughout, finite at the centre |
+| `bullen_mantle` | a core of that kind (Bullen parameter 1.02) under a mantle that is itself stably stratified, every parameter of it linear in radius: stable throughout, the core weakly stratified as the Earth's is, and nothing singular at the centre |
+| `bullen_mantle_stacked` | `bullen_mantle` with a core that is stably stratified below half its radius and neutral above: a fluid region that is a stack of layers, the transition a knot of the core and not an interface |
+| `aw_mantle` | `aw_core`'s core under a mantle that is itself exactly neutral |
+| `inner_core` | a uniform solid inner core, a neutrally stratified fluid outer core and a uniform mantle: the fluid a shell between two walls |
 | `linear_solid` | one solid, density and velocities linear in radius |
-| `stratified_core` | a fluid core whose density falls with radius, under a mantle, every parameter linear in radius |
-| `earth_like` | inner core, fluid outer core and mantle, every parameter linear in radius within each |
-| `prem_4` | PREM without its ocean, isotropic, on four layers: inner core, outer core, lower mantle, upper mantle with the crust |
+| `prem_4` | PREM without its ocean, isotropic, on four layers: inner core, outer core, lower mantle, upper mantle with the crust; its outer core made stable |
 | `prem_6` | the same on six: the transition zone and the crust are layers of their own |
 | `homogeneous_lithosphere` | `homogeneous` cut at 5700 km, so that the outer shell can stay elastic (viscoelastic family) |
 
 The values are in `doc/benchmarks/benchmarks.tex` ("The models"). A new model is a
-function in `common/models.py` and an entry in `MODELS`; every one is
-planetmodel's `LayeredIsotropicElastic`, whose layers take a constant or
-polynomial coefficients in the radius. The PREM models keep the named
-boundaries and merge what lies between them (`Model.coarsened`), each
-parameter within a merged layer being the cubic closest to PREM's.
+function in `common/models.py` and an entry in `MODELS`. A solid layer
+takes a constant or polynomial coefficients in the radius for each
+parameter. A fluid layer is stably or neutrally stratified and is
+described by its stratification: it holds its Bullen excess (the field
+`bullen_excess`, zero where it is neutral), and its density is derived
+from that, its P velocity and its mass (planetmodel's
+`with_bullen_excess`). The PREM models keep the named boundaries and
+merge what lies between them (`Model.coarsened`), each parameter within a
+merged layer being the cubic closest to PREM's; PREM's outer core, which
+is unstably stratified over part of its radius, is replaced by the stable
+layer nearest to it (`Model.stabilised`), which takes about twenty
+seconds each time such a model is built.
 
 A case is solved in the units of `models.scales` (the outer radius, 5000
 kg m^-3, and by default the time unit that makes G one);
@@ -184,8 +204,8 @@ With a fluid layer and the naked Dahlen reduction the summed load
 starts at degree 1 by default; `field_benchmark -lmin 0` (run by hand)
 includes degree zero for either method and shows the naked Dahlen's
 degree-zero difference from the reference (`doc/theory/dahlen_closure.tex`).
-Closed by the level border (`-level-border <n>`, the `run` script's
-default on the fluid models) degree zero is included like any other.
+Closed by a border (the profile border is the `run` script's default
+on the fluid models) degree zero is included like any other.
 The Love-number plots show the naked Dahlen's degree-zero point for the
 same reason.
 
@@ -208,13 +228,13 @@ stages this way (`../README.md`).
 The discrete operator is not exactly rotationally invariant, so a load of
 degree l leaks into the responses of the other degrees, which the solves
 by degree discard and the combined solve adds to each degree's number. On
-`fluid_core` at h = 0.3, order 2, the difference is 2e-5 to 4.5e-3
-relative, below the error against the reference in all entries but one;
-`doc/benchmarks/benchmarks.tex` ("Combined solves") has the numbers and the cost.
+`aw_core` at h = 0.3, order 2, degrees 0 to 4, the difference is 2e-5 to
+3.7e-3 relative, below the error against the reference in every entry;
+`doc/benchmarks/benchmarks.tex` ("Combined solves") has the cost.
 The naked Dahlen fluid leaves degree zero out of the combined load,
 since its degree-zero response differs from the reference by design (it
-does not represent the fluid's compressibility there); closed by the
-level border it keeps it, as the other methods do.
+does not represent the fluid's compressibility there); closed by a
+border it keeps it, as the other methods do.
 
 ## Resolution and h-refinement
 
@@ -232,11 +252,11 @@ error of each Love number against the element size at fixed order in
 `convergence.png`, and of the cap-load fields in `field_convergence.png`,
 with the observed rate fitted over the ladder and a table of the rates
 printed alongside. The angular cap holds the elements of a deep interface
-at a fixed size for every `--h` above it (0.165 on `fluid_core`'s CMB), so
+at a fixed size for every `--h` above it (0.165 on `aw_core`'s CMB), so
 a convergence ladder is run with `--angular 1.0`:
 
 ```
-./run fluid_core --h 0.3 0.24 0.19 0.15 0.12 --order 2 3 --lmax 4 \
+./run aw_core --h 0.3 0.24 0.19 0.15 0.12 --order 2 3 --lmax 4 \
     --angular 1.0 --field --out ladder
 ./plot ladder
 ```

@@ -1436,18 +1436,19 @@ xmp = ["defusedxml"]
 
 [[package]]
 name = "planetmodel"
-version = "1.5.0"
+version = "2.2.0"
 description = "Spherically layered planetary models: reference bodies, fields, mappings and meshes"
 optional = false
 python-versions = ">=3.12"
 groups = ["main"]
 files = [
-    {file = "planetmodel-1.5.0-py3-none-any.whl", hash = "sha256:ff361bd08a598382591db69d2afbecb622c838ff2d1b5b00ac33903d7a43633b"},
-    {file = "planetmodel-1.5.0.tar.gz", hash = "sha256:f991bcd471fd0f0ba0315b8213229485e9fa95498f29f197304538f141c9b47d"},
+    {file = "planetmodel-2.2.0-py3-none-any.whl", hash = "sha256:685ea7be9fee7265526f563cb35e23061b29047c1bd196e12998aa1f20b70407"},
+    {file = "planetmodel-2.2.0.tar.gz", hash = "sha256:6127ff4304c00855ca27c018ab9da2784f3d9ea21fea5aba002257ff228a27af"},
 ]
 
 [package.dependencies]
 ducc0 = ">=0.41,<1"
+finufft = ">=2.3,<3"
 gmsh = {version = ">=4.13", optional = true, markers = "extra == \"meshing\""}
 mfem = {version = ">=4.8", optional = true, markers = "extra == \"mfem\""}
 netCDF4 = {version = ">=1.7", optional = true, markers = "extra == \"netcdf\""}
@@ -1527,14 +1528,14 @@ test = ["pytest", "pytest-doctestplus (>=0.7)"]
 
 [[package]]
 name = "pygeoinf"
-version = "2.2.1"
+version = "2.5.0"
 description = "A package for solving geophysical inference and inverse problems"
 optional = false
 python-versions = ">=3.12"
 groups = ["main"]
 files = [
-    {file = "pygeoinf-2.2.1-py3-none-any.whl", hash = "sha256:b0f464adf2b1d09c75a9e080bcf73254e48f424fae317fded6662780358bc6e2"},
-    {file = "pygeoinf-2.2.1.tar.gz", hash = "sha256:b460b3bb1c0dfa4f1fb0efd06ba49caeb46a3820cfdf70bc8a8ff7bda67c943d"},
+    {file = "pygeoinf-2.5.0-py3-none-any.whl", hash = "sha256:d7aa9e82461022bcdf546e61498610405f1585607fa6927d00b574689d856975"},
+    {file = "pygeoinf-2.5.0.tar.gz", hash = "sha256:cbf925f46b56a61c45d3df540d530ad88805c45928ebea02d9de97e49837cca4"},
 ]
 
 [package.dependencies]
@@ -1544,6 +1545,7 @@ finufft = ">=2.5.1"
 joblib = ">=1.5.3"
 matplotlib = ">=3.9.0"
 numpy = ">=2.0.0"
+planetmodel = ">=2.1.0"
 pyshtools = {version = ">=4.14.1", optional = true, markers = "extra == \"sphere\""}
 scipy = ">=1.13.0"
 shapely = {version = ">=2.0.0", optional = true, markers = "extra == \"sphere\""}
@@ -1554,7 +1556,6 @@ clarabel = ["clarabel (>=0.9.0)"]
 interactive = ["plotly (>=5.0.0)"]
 mfem = ["mfem (>=4.8.0) ; sys_platform == \"linux\""]
 osqp = ["osqp (>=1.0.0)"]
-planetmodel = ["planetmodel (>=1.4.1)"]
 plot3d = ["plotly (>=5.18,<7)"]
 sphere = ["Cartopy (>=0.25.0)", "ducc0 (>=0.15)", "pyshtools (>=4.14.1)", "shapely (>=2.0.0)"]
 
@@ -1750,14 +1751,14 @@ pygmt = ["pygmt (>=0.7)"]
 
 [[package]]
 name = "pyslfp"
-version = "4.0.0"
+version = "4.3.0"
 description = "Sea level fingerprints and glacial isostatic adjustment"
 optional = false
 python-versions = ">=3.12"
 groups = ["main"]
 files = [
-    {file = "pyslfp-4.0.0-py3-none-any.whl", hash = "sha256:dba1e51e61a5b7cd86244aea99dc328568ab28fdd081bef660e4d2f3ec4ead1a"},
-    {file = "pyslfp-4.0.0.tar.gz", hash = "sha256:08ed8305daad346c272fd7d43683d790722ea9151b1884adcf8b53b992b9733e"},
+    {file = "pyslfp-4.3.0-py3-none-any.whl", hash = "sha256:b3e66cbd36006a5994f367c8d7630e4e300447a911d329ba6c9a9ae666a9b9c0"},
+    {file = "pyslfp-4.3.0.tar.gz", hash = "sha256:480a430a89fb7edb45e71be0d22eb9810acad23762e4228f11eb793d75ebdc94"},
 ]
 
 [package.dependencies]
@@ -1766,8 +1767,8 @@ cf-xarray = ">=0.10.11,<0.11.0"
 ducc0 = ">=0.35"
 matplotlib = ">=3.9.0"
 numpy = ">=2.0.0"
-planetmodel = {version = ">=1.5.0,<2.0.0", extras = ["netcdf"]}
-pygeoinf = {version = ">=2.2.0", extras = ["sphere"]}
+planetmodel = {version = ">=2.2.0,<3.0.0", extras = ["netcdf"]}
+pygeoinf = {version = ">=2.5.0", extras = ["sphere"]}
 pyshtools = ">=4.14.1"
 regionmask = ">=0.13.0,<0.14.0"
 scipy = ">=1.13.0"
@@ -2268,4 +2269,4 @@ maps = ["cartopy", "pyshtools"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12"
-content-hash = "49ed626ec7f8125c2a86d612ae2783a06b1057f9b906a6a9e30c8da2fc67f809"
+content-hash = "eb884d583de3add0bdc81c577d28fa4abbefa6ce9c5fcffd0a5bbc69f274e5ea"

@@ -24,6 +24,7 @@
 #include "mfem.hpp"
 #include "AdGIA/bordered.hpp"
 #include "AdGIA/level_border.hpp"
+#include "AdGIA/profile_border.hpp"
 #include "AdGIA/coefficient.hpp"
 #include "AdGIA/poisson.hpp"
 #include "AdGIA/quasi_static_problem.hpp"
@@ -161,7 +162,8 @@ class DomainVectorGradVectorIntegrator;
  * potential through volume integrals over the fluid elements and to the
  * solid through each wall's level-mean normal flux, eliminated by the
  * shared bordered engine. Requires each region's @p bulk_modulus. Gated
- * on @c fluid_core against pyslfp at degree 0 and inert at every degree
+ * against pyslfp at degree 0 on the fluid models of the Love-number
+ * benchmark, and inert at every degree
  * @f$\ell \ge 1@f$ on a sphere. Data on the border's own rows enter
  * through AddLevelBorderForce(), and the border can read its levels off
  * an analytic background (SetLevelBorder(levels, true, grad_phi0)).
@@ -197,8 +199,34 @@ class DomainVectorGradVectorIntegrator;
  * from the displacement block exposes the first-order gravity term
  * rho (div u)(g.v), which kappa div div bounds in the primal route (for
  * Earth rho g R ~ kappa). The primal route is the production one for
- * gravitating problems (planning note preconditioning-2026-11-06).
+ * gravitating problems.
  */
+/**
+ * @brief What a LinearQuasiStaticMixedSelfGravitatingProblem must be told
+ * as it is made, because its constructor builds the operators concerned.
+ */
+struct MixedProblemConstruction {
+  /**
+   * The potential's operator and the two couplings as operators with no
+   * matrix (DiffusionMassIntegrator with partial assembly;
+   * GradientCouplingOperator), and SetMatrixFree() and
+   * SetPotentialPreconditionerMatrixFree() switched on, so that nothing
+   * of the fine spaces is assembled. For a solid body in 3-D on a mesh
+   * of one element geometry. The setters may be used afterwards as
+   * usual; the operator and the couplings stay as made.
+   */
+  bool matrix_free = false;
+  /**
+   * The options SetMatrixFree() is given. Its quadrature_excess is also
+   * that of the potential's operator and the couplings (rules of order
+   * 2 p + excess, p + p' + excess for a coupling between orders p and
+   * p'); negative, they have the rules of the forms they replace
+   * (mfem's DiffusionIntegrator and GradientIntegrator) and are the same
+   * operators.
+   */
+  MatrixFreePMultigrid::Options multigrid = {};
+};
+
 class LinearQuasiStaticMixedSelfGravitatingProblem
     : public LinearQuasiStaticProblemBase,
       public PotentialForceSlot,
@@ -262,13 +290,19 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
    * @p fes_phi); solved from the densities when null.
    * @param fluids Fluid regions (copied); their coefficients must outlive
    * the problem. Empty for a solid body.
+   * @param construction What must be known here (MixedProblemConstruction).
    */
   LinearQuasiStaticMixedSelfGravitatingProblem(
       mfem::FiniteElementSpace* fes_u, mfem::FiniteElementSpace* fes_phi,
       const AdGIA::Rheology& rheology, mfem::Coefficient& density,
       mfem::real_t gravitational_constant, int dtn_degree,
       mfem::Coefficient* background_potential = nullptr,
-      const std::vector<FluidRegion>& fluids = {});
+      const std::vector<FluidRegion>& fluids = {},
+      const MixedProblemConstruction& construction = {});
+
+  /// Whether the potential's operator and the couplings have no matrix
+  /// (MixedProblemConstruction::matrix_free).
+  bool OperatorsMatrixFree() const { return operators_matrix_free_; }
 
   // --- loads ----------------------------------------------------------------
 
@@ -440,8 +474,8 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
    * solves disappear at the price of an indefinite outer iteration
    * whose cost is flat in the border count. Gated to agree with the
    * elimination at solver grade; the elimination stays the default.
-   * With the level border (measured, fluid_core h0.2 order 2, 8
-   * ranks): agreement to eight digits; the one-off degree-0 solve is
+   * With the level border (measured on a body with a uniform fluid
+   * core, h 0.2, order 2, 8 ranks): agreement to eight digits; the one-off degree-0 solve is
    * ~2.4x cheaper than the elimination's column setup (2.9 s against
    * 6.9 s), but EVERY solve then costs 3-6x the naked iterations
    * (the border scalars degrade the outer Krylov), so the elimination
@@ -485,6 +519,8 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
                 "SetPicardBorder: incompatible with SetMonolithicBorder.");
     MFEM_VERIFY(!on || !level_enabled_,
                 "SetPicardBorder: incompatible with SetLevelBorder.");
+    MFEM_VERIFY(!on || !profile_enabled_,
+                "SetPicardBorder: incompatible with SetProfileBorder.");
     MFEM_VERIFY(tol > 0.0 && max_passes > 1,
                 "SetPicardBorder: invalid tolerance or pass cap.");
     picard_border_ = on;
@@ -620,6 +656,52 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
 
   /** @brief Whether SetLevelBorder() is on. */
   bool HasLevelBorder() const { return level_enabled_; }
+
+  /**
+   * @brief Close the eliminated fluid regions by the profile border,
+   * the dual form of the closure that SetLevelBorder() solves in its
+   * primal form (profile_border.hpp; doc/methods/profile_border.md).
+   *
+   * Per region the unknown is the perturbation of the fluid's pressure
+   * profile, a function of the level of @f$\Phi_0@f$: one number on a
+   * neutral layer, a polynomial on a stratified one. It couples to the
+   * potential through a volume integral over the fluid and to the solid
+   * through an integral over the region's wall, both by quadrature with
+   * the profile evaluated at the level of each point. The hypsometry of
+   * the level surfaces is not used and the walls are not classified, so
+   * a wall need not be a level surface. The bordered system is
+   * symmetric and runs on the shared elimination engine or the
+   * monolithic route (SetMonolithicBorder()).
+   *
+   * Requirements: every region under Treatment::Full with a
+   * @p bulk_modulus, and stably or neutrally stratified (an unstable
+   * region is refused unless ProfileBorderOptions::unstable_as_neutral).
+   * Incompatible with SetLevelBorder() and SetPicardBorder(). Composes
+   * with SetRotation() and with a tidal potential, which enter the
+   * border's rows as the potential does. Call once, after construction
+   * and before the first Solve().
+   *
+   * @param options The polynomial degree, the survey bins and the
+   * neutral tolerance.
+   * @param exact_levels Read the levels from the background potential
+   * coefficient (the constructor's background_potential or
+   * SetBackgroundPotential()) in place of its projection.
+   */
+  void SetProfileBorder(const ProfileBorderOptions& options = {},
+                        bool exact_levels = false);
+
+  /** @brief Whether SetProfileBorder() is on. */
+  bool HasProfileBorder() const { return profile_enabled_; }
+
+  /** @brief The number of fluid regions carrying a profile border, in
+   * the order of the FluidRegion list. */
+  int NumProfileBorderRegions() const {
+    return profile_enabled_ ? static_cast<int>(profile_.size()) : 0;
+  }
+
+  /** @brief A region's profile border (layers, dense block, columns
+   * and, after a solve, its unknowns), read-only. */
+  const ProfileBorder& ProfileBorderData(int region) const;
 
   /** @brief The border unknowns of region @p region after the last
    * Solve(): the node levels @p c, the flux @p U (per node; zero at a
@@ -902,8 +984,26 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
                               GaugePenalty form,
                               Diffeomorphism* map) override;
 
+ public:
+  /**
+   * @brief With SetMatrixFree(): the potential's preconditioner as a
+   * MatrixFreePMultigrid of its shifted Laplacian (DiffusionMassIntegrator)
+   * in place of the AMG on that matrix. Off by default: measured on
+   * Love-number runs at orders 3 to 5 it takes a tenth fewer iterations
+   * and no less time, and more time where the kernels are not compiled
+   * for the machine; what it saves is the matrix. 3-D.
+   */
+  void SetPotentialPreconditionerMatrixFree(bool on) {
+    potential_matrix_free_ = on;
+    MarkOperatorDirty();
+  }
+
  protected:
   void SetupSolver(mfem::OperatorHandle& A) override;
+  /// The elastic tensor form and the gravity terms as one integrator
+  /// (GravitatingElasticityIntegrator); solid bodies.
+  std::unique_ptr<mfem::BilinearFormIntegrator> MakeMatrixFreeStiffness()
+      override;
   bool SolveLinearSystem(const mfem::Vector& B, mfem::Vector& X) override;
 
   /** @brief The system solve without the water-load border (the body of
@@ -994,6 +1094,14 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   // order.
   mfem::real_t shift_ = 1e-3;
   mfem::ConstantCoefficient one_, inv_four_pi_G_, shift_coef_;
+  // SetPotentialPreconditionerMatrixFree(), and whether the potential's
+  // preconditioner as it stands was made with no matrix: SetupSolver()
+  // makes it again when the choice has changed.
+  bool potential_matrix_free_ = false;
+  bool operators_matrix_free_ = false;
+  // Options::quadrature_excess of the operators with no matrix.
+  int operators_quadrature_excess_ = -1;
+  bool potential_prec_matrix_free_ = false;
   std::unique_ptr<mfem::ProductCoefficient> half_rho_, minus_half_rho_;
   std::unique_ptr<mfem::ScalarVectorProductCoefficient> minus_half_rho_grad_;
 
@@ -1038,7 +1146,7 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   // coupling C (trial phi on B, test u on M) and its transpose, true dofs
   std::unique_ptr<mfem::MixedBilinearForm> c_form_;
   mfem::OperatorHandle C_;
-  std::unique_ptr<mfem::Operator> Ct_owned_;
+  std::unique_ptr<mfem::Operator> C_owned_, Ct_owned_;
   const mfem::Operator* C_op_ = nullptr;
   const mfem::Operator* Ct_op_ = nullptr;
 
@@ -1181,6 +1289,15 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   std::vector<mfem::Coefficient*> fluid_rho_prime_;  ///< per region
   std::vector<std::unique_ptr<mfem::Coefficient>> level_coefs_;
   void BuildLevelBorders();
+
+  // ---- the profile border (SetProfileBorder) ----
+  // ProfileBorder and its builder live in profile_border.hpp.
+  bool profile_enabled_ = false;
+  std::vector<ProfileBorder> profile_;
+  /// The border's centrifugal cross-block per region: the potential
+  /// columns against the psi interpolants, cached with the rotation
+  /// columns.
+  std::vector<mfem::DenseMatrix> rot_profile_;
 
   // ---- KKT gauge (EnableGaugeKKT): the doubled saddle solver ----
   bool gauge_kkt_ = false;

@@ -19,7 +19,7 @@ case — and draws one figure per method into the results directory,
           the identity plot cannot resolve for the small ones.
 
     python plot.py <case> --out <root> --method referential slip_broken
-    python plot.py runs/fluid_core/h0.3     # results beside the case
+    python plot.py runs/aw_core/h0.3        # results beside the case
 
 The comparison rules are perturbation_check's: h' everywhere, l' and k'
 from degree two, degree one skipped, near-zero references and

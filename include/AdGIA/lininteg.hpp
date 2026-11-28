@@ -8,6 +8,7 @@
 #pragma once
 
 #include "mfem.hpp"
+#include "AdGIA/detail/reference_gradients.hpp"
 #include "AdGIA/coefficient.hpp"
 
 namespace AdGIA {
@@ -44,6 +45,7 @@ namespace AdGIA {
  */
 class DomainLFDeformationGradientIntegrator : public mfem::DeltaLFIntegrator {
  private:
+  detail::ReferenceGradients gradients_;
   /** @brief The matrix coefficient \f$\bvec{m}\f$ (components \f$m_{ij}\f$)
    * used in the integral. */
   mfem::MatrixCoefficient& M_;

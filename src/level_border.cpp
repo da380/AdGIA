@@ -440,9 +440,9 @@ std::vector<LevelBorder> BuildLevelBorders(
         }
       }
     });
-    allreduce(L.vol.GetData(), n, MPI_SUM);
-    allreduce(L.mass.GetData(), n, MPI_SUM);
-    allreduce(L.kap.GetData(), n, MPI_SUM);
+    allreduce(L.vol.HostReadWrite(), n, MPI_SUM);
+    allreduce(L.mass.HostReadWrite(), n, MPI_SUM);
+    allreduce(L.kap.HostReadWrite(), n, MPI_SUM);
     allreduce(Kss.Data(), (n + 1) * (n + 1), MPI_SUM);
     allreduce(Ksnu.Data(), (n + 1) * (n + 1), MPI_SUM);
     for (int e = 0; e < n; e++) {

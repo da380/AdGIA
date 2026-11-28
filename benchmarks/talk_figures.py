@@ -4,7 +4,7 @@ Single-message figures with slide typography (large type, one point per
 panel), regenerated at will from the raw results:
 
   methods.png     five formulations, one reference: agreement by degree
-                  and the cost of each (fluid_core, h = 0.3, order 2)
+                  and the cost of each (aw_core, h = 0.3, order 2)
   cmb.png         what the CMB approximations cost, loading vs tidal
                   (prem_4, h = 0.2, order 2), the rotational-feedback
                   column being the tidal one
@@ -13,26 +13,24 @@ panel), regenerated at will from the raw results:
                   covariant gauge penalty included; the slipping
                   interface informational
   derivative.png  d(Love)/d(interface radius), 3-D against 1-D
-                  (fluid_core, referential and slip_broken)
+                  (aw_core, referential and slip_broken)
   aspherical.png  field errors on the independently meshed aspherical
                   body against the shape amplitude: flat in the
                   amplitude, falling with refinement
-  ladder.png      h-refinement at orders 2 and 3 (fluid_core)
+  ladder.png      h-refinement at orders 2 and 3 (aw_core)
   models.png      every model of the sweep at orders 2 and 3: the
                   typical and the worst error of its Love numbers
-  viscoelastic.png  Maxwell Love-number histories in time, finite
-                  elements against the Laplace-domain reference
   fieldmap.png    the response to an off-axis cap load on the surface:
                   reference, finite elements, difference
 
     python talk_figures.py --out talk
-    python talk_figures.py --out talk --methods-case runs/fluid_core/h0.3 \\
+    python talk_figures.py --out talk --methods-case runs/aw_core/h0.3 \\
         --cmb-case runs/prem_4/h0.2 --identity-logs runs/relabelling \\
-        --derivative-case runs/perturbation/fluid_core \\
-        --ladder runs/ladder/fluid_core --combined
+        --derivative-case runs/perturbation/aw_core \\
+        --ladder runs/ladder/aw_core --combined
 
 Every input has a flag (--methods-case, --cmb-case, --identity-logs,
---aspherical, --derivative-case, --ladder, --models, --viscoelastic,
+--aspherical, --derivative-case, --ladder, --models,
 --field; --combined selects combined Love results for methods.png); the
 defaults point at the build-tree runs this repository's campaigns produce
 (run from <build>/benchmarks). A figure whose inputs are missing is
@@ -225,7 +223,7 @@ def identity_figure(campaign: Path, out: Path) -> None:
     for pattern, label in [
             ("identity_homogeneous_h*.txt", "homogeneous (welded solid)"),
             ("identity_two_solid_h*.txt", "two solids (welded)"),
-            ("identity_fluid_core_h*.txt", "fluid core (welded, gauged)")]:
+            ("identity_aw_core_h*.txt", "fluid core (welded, gauged)")]:
         path = find_log(pattern)
         if path is not None:
             bars.append((label, measured(path), GOOD, False))
@@ -235,7 +233,7 @@ def identity_figure(campaign: Path, out: Path) -> None:
     # hatched and labelled so it cannot pass for a measurement of this
     # tree. The slipping-interface forms are not certified covariant, so
     # this bar is informational.
-    slip_log = find_log("identity_fluid_core_slip_h*.txt")
+    slip_log = find_log("identity_aw_core_slip_h*.txt")
     if slip_log is not None:
         bars.append(("fluid core (slip interface)", measured(slip_log),
                      WARN, False))
@@ -433,7 +431,7 @@ def models_figure(tree: Path, out: Path, h: float = 0.2) -> None:
     rows = []
     import models as model_table  # noqa: E402
     # the named models only (a tree may hold variant studies beside
-    # them, prem_4_cmb or fluid_core_geom3, which repeat a model)
+    # them, prem_4_cmb or aw_core_geom3, which repeat a model)
     for model in sorted(d for d in tree.iterdir() if d.is_dir()
                         and d.name in model_table.MODELS):
         case = model / f"h{h:g}"
@@ -478,57 +476,6 @@ def models_figure(tree: Path, out: Path, h: float = 0.2) -> None:
               bbox_to_anchor=(0.5, -0.22), frameon=False)
     ax.grid(axis="x", visible=False)
     save(fig, out / "models.png")
-
-
-def viscoelastic_figure(series: Path, out: Path) -> None:
-    """Maxwell load Love numbers h'_l(t) in time, finite elements
-    (markers) on the Laplace-domain reference (lines): an elastic
-    lithosphere over a Maxwell interior, and a Maxwell mantle over a
-    fluid core."""
-    cases = [("fe_hl_series.json", "laplace_hl_series.json",
-              "elastic lithosphere, Maxwell interior"),
-             ("fe_fluid_core_series.json", "laplace_fluid_core_series.json",
-              "Maxwell mantle, fluid core")]
-    cases = [c for c in cases if (series / c[0]).exists()
-             and (series / c[1]).exists()]
-    if not cases:
-        print(f"no viscoelastic series under {series}: skipped")
-        return
-    palette = ["#2a78d6", "#eb6834", "#1baf7a"]
-    fig, axes = plt.subplots(1, len(cases), figsize=(6.2 * len(cases), 4.8),
-                             squeeze=False)
-    for ax, (fe_name, ref_name, title) in zip(axes[0], cases):
-        fe = json.loads((series / fe_name).read_text())
-        ref = json.loads((series / ref_name).read_text())
-        for k, l in enumerate(d for d in fe["degree"] if d in ref["degree"]):
-            c = palette[k % len(palette)]
-            r, d = ref["degree"].index(l), fe["degree"].index(l)
-            ax.plot([0.0] + [h["time"] for h in ref["histories"]],
-                    [ref["elastic"]["h_load"][r]]
-                    + [h["h_load"][r] for h in ref["histories"]],
-                    color=c, label=f"$l$ = {l}")
-            ft = [0.0] + [h["time"] for h in fe["histories"]]
-            fv = [fe["elastic"]["h_load"][d]] + [h["h_load"][d]
-                                                 for h in fe["histories"]]
-            ax.plot(ft[::2], fv[::2], "o", color=c, markerfacecolor="white",
-                    markeredgewidth=1.6, markersize=6)
-            relaxed = (ref.get("relaxed") or {}).get("h_load")
-            if relaxed and relaxed[r] is not None:
-                ax.axhline(relaxed[r], color=c, linewidth=1.0, linestyle=":")
-        ax.set_title(title, loc="left")
-        ax.set_xlabel("time after the load / Maxwell time")
-        ax.set_xlim(left=0.0)
-    axes[0][0].set_ylabel("load Love number $h'_l(t)$")
-    handles, labels = axes[0][0].get_legend_handles_labels()
-    handles += [plt.Line2D([], [], color=INK),
-                plt.Line2D([], [], ls="none", marker="o", color=INK,
-                           markerfacecolor="white", markeredgewidth=1.6),
-                plt.Line2D([], [], color=INK, linestyle=":", linewidth=1.0)]
-    labels += ["reference (Laplace)", "finite elements",
-               "static-fluid limit"]
-    fig.legend(handles, labels, loc="center left", bbox_to_anchor=(1.0, 0.5),
-               frameon=False)
-    save(fig, out / "viscoelastic.png")
 
 
 def fieldmap_figure(field_path: Path, out: Path) -> None:
@@ -576,30 +523,28 @@ def main() -> None:
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     # Defaults read the campaign tree (runs_campaign, campaign.py) and
-    # the hand-made trees beside it (talk_data, viscoelastic_series,
-    # runs_campaign/ladder), relative to the working directory.
+    # the hand-made trees beside it (talk_data, runs_campaign/ladder),
+    # relative to the working directory.
     base = Path("runs_campaign/love_numbers")
     p.add_argument("--out", type=Path, default=Path("talk"))
     p.add_argument("--methods-case", type=Path,
-                   default=base / "fluid_core/h0.3")
+                   default=base / "aw_core/h0.3")
     p.add_argument("--cmb-case", type=Path,
                    default=base / "prem_4/h0.2")
     p.add_argument("--identity-logs", type=Path,
                    default=Path("runs_campaign/relabelling"))
     p.add_argument("--aspherical", type=Path, default=Path("talk_data"))
     p.add_argument("--derivative-case", type=Path,
-                   default=Path("runs_campaign/perturbation/fluid_core"),
+                   default=Path("runs_campaign/perturbation/aw_core"),
                    help="where perturbation_check wrote the shifted runs "
                         "and references")
     p.add_argument("--ladder", type=Path,
-                   default=Path("runs_campaign/ladder/fluid_core"),
+                   default=Path("runs_campaign/ladder/aw_core"),
                    help="the UNCAPPED ladder (--angular 1.0: every rung "
                         "refines the CMB)")
     p.add_argument("--models", type=Path, default=base)
-    p.add_argument("--viscoelastic", type=Path,
-                   default=Path("viscoelastic_series"))
     p.add_argument("--field", type=Path,
-                   default=Path("runs_campaign/love_numbers/fluid_core/h0.3/"
+                   default=Path("runs_campaign/love_numbers/aw_core/h0.3/"
                                 "field_o2.json"))
     p.add_argument("--combined", action="store_true",
                    help="methods.png from the combined results "
@@ -619,7 +564,6 @@ def main() -> None:
     aspherical_figure(args.aspherical, args.out)
     ladder_figure(args.ladder, args.out)
     models_figure(args.models, args.out)
-    viscoelastic_figure(args.viscoelastic, args.out)
     fieldmap_figure(args.field, args.out)
 
 

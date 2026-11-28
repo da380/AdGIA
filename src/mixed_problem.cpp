@@ -3,6 +3,7 @@
  * @brief Implementation of LinearQuasiStaticMixedSelfGravitatingProblem.
  */
 
+#include "AdGIA/gradient_coupling.hpp"
 #include "AdGIA/mixed_problem.hpp"
 
 #include <algorithm>
@@ -24,6 +25,65 @@ using namespace mfem;
 namespace {
 constexpr real_t kPi = std::numbers::pi_v<real_t>;
 constexpr real_t kMinInnerRelTol = 1e-13;
+
+// The coupling between true dofs with no matrix: the potential on the
+// ball to its shadow on the body, the form there, and back to the
+// displacement's true dofs.
+class MatrixFreeCoupling : public Operator {
+ public:
+  MatrixFreeCoupling(FiniteElementSpace& fes_phi,
+                     const SubMeshDofInjection& injection,
+                     FiniteElementSpace& shadow_phi, FiniteElementSpace& fes_u,
+                     Coefficient& rho, const IntegrationRule* ir)
+      : Operator(fes_u.GetTrueVSize(), fes_phi.GetTrueVSize()),
+        P_phi_(fes_phi.GetProlongationMatrix()),
+        P_u_(fes_u.GetProlongationMatrix()),
+        injection_(&injection),
+        form_(shadow_phi, fes_u, rho, ir),
+        phi_(fes_phi.GetVSize()),
+        shadow_(shadow_phi.GetVSize()),
+        u_(fes_u.GetVSize()) {
+    shadow_.UseDevice(true);
+    u_.UseDevice(true);
+  }
+
+  void Mult(const Vector& x, Vector& y) const override {
+    const Vector* phi = &x;
+    if (P_phi_) {
+      P_phi_->Mult(x, phi_);
+      phi = &phi_;
+    }
+    injection_->MultTranspose(*phi, shadow_);
+    if (P_u_) {
+      form_.Mult(shadow_, u_);
+      P_u_->MultTranspose(u_, y);
+    } else {
+      form_.Mult(shadow_, y);
+    }
+  }
+
+  void MultTranspose(const Vector& x, Vector& y) const override {
+    const Vector* u = &x;
+    if (P_u_) {
+      P_u_->Mult(x, u_);
+      u = &u_;
+    }
+    form_.MultTranspose(*u, shadow_);
+    if (P_phi_) {
+      injection_->Mult(shadow_, phi_);
+      P_phi_->MultTranspose(phi_, y);
+    } else {
+      injection_->Mult(shadow_, y);
+    }
+  }
+
+ private:
+  const Operator* P_phi_;
+  const Operator* P_u_;
+  const SubMeshDofInjection* injection_;
+  GradientCouplingOperator form_;
+  mutable Vector phi_, shadow_, u_;
+};
 }
 
 // ---------------------------------------------------------------------------
@@ -35,7 +95,8 @@ LinearQuasiStaticMixedSelfGravitatingProblem::
         const AdGIA::Rheology& rheology, Coefficient& density,
         real_t gravitational_constant, int dtn_degree,
         Coefficient* background_potential,
-        const std::vector<FluidRegion>& fluids)
+        const std::vector<FluidRegion>& fluids,
+        const MixedProblemConstruction& construction)
     : LinearQuasiStaticProblemBase(fes_u, rheology),
       dim_(fes_u->GetMesh()->Dimension()),
       fes_phi_(fes_phi),
@@ -211,6 +272,18 @@ LinearQuasiStaticMixedSelfGravitatingProblem::
         "LinearQuasiStaticMixedSelfGravitatingProblem: empty outer boundary.");
   }
 
+  if (construction.matrix_free) {
+    Array<Geometry::Type> geoms;
+    fes_phi_->GetMesh()->GetGeometries(dim_, geoms);
+    MFEM_VERIFY(dim_ == 3 && fluids_.empty() && geoms.Size() == 1,
+                "MixedProblemConstruction::matrix_free: a solid body in 3-D "
+                "on a mesh of one element geometry.");
+    operators_matrix_free_ = true;
+    operators_quadrature_excess_ = construction.multigrid.quadrature_excess;
+    SetMatrixFree(true, construction.multigrid);
+    potential_matrix_free_ = true;
+  }
+
   SetupPotentialOperators();
   phi0_coef_ = background_potential;
   ComputeBackgroundPotential(background_potential);
@@ -249,7 +322,21 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetupPotentialOperators() {
 
   // K = (grad phi, grad psi) on the ball; A_phiphi = (K + DtN) / (4 pi G).
   k_phi_form_ = detail::MakeBilinearForm(fes_phi_);
-  k_phi_form_->AddDomainIntegrator(new DiffusionIntegrator(one_));
+  if (operators_matrix_free_) {
+    // The same form with no matrix, on the rule of mfem's unless another
+    // was asked for.
+    const FiniteElement& fe = *fes_phi_->GetTypicalFE();
+    k_phi_form_->SetAssemblyLevel(AssemblyLevel::PARTIAL);
+    k_phi_form_->AddDomainIntegrator(new DiffusionMassIntegrator(
+        one_, nullptr,
+        operators_quadrature_excess_ >= 0
+            ? nullptr
+            : &DiffusionIntegrator::GetRule(fe, fe)));
+    MatrixFreePMultigrid::SetQuadrature(*k_phi_form_,
+                                        operators_quadrature_excess_);
+  } else {
+    k_phi_form_->AddDomainIntegrator(new DiffusionIntegrator(one_));
+  }
   k_phi_form_->Assemble();
   k_phi_form_->FormSystemMatrix(empty, K_phi_);
   const real_t c = 1.0 / four_pi_G_;
@@ -319,6 +406,27 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetupPotentialPreconditioner(
   // exists, is rebuilt on it by the caller through SetupPotentialSolver().
   Array<int> empty;
   shift_coef_.constant = shift_ / four_pi_G_;
+  const bool matrix_free = MatrixFree() && potential_matrix_free_;
+  potential_prec_matrix_free_ = matrix_free;
+  if (matrix_free && dim_ == 3 &&
+      fes_phi_->GetMaxElementOrder() > MatrixFreeOptions().coarse_order) {
+    // SetPotentialPreconditionerMatrixFree(): the same shifted Laplacian
+    // with no matrix above the coarsest level of a p-multigrid.
+    k_shift_form_.reset();
+    K_shift_.Clear();
+    prec_phi_ = std::make_unique<MatrixFreePMultigrid>(
+        *fes_phi_, empty,
+        [this](BilinearForm& form) {
+          // The two terms in one pass.
+          form.AddDomainIntegrator(
+              new DiffusionMassIntegrator(inv_four_pi_G_, &shift_coef_));
+        },
+        MatrixFreeOptions());
+    if (cg_phi_) {
+      SetupPotentialSolver();
+    }
+    return;
+  }
   k_shift_form_ = detail::MakeBilinearForm(fes_phi_);
   k_shift_form_->AddDomainIntegrator(new DiffusionIntegrator(inv_four_pi_G_));
   k_shift_form_->AddDomainIntegrator(new MassIntegrator(shift_coef_));
@@ -327,6 +435,7 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetupPotentialPreconditioner(
 #ifdef MFEM_USE_MPI
   if (pfes_phi_) {
     auto amg = std::make_unique<HypreBoomerAMG>(*K_shift_.As<HypreParMatrix>());
+    detail::SetDeviceAMGOptions(*amg);
     amg->SetPrintLevel(0);
     prec_phi_ = std::move(amg);
   } else
@@ -434,6 +543,10 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::DistributePotential(
     const Vector& Phi) {
   phi_->SetFromTrueDofs(Phi);
   injection_->MultTranspose(*phi_, *phi_shadow_);
+  // What follows a solve is host code.
+  phi_->HostReadWrite();
+  phi_shadow_->HostReadWrite();
+  Phi_true_.HostReadWrite();
 }
 
 void LinearQuasiStaticMixedSelfGravitatingProblem::ComputeBackgroundPotential(
@@ -489,8 +602,9 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::ComputeBackgroundPotential(
 
 void LinearQuasiStaticMixedSelfGravitatingProblem::SetupFluidMass() {
   // M_F = int_{M_F} rho'_F phi chi on the parent's fluid elements, with
-  // rho'_F from the region or, by default, from the element-wise L2
-  // projection of the density and the discrete grad Phi0. Then
+  // rho'_F from the region, from its declared stratification or, by
+  // default, from the element-wise L2 projection of the density and the
+  // discrete grad Phi0. Then
   // A_phiphi = A_lap + M_F and the potential solver is rebuilt on it.
   if (fluids_.empty()) {
     return;
@@ -502,6 +616,14 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetupFluidMass() {
   auto marker = fluid_markers_.begin();
   for (auto& f : fluids_) {
     Coefficient* rho_prime = f.density_gradient;
+    if (!rho_prime && f.stratification && f.bulk_modulus) {
+      // The region declares its stratification: the gradient follows
+      // from it, with no derivative taken on the mesh.
+      auto rp = std::make_unique<DeclaredDensityGradientCoefficient>(
+          *f.density, *f.bulk_modulus, *f.stratification);
+      rho_prime = rp.get();
+      fluid_coefs_.push_back(std::move(rp));
+    }
     if (!rho_prime) {
       if (!l2_fes_) {
         l2_fec_ = std::make_unique<L2_FECollection>(
@@ -534,6 +656,22 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetupCoupling() {
   // C = int_{M_S} rho grad phi . v  -  sum_F int_{Sigma_F} rho_F phi (m.v),
   // trial phi on B, test v on M_S; C^T by transposition.
   Array<int> empty;
+  if (operators_matrix_free_) {
+    // The domain term with no matrix; a solid body has no other.
+    const IntegrationRule* ir = nullptr;
+    if (operators_quadrature_excess_ >= 0 && fes_->GetNE() > 0) {
+      ir = &IntRules.Get(fes_->GetMesh()->GetTypicalElementGeometry(),
+                         shadow_phi_->GetMaxElementOrder() +
+                             fes_->GetMaxElementOrder() +
+                             operators_quadrature_excess_);
+    }
+    C_owned_ = std::make_unique<MatrixFreeCoupling>(
+        *fes_phi_, *injection_, *shadow_phi_, *fes_, *rho_, ir);
+    Ct_owned_ = std::make_unique<TransposeOperator>(C_owned_.get());
+    C_op_ = C_owned_.get();
+    Ct_op_ = Ct_owned_.get();
+    return;
+  }
   auto add_interfaces = [&](MixedBilinearForm& form) {
     for (auto& f : fluids_) {
       if (!f.interface_potential_coupling) {
@@ -721,11 +859,13 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetupCoupledNullSpace() {
   for (int i = 0; i < projector_u_->Size(); i++) {
     n.GetBlock(0) = projector_u_->Basis(i);
     n.GetBlock(1) = 0.0;
+    n.SyncFromBlocks();
     projector_block_->Add(n);
   }
   if (dim_ == 2) {
     n.GetBlock(0) = 0.0;
     n.GetBlock(1) = ones_;
+    n.SyncFromBlocks();
     projector_block_->Add(n);
   }
 }
@@ -1369,6 +1509,7 @@ LinearQuasiStaticMixedSelfGravitatingProblem::SchurEigenvalues(
   HypreBoomerAMG amg(*Ashift);
   detail::SetSystemsAMGOptions(amg, *pfes_);
   HYPRE_BoomerAMGSetCycleRelaxType(amg, 8, 3);
+  detail::SetDeviceAMGOptions(amg, true);
   amg.SetPrintLevel(0);
   SchurOperator schur(*this, *A.Ptr());
   HypreLOBPCG lobpcg(comm);
@@ -1585,7 +1726,28 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SchurOperator::Mult(
   y -= cw_;
 }
 
+std::unique_ptr<BilinearFormIntegrator>
+LinearQuasiStaticMixedSelfGravitatingProblem::MakeMatrixFreeStiffness() {
+  MFEM_VERIFY(fluids_.empty(), "SetMatrixFree: no fluid regions yet.");
+  MFEM_VERIFY(grav_g1_ && grav_g1_->UsesGradient() && hess_phi0_shadow_,
+              "SetMatrixFree: with the Hessian of the discrete background "
+              "potential (the default).");
+  auto& forms = StiffnessIntegrators();
+  MatrixCoefficient& C = MatrixFreeTensor();
+  MFEM_VERIFY(forms.GetDBFI()->Size() == NumRheologyDomainForms() + 4 &&
+                  forms.GetBBFI()->Size() == 0 &&
+                  forms.GetFBFI()->Size() == 0 && forms.GetBFBFI()->Size() == 0,
+              "SetMatrixFree: the problem has forms beside the rheology's "
+              "and the gravity terms.");
+  return std::make_unique<GravitatingElasticityIntegrator>(
+      C, *rho_, *grad_phi0_shadow_, *hess_phi0_shadow_);
+}
+
 void LinearQuasiStaticMixedSelfGravitatingProblem::SetupSolver(OperatorHandle& A) {
+  if ((MatrixFree() && potential_matrix_free_) !=
+      potential_prec_matrix_free_) {
+    SetupPotentialPreconditioner();
+  }
   if (!inner_tol_set_) {
     inner_rel_tol_ = std::max<real_t>(kMinInnerRelTol, 1e-2 * rel_tol_);
     cg_phi_->SetRelTol(inner_rel_tol_);
@@ -1993,7 +2155,8 @@ LinearQuasiStaticMixedSelfGravitatingProblem::KKTResiduals() const {
 
 bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveLinearSystem(
     const Vector& B_in, Vector& X) {
-  if (!sea_enabled_ && !rot_enabled_ && !level_enabled_) {
+  if (!sea_enabled_ && !rot_enabled_ && !level_enabled_ &&
+      !profile_enabled_) {
     return SolveUnbordered(B_in, X);
   }
   // The bordered solve:
@@ -2013,6 +2176,9 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveLinearSystem(
   int nl = 0;
   for (const auto& L : level_) {
     nl += L.size;
+  }
+  for (const auto& P : profile_) {
+    nl += P.size;
   }
   const int nb = nb0 + nl;
 
@@ -2075,6 +2241,19 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveLinearSystem(
           }
         }
         rot_level_nu_.push_back(M);
+      }
+      // The profile border's cross-block: the centrifugal potential
+      // enters the border's rows as the potential does, through the
+      // same columns.
+      rot_profile_.clear();
+      for (const auto& P : profile_) {
+        DenseMatrix M(P.size, nw);
+        for (int i = 0; i < P.size; i++) {
+          for (int k = 0; k < nw; k++) {
+            M(i, k) = Dot(P.phi_cols[i], Psi[k]);
+          }
+        }
+        rot_profile_.push_back(M);
       }
       rot_cache_version_ = OperatorVersion();
     }
@@ -2154,6 +2333,37 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveLinearSystem(
       }
       off += L.size;
       lr++;
+    }
+  }
+
+  // The profile borders (SetProfileBorder): every unknown couples to
+  // the potential and to the solid. An applied potential enters the
+  // rows with the potential unknown, so it is moved to the right.
+  if (profile_enabled_) {
+    int off = nb0;
+    int pr = 0;
+    for (const auto& P : profile_) {
+      for (int j = 0; j < P.size; j++) {
+        Bu[off + j] = P.u_cols[j];
+        Bphi[off + j] = P.phi_cols[j];
+        for (int i = 0; i < P.size; i++) {
+          Db(off + i, off + j) = P.Db(i, j);
+        }
+        if (psi_) {
+          r[off + j] -= Dot(P.phi_cols[j], Psi_true_);
+        }
+      }
+      if (rot_enabled_) {
+        const DenseMatrix& M = rot_profile_[pr];
+        for (int k = 0; k < nw; k++) {
+          for (int i = 0; i < P.size; i++) {
+            Db(off + i, ns + k) = M(i, k);
+            Db(ns + k, off + i) = M(i, k);
+          }
+        }
+      }
+      off += P.size;
+      pr++;
     }
   }
 
@@ -2250,6 +2460,16 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveLinearSystem(
         L.y[j] = y[off + j];
       }
       off += L.size;
+    }
+  }
+  if (profile_enabled_) {
+    int off = nb0;
+    for (auto& P : profile_) {
+      P.y.SetSize(P.size);
+      for (int j = 0; j < P.size; j++) {
+        P.y[j] = y[off + j];
+      }
+      off += P.size;
     }
   }
   if (rot_enabled_) {
@@ -2452,7 +2672,7 @@ class BorderedBlockOperator : public Operator {
     }
 #ifdef MFEM_USE_MPI
     if (parallel_) {
-      MPI_Bcast(y_.GetData(), nb_, MPITypeMap<real_t>::mpi_type, 0, comm_);
+      MPI_Bcast(y_.HostReadWrite(), nb_, MPITypeMap<real_t>::mpi_type, 0, comm_);
     }
 #endif
     A2_.Mult(x2, out2);
@@ -2462,7 +2682,7 @@ class BorderedBlockOperator : public Operator {
     }
 #ifdef MFEM_USE_MPI
     if (parallel_) {
-      MPI_Allreduce(MPI_IN_PLACE, dots_.GetData(), nb_,
+      MPI_Allreduce(MPI_IN_PLACE, dots_.HostReadWrite(), nb_,
                     MPITypeMap<real_t>::mpi_type, MPI_SUM, comm_);
     }
 #endif
@@ -2776,7 +2996,7 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveBorderedMonolithic(
   }
 #ifdef MFEM_USE_MPI
   if (IsParallel()) {
-    MPI_Bcast(y.GetData(), nb, MPITypeMap<real_t>::mpi_type, 0,
+    MPI_Bcast(y.HostReadWrite(), nb, MPITypeMap<real_t>::mpi_type, 0,
               static_cast<ParFiniteElementSpace*>(fes_)->GetComm());
   }
 #endif
@@ -2795,6 +3015,16 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveBorderedMonolithic(
         L.y[j] = y[off + j];
       }
       off += L.size;
+    }
+  }
+  if (profile_enabled_) {
+    int off = ns + (rot_enabled_ ? static_cast<int>(rot_psi_.size()) : 0);
+    for (auto& P : profile_) {
+      P.y.SetSize(P.size);
+      for (int j = 0; j < P.size; j++) {
+        P.y[j] = y[off + j];
+      }
+      off += P.size;
     }
   }
   if (rot_enabled_) {
@@ -2866,6 +3096,7 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveUnbordered(
   } else {
     B_block_->GetBlock(0) = B;
     B_block_->GetBlock(1) = B_phi_;
+    B_block_->SyncFromBlocks();
     if (!SetBlockKrylovTolerance(*minres_, *projected_prec_, *B_block_)) {
       X = 0.0;
       Phi_true_ = 0.0;
@@ -2885,6 +3116,7 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveUnbordered(
         outer_its_ = minres_->GetNumIterations();
       }
       NoteIterations(outer_its_);
+      X_block_->SyncToBlocks();
       X = X_block_->GetBlock(0);
       if (mass_gauge_) {
         // The gauge shifted the body by a rigid motion, whose potential
@@ -2943,6 +3175,8 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetLevelBorder(
   MFEM_VERIFY(!picard_border_,
               "SetLevelBorder: incompatible with the Picard border route.");
 
+  MFEM_VERIFY(!profile_enabled_,
+              "SetLevelBorder: incompatible with SetProfileBorder.");
   MFEM_VERIFY(!gauge_kkt_, "SetLevelBorder: incompatible with the KKT gauge.");
   MFEM_VERIFY(fluid_rho_prime_.size() == fluids_.size(),
               "SetLevelBorder: the fluid mass term is not set up.");
@@ -2977,6 +3211,52 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::BuildLevelBorders() {
   ctx.n = level_n_;
   level_ = AdGIA::BuildLevelBorders(ctx, fluids_, fluid_markers_,
                                     fluid_rho_prime_, level_coefs_);
+}
+
+// The profile border (SetProfileBorder): the dual form of the closure.
+void LinearQuasiStaticMixedSelfGravitatingProblem::SetProfileBorder(
+    const ProfileBorderOptions& options, bool exact_levels) {
+  MFEM_VERIFY(!exact_levels || phi0_coef_,
+              "SetProfileBorder: exact levels need the background potential "
+              "as a coefficient (the constructor's background_potential or "
+              "SetBackgroundPotential()); this problem solved for it.");
+  MFEM_VERIFY(!fluids_.empty(), "SetProfileBorder: no fluid regions.");
+  for (const auto& f : fluids_) {
+    MFEM_VERIFY(f.treatment == FluidRegion::Treatment::Full,
+                "SetProfileBorder: every region must use Treatment::Full.");
+    MFEM_VERIFY(f.bulk_modulus,
+                "SetProfileBorder: every region needs its bulk_modulus.");
+  }
+  MFEM_VERIFY(!level_enabled_,
+              "SetProfileBorder: incompatible with SetLevelBorder.");
+  MFEM_VERIFY(!picard_border_,
+              "SetProfileBorder: incompatible with the Picard border route.");
+  MFEM_VERIFY(!gauge_kkt_,
+              "SetProfileBorder: incompatible with the KKT gauge.");
+  MFEM_VERIFY(fluid_rho_prime_.size() == fluids_.size(),
+              "SetProfileBorder: the fluid mass term is not set up.");
+  ProfileBorderContext ctx;
+  ctx.fes_u = fes_;
+  ctx.fes_pot = fes_phi_;
+  ctx.pot0 = phi0_.get();
+  ctx.pot0_shadow = phi0_shadow_.get();
+  ctx.pot0_coef = exact_levels ? phi0_coef_ : nullptr;
+  ctx.options = options;
+  profile_ = BuildProfileBorders(ctx, fluids_, fluid_markers_,
+                                 fluid_rho_prime_);
+  profile_enabled_ = true;
+  rot_cache_version_ = -1;  // the centrifugal cross-block is border data
+  if (border_elim_) {
+    border_elim_->InvalidateCache();
+  }
+}
+
+const ProfileBorder& LinearQuasiStaticMixedSelfGravitatingProblem::
+    ProfileBorderData(int region) const {
+  MFEM_VERIFY(profile_enabled_ && region >= 0 &&
+                  region < static_cast<int>(profile_.size()),
+              "ProfileBorderData: no such profile border.");
+  return profile_[region];
 }
 
 real_t LinearQuasiStaticMixedSelfGravitatingProblem::

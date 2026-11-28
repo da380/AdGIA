@@ -34,6 +34,8 @@
   - The approximate CMB conditions ('uniform', 'winkler') keep the operator
     symmetric and change the answer; the named FluidRegion::Treatment rungs
     reproduce the hand-assembled configurations exactly.
+  - On a fluid of uniform density the Full, NoMass and UniformCore rungs
+    coincide.
 */
 
 namespace {
@@ -523,6 +525,41 @@ TEST(MixedProblemFluidCMB, ApproximateConditions) {
   ASSERT_TRUE(nomass_hand->Solve());
   auto nomass_t = by_treatment(FluidRegion::Treatment::NoMass);
   EXPECT_LT(RelDiff(nomass_t->Potential(), nomass_hand->Potential()), 1e-12);
+}
+
+// On a fluid of uniform density the upper rungs of the ladder coincide:
+// the fluid mass term vanishes with the density gradient, so NoMass is
+// Full, and the interface density is already the constant, so
+// UniformCore is NoMass. The stratification of the fluid does not enter:
+// no closure is set.
+TEST(MixedProblemFluidCMB, RungsCoincideOnAUniformFluid) {
+  for (int dim : {2, 3}) {
+    Case c(dim, dim == 2 ? 2 : 1);
+    const auto density = 1.15;
+    ConstantCoefficient rho_u(density);
+
+    auto solve = [&](FluidRegion::Treatment t) {
+      std::vector<FluidRegion> regions{OuterCore(*c.solid, rho_u)};
+      regions[0].treatment = t;
+      if (t == FluidRegion::Treatment::UniformCore) {
+        regions[0].uniform_density = density;
+      }
+      auto p = c.Problem(true, true, &regions);
+      p->AssembleForce(0.0);
+      EXPECT_TRUE(p->Solve());
+      return p;
+    };
+    auto full = solve(FluidRegion::Treatment::Full);
+    auto nomass = solve(FluidRegion::Treatment::NoMass);
+    auto uniform = solve(FluidRegion::Treatment::UniformCore);
+
+    EXPECT_GT(L2Norm(full->Displacement()), 0.0);
+    const auto tol = 1e-8;
+    EXPECT_LT(RelDiff(nomass->Displacement(), full->Displacement()), tol);
+    EXPECT_LT(RelDiff(nomass->Potential(), full->Potential()), tol);
+    EXPECT_LT(RelDiff(uniform->Displacement(), full->Displacement()), tol);
+    EXPECT_LT(RelDiff(uniform->Potential(), full->Potential()), tol);
+  }
 }
 
 // The literature's condition models nothing below the CMB, so under a

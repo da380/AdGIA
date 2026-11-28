@@ -179,8 +179,8 @@ long long TrueSize(SpaceType& fes) {
 //   uniform  the non-dimensional solver-demo body of the tests: rho = 1
 //            and kappa = 1 everywhere, mu = 0.5 in the mantle, weak
 //            coupling G = 0.05 — the default model;
-//   fc       the benchmark twins' fluid_core in the disc family's units
-//            (densities in 5000 kg/m^3, G = 1): uniform core with
+//   fc       a uniform fluid core under a uniform mantle in the disc
+//            family's units (densities in 5000 kg/m^3, G = 1), with
 //            N^2 < 0, where welded, slipping and Dahlen genuinely
 //            differ;
 //   aw       the closed-form Adams-Williamson neutral twin (N^2 = 0,
@@ -217,8 +217,8 @@ Model MakeModel(const std::string& name, int dim, double G_opt,
     m.drho = [](double) { return 0.0; };
     return m;
   }
-  // the disc family's units: densities / 5000 kg/m^3, moduli from the
-  // fluid_core velocities
+  // the disc family's units: densities / 5000 kg/m^3, moduli from
+  // round velocities
   const double rho_mantle = 4500.0 / 5000.0;
   const double rho_core_mean = 11000.0 / 5000.0;
   const double kap_mantle =

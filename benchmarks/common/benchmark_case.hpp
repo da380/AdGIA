@@ -50,11 +50,55 @@ using Problem = LinearQuasiStaticMixedSelfGravitatingProblem;
 // The fields of the model a case holds.
 inline constexpr const char* kFields[] = {"rho", "kappa", "mu"};
 
+// The field of the case's model file in which a fluid layer states its
+// stratification: the excess of its Bullen parameter over one.
+inline constexpr const char* kStratification = "bullen_excess";
+
 // Where the parts of a case for a number of ranks are (partition_case.cpp).
 inline std::string PartsDirectory(const planetmodel::MeshManifest& manifest,
                                   int ranks) {
   return (manifest.Path().parent_path() / ("parts_" + std::to_string(ranks)))
       .string();
+}
+
+// The radii inside a fluid layer at which the model's stratification
+// changes: the edges of the layer's radial elements in the model file
+// (a field's breakpoints are element edges there) across which the
+// excess of the Bullen parameter goes from zero throughout one element
+// to positive in the next, or jumps. They are the ends of the layers of
+// the profile border.
+inline std::vector<double> StratificationChanges(
+    const planetmodel::ModelFile& file, int layer) {
+  std::vector<double> radii;
+  const auto excess = file.FieldOn(layer, kStratification).AsScalar();
+  for (const auto& part : file.Parts()) {
+    if (std::ranges::find(part.layers, layer) == part.layers.end()) {
+      continue;
+    }
+    const auto [first, last] = part.Elements(layer);
+    auto lower = [&](std::size_t e) { return part.element_bounds[2 * e]; };
+    auto upper = [&](std::size_t e) { return part.element_bounds[2 * e + 1]; };
+    auto at = [&](std::size_t e, double t) {
+      return excess.Value(lower(e) + t * (upper(e) - lower(e)), 0.0, 0.0);
+    };
+    auto stratified = [&](std::size_t e) {
+      for (const double t : {0.1, 0.3, 0.5, 0.7, 0.9}) {
+        if (at(e, t) > 1e-12) {
+          return true;
+        }
+      }
+      return false;
+    };
+    for (auto e = first; e + 1 < last; e++) {
+      const double below = at(e, 1.0 - 1e-6), above = at(e + 1, 1e-6);
+      const bool jump = std::abs(above - below) >
+                        1e-3 * std::max(std::abs(above), std::abs(below));
+      if (stratified(e) != stratified(e + 1) || jump) {
+        radii.push_back(upper(e));
+      }
+    }
+  }
+  return radii;
 }
 
 inline double Seconds(Clock::time_point since) {
@@ -198,9 +242,9 @@ inline Vector RadialFunction(ParMesh& mesh, int attribute, real_t r_inner,
       }
     }
   }
-  MPI_Allreduce(MPI_IN_PLACE, A.GetData(), modes * modes,
+  MPI_Allreduce(MPI_IN_PLACE, A.HostReadWrite(), modes * modes,
                 MPITypeMap<real_t>::mpi_type, MPI_SUM, mesh.GetComm());
-  MPI_Allreduce(MPI_IN_PLACE, b.GetData(), modes,
+  MPI_Allreduce(MPI_IN_PLACE, b.HostReadWrite(), modes,
                 MPITypeMap<real_t>::mpi_type, MPI_SUM, mesh.GetComm());
   Vector values(radii.Size());
   values = 0.0;
@@ -228,7 +272,7 @@ struct InterfaceAnalysis {
 // What a driver asks of a case.
 struct CaseOptions {
   const char* manifest = "case.json";
-  bool model_fields = false;
+  bool model_fields = true;
   int order = 2;
   int order_phi = 0;  // the potential space's order; 0: the displacement's
   int dtn_degree = 16;
@@ -250,6 +294,9 @@ struct CaseOptions {
   bool level_monolithic = false;  // dahlen: solve the bordered system
                                   // monolithically (MINRES) instead of
                                   // by the elimination (3-D only)
+  int profile_border = 0;         // dahlen: profile-border degree (0: off)
+  bool profile_unstable_neutral = false;  // treat unstable levels as neutral
+  bool profile_survey = false;  // profile border: layers by the survey alone
   // dahlen: the pressure split on the gravitating solve (-up)
   bool psplit = false;
   real_t psplit_theta = 1.0;
@@ -260,6 +307,13 @@ struct CaseOptions {
                              // > 0: AMG on the full operator, this shift factor
   bool block_gmres = false;  // force FGMRES for the block solves
   bool block_minres = false; // force MINRES (default: the class's choice)
+  bool eulerian_prec = true; // referential: the Eulerian-potential preconditioner
+  bool prec_on_fold = false; // referential: AMG on the folded displacement block
+  bool pmg = false;          // p-multigrid on the displacement block
+  bool matrix_free = false;  // the displacement block with no matrix
+  bool matrix_free_potential = false;  // and the potential's preconditioner
+  bool matrix_free_operators = false;  // nothing of the fine spaces assembled
+  int matrix_free_quadrature = -1;     // rules of order 2 p + this
   const char* method = "dahlen";
   real_t slip_theta = 1e2;
   real_t gs_scale = 1.0;
@@ -373,6 +427,26 @@ struct CaseOptions {
                    "this many nodes in Phi_0 per fluid region (0: off). "
                    "Turns degree 0 into the compressible fluid problem and "
                    "leaves the sphere's l >= 1 untouched.");
+    args.AddOption(&profile_border, "-profile-border", "--profile-border",
+                   "Method dahlen: close the reduction's free function with "
+                   "the profile border, the dual form of the closure, with "
+                   "polynomials of this degree in Phi_0 on each stratified "
+                   "layer of a fluid region (0: off). A neutral layer "
+                   "carries one number whatever the degree. The fluid "
+                   "layers of the case's model must state their "
+                   "stratification (the field bullen_excess of the model "
+                   "file).");
+    args.AddOption(&profile_unstable_neutral, "-profile-unstable-neutral",
+                   "--profile-unstable-neutral", "-no-profile-unstable-neutral",
+                   "--no-profile-unstable-neutral",
+                   "With -profile-border: treat unstably stratified levels "
+                   "as neutral instead of refusing them.");
+    args.AddOption(&profile_survey, "-profile-survey", "--profile-survey",
+                   "-no-profile-survey", "--no-profile-survey",
+                   "With -profile-border: leave the layers of each fluid "
+                   "region to the border's survey. Off, they end where the "
+                   "case's model says the stratification changes kind or "
+                   "jumps.");
     args.AddOption(&psplit, "-up", "--pressure-split", "-no-up",
                    "--no-pressure-split",
                    "Dahlen: solve the gravitating system with the pressure "
@@ -394,6 +468,41 @@ struct CaseOptions {
                    "FGMRES for the gravitating block solves (the "
                    "referential class's default; MINRES is the mixed "
                    "class's).");
+    args.AddOption(&eulerian_prec, "-eulerian-prec", "--eulerian-prec",
+                   "-no-eulerian-prec", "--no-eulerian-prec",
+                   "Method referential: precondition through the change of "
+                   "variables to the Eulerian potential (the class's "
+                   "default); off, the block diagonal alone.");
+    args.AddOption(&matrix_free, "-mf", "--matrix-free", "-no-mf",
+                   "--no-matrix-free",
+                   "Method dahlen: the displacement block with no matrix "
+                   "(SetMatrixFree); solid bodies, and a device that the "
+                   "forms' partial assembly takes (-d ceed-cpu).");
+    args.AddOption(&matrix_free_potential, "-mf-phi",
+                   "--matrix-free-potential", "-no-mf-phi",
+                   "--no-matrix-free-potential",
+                   "With -mf: the potential's preconditioner with no matrix "
+                   "as well (SetPotentialPreconditionerMatrixFree).");
+    args.AddOption(&matrix_free_operators, "-mf-all", "--matrix-free-all",
+                   "-no-mf-all", "--no-matrix-free-all",
+                   "Method dahlen: the potential's operator and the "
+                   "couplings with no matrix as well as -mf and -mf-phi "
+                   "(MixedProblemConstruction::matrix_free).");
+    args.AddOption(&matrix_free_quadrature, "-mf-q", "--matrix-free-quadrature",
+                   "With -mf or -mf-all: integration rules of order 2 p + "
+                   "this for the forms with no matrix "
+                   "(MatrixFreePMultigrid::Options::quadrature_excess; "
+                   "negative: the forms' own).");
+    args.AddOption(&pmg, "-pmg", "--p-multigrid", "-no-pmg",
+                   "--no-p-multigrid",
+                   "Methods dahlen and referential: the displacement block's "
+                   "preconditioner as a p-multigrid with the AMG on its "
+                   "coarsest level (SetPreconditionerPMultigrid).");
+    args.AddOption(&prec_on_fold, "-prec-on-fold", "--prec-on-fold",
+                   "-no-prec-on-fold", "--no-prec-on-fold",
+                   "Method referential: build the displacement block's AMG "
+                   "on the block with the folds of the vacuum extension and "
+                   "the eliminated fluid (off is the class's default).");
     args.AddOption(&block_minres, "-minres", "--block-minres", "-no-minres",
                    "--no-block-minres",
                    "MINRES for the gravitating block solves (the mixed "
@@ -441,12 +550,13 @@ struct CaseOptions {
     args.AddOption(&manifest, "-c", "--case", "Manifest of the case.");
     args.AddOption(&model_fields, "-model-fields", "--model-fields",
                    "-gf-fields", "--gf-fields",
-                   "Constitutive coefficients from the case's netCDF model "
-                   "file (make_case.py --model-file) instead of the "
-                   "exported .gf fields: planetmodel's own interpolants, "
-                   "evaluated at the integration points. Eulerian methods "
-                   "(dahlen, gauged); the .gf fields still carry the "
-                   "partitioning.");
+                   "Eulerian methods (dahlen, gauged): the constitutive "
+                   "coefficients from the case's model file, planetmodel's "
+                   "own interpolants evaluated at the integration points "
+                   "(the default where the case holds a model file), or "
+                   "from the exported .gf fields. The referential methods "
+                   "read the .gf fields. Either way a fluid layer's "
+                   "stratification is the model file's.");
     args.AddOption(&order, "-o", "--order", "Finite element order.");
     args.AddOption(&order_phi, "-ophi", "--order-phi",
                    "Order of the potential space (0: the displacement's). "
@@ -573,6 +683,12 @@ class Case {
                 "not built).");
     MFEM_VERIFY(!options.level_monolithic || method == "dahlen",
                 "-level-mono is the mixed class's route (-method dahlen).");
+    MFEM_VERIFY(options.profile_border == 0 || method == "dahlen",
+                "-profile-border is built on the mixed class "
+                "(-method dahlen).");
+    MFEM_VERIFY(options.profile_border == 0 || options.level_border == 0,
+                "-profile-border and -level-border are two forms of one "
+                "closure; choose one.");
     MFEM_VERIFY(!ref_eliminated || options.gauge_prec_eps == 0.0,
                 "-gpe is a gauge-treatment knob; the eliminated fluid "
                 "has no gauge penalty.");
@@ -659,6 +775,7 @@ class Case {
     }
     solid = std::make_unique<ParSubMesh>(
         ParSubMesh::CreateFromDomain(*parent, u_attributes));
+    VerifySharedEntities(*solid, "the displacement's layers");
     rho_solid_ = OnSolid(*rho);
     kappa_solid_ = OnSolid(*kappa);
     mu_solid_ = OnSolid(*mu);
@@ -667,11 +784,19 @@ class Case {
     mu_c_ = std::make_unique<GridFunctionCoefficient>(mu_solid_.get());
     rho_parent_c_ = std::make_unique<GridFunctionCoefficient>(rho.get());
     kappa_parent_c_ = std::make_unique<GridFunctionCoefficient>(kappa.get());
-    if (options.model_fields) {
-      MFEM_VERIFY(eulerian,
-                  "-model-fields: the Eulerian methods (the referential "
-                  "family still reads the .gf fields).");
+    // The model file of the case, where it holds one: the Eulerian
+    // methods read the model from it unless told otherwise, and Dahlen's
+    // fluid reads its stratification from it either way.
+    const auto has_model = manifest.Model().has_value();
+    if (eulerian && has_model) {
       model_file_.emplace(LoadModelFile(manifest));
+    }
+    if (eulerian && root && !(options.model_fields && has_model)) {
+      std::cout << "Constitutive coefficients from the exported fields"
+                << (has_model ? "" : " (the case holds no model file)")
+                << "\n";
+    }
+    if (options.model_fields && model_file_) {
       rho_c_ = std::make_unique<ModelScalarCoefficient>(*model_file_, "rho");
       kappa_c_ =
           std::make_unique<ModelScalarCoefficient>(*model_file_, "kappa");
@@ -688,6 +813,7 @@ class Case {
           std::make_unique<ModelScalarCoefficient>(*model_file_, "kappa");
       kappa_parent_c_ = std::make_unique<RestrictedCoefficient>(*model_kappa_,
                                                                 body_marker);
+      model_fields_used_ = true;
       if (root) {
         std::cout << "Constitutive coefficients from the model file "
                   << manifest.ModelFile().filename().string() << "\n";
@@ -763,6 +889,32 @@ class Case {
         if (options.no_fluid_gradient && cmb == "full") {
           f.density_gradient = &zero_;
         }
+        if (method == "dahlen" && model_file_ &&
+            model_file_->HasField(attribute - 1, kStratification)) {
+          // The stratification the model states for the layer: the class
+          // takes d rho / d Phi_0 from it, with no derivative on the
+          // mesh, and the profile border its layers.
+          if (!bullen_excess_c_) {
+            bullen_excess_c_ = std::make_unique<ModelScalarCoefficient>(
+                *model_file_, kStratification);
+          }
+          f.stratification = bullen_excess_c_.get();
+        }
+        if (options.profile_border > 0 && method == "dahlen" &&
+            !f.stratification) {
+          const auto& layer =
+              manifest.Layers()[static_cast<std::size_t>(attribute - 1)];
+          MFEM_ABORT("-profile-border: the fluid layer '"
+                     << layer.name << "' (attribute " << attribute
+                     << ") states no stratification: "
+                     << (has_model ? "the case's model file holds no "
+                                   : "the case holds no model file, and so no ")
+                     << kStratification
+                     << " on it. Describe the layer by its stratification in "
+                        "the model (planetmodel's with_bullen_excess, or "
+                        "stabilised) and make the case again; "
+                        "-level-border runs on the case as it is.");
+        }
         if (cmb == "nomass") {
           f.treatment = FluidRegion::Treatment::NoMass;
         } else if (cmb == "uniform" || cmb == "winkler") {
@@ -797,11 +949,16 @@ class Case {
       const Rheology* chosen =
           rheology_factory ? rheology_factory(*solid, *kappa_c_, *mu_c_)
                            : nullptr;
+      MatrixFreePMultigrid::Options matrix_free_options;
+      matrix_free_options.quadrature_excess = options.matrix_free_quadrature;
       problem = std::make_unique<Problem>(fes_u.get(), fes_phi.get(),
                                           chosen ? *chosen : *rheology_,
                                           *rho_c_, G,
                                           options.dtn_degree, nullptr,
-                                          fluids);
+                                          fluids,
+                                          MixedProblemConstruction{
+                                              options.matrix_free_operators,
+                                              matrix_free_options});
       if (options.level_border > 0 && method == "dahlen" && !fluids.empty()) {
         problem->SetLevelBorder(options.level_border);
         if (options.level_monolithic) {
@@ -814,6 +971,55 @@ class Case {
                                                  : "")
                     << ").\n";
         }
+      }
+      if (options.profile_border > 0 && method == "dahlen" &&
+          !fluids.empty()) {
+        ProfileBorderOptions profile;
+        profile.degree = options.profile_border;
+        profile.unstable_as_neutral = options.profile_unstable_neutral;
+        if (!options.profile_survey && model_file_) {
+          // The layers the model declares: the level of the background
+          // potential at each radius where a fluid layer's
+          // stratification changes.
+          std::vector<double> radii;
+          for (const int attribute : fluid_attributes) {
+            if (model_file_->HasField(attribute - 1, kStratification)) {
+              const auto changes =
+                  StratificationChanges(*model_file_, attribute - 1);
+              radii.insert(radii.end(), changes.begin(), changes.end());
+            }
+          }
+          Vector point(dim);
+          for (const double radius : radii) {
+            point = 0.0;
+            point[dim - 1] = radius;
+            profile.breaks.push_back(
+                ValueAtPoint(problem->BackgroundPotential(), point));
+          }
+          if (root && !radii.empty()) {
+            std::cout << "Profile border: layers declared at the radii";
+            for (const double radius : radii) {
+              std::cout << " " << radius;
+            }
+            std::cout << "\n";
+          }
+        }
+        problem->SetProfileBorder(profile);
+        if (options.level_monolithic) {
+          problem->SetMonolithicBorder();
+        }
+        if (root) {
+          std::cout << "Dahlen fluid closed by the profile border (degree "
+                    << options.profile_border
+                    << (options.level_monolithic ? ", monolithic route" : "")
+                    << ").\n";
+        }
+      }
+      problem->SetPreconditionerPMultigrid(options.pmg);
+      if (options.matrix_free && !options.matrix_free_operators) {
+        problem->SetMatrixFree(true, matrix_free_options);
+        problem->SetPotentialPreconditionerMatrixFree(
+            options.matrix_free_potential);
       }
       if (options.prec_full == 0.0) {
         problem->SetPreconditionerFullOperator(false);
@@ -951,7 +1157,7 @@ class Case {
         m.Assemble();
         local[attribute - 1] = m.Sum();
       }
-      MPI_Allreduce(local.GetData(), layer_mass.GetData(), n_layers,
+      MPI_Allreduce(local.HostReadWrite(), layer_mass.HostReadWrite(), n_layers,
                     MPITypeMap<real_t>::mpi_type, MPI_SUM, MPI_COMM_WORLD);
       for (auto& an : analyses) {
         real_t within = 0.0;
@@ -1302,8 +1508,8 @@ class Case {
                           "\""
                     : std::string())
        << ",\n  \"method\": \"" << method << "\""
-       << (options_.model_fields ? ",\n  \"model_fields\": true"
-                                 : std::string())
+       << (model_fields_used_ ? ",\n  \"model_fields\": true"
+                              : std::string())
        << ",\n  \"fluid_treatment\": \""
        // dahlen keeps Dahlen's fluid; the gauged Eulerian and the welded
        // referential methods gauge it; maxwell relaxes it; the slip pair
@@ -1328,6 +1534,10 @@ class Case {
                           ? std::string(",\n  \"level_monolithic\": ") +
                                 (options_.level_monolithic ? "true" : "false")
                           : std::string())
+               : std::string())
+       << (options_.profile_border > 0
+               ? ",\n  \"profile_border\": " +
+                     std::to_string(options_.profile_border)
                : std::string())
        << (options_.map_amplitude != 0.0
                ? ",\n  \"map_amplitude\": " + Num(options_.map_amplitude) +
@@ -1435,6 +1645,7 @@ class Case {
                 "The referential methods need the buffer shell.");
     buffer_sub_ = std::make_unique<ParSubMesh>(
         ParSubMesh::CreateFromDomain(*parent, buffer_attributes));
+    VerifySharedEntities(*buffer_sub_, "the buffer shell");
     fes_buffer_ = std::make_unique<ParFiniteElementSpace>(
         buffer_sub_.get(), fec_.get(), dim);
     Vector bb_min, bb_max;
@@ -1584,6 +1795,7 @@ class Case {
           "shell (nested shells are not supported).");
       fluid_sub_ = std::make_unique<ParSubMesh>(
           ParSubMesh::CreateFromDomain(*parent, fluid_attributes));
+      VerifySharedEntities(*fluid_sub_, "the fluid layers");
       fes_f_ = std::make_unique<ParFiniteElementSpace>(fluid_sub_.get(),
                                                        fec_.get(), dim);
     }
@@ -1642,13 +1854,27 @@ class Case {
         dim, *C_final, *S_final, *phi_e);
 
     if (!slip) {
+      const auto t_problem = Clock::now();
       ref_problem = std::make_unique<LinearQuasiStaticReferentialSelfGravitatingProblem>(
           fes_u.get(), fes_phi.get(), *ref_rheology_, *rho_use, G,
           options.dtn_degree, nullptr, ref_eliminated
                                            ? fluids
                                            : std::vector<FluidRegion>{});
+      if (root) {
+        std::cout << "Referential setup: the problem " << Seconds(t_problem)
+                  << " s\n";
+      }
+      const auto t_extension = Clock::now();
       Evac_ = NewRadialVacuumExtension(*fes_u, *fes_buffer_, radius, r_out);
+      const auto extension_seconds = Seconds(t_extension);
+      const auto t_forms = Clock::now();
       ref_problem->SetPrescribedVacuumExtension(*fes_buffer_, *Evac_);
+      if (root) {
+        std::cout << "Referential setup: the vacuum extension "
+                  << extension_seconds << " s, its forms "
+                  << Seconds(t_forms) << " s\n";
+      }
+      ref_problem->SetPreconditionerPMultigrid(options.pmg);
       if (options.prec_full == 0.0) {
         ref_problem->SetPreconditionerFullOperator(false);
       } else if (options.prec_full > 0.0) {
@@ -1659,6 +1885,8 @@ class Case {
       if (options.block_gmres || options.block_minres) {
         ref_problem->SetBlockGMRES(options.block_gmres);
       }
+      ref_problem->SetEulerianPotentialPreconditioner(options.eulerian_prec);
+      ref_problem->SetPreconditionerOnFold(options.prec_on_fold);
       if (ref_eliminated) {
         const int first = manifest.Interfaces().front().attribute;
         const auto blist = manifest.FluidSolidInterfaces(fluid_attributes[0]);
@@ -1669,6 +1897,7 @@ class Case {
         const auto& itf = manifest.Interfaces()[blist[0] - first];
         fluid_sub_ = std::make_unique<ParSubMesh>(
             ParSubMesh::CreateFromDomain(*parent, fluid_attributes));
+        VerifySharedEntities(*fluid_sub_, "the fluid layers");
         fes_f_ = std::make_unique<ParFiniteElementSpace>(fluid_sub_.get(),
                                                          fec_.get(), dim);
         Ef_ = NewRadialFluidExtension(*fes_u, *fes_f_, itf.radius);
@@ -1826,6 +2055,7 @@ class Case {
         outer_attributes.Sort();
         outer_sub_ = std::make_unique<ParSubMesh>(
             ParSubMesh::CreateFromDomain(*parent, outer_attributes));
+        VerifySharedEntities(*outer_sub_, "the layers outside the fluid");
         if (xi_interp_) {
           xi_interp_->AddMesh(*outer_sub_);
         }
@@ -1908,6 +2138,8 @@ class Case {
  private:
   std::vector<std::unique_ptr<ParFiniteElementSpace>> spaces_;
   std::unique_ptr<ParGridFunction> rho_solid_, kappa_solid_, mu_solid_;
+  std::unique_ptr<ModelScalarCoefficient> bullen_excess_c_;
+  bool model_fields_used_ = false;
   std::unique_ptr<Coefficient> rho_c_, kappa_c_, mu_c_, rho_parent_c_,
       kappa_parent_c_, model_kappa_;
   std::optional<planetmodel::ModelFile> model_file_;

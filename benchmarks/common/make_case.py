@@ -8,6 +8,9 @@ A case is a directory holding
                      (with the one-sided field values), fields, scales and G
   case.<name>.gf     rho, kappa, mu and the hydrostatic pressure p0 as L2
                      GridFunctions on the mesh
+  case.model.nc      the model itself as planetmodel's model file: its
+                     fields by layer as functions of radius, the Bullen
+                     excess of its fluid layers among them
   mesh_summary.json  the mesh parameters and the mesher's summary
   gmsh/              the mesher's own files
   reference.json     the Love numbers and radial solutions of pyslfp
@@ -45,6 +48,12 @@ from outputs import outside_source
 #: hydrostatic pressure p0 that the referential methods need (bare
 #: moduli, S_e = -p0 I, the interface pressure of the slipping methods).
 FIELDS = ("rho", "kappa", "mu", "p0")
+
+#: The field in which a fluid layer states its stratification, the
+#: excess of its Bullen parameter over one. It is written with the
+#: others where a layer of the model holds it, and the drivers read it
+#: from the model file.
+STRATIFICATION = "bullen_excess"
 
 #: The basename of the files of a case.
 BASENAME = "case"
@@ -115,9 +124,9 @@ def build_mesh(model: Model, out: Path, *, h: float, h_max: float, decay: float,
                ring_far: float | None = None,
                ring_decay: float | None = None,
                coast_grid: Path | None = None,
-               coast_width: float = 0.04,
-               model_file: bool = False) -> dict:
-    """The mesh, the fields and the manifest; returns a summary."""
+               coast_width: float = 0.04) -> dict:
+    """The mesh, the fields, the model file and the manifest; returns a
+    summary."""
     refinements = []
     if rings or coast_grid is not None:
         ring_size = ring_size if ring_size is not None else h / 3.0
@@ -143,8 +152,12 @@ def build_mesh(model: Model, out: Path, *, h: float, h_max: float, decay: float,
     scratch = out / "gmsh"
     scratch.mkdir(parents=True, exist_ok=True)
     built = build_layered_mesh(spec, scratch / BASENAME, verbose=verbose)
-    export = export_mfem(built, out / BASENAME, model=model, fields=FIELDS,
-                         model_file=model_file)
+    # The Bullen excess of the fluid layers goes with the model, for the
+    # drivers to read from the model file.
+    stated = tuple(name for name in (STRATIFICATION,)
+                   if any(name in layer.fields for layer in model.layers))
+    export = export_mfem(built, out / BASENAME, model=model,
+                         fields=FIELDS + stated, model_file=True)
     return {"h": h, "h_max": h_max, "decay": decay, "angular": angular,
             "thin": thin,
             "buffer": buffer, "optimised": optimise,
@@ -323,10 +336,6 @@ def main() -> None:
                    help="radii per layer in the reference's radial solutions")
     p.add_argument("--field-nodes", type=int, default=33,
                    help="Chebyshev nodes per layer in reference_fields.txt")
-    p.add_argument("--model-file", action="store_true",
-                   help="write the model beside the mesh as a netCDF model "
-                        "file too, recorded in the manifest (the "
-                        "coefficient route of the drivers)")
     p.add_argument("--reference-only", action="store_true",
                    help="write reference.json alone, leaving the mesh")
     p.add_argument("--verbose", action="store_true",
@@ -359,8 +368,7 @@ def main() -> None:
                          ring_size=args.ring_size, ring_far=args.ring_far,
                          ring_decay=args.ring_decay,
                          coast_grid=args.coast_grid,
-                         coast_width=args.coast_width,
-                         model_file=args.model_file)
+                         coast_width=args.coast_width)
     (args.out / "mesh_summary.json").write_text(json.dumps(summary, indent=1))
     print(f"{BASENAME}.mesh: {summary['summary']}")
 

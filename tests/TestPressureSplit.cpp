@@ -20,8 +20,7 @@
     composite.
   - High contrast: with the weak region's branch weight at 1e-6 (the
     collapsed effective shear of dt >> tau) the split solve converges and
-    agrees with the primal one; iteration counts are printed for the
-    measured comparison in solvers.md.
+    agrees with the primal one; iteration counts are printed.
   - Viscoelastic stepping: under a prescribed uniform strain the
     displacement stays u = A x at every time (constant stress divergence),
     so backward Euler through the split route is exact in space — the gate
@@ -219,7 +218,7 @@ TEST_P(PressureSplitTest, ModulusSwitchesAndHighContrast) {
   // Extreme contrast (the collapsed effective shear of dt >> tau): the
   // primal discretisation LOCKS at kappa/mu_eff ~ 1e6+ — the pathology
   // the split removes — so no agreement gate here, only robustness; the
-  // iteration counts feed solvers.md.
+  // iteration counts are printed.
   const std::vector<Coefficient*> beta{&beta_healthy, &beta_weak};
   split->SetRelaxationWeights(beta);
   primal->SetRelaxationWeights(beta);

@@ -17,6 +17,7 @@
 #include <functional>
 #include <memory>
 
+#include "AdGIA/detail/reference_gradients.hpp"
 #include "mfem.hpp"
 
 namespace AdGIA {
@@ -106,6 +107,35 @@ class BarotropicDensityGradientCoefficient : public mfem::Coefficient {
 };
 
 /**
+ * @brief The barotropic density gradient of a hydrostatic fluid from its
+ * declared stratification,
+ * @f[
+ *   \rho'_F = \frac{d\rho}{d\Phi_0} = -(1 + e)\,\frac{\rho^2}{\kappa},
+ * @f]
+ * with @f$e@f$ the excess of the Bullen parameter over one (zero for a
+ * neutrally stratified fluid, positive for a stably stratified one). No
+ * derivative is taken on the mesh, so the gradient is as accurate as the
+ * three fields and regular next to a centre, where
+ * BarotropicDensityGradientCoefficient is a ratio of two vanishing
+ * quantities. None of the coefficients is owned.
+ */
+class DeclaredDensityGradientCoefficient : public mfem::Coefficient {
+ public:
+  DeclaredDensityGradientCoefficient(mfem::Coefficient& rho,
+                                     mfem::Coefficient& kappa,
+                                     mfem::Coefficient& excess)
+      : rho_(&rho), kappa_(&kappa), excess_(&excess) {}
+
+  mfem::real_t Eval(mfem::ElementTransformation& T,
+                    const mfem::IntegrationPoint& ip) override;
+
+ private:
+  mfem::Coefficient* rho_;
+  mfem::Coefficient* kappa_;
+  mfem::Coefficient* excess_;
+};
+
+/**
  * @brief A matrix-valued delta function @f$\mathbf{M}\,\delta(\mathbf{x} -
  * \mathbf{x}_c)@f$: a constant matrix (a moment tensor, or a point stress
  * glut) times an mfem::DeltaCoefficient, following the pattern of
@@ -173,6 +203,66 @@ class MatrixDeltaCoefficient : public mfem::MatrixCoefficient {
  private:
   mfem::DenseMatrix M_;
   mfem::DeltaCoefficient d_;
+};
+
+/**
+ * @brief The gradient of a scalar grid function as a vector coefficient,
+ * for use under element integrals of the function's own mesh.
+ *
+ * The values of mfem::GradientGridFunctionCoefficient, at less cost: the
+ * dofs of the element last asked for are kept, and the reference
+ * gradients of the shape functions are kept by quadrature point
+ * (detail::ReferenceGradients). The function's values are read afresh at
+ * every call, so the coefficient follows a function that changes. On a
+ * transformation that is not an element of the function's mesh it is
+ * mfem's coefficient.
+ */
+class ElementGradientCoefficient : public mfem::VectorCoefficient {
+ public:
+  explicit ElementGradientCoefficient(const mfem::GridFunction* f)
+      : mfem::VectorCoefficient(f->FESpace()->GetMesh()->SpaceDimension()),
+        f_(f),
+        general_(f) {}
+
+  void Eval(mfem::Vector& V, mfem::ElementTransformation& T,
+            const mfem::IntegrationPoint& ip) override {
+    const auto& fes = *f_->FESpace();
+    if (T.ElementType != mfem::ElementTransformation::ELEMENT ||
+        T.mesh != fes.GetMesh()) {
+      general_.Eval(V, T, ip);
+      return;
+    }
+    if (T.ElementNo != cached_element_ ||
+        fes.GetSequence() != cached_sequence_) {
+      cached_plain_ = fes.GetElementDofs(T.ElementNo, dofs_) == nullptr;
+      cached_element_ = T.ElementNo;
+      cached_sequence_ = fes.GetSequence();
+    }
+    if (!cached_plain_) {
+      general_.Eval(V, T, ip);
+      return;
+    }
+    if (&T.GetIntPoint() != &ip) {
+      T.SetIntPoint(&ip);
+    }
+    const auto* fe = fes.GetFE(T.ElementNo);
+    const auto& dshape = gradients_.At(*fe, ip);
+    f_->GetSubVector(dofs_, values_);
+    reference_.SetSize(fe->GetDim());
+    dshape.MultTranspose(values_, reference_);
+    V.SetSize(vdim);
+    T.InverseJacobian().MultTranspose(reference_, V);
+  }
+
+ private:
+  const mfem::GridFunction* f_;
+  mfem::GradientGridFunctionCoefficient general_;
+  int cached_element_ = -1;
+  long cached_sequence_ = -1;
+  bool cached_plain_ = false;
+  mfem::Array<int> dofs_;
+  mfem::Vector values_, reference_;
+  detail::ReferenceGradients gradients_;
 };
 
 /**

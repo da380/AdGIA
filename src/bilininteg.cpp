@@ -106,7 +106,7 @@ void DomainVectorGradScalarIntegrator::AssembleElementMatrix2(
     auto w = Trans.Weight() * ip.weight;
 
     test_fe.CalcShape(ip, test_shape);
-    trial_fe.CalcPhysDShape(Trans, trial_dshape);
+    Mult(gradients_.At(trial_fe, ip), Trans.InverseJacobian(), trial_dshape);
 
     if (map_) {
       map_->EvalGradient(F_, Trans, ip);
@@ -180,7 +180,7 @@ void DomainDivVectorScalarIntegrator::AssembleElementMatrix2(
     const auto& ip = ir->IntPoint(i);
     Trans.SetIntPoint(&ip);
 
-    test_fe.CalcPhysDShape(Trans, test_dshape);
+    Mult(gradients_.At(test_fe, ip), Trans.InverseJacobian(), test_dshape);
     trial_fe.CalcShape(ip, trial_shape);
 
     auto w = Trans.Weight() * ip.weight;
@@ -252,9 +252,9 @@ void DomainDivVectorDivVectorIntegrator::AssembleElementMatrix2(
     const auto& ip = ir->IntPoint(i);
     Trans.SetIntPoint(&ip);
 
-    trial_fe.CalcPhysDShape(Trans, trial_dshape);
+    Mult(gradients_.At(trial_fe, ip), Trans.InverseJacobian(), trial_dshape);
     if (!same_spaces) {
-      test_fe.CalcPhysDShape(Trans, test_dshape);
+      Mult(gradients_.At(test_fe, ip), Trans.InverseJacobian(), test_dshape);
     }
 
     auto w = Trans.Weight() * ip.weight;
@@ -326,7 +326,7 @@ void DomainVectorGradVectorIntegrator::AssembleElementMatrix2(
       }
       QV->Eval(qv, Trans, ip);
       grad_w_->Eval(G, Trans, ip);
-      trial_fe.CalcPhysDShape(Trans, trial_dshape);
+      Mult(gradients_.At(trial_fe, ip), Trans.InverseJacobian(), trial_dshape);
       trial_fe.CalcShape(ip, trial_shape);
       test_fe.CalcShape(ip, test_shape);
       for (auto k = 0; k < space_dim; k++) {
@@ -373,7 +373,7 @@ void DomainVectorGradVectorIntegrator::AssembleElementMatrix2(
     Trans.SetIntPoint(&ip);
     auto w = Trans.Weight() * ip.weight;
 
-    trial_fe.CalcPhysDShape(Trans, trial_dshape);
+    Mult(gradients_.At(trial_fe, ip), Trans.InverseJacobian(), trial_dshape);
     test_fe.CalcShape(ip, test_shape);
 
     if (Q) {
@@ -456,7 +456,7 @@ void DomainVectorDivVectorIntegrator::AssembleElementMatrix2(
     qv *= w;
 
     test_fe.CalcShape(ip, test_shape);
-    trial_fe.CalcPhysDShape(Trans, trial_dshape);
+    Mult(gradients_.At(trial_fe, ip), Trans.InverseJacobian(), trial_dshape);
 
     if (map_) {
       dtmp_ = trial_dshape;
@@ -511,7 +511,7 @@ void DomainMatrixDeformationGradientIntegrator::AssembleElementMatrix2(
     Trans.SetIntPoint(&ip);
     auto w = Trans.Weight() * ip.weight;
 
-    trial_fe.CalcPhysDShape(Trans, trial_dshape);
+    Mult(gradients_.At(trial_fe, ip), Trans.InverseJacobian(), trial_dshape);
     test_fe.CalcShape(ip, test_shape);
 
     if (Q) {
@@ -571,7 +571,7 @@ void DomainSymmetricMatrixStrainIntegrator::AssembleElementMatrix2(
       w *= Q->Eval(Trans, ip);
     }
 
-    trial_fe.CalcPhysDShape(Trans, trial_dshape);
+    Mult(gradients_.At(trial_fe, ip), Trans.InverseJacobian(), trial_dshape);
     test_fe.CalcShape(ip, test_shape);
 
     for (auto k = 0; k < space_dim; k++) {
@@ -630,7 +630,7 @@ void DomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator::
       w *= Q->Eval(Trans, ip);
     }
 
-    trial_fe.CalcPhysDShape(Trans, trial_dshape);
+    Mult(gradients_.At(trial_fe, ip), Trans.InverseJacobian(), trial_dshape);
     test_fe.CalcShape(ip, test_shape);
 
     for (auto k = 0; k < space_dim - 1; k++) {
@@ -719,7 +719,7 @@ void ElasticTensorIntegrator::AssembleElementMatrix(
   for (auto q = 0; q < ir->GetNPoints(); q++) {
     const auto& ip = ir->IntPoint(q);
     Trans.SetIntPoint(&ip);
-    el.CalcDShape(ip, dshape_);
+    dshape_ = gradients_.At(el, ip);
     Mult(dshape_, Trans.InverseJacobian(), gshape_);
     auto w = ip.weight * Trans.Weight();
     if (map_) {
@@ -775,7 +775,7 @@ void GeometricStiffnessIntegrator::AssembleElementMatrix(
   for (auto q = 0; q < ir->GetNPoints(); q++) {
     const auto& ip = ir->IntPoint(q);
     Trans.SetIntPoint(&ip);
-    el.CalcDShape(ip, dshape_);
+    dshape_ = gradients_.At(el, ip);
     Mult(dshape_, Trans.InverseJacobian(), gshape_);
     auto w = ip.weight * Trans.Weight();
     const DenseMatrix* g = &gshape_;
@@ -871,7 +871,7 @@ void MaterialStiffnessIntegrator::AssembleElementMatrix(
   for (auto q = 0; q < ir->GetNPoints(); q++) {
     const auto& ip = ir->IntPoint(q);
     Trans.SetIntPoint(&ip);
-    el.CalcDShape(ip, dshape_);
+    dshape_ = gradients_.At(el, ip);
     Mult(dshape_, Trans.InverseJacobian(), gshape_);
     // The equilibrium mapping enters the strain operator alone: no
     // Jacobian factor (the strain energy is per referential volume).
@@ -895,7 +895,7 @@ void ReferentialGravityIntegrator::AssembleElementMatrix(
               "supported.");
 
 #ifdef MFEM_THREAD_SAFE
-  DenseMatrix dshape_, gshape_, F_, a_, M_, P_, ag_;
+  DenseMatrix dshape_, gshape_, F_, a_, M_, P_, ag_, B_, N_;
   Vector g0v_, w_, beta_, gamma_;
 #endif
   dshape_.SetSize(dof, dim);
@@ -903,6 +903,8 @@ void ReferentialGravityIntegrator::AssembleElementMatrix(
   F_.SetSize(dim);
   a_.SetSize(dim);
   M_.SetSize(dof, dim);
+  B_.SetSize(dof, dim);
+  N_.SetSize(dof, dim);
   P_.SetSize(dof);
   ag_.SetSize(dof, dim);
   g0v_.SetSize(dim);
@@ -921,8 +923,7 @@ void ReferentialGravityIntegrator::AssembleElementMatrix(
   for (auto q = 0; q < ir->GetNPoints(); q++) {
     const auto& ip = ir->IntPoint(q);
     Trans.SetIntPoint(&ip);
-    el.CalcDShape(ip, dshape_);
-    Mult(dshape_, Trans.InverseJacobian(), gshape_);
+    Mult(gradients_.At(el, ip), Trans.InverseJacobian(), gshape_);
     const auto wq = scale_ * ip.weight * Trans.Weight();
 
     map_->EvalGradient(F_, Trans, ip);
@@ -943,19 +944,33 @@ void ReferentialGravityIntegrator::AssembleElementMatrix(
     //   c0 [M_ak M_bl - M_al M_bk]
     //   - 2 M_ak beta_b gamma_l - 2 M_bl beta_a gamma_k
     //   + 2 M_al beta_b gamma_k + 2 M_bk beta_a gamma_l
-    //   + 2 gamma_k gamma_l P_ab.
-    for (auto k = 0; k < dim; k++) {
+    //   + 2 gamma_k gamma_l P_ab,
+    // gathered, with B_ak = 2 beta_a gamma_k and N = c0 M - B, as
+    //   M_ak N_bl - B_ak M_bl - M_al N_bk + B_al M_bk
+    //   + 2 gamma_k gamma_l P_ab,
+    // and added a column of the element matrix at a time (the rows of
+    // one component are contiguous).
+    for (auto k2 = 0; k2 < dim; k2++) {
       for (auto a = 0; a < dof; a++) {
-        const auto row = uidx(a, k);
-        for (auto l = 0; l < dim; l++) {
-          for (auto b = 0; b < dof; b++) {
-            const auto val = c0 * (M_(a, k) * M_(b, l) - M_(a, l) * M_(b, k)) -
-                             2.0 * (M_(a, k) * beta_(b) * gamma_(l) +
-                                    M_(b, l) * beta_(a) * gamma_(k)) +
-                             2.0 * (M_(a, l) * beta_(b) * gamma_(k) +
-                                    M_(b, k) * beta_(a) * gamma_(l)) +
-                             2.0 * gamma_(k) * gamma_(l) * P_(a, b);
-            elmat(row, uidx(b, l)) += wq * val;
+        B_(a, k2) = 2.0 * beta_(a) * gamma_(k2);
+        N_(a, k2) = c0 * M_(a, k2) - B_(a, k2);
+      }
+    }
+    for (auto l = 0; l < dim; l++) {
+      const auto* Ml = M_.GetColumn(l);
+      const auto* Bl = B_.GetColumn(l);
+      for (auto b = 0; b < dof; b++) {
+        const auto* Pb = P_.GetColumn(b);  // P is symmetric
+        for (auto k2 = 0; k2 < dim; k2++) {
+          const auto* Mk = M_.GetColumn(k2);
+          const auto* Bk = B_.GetColumn(k2);
+          const auto c1 = wq * N_(b, l), c2 = wq * M_(b, l);
+          const auto c3 = wq * N_(b, k2), c4 = wq * M_(b, k2);
+          const auto c5 = wq * 2.0 * gamma_(k2) * gamma_(l);
+          auto* out = elmat.GetColumn(uidx(b, l)) + uidx(0, k2);
+          for (auto a = 0; a < dof; a++) {
+            out[a] += Mk[a] * c1 - Bk[a] * c2 - Ml[a] * c3 + Bl[a] * c4 +
+                      c5 * Pb[a];
           }
         }
       }
@@ -1008,10 +1023,8 @@ void ReferentialGravityCouplingIntegrator::AssembleElementMatrix2(
   for (auto q = 0; q < ir->GetNPoints(); q++) {
     const auto& ip = ir->IntPoint(q);
     Trans.SetIntPoint(&ip);
-    trial_fe.CalcDShape(ip, dshape_p_);
-    Mult(dshape_p_, Trans.InverseJacobian(), gshape_p_);
-    test_fe.CalcDShape(ip, dshape_u_);
-    Mult(dshape_u_, Trans.InverseJacobian(), gshape_u_);
+    Mult(gradients_.At(trial_fe, ip), Trans.InverseJacobian(), gshape_p_);
+    Mult(gradients_.At(test_fe, ip), Trans.InverseJacobian(), gshape_u_);
     const auto wq = scale_ * ip.weight * Trans.Weight();
 
     map_->EvalGradient(F_, Trans, ip);
@@ -1114,9 +1127,9 @@ void TransformedDiffusionIntegrator::AssembleElementMatrix2(
     const auto& ip = ir->IntPoint(i);
     Trans.SetIntPoint(&ip);
 
-    trial_fe.CalcPhysDShape(Trans, trial_dshape);
+    Mult(gradients_.At(trial_fe, ip), Trans.InverseJacobian(), trial_dshape);
     if (!same_spaces) {
-      test_fe.CalcPhysDShape(Trans, test_dshape);
+      Mult(gradients_.At(test_fe, ip), Trans.InverseJacobian(), test_dshape);
     }
 
     auto w = Trans.Weight() * ip.weight;
@@ -1191,7 +1204,7 @@ void DeformationGradientInterpolator::AssembleElementMatrix2(
   for (auto i = 0; i < out_dof; i++) {
     const auto& ip = nodes.IntPoint(i);
     Trans.SetIntPoint(&ip);
-    in_fe.CalcPhysDShape(Trans, dshape);
+    Mult(gradients_.At(in_fe, ip), Trans.InverseJacobian(), dshape);
     for (auto l = 0; l < space_dim; l++) {
       for (auto j = 0; j < in_dof; j++) {
         for (auto k = 0; k < space_dim; k++) {
@@ -1228,7 +1241,7 @@ void StrainInterpolator::AssembleElementMatrix2(
   for (auto i = 0; i < out_dof; i++) {
     const IntegrationPoint& ip = nodes.IntPoint(i);
     Trans.SetIntPoint(&ip);
-    in_fe.CalcPhysDShape(Trans, dshape);
+    Mult(gradients_.At(in_fe, ip), Trans.InverseJacobian(), dshape);
 
     for (auto l = 0; l < space_dim; l++) {
       for (auto j = 0; j < in_dof; j++) {
@@ -1268,7 +1281,7 @@ void DeviatoricStrainInterpolator::AssembleElementMatrix2(
   for (auto i = 0; i < out_dof; i++) {
     const IntegrationPoint& ip = nodes.IntPoint(i);
     Trans.SetIntPoint(&ip);
-    in_fe.CalcPhysDShape(Trans, dshape);
+    Mult(gradients_.At(in_fe, ip), Trans.InverseJacobian(), dshape);
 
     for (auto l = 0; l < space_dim - 1; l++) {
       for (auto j = 0; j < in_dof; j++) {

@@ -58,6 +58,22 @@ add_executable(TestElasticTensorIntegrator TestElasticTensorIntegrator.cpp)
 target_link_libraries(TestElasticTensorIntegrator PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestElasticTensorIntegrator)
 
+add_executable(TestElasticTensorPartialAssembly TestElasticTensorPartialAssembly.cpp)
+target_link_libraries(TestElasticTensorPartialAssembly PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestElasticTensorPartialAssembly)
+
+add_executable(TestGravitatingElasticityIntegrator TestGravitatingElasticityIntegrator.cpp)
+target_link_libraries(TestGravitatingElasticityIntegrator PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestGravitatingElasticityIntegrator)
+
+add_executable(TestDiffusionMassIntegrator TestDiffusionMassIntegrator.cpp)
+target_link_libraries(TestDiffusionMassIntegrator PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestDiffusionMassIntegrator)
+
+add_executable(TestGradientCouplingOperator TestGradientCouplingOperator.cpp)
+target_link_libraries(TestGradientCouplingOperator PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestGradientCouplingOperator)
+
 add_executable(TestBoundaryNormalIntegrators TestBoundaryNormalIntegrators.cpp)
 target_link_libraries(TestBoundaryNormalIntegrators PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestBoundaryNormalIntegrators)
@@ -75,6 +91,18 @@ if(USE_MPI)
     target_link_libraries(TestSubMeshMixedBilinearFormPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestQuasiStaticProblemPar TestQuasiStaticProblemPar.cpp)
     target_link_libraries(TestQuasiStaticProblemPar PRIVATE AdGIA MPI::MPI_CXX)
+    add_executable(TestSharedEntitiesPar TestSharedEntitiesPar.cpp)
+    target_link_libraries(TestSharedEntitiesPar PRIVATE AdGIA MPI::MPI_CXX)
+    add_executable(TestPMultigridPar TestPMultigridPar.cpp)
+    target_link_libraries(TestPMultigridPar PRIVATE AdGIA MPI::MPI_CXX)
+    add_executable(TestMatrixFreePMultigridPar TestMatrixFreePMultigridPar.cpp)
+    target_link_libraries(TestMatrixFreePMultigridPar PRIVATE AdGIA MPI::MPI_CXX)
+    add_executable(TestMatrixFreeProblemPar TestMatrixFreeProblemPar.cpp)
+    target_link_libraries(TestMatrixFreeProblemPar PRIVATE AdGIA MPI::MPI_CXX)
+    add_executable(TestNonlinearClampedPar TestNonlinearClampedPar.cpp)
+    target_link_libraries(TestNonlinearClampedPar PRIVATE AdGIA MPI::MPI_CXX)
+    add_executable(TestNonlinearSelfGravitatingPar TestNonlinearSelfGravitatingPar.cpp)
+    target_link_libraries(TestNonlinearSelfGravitatingPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestFaultProblemPar TestFaultProblemPar.cpp)
     target_link_libraries(TestFaultProblemPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestViscoelasticPar TestViscoelasticPar.cpp)
@@ -122,6 +150,8 @@ if(USE_MPI)
     target_link_libraries(TestShorelineRefinementPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestMonolithicBorderPar TestMonolithicBorderPar.cpp)
     target_link_libraries(TestMonolithicBorderPar PRIVATE AdGIA MPI::MPI_CXX)
+    add_executable(TestProfileBorderPar TestProfileBorderPar.cpp)
+    target_link_libraries(TestProfileBorderPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestSphericalHarmonicsPar TestSphericalHarmonicsPar.cpp)
     target_link_libraries(TestSphericalHarmonicsPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestEquilibriumFiguresPar TestEquilibriumFiguresPar.cpp)
@@ -140,6 +170,10 @@ if(USE_MPI)
     target_link_libraries(TestDiscreteSecondOrderPar PRIVATE AdGIA MPI::MPI_CXX)
     add_executable(TestAdjointFingerprintPar TestAdjointFingerprintPar.cpp)
     target_link_libraries(TestAdjointFingerprintPar PRIVATE AdGIA MPI::MPI_CXX)
+    # Its arrangement of ranks needs four.
+    add_test(NAME TestSharedEntitiesPar_np4
+             COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 4
+                     $<TARGET_FILE:TestSharedEntitiesPar>)
     foreach(np 1 2 4)
         # First, so a broken launcher fails the batch at its first test.
         add_test(NAME TestMpiWorldPar_np${np}
@@ -151,6 +185,21 @@ if(USE_MPI)
         add_test(NAME TestSubMeshMixedBilinearFormPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestSubMeshMixedBilinearFormPar>)
+        add_test(NAME TestPMultigridPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestPMultigridPar>)
+        add_test(NAME TestMatrixFreePMultigridPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestMatrixFreePMultigridPar>)
+        add_test(NAME TestMatrixFreeProblemPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestMatrixFreeProblemPar>)
+        add_test(NAME TestNonlinearClampedPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestNonlinearClampedPar>)
+        add_test(NAME TestNonlinearSelfGravitatingPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestNonlinearSelfGravitatingPar>)
         add_test(NAME TestQuasiStaticProblemPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestQuasiStaticProblemPar>)
@@ -238,6 +287,9 @@ if(USE_MPI)
         add_test(NAME TestMonolithicBorderPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestMonolithicBorderPar>)
+        add_test(NAME TestProfileBorderPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestProfileBorderPar>)
         add_test(NAME TestSphericalHarmonicsPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestSphericalHarmonicsPar>)
@@ -312,6 +364,30 @@ gtest_discover_tests(TestRheology)
 add_executable(TestQuasiStaticProblem TestQuasiStaticProblem.cpp)
 target_link_libraries(TestQuasiStaticProblem PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestQuasiStaticProblem)
+
+add_executable(TestMaterialLaw TestMaterialLaw.cpp)
+target_link_libraries(TestMaterialLaw PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestMaterialLaw)
+
+add_executable(TestNonlinearClamped TestNonlinearClamped.cpp)
+target_link_libraries(TestNonlinearClamped PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestNonlinearClamped)
+
+add_executable(TestNonlinearSelfGravitating TestNonlinearSelfGravitating.cpp)
+target_link_libraries(TestNonlinearSelfGravitating PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestNonlinearSelfGravitating)
+
+add_executable(TestPMultigrid TestPMultigrid.cpp)
+target_link_libraries(TestPMultigrid PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestPMultigrid)
+
+add_executable(TestMatrixFreePMultigrid TestMatrixFreePMultigrid.cpp)
+target_link_libraries(TestMatrixFreePMultigrid PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestMatrixFreePMultigrid)
+
+add_executable(TestLocatePoints TestLocatePoints.cpp)
+target_link_libraries(TestLocatePoints PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestLocatePoints)
 
 add_executable(TestFaultProblem TestFaultProblem.cpp)
 target_link_libraries(TestFaultProblem PRIVATE AdGIA gtest_main)
@@ -441,6 +517,10 @@ gtest_discover_tests(TestSeaLevelViscoelastic)
 add_executable(TestMonolithicBorder TestMonolithicBorder.cpp)
 target_link_libraries(TestMonolithicBorder PRIVATE AdGIA gtest_main)
 gtest_discover_tests(TestMonolithicBorder)
+
+add_executable(TestProfileBorder TestProfileBorder.cpp)
+target_link_libraries(TestProfileBorder PRIVATE AdGIA gtest_main)
+gtest_discover_tests(TestProfileBorder)
 
 add_executable(TestSlipInterface TestSlipInterface.cpp)
 target_link_libraries(TestSlipInterface PRIVATE AdGIA gtest_main)

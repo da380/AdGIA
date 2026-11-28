@@ -46,6 +46,7 @@
 #include "mfem.hpp"
 #include "AdGIA/rheology.hpp"
 #include "AdGIA/null_space.hpp"
+#include "AdGIA/p_multigrid.hpp"
 
 namespace AdGIA {
 
@@ -142,8 +143,10 @@ struct MaxwellRelaxationOptions {
  *   domain attribute or a GridFunctionCoefficient on the parent does not.
  * - @p density_gradient: @f$\rho'_F = d\rho/d\Phi_0 = g^{-1}\partial_r\rho@f$
  *   on the fluid elements (BarotropicDensityGradientCoefficient, or an
- *   analytic form for radial models). When null it is computed from the
- *   element-wise L2 projection of @p density and the discrete
+ *   analytic form for radial models). When null it follows from
+ *   @p stratification and @p bulk_modulus where both are given
+ *   (DeclaredDensityGradientCoefficient), and is otherwise computed from
+ *   the element-wise L2 projection of @p density and the discrete
  *   @f$\nabla\Phi_0@f$.
  * - @p interface_marker: the SubMesh boundary attributes of the fluid's
  *   interfaces with the solid (sized to the SubMesh's bdr_attributes.Max()).
@@ -182,6 +185,17 @@ struct MaxwellRelaxationOptions {
  *   only by the level border (SetLevelBorder()), which is the one place
  *   the closure consults the fluid's compressibility. Evaluated like
  *   @p density, on the parent mesh.
+ * - @p stratification: the excess of the Bullen parameter over one,
+ *   @f$-\kappa\rho'_F/\rho^2 - 1@f$, on the parent's fluid elements:
+ *   zero where the fluid is neutrally stratified, positive where it is
+ *   stably stratified. With @p bulk_modulus it gives the density
+ *   gradient where @p density_gradient is null, and the profile border
+ *   (SetProfileBorder()) divides the region into neutral and stratified
+ *   layers by it. When null the profile border computes it from
+ *   @p density_gradient and @p bulk_modulus; a density gradient taken
+ *   numerically from fields on the mesh carries errors of the size of
+ *   the discretisation, which a model that is neutral, or nearly so,
+ *   does not survive, so such a model should supply this.
  */
 struct FluidRegion {
   /** @brief The CMB-approximation ladder: each rung degrades the full
@@ -207,6 +221,7 @@ struct FluidRegion {
   Treatment treatment = Treatment::Full;
   mfem::real_t uniform_density = 0.0;
   mfem::Coefficient* bulk_modulus = nullptr;
+  mfem::Coefficient* stratification = nullptr;
 };
 
 /** @brief The gauge penalty's form: Deviatoric (a fluid: dev-dev
@@ -770,7 +785,7 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
    * by @p shift_factor (default 100) times the free-body mass-shift scale
    * (MassShiftedMatrix). Off: on the rheology's stiffness alone.
    *
-   * Measured (planning note preconditioning-2026-11-06 §9; static solves,
+   * Measured (static solves,
    * stratified Earth model, mantle shear scaled by f = 1, 0.1, 0.01 into
    * the time-stepping regime): the full operator needs 3.9x fewer MINRES
    * iterations for the referential class at f = 0.01 (1028 -> 265) and
@@ -793,11 +808,57 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
     prec_stale_ = true;
     MarkOperatorDirty();
   }
+  /**
+   * @brief The displacement block's preconditioner as a p-multigrid
+   * (PMultigridPreconditioner) on the matrix the default preconditioner
+   * is built on, in place of the AMG (parallel) or the Gauss-Seidel
+   * sweep (serial) on that matrix.
+   *
+   * In parallel the coarsest level has the AMG with the settings of the
+   * default. Taken where the space's order is above
+   * @p options.coarse_order; at or below it the default stands.
+   * Measured on Love-number runs at orders 3 to 5, 16 ranks: a fifth to
+   * a quarter off a solve, the iterations the same or fewer.
+   */
+  void SetPreconditionerPMultigrid(
+      bool on, PMultigridPreconditioner::Options options = {}) {
+    prec_pmg_ = on;
+    prec_pmg_options_ = options;
+    prec_stale_ = true;
+    MarkOperatorDirty();
+  }
+  bool PreconditionerPMultigrid() const { return prec_pmg_; }
+  /**
+   * @brief Hold the stiffness operator with no matrix: the form applied
+   * by partial assembly, preconditioned by a MatrixFreePMultigrid of the
+   * elastic tensor form (with the mass shift of the default
+   * preconditioner where the body is free). Off by default.
+   *
+   * For an isotropic rheology, or one of a single elastic tensor form,
+   * on the whole body with no mapping, no essential dofs and no gauged
+   * fluid; the classes that
+   * add forms to the stiffness say which of theirs are taken
+   * (MakeMatrixFreeStiffness()). The space's order must be above
+   * @p options.coarse_order. What the forms' partial assembly needs of
+   * the mesh and the device is the integrators' to say: with libCEED in
+   * mfem and a device that uses it (`ceed-cpu`, ...), tetrahedra and
+   * hexahedra.
+   */
+  void SetMatrixFree(bool on, MatrixFreePMultigrid::Options options = {}) {
+    matrix_free_ = on;
+    matrix_free_options_ = options;
+    prec_stale_ = true;
+    MarkOperatorDirty();
+  }
+  bool MatrixFree() const { return matrix_free_; }
+  const MatrixFreePMultigrid::Options& MatrixFreeOptions() const {
+    return matrix_free_options_;
+  }
   /** @brief Flexible GMRES(200) instead of MINRES for the gravitating
    * classes' block solves (no SPD requirement on the preconditioner; the
    * tolerance is rel_tol on the true residual instead of MINRES's
    * preconditioner norm). Default: on for the referential class, off for
-   * the mixed one (planning note preconditioning-2026-11-06 §9: on a
+   * the mixed one (measured: on a
    * stratified model with mantle shear scaled into the time-stepping
    * regime, FGMRES cut the referential iterations by 15-20%, e.g. 265 ->
    * 227 at mu x 0.01; note the two stop on different norms, MINRES on the
@@ -902,6 +963,20 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   /** @brief Build/refresh preconditioner and solver for a new operator.
    * Default: SetupDefaultCG(). */
   virtual void SetupSolver(mfem::OperatorHandle& A);
+
+  /** @brief The whole stiffness form as one integrator with partial
+   * assembly, for SetMatrixFree(). Default: the rheology's elastic
+   * tensor form, and a refusal if anything else has been added. */
+  virtual std::unique_ptr<mfem::BilinearFormIntegrator>
+  MakeMatrixFreeStiffness();
+
+  /** @brief The rheology's tensor as it now stands, for an isotropic
+   * rheology or one of a single elastic tensor form, on the whole body
+   * with no mapping; a refusal else. */
+  mfem::MatrixCoefficient& MatrixFreeTensor();
+
+  /// The rheology's domain forms among the stiffness integrators.
+  int NumRheologyDomainForms() const { return n_rheology_domain_; }
 
   /** @brief Solve A X = B with the solver from SetupSolver(); return
    * convergence. Default: warm-started preconditioned CG. */
@@ -1078,6 +1153,14 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   // (the public setters are unconditional, and the serial block solves
   // take the same Krylov choice); only the AMG matrices above are MPI-only.
   bool prec_full_operator_ = true;   // SetPreconditionerFullOperator
+  bool prec_pmg_ = false;            // SetPreconditionerPMultigrid
+  PMultigridPreconditioner::Options prec_pmg_options_;
+  bool matrix_free_ = false;         // SetMatrixFree
+  MatrixFreePMultigrid::Options matrix_free_options_;
+  std::unique_ptr<mfem::ConstantCoefficient> matrix_free_shift_;
+  std::unique_ptr<mfem::MatrixCoefficient> matrix_free_tensor_;
+  void AssembleOperatorMatrixFree();
+  void SetupMatrixFreePreconditioner();
   mfem::real_t prec_full_shift_ = 100.0;
   bool block_gmres_ = false;         // SetBlockGMRES
   /** @brief MINRES, or FGMRES with SetBlockGMRES(), for a block solve. */
@@ -1152,12 +1235,18 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   mfem::OperatorHandle A_solve_;
   std::vector<mfem::real_t> gauge_residuals_;
 
-  /** @brief Mark the assembled operator out of date. EVERY mutation of
-   * operator data outside the modulus-flavour switch goes through here
-   * (never by writing the flag): it also drops the cached flavour
-   * states, whose revived operator versions would otherwise resurrect
-   * stale version-keyed caches (border columns). */
+ public:
+  /** @brief Mark the assembled operator out of date, so that it is
+   * assembled again before the next solve: the call of a caller whose
+   * coefficients, read by the stiffness integrators, have changed (the
+   * state of a nonlinear solve, for one). EVERY mutation of operator
+   * data outside the modulus-flavour switch goes through here (never by
+   * writing the flag): it also drops the cached flavour states, whose
+   * revived operator versions would otherwise resurrect stale
+   * version-keyed caches (border columns). */
   void MarkOperatorDirty();
+
+ protected:
   /** @brief As MarkOperatorDirty() when only the gauge epsilon
    * changed, keeping the cheap RescaleGaugeOperator() update path. */
   void MarkGaugeEpsilonDirty();
@@ -1450,7 +1539,7 @@ class LinearQuasiStaticClampedProblem : public LinearQuasiStaticProblemBase {
   void UpdateBoundaryValues(mfem::real_t t) override;
 
   // The base solve path with essential conditions and no extra solver
-  // machinery: the pressure-split prototype's home (see solvers.md).
+  // machinery: the pressure split's home (doc/methods/pressure_split.tex).
   bool SupportsPressureSplit() const override { return true; }
 
  private:

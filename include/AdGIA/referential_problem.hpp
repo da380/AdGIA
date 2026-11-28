@@ -395,15 +395,29 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
    * the background potential; their perturbation terms — F1, F2, the
    * fluid halves of F3, the follower load and the level border
    * (doc/theory/dahlen_closure.tex, "The referential solid, and the wall
-   * seam") — are not yet assembled, and Solve() refuses
-   * until they are. Empty for a solid body.
+   * seam") — are assembled by SetFluidPotentialGlue() and
+   * SetLevelBorder(); Solve() refuses a fluid region without the glue.
+   * Empty for a solid body.
+   * @param gravity_rule One quadrature rule for every gravity form of
+   * the class (the mapped Laplacian of the potential, the coupling and
+   * the gravity-gravity term of the displacement block, on the body and
+   * in the buffer) in place of each integrator's own; null keeps their
+   * own. The three are the second variations of one energy,
+   * @f$(1/8\pi G)\int\langle a(F)\nabla\zeta,\nabla\zeta\rangle@f$,
+   * in which @f$a@f$ is a rational function of the mapping's gradient:
+   * on a mapped body no rule integrates them exactly, and with one rule
+   * for all of them the assembled blocks are the second variations of
+   * the energy as that rule integrates it, which the finite-strain
+   * problem, whose residual is read from these blocks, needs. For a mesh
+   * of one element type; not built with fluid regions; not owned.
    */
   LinearQuasiStaticReferentialSelfGravitatingProblem(
       mfem::FiniteElementSpace* fes_u, mfem::FiniteElementSpace* fes_zeta,
       const ReferentialElasticRheology& rheology, mfem::Coefficient& density,
       mfem::real_t gravitational_constant, int dtn_degree,
       mfem::Coefficient* background_zeta0 = nullptr,
-      const std::vector<FluidRegion>& fluids = {});
+      const std::vector<FluidRegion>& fluids = {},
+      const mfem::IntegrationRule* gravity_rule = nullptr);
 
   /** @brief Surface mass load @f$\sigma@f$ per referential area
    * (registered as time-dependent) on the marked boundary attributes of
@@ -563,20 +577,26 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
    * *prescribed* extension @f$u_{\mathrm{ext}} = E\,u@f$ on a buffer
    * displacement space (option (b) of doc/theory/gravitating_elasticity.md
    * §3.1, the accurate route): the buffer's gravity-gravity block and
-   * coupling are assembled on @p fes_buffer and folded through @f$E@f$
-   * by sparse products. Exact for any smooth extension (the choice is
+   * coupling are assembled on @p fes_buffer and folded through @f$E@f$.
+   * Exact for any smooth extension (the choice is
    * gauge); no extra unknowns and no penalty. @p fes_buffer must live on
    * a (Sub)Mesh of the ball sharing this space's collection; @p E maps
    * body vdofs to buffer vdofs (NewRadialVacuumExtension). Serial. Call
-   * once, before the first Solve().
+   * once, before the first Solve(). The folds @f$E^TG_VE@f$ and
+   * @f$C + E^TC_V@f$ are applied as the products of their factors, and
+   * assembled only where a matrix is needed (the eliminated fluid's
+   * glue, the slipping subclass). The buffer's gravity-gravity block is
+   * assembled when the solver is first set up, so @p fes_buffer is kept
+   * and must outlive the problem.
    */
   void SetPrescribedVacuumExtension(mfem::FiniteElementSpace& fes_buffer,
                                     const mfem::SparseMatrix& E);
 
 #ifdef MFEM_USE_MPI
   /** @brief Parallel overload: @p E on true dofs
-   * (NewRadialVacuumExtension parallel overload); the folds run through
-   * hypre RAP/ParMult. */
+   * (NewRadialVacuumExtension parallel overload). As in serial; the
+   * matrices, where needed (also for a preconditioner on the fold), are
+   * hypre's RAP and ParMult. */
   void SetPrescribedVacuumExtension(mfem::ParFiniteElementSpace& fes_buffer,
                                     const mfem::HypreParMatrix& E);
 #endif
@@ -715,8 +735,49 @@ u@f$ columns CONJUGATED
   const PoissonDtNOperator& DtN() const { return *dtn_; }
   mfem::real_t GravitationalConstant() const { return G_; }
 
+  /** @brief The load of the potential row as AssembleForce() and
+   * AddPotentialForce() left it, on the potential's true dofs. */
+  const mfem::Vector& PotentialForce() const { return B_zeta_; }
+
+  /** @brief Superpose a dual vector on the potential row, on the
+   * potential's true dofs; after AssembleForce(), which resets it. */
+  void AddPotentialForce(const mfem::Vector& f);
+
   /** @brief Iterations of the outer solver in the last Solve(). */
   int LastOuterIterations() const { return outer_its_; }
+
+  /**
+   * @brief Precondition the block solve through the change of variables
+   * to the Eulerian potential (on by default).
+   *
+   * The referential potential increment and the Eulerian one are related
+   * by @f$\zeta = \phi\circ\varphi_e + u\cdot\nabla_x\Phi_0@f$, with
+   * @f$\nabla_x\Phi_0 = F_e^{-T}\nabla\zeta^0@f$. In @f$(u, \zeta)@f$
+   * the coupling of the two unknowns pairs first derivatives with first
+   * derivatives; in @f$(u, \phi)@f$ it is of lower order, and a block
+   * diagonal preconditioner is the better for it. With @f$G@f$ the
+   * nodal map @f$u \mapsto u_{\mathrm{ext}}\cdot\nabla_x\Phi_0@f$
+   * on the potential's nodes (the body's own, the buffer's through the
+   * prescribed vacuum extension, an eliminated fluid's through the
+   * potential glue) and @f$S = [I\ 0;\ G\ I]@f$, the preconditioner
+   * applied is @f$S\,D^{-1}S^T@f$, @f$D@f$ the block diagonal of the
+   * displacement and potential preconditioners. Off, @f$D^{-1}@f$ alone
+   * is applied. The operator and the solution are the same either way.
+   *
+   * The slipping subclass has its own solvers and does not use it.
+   */
+  void SetEulerianPotentialPreconditioner(bool on = true);
+  bool EulerianPotentialPreconditioner() const { return eulerian_prec_; }
+
+  /**
+   * @brief Build the displacement block's preconditioner on the block
+   * with the folds of the vacuum extension and of an eliminated fluid
+   * (off by default: it is built on the block without them, which is a
+   * fraction of the size and as good a preconditioner). The Krylov
+   * operator carries the folds either way.
+   */
+  void SetPreconditionerOnFold(bool on = true);
+  bool PreconditionerOnFold() const { return prec_on_fold_; }
 
   /** @brief Rigid-body modes (orthonormal, true dofs): translations, then
    * rotations of the *mapped* positions @f$W\varphi_e@f$. */
@@ -740,6 +801,16 @@ u@f$ columns CONJUGATED
   void ApplyBlockOperator(const mfem::Vector& u_true,
                           const mfem::Vector& z_true, mfem::Vector& r_u,
                           mfem::Vector& r_z);
+
+  /** @brief The potential's column of the block operator applied to a
+   * potential (true dofs): the coupling, into the displacement's row,
+   * and the potential's own block. The displacement's block is not
+   * assembled for it, nor a solver set up. On a problem with the
+   * prescribed vacuum extension the coupling is the folded one. Not
+   * built with the water load, rotation, a level border or an
+   * eliminated fluid's glue. */
+  void ApplyPotentialColumn(const mfem::Vector& z_true, mfem::Vector& r_u,
+                            mfem::Vector& r_z) const;
 
   /**
    * @brief Diagnostic: @f$\|A_{\mathrm{blk}} n\| / \|A\|_{\max}@f$ for
@@ -797,8 +868,8 @@ u@f$ columns CONJUGATED
 
   // eliminated fluid regions (constructor): geometry and background
   // sources; the perturbation terms come through the potential glue
-  // (SetFluidPotentialGlue), the level border is still to come
-  // (doc/theory/dahlen_closure.tex, "Implementation").
+  // (SetFluidPotentialGlue) and the level border (SetLevelBorder;
+  // doc/theory/dahlen_closure.tex, "Implementation").
   std::vector<FluidRegion> fluids_;
   std::list<mfem::Array<int>> fluid_markers_;  ///< parent-attribute markers
 
@@ -848,7 +919,7 @@ u@f$ columns CONJUGATED
   // potential fields
   std::unique_ptr<mfem::GridFunction> zeta0_, zeta0_shadow_, zeta_,
       zeta_shadow_;
-  std::unique_ptr<mfem::GradientGridFunctionCoefficient> grad_zeta0_shadow_;
+  std::unique_ptr<ElementGradientCoefficient> grad_zeta0_shadow_;
   mfem::Vector Zeta_true_;
 
   // potential operators: A_zeta = (K_a + DtN)/4piG
@@ -861,7 +932,8 @@ u@f$ columns CONJUGATED
   mfem::OperatorHandle K_zeta_, K_shift_;
   std::unique_ptr<mfem::SumOperator> A_zeta_op_;
   const mfem::Operator* A_zeta_ = nullptr;
-  std::unique_ptr<mfem::Solver> prec_zeta_;
+  std::unique_ptr<mfem::Solver> prec_zeta_;  // made when first applied
+  std::unique_ptr<mfem::Solver> MakePotentialPreconditioner();
   std::unique_ptr<mfem::CGSolver> cg_zeta_;
   std::unique_ptr<NullSpaceProjector> projector_c_;
   std::unique_ptr<ProjectedOperator> projected_zeta_op_;
@@ -878,12 +950,37 @@ u@f$ columns CONJUGATED
   // prescribed vacuum extension (SubMesh mode, serial)
   std::unique_ptr<mfem::FiniteElementSpace> shadow_zeta_buffer_;
   std::unique_ptr<mfem::GridFunction> zeta0_buffer_;
-  std::unique_ptr<mfem::GradientGridFunctionCoefficient> grad_zeta0_buffer_;
+  std::unique_ptr<ElementGradientCoefficient> grad_zeta0_buffer_;
   std::unique_ptr<mfem::SparseMatrix> ext_EtGE_, ext_C_total_, ext_Ct_total_;
 #ifdef MFEM_USE_MPI
   std::unique_ptr<mfem::HypreParMatrix> pext_EtGE_, pext_C_total_,
       pext_Ct_total_;
 #endif
+  // The fold E^T G_V E of the extension's gravity-gravity block, kept as
+  // its factors; (p)ext_EtGE_ above holds the product once
+  // AssembleExtensionFold() has been asked for it (the eliminated
+  // fluid's glue, a preconditioner on the fold, the slipping subclass).
+  // Otherwise the solver takes it as an operator. The folded coupling
+  // C + E^T C_V is kept and assembled in the same way.
+  bool ext_set_ = false;
+  std::unique_ptr<mfem::SparseMatrix> ext_Gv_, ext_Cv_, ext_E_;
+#ifdef MFEM_USE_MPI
+  // In parallel G_V and C_V are held as each rank's own matrix, applied
+  // between the spaces' prolongations.
+  std::unique_ptr<mfem::HypreParMatrix> pext_E_;
+  std::unique_ptr<mfem::SparseMatrix> pext_Gv_local_, pext_Cv_local_;
+  std::unique_ptr<mfem::Operator> pext_Gv_op_;
+  mfem::ParFiniteElementSpace* pext_buffer_fes_ = nullptr;
+#endif
+  // The operators of C + E^T C_V and its transpose, from the factors.
+  std::vector<std::unique_ptr<mfem::Operator>> ext_C_ops_;
+  std::unique_ptr<mfem::Operator> ext_fold_op_;
+  std::unique_ptr<mfem::SumOperator> A_fold_op_;
+  void AssembleExtensionFold();
+  // G_V, the buffer's gravity-gravity block: assembled once, when the
+  // solver is set up or the fold is asked for as a matrix.
+  void AssembleExtensionGravity();
+  mfem::FiniteElementSpace* ext_buffer_fes_ = nullptr;
   mfem::OperatorHandle A_aug_;
   mfem::OperatorHandle A_aug_clean_;  // clean-A augmentation of the
                                       // SetGaugePreconditionerOnly mode
@@ -966,6 +1063,31 @@ u@f$ columns CONJUGATED
   // 2-D compatibility (as in the Eulerian class)
   mfem::Vector ones_, L_outer_;
   mfem::real_t outer_length_ = 0.0;
+
+  // The one rule of the gravity forms, where the constructor was given
+  // one.
+  const mfem::IntegrationRule* gravity_rule_ = nullptr;
+  template <class Integrator>
+  Integrator* WithGravityRule(Integrator* integrator) const {
+    if (gravity_rule_) {
+      integrator->SetIntRule(gravity_rule_);
+    }
+    return integrator;
+  }
+
+  // The Eulerian-potential preconditioner
+  // (SetEulerianPotentialPreconditioner): the nodal map G on the
+  // potential's dofs, the buffer's rows of it kept from
+  // SetPrescribedVacuumExtension(), and the solver S D^-1 S^T.
+  bool eulerian_prec_ = true;
+  bool prec_on_fold_ = false;
+  std::unique_ptr<mfem::SparseMatrix> cov_G_, cov_G_buffer_;
+#ifdef MFEM_USE_MPI
+  std::unique_ptr<mfem::HypreParMatrix> pcov_G_, pcov_G_buffer_;
+#endif
+  std::unique_ptr<mfem::Solver> cov_prec_;
+  /** @brief The map G, assembled at first use. */
+  const mfem::Operator& PotentialChangeOfVariables();
 
   // null space and solver
   std::unique_ptr<NullSpaceProjector> projector_u_, projector_block_;

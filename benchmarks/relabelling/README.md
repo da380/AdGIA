@@ -11,12 +11,12 @@ family"). Three legs:
 
 ```
 cd <build>/benchmarks/love_numbers
-./run fluid_core --h 0.3 --order 2 --np 8 \
+./run aw_core --h 0.3 --order 2 --np 8 \
     --method referential slip_broken --map 0.02
 mpiexec -np 8 ../bin/relabelled_identity \
     -c runs/two_solid/h0.3/case.json -o 2 -map 0.02
 mpiexec -np 8 ../bin/relabelled_identity \
-    -c runs/fluid_core/h0.3/case.json -o 2 -map 0.02 -method slip_broken
+    -c runs/aw_core/h0.3/case.json -o 2 -map 0.02 -method slip_broken
 mpiexec -np 8 ../bin/aspherical_reference \
     -m ../../data/aspherical_buffer_3d.mesh \
     -c runs/homogeneous/h0.3/case.json -o 2 -out aspherical_o2.json

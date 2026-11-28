@@ -271,11 +271,82 @@ void GridFunctionDiffeomorphism::EvalGradient(DenseMatrix& F,
     EvalGradient(F, T1, T1.GetIntPoint());
     return;
   }
-  T.SetIntPoint(&ip);
+  // An integrand has set the point already: setting it again would
+  // have the transformation make its Jacobian again.
+  if (&T.GetIntPoint() != &ip) {
+    T.SetIntPoint(&ip);
+  }
   F.SetSize(vdim);
-  h_->GetVectorGradient(T, F);
+  const auto* fes = h_->FESpace();
+  if (T.ElementNo != cached_element_ ||
+      fes->GetSequence() != cached_sequence_) {
+    cached_plain_ = fes->GetElementVDofs(T.ElementNo, vdofs_) == nullptr;
+    cached_element_ = T.ElementNo;
+    cached_sequence_ = fes->GetSequence();
+  }
+  if (!cached_plain_) {
+    h_->GetVectorGradient(T, F);
+  } else {
+    const auto* fe = fes->GetFE(T.ElementNo);
+    const auto& dshape = gradients_.At(*fe, ip);
+    h_->GetSubVector(vdofs_, values_);
+    const auto values = DenseMatrix(values_.GetData(), fe->GetDof(), vdim);
+    reference_gradient_.SetSize(vdim, fe->GetDim());
+    MultAtB(values, dshape, reference_gradient_);
+    Mult(reference_gradient_, T.InverseJacobian(), F);
+  }
   for (int i = 0; i < vdim; i++) {
     F(i, i) += 1.0;
+  }
+}
+
+DisplacedDiffeomorphism::DisplacedDiffeomorphism(Diffeomorphism& base)
+    : Diffeomorphism(base.GetVDim()), base_(&base) {}
+
+void DisplacedDiffeomorphism::AddField(const mfem::GridFunction& u) {
+  const mfem::Mesh* mesh = u.FESpace()->GetMesh();
+  MFEM_VERIFY(u.VectorDim() == vdim,
+              "DisplacedDiffeomorphism: the displacement must have the "
+              "mapping's dimension.");
+  for (const mfem::Mesh* held : meshes_) {
+    MFEM_VERIFY(held != mesh,
+                "DisplacedDiffeomorphism: a field of this mesh is held "
+                "already.");
+  }
+  meshes_.push_back(mesh);
+  fields_.push_back(std::make_unique<GridFunctionDiffeomorphism>(u));
+}
+
+GridFunctionDiffeomorphism& DisplacedDiffeomorphism::Field(
+    ElementTransformation& T) {
+  for (std::size_t i = 0; i < meshes_.size(); i++) {
+    if (T.mesh == meshes_[i]) {
+      return *fields_[i];
+    }
+  }
+  MFEM_ABORT("DisplacedDiffeomorphism: evaluated on a mesh for which no "
+             "displacement was given.");
+}
+
+void DisplacedDiffeomorphism::Eval(Vector& V, ElementTransformation& T,
+                                   const IntegrationPoint& ip) {
+  // The field's own mapping is x + u.
+  Field(T).Eval(v_, T, ip);
+  T.Transform(ip, x_);
+  base_->Eval(V, T, ip);
+  V += v_;
+  V -= x_;
+}
+
+void DisplacedDiffeomorphism::EvalGradient(DenseMatrix& F,
+                                           ElementTransformation& T,
+                                           const IntegrationPoint& ip) {
+  // The field's own gradient is 1 + grad u, on boundary elements too.
+  Field(T).EvalGradient(F_, T, ip);
+  base_->EvalGradient(F, T, ip);
+  F += F_;
+  for (int i = 0; i < vdim; i++) {
+    F(i, i) -= 1.0;
   }
 }
 

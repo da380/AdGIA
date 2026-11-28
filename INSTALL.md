@@ -31,6 +31,37 @@ then the `MFEM_DIR` below. By hand, the minimum is:
 MFEM v4.10 is the reference (what the CI tests against); v4.9 is also
 known to work — the full test suite passes on both.
 
+### Optional: kernels for this machine, libCEED, and MFEM for CUDA
+
+None is needed: operators applied with no matrix (`SetMatrixFree`, the
+integrators' partial assembly) run with MFEM alone, by kernels in
+`src/kernels/`. Each of these adds to that:
+
+- **`-DADGIA_NATIVE_KERNELS=ON`** — the kernel sources alone are compiled
+  with `-march=native`. On a machine with AVX2 or AVX-512 the kernel for
+  tetrahedra then works on a block of elements as one vector and is two
+  to three times faster. The binaries need the machine they were built
+  on, or one like it; off by default.
+
+- **libCEED** — MFEM configured with `-DMFEM_USE_CEED=YES
+  -DCEED_DIR=<libCEED>`. AdGIA finds it through MFEM and then applies its
+  forms as libCEED operators on the devices `ceed-cpu` or
+  `ceed-cuda:/gpu/cuda/gen`, on tetrahedra as well as hexahedra. libCEED
+  reads the sources in `src/ceed/` again at run time, from
+  `ADGIA_CEED_QFUNCTION_DIR` (a CMake cache path, the source directory by
+  default): they have to be there when a program runs.
+- **CUDA** — hypre and MFEM built for CUDA (`-DMFEM_USE_CUDA=YES`).
+  AdGIA's sources that hold device kernels (`src/kernels/`) are then
+  compiled by the CUDA compiler, at C++20; the rest stays C++23.
+  Configure AdGIA with `-DCMAKE_NO_SYSTEM_FROM_IMPORTED=ON` if the MPI
+  wrapper's own include directory holds another hypre's headers:
+  otherwise AdGIA is compiled against the wrong `HYPRE_config.h` and
+  takes hypre to be on the host. The device is chosen at run time
+  (`cpu`, `cuda`); the whole test suite runs on such a build on the host.
+
+The tests that exercise these routes read the device from the
+environment, e.g. `ADGIA_TEST_DEVICE=ceed-cpu ctest -R MatrixFree`.
+
 ## Prerequisites
 
 1. **CMake** 3.26 or later.

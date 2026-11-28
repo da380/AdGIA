@@ -103,6 +103,10 @@ void RunCase(int dim, int order, const std::string& label) {
   Setup par(fes_u, fes_phi, solid);
   auto& p = *par.problem;
   Check(p.IsParallel() ? 0.0 : 1.0, 0.0, label + " parallel spaces");
+  // The solid SubMesh leaves the fluid out, so an edge of a fluid-solid
+  // interface shared by three ranks joins a smaller group on it: the
+  // case in which mfem can pair shared entities wrongly.
+  Check(SharedEntityMismatch(solid), 1e-12, label + " shared entities matched");
   Check(p.HasFluidRegions() ? 0.0 : 1.0, 0.0, label + " fluid regions");
 
   Check(RelErr(L2Norm(p.BackgroundPotential()), phi0_ref), 1e-9,
@@ -218,6 +222,33 @@ void RunCmbCase(int dim, int order, const std::string& label) {
     Check(RelErr(L2Norm(p_named->Potential()), L2Norm(p_hand->Potential())),
           1e-11, name + " |phi|");
   }
+
+  // On a fluid of uniform density the Full, NoMass and UniformCore rungs
+  // coincide: the fluid mass term vanishes with the density gradient and
+  // the interface density is already the constant.
+  const auto density = 1.15;
+  ConstantCoefficient rho_u(density);
+  auto rung = [&](FluidRegion::Treatment t, const std::string& what) {
+    std::vector<FluidRegion> fluids{OuterCore(solid, rho_u)};
+    fluids[0].treatment = t;
+    if (t == FluidRegion::Treatment::UniformCore) {
+      fluids[0].uniform_density = density;
+    }
+    return solve(fluids, label + " uniform fluid " + what);
+  };
+  auto p_full = rung(FluidRegion::Treatment::Full, "full");
+  auto p_nomass = rung(FluidRegion::Treatment::NoMass, "nomass");
+  auto p_uniform = rung(FluidRegion::Treatment::UniformCore, "uniform");
+  const auto u_full = L2Norm(p_full->Displacement());
+  const auto phi_full = L2Norm(p_full->Potential());
+  Check(RelErr(L2Norm(p_nomass->Displacement()), u_full), 1e-8,
+        label + " uniform fluid nomass |u|");
+  Check(RelErr(L2Norm(p_nomass->Potential()), phi_full), 1e-8,
+        label + " uniform fluid nomass |phi|");
+  Check(RelErr(L2Norm(p_uniform->Displacement()), u_full), 1e-8,
+        label + " uniform fluid uniform |u|");
+  Check(RelErr(L2Norm(p_uniform->Potential()), phi_full), 1e-8,
+        label + " uniform fluid uniform |phi|");
 }
 
 // The dropped-inner-core recipe in parallel: a mantle-only ParSubMesh

@@ -2,8 +2,8 @@
 // viscoelastic_love.cpp
 //
 // Viscoelastic load (and tidal) Love-number HISTORIES of a spherically
-// layered Maxwell body, for comparison with the correspondence-principle
-// reference of laplace_reference.py. The body is a case written by
+// layered Maxwell body, for comparison with the time-stepped histories of
+// the spectral codes (pyslfp_histories.py). The body is a case written by
 // make_case.py (benchmark_case.hpp), exactly as for love_benchmark; what this
 // driver adds is the rheology and the time.
 //
@@ -34,17 +34,16 @@
 // each interval between output times, the same number of equal steps: at
 // least -steps, more if needed to keep dt <= -dt-max. The output times are
 // therefore hit exactly, are NOT tied to a fixed step grid, and the
-// default times (geometric, ratio 2^(5/6), the reference's own) fall at a
-// different place in the relaxation each, so that the history metric of
-// compare.py (worst error over all output times) cannot
-// be scored stroboscopically.
+// default times (geometric, ratio 2^(5/6)) fall at a different place in
+// the relaxation each, so that a history metric (worst error over all
+// output times) cannot be scored stroboscopically.
 //
 // Times and taus are in the same, arbitrary, unit: the quasi-static problem
 // knows time only through the relaxation times.
 //
 // The results are JSON: the header of the case, the layers and their taus,
-// the scheme, per output time the Love numbers per degree (the schema of
-// laplace_reference.py's "histories") with the cumulative cost, the elastic
+// the scheme, per output time the Love numbers per degree ("histories")
+// with the cumulative cost, the elastic
 // (t = 0+) numbers, and the totals: steps, elastic solves (stepping and
 // observation apart), operator assemblies, preconditioner setups, Krylov
 // iterations and seconds.
@@ -188,8 +187,8 @@ int main(int argc, char* argv[]) try {
   std::vector<real_t> times = ParseList(times_arg);
   if (times.empty()) {
     for (int k = 0; k <= 12; k++) {
-      // Rounded to six decimals in units of tau_min, as the Laplace
-      // reference and the spectral V1 drivers write them, so that the
+      // Rounded to six decimals in units of tau_min, as the spectral
+      // V1 drivers write them, so that the
       // exchange files share one time column exactly.
       times.push_back(
           std::round(0.011 * std::pow(2.0, k * 10.0 / 12.0) * 1e6) / 1e6 *

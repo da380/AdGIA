@@ -163,6 +163,86 @@ std::unique_ptr<mfem::SparseMatrix> NewSubMeshPairingMatrix(
  */
 std::unique_ptr<mfem::HypreParMatrix> NewSubMeshPairingTrueDofMatrix(
     const SubMeshDofInjection& a, const SubMeshDofInjection& b);
+
+/**
+ * @brief How far the entities that a ParSubMesh shares between ranks are
+ * from being matched: a generic linear function of position is
+ * interpolated in the scalar H1 space of @p order on the SubMesh,
+ * restricted to the true dofs and prolonged, and the largest change of a
+ * dof is returned, over every rank. It is zero to rounding when every
+ * shared vertex, edge and face is the same entity on the ranks that share
+ * it, and of the size of the mesh otherwise.
+ *
+ * mfem builds the shared entities of a ParSubMesh from those of its
+ * parent, and an edge or vertex shared by three ranks or more in the
+ * parent, of which some hold none of the SubMesh's elements about it,
+ * joins a smaller group on the SubMesh. Where entities from several
+ * groups of the parent join one group of the SubMesh, mfem lists them in
+ * the order of each rank's own numbering of the parent's groups, which
+ * need not agree between ranks; the shared dofs of every space on the
+ * SubMesh are then paired wrongly, without an error. A SubMesh that
+ * takes in every element about an edge is not affected.
+ *
+ * Seen with a ParMesh read from parts that mfem's MeshPartitioner wrote,
+ * on some partitions; not with a ParMesh made from a serial mesh and a
+ * partitioning, whose ranks number the groups alike. The problem classes
+ * do not check: a program that makes a ParSubMesh of part of a ParMesh
+ * read from parts calls VerifySharedEntities() once on it, and
+ * benchmarks/love_numbers/check_submesh.cpp checks the parts of a mesh
+ * beforehand.
+ */
+inline mfem::real_t SharedEntityMismatch(mfem::ParSubMesh& submesh,
+                                         int order = 3) {
+  const auto dim = submesh.Dimension();
+  auto fec = mfem::H1_FECollection(order, dim);
+  auto fes = mfem::ParFiniteElementSpace(&submesh, &fec);
+  auto linear = mfem::FunctionCoefficient([](const mfem::Vector& x) {
+    auto value = mfem::real_t{0.3};
+    for (auto i = 0; i < x.Size(); i++) {
+      value += (1.0 + 0.618 * (i + 1)) * x[i];
+    }
+    return value;
+  });
+  auto field = mfem::ParGridFunction(&fes);
+  field.ProjectCoefficient(linear);
+  auto shared = mfem::Vector(fes.GetTrueVSize());
+  field.GetTrueDofs(shared);
+  auto back = mfem::ParGridFunction(&fes);
+  back.SetFromTrueDofs(shared);
+  back -= field;
+  auto local = back.Normlinf();
+  auto global = mfem::real_t{0};
+  MPI_Allreduce(&local, &global, 1, mfem::MPITypeMap<mfem::real_t>::mpi_type,
+                MPI_MAX, submesh.GetComm());
+  return global;
+}
+
+/** @brief Whether the shared entities of a ParSubMesh are matched across
+ * ranks: SharedEntityMismatch() against the size of its elements. */
+inline bool SharedEntitiesMatch(mfem::ParSubMesh& submesh,
+                                mfem::real_t* mismatch = nullptr) {
+  auto h = mfem::real_t{0}, h_max = h, kappa_min = h, kappa_max = h;
+  submesh.GetCharacteristics(h, h_max, kappa_min, kappa_max);
+  const auto change = SharedEntityMismatch(submesh);
+  if (mismatch) {
+    *mismatch = change;
+  }
+  return change <= 1e-8 * (h_max > 0.0 ? h_max : 1.0);
+}
+
+/** @brief Abort, naming @p what, if the shared entities of a ParSubMesh
+ * are not matched across ranks (SharedEntitiesMatch()). */
+inline void VerifySharedEntities(mfem::ParSubMesh& submesh, const char* what) {
+  auto mismatch = mfem::real_t{0};
+  MFEM_VERIFY(SharedEntitiesMatch(submesh, &mismatch),
+              "The ParSubMesh of " << what << " on " << submesh.GetNRanks()
+              << " ranks pairs entities that it shares between ranks "
+                 "wrongly (a linear function changes by " << mismatch
+              << " under restriction and prolongation): a fault of mfem's "
+                 "ParSubMesh on this partition of the mesh, under which "
+                 "every space on the SubMesh is wrong. Use another number "
+                 "of ranks or another partition.");
+}
 #endif
 
 namespace detail {

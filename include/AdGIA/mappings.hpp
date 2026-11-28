@@ -29,7 +29,9 @@
 
 #include <functional>
 #include <memory>
+#include <vector>
 
+#include "AdGIA/detail/reference_gradients.hpp"
 #include "mfem.hpp"
 
 namespace AdGIA {
@@ -299,6 +301,61 @@ class GridFunctionDiffeomorphism : public Diffeomorphism {
   std::unique_ptr<mfem::GridFunction> owned_h_;
   const mfem::GridFunction* h_;
   mfem::Vector x_;
+
+  // Kept between calls of EvalGradient: the dofs of the element last
+  // asked for. The displacement's values are read afresh at every call.
+  int cached_element_ = -1;
+  long cached_sequence_ = -1;
+  bool cached_plain_ = false;
+  mfem::Array<int> vdofs_;
+  mfem::Vector values_;
+  mfem::DenseMatrix reference_gradient_;
+  detail::ReferenceGradients gradients_;
+};
+
+/**
+ * @brief A mapping displaced by a field held on several meshes:
+ * @f$\boldsymbol{\xi} = \boldsymbol{\xi}_0 + \mathbf{u}@f$, with
+ * @f$F = F_0 + \nabla\mathbf{u}@f$.
+ *
+ * The displacement is given as one grid function for each mesh on which
+ * the mapping is to be evaluated, typically a mesh and SubMeshes of it:
+ * a nodal field read through an element transformation of another mesh
+ * takes the values of the wrong elements, without an error
+ * (doc/methods/mappings.md). An evaluation is served by the field whose
+ * mesh the element transformation belongs to, and aborts when there is
+ * none. The fields are not owned and are read at every evaluation, so
+ * the mapping follows them as they change; keeping the copies on the
+ * several meshes equal is the caller's (SubMesh::Transfer does it
+ * exactly for nodal fields of one collection).
+ *
+ * The configuration of a body at finite strain: @f$\boldsymbol{\xi}_0@f$
+ * its equilibrium mapping and @f$\mathbf{u}@f$ the displacement from
+ * equilibrium, on the body, in its extension and on the whole mesh.
+ */
+class DisplacedDiffeomorphism : public Diffeomorphism {
+ public:
+  /** @param base @f$\boldsymbol{\xi}_0@f$; not owned. */
+  explicit DisplacedDiffeomorphism(Diffeomorphism& base);
+
+  /** @brief The displacement on its mesh: a vector field of the space
+   * dimension; not owned. One field for a mesh. */
+  void AddField(const mfem::GridFunction& u);
+
+  void Eval(mfem::Vector& V, mfem::ElementTransformation& T,
+            const mfem::IntegrationPoint& ip) override;
+
+  void EvalGradient(mfem::DenseMatrix& F, mfem::ElementTransformation& T,
+                    const mfem::IntegrationPoint& ip) override;
+
+ private:
+  GridFunctionDiffeomorphism& Field(mfem::ElementTransformation& T);
+
+  Diffeomorphism* base_;
+  std::vector<const mfem::Mesh*> meshes_;
+  std::vector<std::unique_ptr<GridFunctionDiffeomorphism>> fields_;
+  mfem::Vector x_, v_;
+  mfem::DenseMatrix F_;
 };
 
 /**

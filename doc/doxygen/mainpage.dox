@@ -10,8 +10,9 @@
  * deformation of a self-gravitating elastic or viscoelastic body, with fluid
  * regions, general (non-hydrostatic, non-natural) reference states and
  * slipping fluid–solid interfaces. The sea-level equation, rotational
- * feedbacks, shoreline migration and the first-order adjoints are in place;
- * the interface kernels and the second-order adjoints are still to come.
+ * feedbacks, shoreline migration, the tangent-linear solver and the first- and
+ * second-order adjoints (continuous and discrete) are in place; the
+ * interface kernels are not.
  * Serial and parallel (MPI) paths are provided throughout, normally in one
  * class.
  *

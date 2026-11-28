@@ -89,7 +89,8 @@ singular system is semi-convergent). Too small an `eps` or too many
 refinements bring it back; `eps ~ 1e-2` with **2–3 refinements** balances
 the `O(eps^k)` bias against the `O(k h^q / eps)` pollution, and both
 improve with mesh refinement. The window is bounded on both sides in the
-Love-number benchmarks (`fluid_core`, and PREM structure in `prem_4`):
+Love-number benchmarks (a body with a uniform fluid core, and PREM
+structure in `prem_4`):
 `eps = 1e-1` leaves an observable bias at the percent level, while below
 `1e-2` the cost grows several-fold per decade of `eps` and by `eps = 1e-4`
 the solution is semi-convergently polluted although the solver reports
@@ -104,8 +105,8 @@ coarse test mesh at `eps = 1e-2`, k = 3, growing like `k / eps` beyond
 (`TestMixedProblemGauged`); physical (degree-2) loads do not sit on the
 near-kernel. The mathematics is `doc/methods/gauge_penalty_iteration.tex`.
 
-The window above is the numerical one, and its measurements include the
-non-neutral `fluid_core`; as a *physical* operating window it belongs to
+The window above is the numerical one, and its measurements include a
+uniform fluid core, which is not neutral; as a *physical* operating window it belongs to
 neutrally stratified fluids (`aw_core`, the near-neutral PREM cores). At
 `N^2 != 0` the near-kernel is no longer a harmless gauge: the discrete near-kernel modes
 carry a restoring (or, in an unstably stratified fluid, a destabilising)

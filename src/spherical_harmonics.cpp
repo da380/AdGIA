@@ -454,7 +454,7 @@ void BoundaryHarmonicCoefficients::Assemble() {
 void BoundaryHarmonicCoefficients::Reduce(Vector& c) const {
 #ifdef MFEM_USE_MPI
   if (parallel_) {
-    MPI_Allreduce(MPI_IN_PLACE, c.GetData(), c.Size(),
+    MPI_Allreduce(MPI_IN_PLACE, c.HostReadWrite(), c.Size(),
                   MPITypeMap<real_t>::mpi_type, MPI_SUM, comm_);
   }
 #endif
@@ -465,6 +465,8 @@ void BoundaryHarmonicCoefficients::Coefficients(const mfem::GridFunction& f,
   MFEM_VERIFY(f.Size() == M_.Height(),
               "BoundaryHarmonicCoefficients: the field is not on the space.");
   c.SetSize(Size());
+  f.HostRead();
+  c.HostWrite();
   M_.MultTranspose(f, c);
   Reduce(c);
 }

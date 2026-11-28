@@ -8,26 +8,30 @@ a planetmodel `Model` in SI:
                    the same body cut into an interior and an outer shell
                    (the viscoelastic benchmark's elastic lithosphere)
   two_solid        two solid layers with a jump in every parameter
-  fluid_core       a uniform fluid core under a uniform solid mantle
-  aw_core          fluid_core's neutrally stratified twin: a closed-form
-                   Adams-Williamson core (N^2 = 0 exactly) of the same
-                   mass under the same mantle
-  inner_core       a solid inner core, a fluid outer core and a mantle,
-                   each uniform
+  aw_core          a neutrally stratified fluid core, a closed-form
+                   Adams-Williamson one (N^2 = 0 exactly), under a uniform
+                   solid mantle
+  inner_core       a uniform solid inner core, a neutrally stratified
+                   fluid outer core and a uniform mantle: the fluid shell
+                   between two walls
   linear_solid     one solid layer, density and velocities linear in radius
-  stratified_core  a fluid core whose density falls with radius, under a
-                   mantle, every parameter linear in radius
-  stable_core      a stably stratified fluid core (N^2 > 0 throughout:
-                   density falling faster than adiabatic, large kappa)
-                   under fluid_core's mantle; the core with a clean
-                   static limit
-  stable_core_mild the same with N^2 an order of magnitude smaller
-  stable_core_strong the same with N^2 several times fluid_core's magnitude
-  earth_like       inner core, fluid outer core and mantle, every parameter
-                   linear in radius within each
+  bullen_core_weak, bullen_core_strong
+                   aw_core with the core's bulk modulus raised so that its
+                   Bullen parameter is 1.02 or 1.5 throughout: a stably
+                   stratified core of uniform, finite stratification
+  bullen_mantle    a core of that kind (Bullen parameter 1.02) under a
+                   mantle that is itself stably stratified, every
+                   parameter of it linear in radius: stable throughout,
+                   weakly in the core, smooth at the centre
+  bullen_mantle_stacked
+                   bullen_mantle with a core that is stably stratified in
+                   its lower half and neutral above: a fluid region that
+                   is a stack of layers
+  aw_mantle        aw_core's core under a mantle that is itself exactly
+                   neutral
   prem_4           PREM without its ocean, isotropic, on four layers: inner
                    core, outer core, lower mantle, and the upper mantle
-                   with the crust
+                   with the crust; its outer core made stable
   prem_6           the same on six: the transition zone and the crust are
                    layers of their own
 
@@ -36,11 +40,16 @@ them (`Model.coarsened`): within a merged layer each parameter is the
 cubic closest to PREM's, so that the model is smooth within its layers,
 as the mesh takes it to be.
 
-Every model is a planetmodel `LayeredIsotropicElastic`, whose layers take
-a constant or the coefficients of a polynomial in r / RADIUS for each
-parameter. The values are round numbers of the Earth's order, so that the
-ratio rho g a / mu of gravitational to elastic forces is of order one, as
-in the Earth. `model(name)` returns the model in SI and `scaled(model)`
+Every fluid layer is stably or neutrally stratified and is described by
+its stratification: it holds its Bullen excess (the field
+`bullen_excess`, zero where it is neutral), and its density is derived
+from that, its P velocity and its mass
+(`SelfGravitating.with_bullen_excess`).
+
+The solid layers take a constant or the coefficients of a polynomial in
+r / RADIUS for each parameter. The values are round numbers of the
+Earth's order, so that the ratio rho g a / mu of gravitational to elastic
+forces is of order one, as in the Earth. `model(name)` returns the model in SI and `scaled(model)`
 the same model in the benchmark's units, in which the mesh is built and
 the finite-element problem solved: lengths in units of the model's outer
 radius, densities in units of `DENSITY_SCALE`, and times in units of
@@ -48,15 +57,17 @@ radius, densities in units of `DENSITY_SCALE`, and times in units of
 """
 from __future__ import annotations
 
+import functools
 import math
 from collections.abc import Callable, Sequence
 
 import numpy as np
 from planetmodel import (DENSITY, PREM, SCALAR, Elastic, Geometry,
-                         LayeredIsotropicElastic, Model, RadialField,
-                         SelfGravitating, Skeleton, as_layer_function,
-                         constant_field, gravity, kappa_mu, polynomial_fit,
-                         polynomial_layer)
+                         LayeredIsotropicElastic, Model, PolynomialLayer,
+                         RadialField, SelfGravitating, Skeleton,
+                         as_layer_function, constant_field, gravity, kappa_mu,
+                         polynomial_fit, polynomial_layer)
+from scipy.interpolate import PPoly
 from planetmodel.units import G_SI, Scales
 
 #: The outer radius of the constructed models, in metres.
@@ -103,15 +114,6 @@ def two_solid(discontinuity: float = MID_MANTLE) -> Model:
         interface_names=["discontinuity", "surface"], name="two_solid")
 
 
-def fluid_core(cmb: float = CMB) -> Model:
-    """The two-layer model; `cmb` moves the interface (the degree-0
-    perturbation benchmark shifts it by a small amount)."""
-    return LayeredIsotropicElastic(
-        [0.0, cmb, RADIUS], rho=[11000.0, 4500.0], vp=[9000.0, 11000.0],
-        vs=[0.0, 6000.0], layer_names=["core", "mantle"],
-        interface_names=["cmb", "surface"], name="fluid_core")
-
-
 class _CallableIsotropicElastic(Elastic, SelfGravitating, Model):
     """LayeredIsotropicElastic with callables admitted per parameter: a
     number is a constant, a sequence polynomial coefficients in
@@ -148,15 +150,17 @@ class _CallableIsotropicElastic(Elastic, SelfGravitating, Model):
         super().__init__(geometry, layers, name=name)
 
 
-#: aw_core: density falloff alpha and the central density that matches
-#: fluid_core's core mass, rho0 (1 - 3 alpha / 5) = 11000.
+#: aw_core: density falloff alpha and the central density for which the
+#: mean density of the core is 11000, rho0 (1 - 3 alpha / 5) = 11000.
 AW_ALPHA = 0.2
 AW_RHO0 = 11000.0 / (1.0 - 3.0 * AW_ALPHA / 5.0)
 
 
 def aw_core(cmb: float = CMB) -> Model:
-    """fluid_core's neutrally stratified twin: a closed-form
-    Adams-Williamson core (N^2 = 0 exactly) under fluid_core's mantle.
+    """A neutrally stratified fluid core under a uniform mantle: a
+    closed-form Adams-Williamson core (N^2 = 0 exactly). `cmb` moves the
+    interface (the degree-0 perturbation benchmark shifts it by a small
+    amount).
 
     The density is the one free profile; kappa follows from the
     neutrality identity kappa = -rho^2 g / rho' with the core's own
@@ -167,9 +171,6 @@ def aw_core(cmb: float = CMB) -> Model:
         kappa(r) = (2 pi G rho0^2 cmb^2 / 3 alpha)
                      (1 - alpha x^2)^2 (1 - (3 alpha / 5) x^2)
 
-    rho0 matches the core's total mass to fluid_core's, so the mantle's
-    hydrostatic state and the surface gravity are identical to
-    fluid_core's and response differences isolate the core physics.
     kappa is bounded away from zero on the core (its zero sits at
     x = 1 / sqrt(alpha)); the limit alpha -> 0 recovers the uniform
     core with kappa -> infinity, the statement that a uniform-density
@@ -180,7 +181,8 @@ def aw_core(cmb: float = CMB) -> Model:
     The core's vp = sqrt(kappa / rho) is not polynomial, so the layer
     is built from callable fields rather than LayeredIsotropicElastic's
     polynomial ones; kappa and mu then derive from it exactly as for
-    every other model."""
+    every other model. The core is then stated as neutral
+    (`with_bullen_excess`), which derives the same density again."""
     rho0, alpha = AW_RHO0, AW_ALPHA
     kappa0 = 2.0 * math.pi * G_SI * rho0 ** 2 * cmb ** 2 / (3.0 * alpha)
 
@@ -196,15 +198,21 @@ def aw_core(cmb: float = CMB) -> Model:
         rho=[(rho0, 0.0, -rho0 * alpha * (RADIUS / cmb) ** 2), 4500.0],
         vp=[vp_core, 11000.0], vs=[0.0, 6000.0], scale=RADIUS,
         layer_names=["core", "mantle"], interface_names=["cmb", "surface"],
-        name="aw_core")
+        name="aw_core").with_bullen_excess("core", 0.0)
 
 
 def inner_core() -> Model:
+    """A uniform solid inner core and a uniform mantle about a fluid
+    outer core that is neutrally stratified: a P velocity of 9000 m/s and
+    the mass of a uniform layer of 11000 kg/m^3, its density (about 12500
+    at the ICB, 10000 at the CMB) derived from those. The fluid is a
+    shell between two walls and holds no centre."""
     return LayeredIsotropicElastic(
         [0.0, ICB, CMB, RADIUS], rho=[13000.0, 11000.0, 4500.0],
         vp=[11000.0, 9000.0, 11000.0], vs=[3500.0, 0.0, 6000.0],
         layer_names=["inner_core", "outer_core", "mantle"],
-        interface_names=["icb", "cmb", "surface"], name="inner_core")
+        interface_names=["icb", "cmb", "surface"],
+        name="inner_core").with_bullen_excess("outer_core", 0.0)
 
 
 def linear_solid() -> Model:
@@ -214,74 +222,109 @@ def linear_solid() -> Model:
         interface_names=["surface"], name="linear_solid")
 
 
-def stratified_core() -> Model:
-    return LayeredIsotropicElastic(
-        [0.0, CMB, RADIUS],
-        rho=[(12500.0, -4500.0), (7000.0, -3000.0)],
-        vp=[(10500.0, -4500.0), (15500.0, -6500.0)],
-        vs=[0.0, (8000.0, -3000.0)], scale=RADIUS,
-        layer_names=["core", "mantle"], interface_names=["cmb", "surface"],
-        name="stratified_core")
-
-
-def stable_core(drho: float = 8000.0, vp_core: float = 14000.0,
-                rho0: float = 13000.0, name: str = "stable_core") -> Model:
-    """A stably stratified fluid core under fluid_core's mantle: density
-    linear in radius, rho0 - drho * r / RADIUS, with a constant vp large
-    enough that the adiabatic term g rho / kappa stays below the density
-    gradient everywhere, so N^2 = -g (rho'/rho + g rho/kappa) > 0
-    throughout the core (N^2 -> 0 only at the centre with g).  The
-    static problem of this core has a well-defined secular limit with no
-    Rayleigh-Taylor growth: the model on which the Maxwell-core route's
-    degree-1 offset from the secular closure is a clean measurement
-    (doc/theory/static_fluid_core.tex)."""
-    return LayeredIsotropicElastic(
-        [0.0, CMB, RADIUS], rho=[(rho0, -drho), 4500.0],
+def bullen_core(excess: float, name: str) -> Model:
+    """aw_core with the bulk modulus of its core raised by the factor
+    1 + excess: the same density, gravity and mantle, and a core whose
+    Bullen parameter -kappa rho' / (rho^2 g) is 1 + excess throughout,
+    stably stratified for excess > 0 and aw_core itself at excess = 0.
+    The stratification is uniform and stays finite at the centre, where
+    the density is smooth, so the family isolates the strength of the
+    stratification: Earth's outer core departs from neutrality by a few
+    hundredths."""
+    rho_core, vp_core = _bullen_core_fields(AW_RHO0, AW_ALPHA, CMB, excess)
+    return _CallableIsotropicElastic(
+        [0.0, CMB, RADIUS], rho=[rho_core, 4500.0],
         vp=[vp_core, 11000.0], vs=[0.0, 6000.0], scale=RADIUS,
         layer_names=["core", "mantle"], interface_names=["cmb", "surface"],
-        name=name)
+        name=name).with_bullen_excess("core", excess)
 
 
-def stable_core_strong() -> Model:
-    """stable_core with a much stronger stratification (N^2 several times
-    fluid_core's magnitude): density falling from 15000 to just above the
-    mantle's 4500 at the CMB, vp 18000 m/s."""
-    return stable_core(drho=18000.0, vp_core=18000.0, rho0=15000.0,
-                       name="stable_core_strong")
+def _bullen_core_fields(rho0: float, alpha: float, cmb: float,
+                        excess: float):
+    """The density (coefficients in r / RADIUS) and the vp (a callable) of
+    a core of density rho0 (1 - alpha (r / cmb)^2) whose Bullen parameter
+    is 1 + excess throughout: aw_core's closed forms, with the neutral
+    bulk modulus multiplied by 1 + excess."""
+    kappa0 = (1.0 + excess) * 2.0 * math.pi * G_SI * rho0 ** 2 * cmb ** 2 \
+        / (3.0 * alpha)
+
+    def vp_core(r):
+        x2 = (np.asarray(r, dtype=float) / cmb) ** 2
+        kappa = kappa0 * (1.0 - alpha * x2) ** 2 * (1.0 - 0.6 * alpha * x2)
+        return np.sqrt(kappa / (rho0 * (1.0 - alpha * x2)))
+
+    return (rho0, 0.0, -rho0 * alpha * (RADIUS / cmb) ** 2), vp_core
 
 
-def stable_core_mild() -> Model:
-    """stable_core with a weaker stratification (N^2 six times smaller at
-    its peak, twelve times at the CMB), to see how the Maxwell-core
-    offset scales with N^2."""
-    return stable_core(drho=4500.0, vp_core=13500.0, name="stable_core_mild")
+def bullen_core_weak() -> Model:
+    """bullen_core at an excess of 0.02, the size of Earth's outer core's
+    departure from neutrality."""
+    return bullen_core(0.02, "bullen_core_weak")
 
 
-def stable_mantle() -> Model:
-    """stable_core's core under a mantle that is locally stable in the
-    strict sense: stratified_core's velocities (vp 15500 - 6500 r/R,
-    vs 8000 - 3000 r/R) with a steeper density, 9000 - 5500 r/R (5975 to
-    3500 kg/m^3), so that rho' is 1.23-1.35 times the adiabatic
-    -rho^2 g / kappa throughout the mantle and N^2 > 0 in both layers:
-    no growing mode at any effective shear, the ladder model on which the
-    long-time viscoelastic tier must converge in h at every time (the
-    review of 7 November 2026, section 5.4; David's steer: steeper density
-    rather than higher velocities)."""
-    return LayeredIsotropicElastic(
-        [0.0, CMB, RADIUS], rho=[(13000.0, -8000.0), (9000.0, -5500.0)],
-        vp=[14000.0, (15500.0, -6500.0)], vs=[0.0, (8000.0, -3000.0)],
+def bullen_core_strong() -> Model:
+    """bullen_core at an excess of 0.5."""
+    return bullen_core(0.5, "bullen_core_strong")
+
+
+#: bullen_mantle: the excess of the core's Bullen parameter over one, the
+#: size of the departure of Earth's outer core from neutrality.
+BULLEN_MANTLE_EXCESS = 0.02
+
+
+def _bullen_mantle(name: str) -> Model:
+    """bullen_mantle before its core is described by its stratification."""
+    # The core's mean density, 13000 - 6000 CMB / RADIUS.
+    mean = 13000.0 - 6000.0 * CMB / RADIUS
+    rho0 = mean / (1.0 - 0.6 * AW_ALPHA)
+    rho_core, vp_core = _bullen_core_fields(rho0, AW_ALPHA, CMB,
+                                            BULLEN_MANTLE_EXCESS)
+    return _CallableIsotropicElastic(
+        [0.0, CMB, RADIUS], rho=[rho_core, (9000.0, -5500.0)],
+        vp=[vp_core, (15500.0, -6500.0)], vs=[0.0, (8000.0, -3000.0)],
         scale=RADIUS, layer_names=["core", "mantle"],
-        interface_names=["cmb", "surface"], name="stable_mantle")
+        interface_names=["cmb", "surface"], name=name)
 
 
-#: aw_mantle: the mantle density, linear in r (stratified_core's), under
-#: which kappa follows from neutrality with the body's own gravity.
+def bullen_mantle() -> Model:
+    """A body that is stably stratified everywhere, weakly in the core as
+    the Earth's is, with nothing singular at the centre.
+
+    The core has the density rho0 (1 - alpha (r / cmb)^2) and a Bullen
+    parameter of 1.02 throughout (bullen_core's closed forms), with a mean
+    density of 13000 - 6000 CMB / RADIUS. The mantle is linear in radius
+    in every parameter: density 9000 - 5500 r / RADIUS (5975 to
+    3500 kg/m^3), vp 15500 - 6500 r / RADIUS and vs 8000 - 3000 r / RADIUS,
+    for which rho' is 1.23 to 1.35 times the adiabatic gradient
+    -rho^2 g / kappa, so that N^2 > 0 throughout and the body has no
+    growing mode at any effective shear."""
+    return _bullen_mantle("bullen_mantle").with_bullen_excess(
+        "core", BULLEN_MANTLE_EXCESS)
+
+
+def bullen_mantle_stacked() -> Model:
+    """bullen_mantle with a core that is a stack of two layers in the
+    level: a Bullen parameter of 1.02 below half the core's radius and
+    neutral above, as a core made stable by the least mixing is in
+    pieces. The core keeps bullen_mantle's P velocity and mass, so
+    gravity in the mantle and the mantle itself are bullen_mantle's; its
+    density follows from the stratification and differs from
+    bullen_mantle's by up to 2e-3. The transition is a knot of the core,
+    not an interface, and is not meshed."""
+    excess = PolynomialLayer(
+        (0.0, CMB), PPoly(np.array([[BULLEN_MANTLE_EXCESS, 0.0]]),
+                          np.array([0.0, 0.5 * CMB, CMB])))
+    return _bullen_mantle("bullen_mantle_stacked").with_bullen_excess(
+        "core", excess)
+
+
+#: aw_mantle: the mantle density, linear in r, under which kappa follows
+#: from neutrality with the body's own gravity.
 AW_MANTLE_RHO = (7000.0, -3000.0)
 
 
 def aw_mantle() -> Model:
-    """The neutrally stratified twin of stable_mantle / stratified_core:
-    aw_core's Adams-Williamson core under a mantle that is itself exactly
+    """aw_core's Adams-Williamson core under a mantle that is itself exactly
     neutral, N^2 = 0 throughout the body, so that the relaxed limit
     neither grows nor decays and discrete growth rates can be read
     directly against zero.
@@ -289,13 +332,13 @@ def aw_mantle() -> Model:
     As in aw_core the density is the free profile and kappa follows from
     the neutrality identity kappa = -rho^2 g / rho', with the body's own
     enclosed-mass gravity, all closed form. The mantle density is linear,
-    rho = a - b r (stratified_core's 7000 - 3000 r/R), so rho' = -b and
+    rho = a - b r (7000 - 3000 r/R), so rho' = -b and
 
         kappa(r) = rho(r)^2 g(r) / b,
         g(r)     = G (M_core + 4 pi [a (r^3 - c^3)/3 - b (r^4 - c^4)/4]) / r^2,
 
-    with M_core aw_core's (= fluid_core's) core mass and c the CMB. vs is
-    stratified_core's (8000 - 3000 r/R); vp = sqrt(kappa / rho + 4 vs^2 / 3)
+    with M_core aw_core's core mass and c the CMB. vs is
+    8000 - 3000 r/R; vp = sqrt(kappa / rho + 4 vs^2 / 3)
     is a callable field. kappa runs from about 6e11 at the CMB to 3e11 at
     the surface, PREM-like at depth and high above 670 km, the price of a
     linear density with a single neutral kappa."""
@@ -333,17 +376,7 @@ def aw_mantle() -> Model:
         rho=[(rho0, 0.0, -rho0 * alpha * (RADIUS / cmb) ** 2), rho_mantle],
         vp=[vp_core, vp_mantle], vs=[0.0, vs_mantle], scale=RADIUS,
         layer_names=["core", "mantle"], interface_names=["cmb", "surface"],
-        name="aw_mantle")
-
-
-def earth_like() -> Model:
-    return LayeredIsotropicElastic(
-        [0.0, ICB, CMB, RADIUS],
-        rho=[(13100.0, -1500.0), (12800.0, -5000.0), (7000.0, -3000.0)],
-        vp=[(11300.0, -1000.0), (10800.0, -5000.0), (15500.0, -6500.0)],
-        vs=[(3700.0, -500.0), 0.0, (8000.0, -3000.0)], scale=RADIUS,
-        layer_names=["inner_core", "outer_core", "mantle"],
-        interface_names=["icb", "cmb", "surface"], name="earth_like")
+        name="aw_mantle").with_bullen_excess("core", 0.0)
 
 
 def prem_like(keep: Sequence[str], layers: Sequence[str], *,
@@ -353,13 +386,22 @@ def prem_like(keep: Sequence[str], layers: Sequence[str], *,
     parameter is the polynomial of `degree` closest to PREM's, refit
     through the velocities so the elastic relations hold exactly, and a
     fluid layer never merges with a solid one. `layers` names the coarse
-    layers, centre outward."""
+    layers, centre outward.
+
+    PREM's outer core is unstably stratified over part of its radius. It
+    is replaced by the stable layer nearest to it (`Model.stabilised`),
+    which keeps its P velocity, mass and moment of inertia, is neutral
+    over most of its radius and changes its density by a few parts in
+    1e4."""
     coarse, _ = PREM(ocean=False).isotropic().coarsened(keep=list(keep),
                                                         degree=degree)
-    return coarse.renamed(layers=list(layers)).replaced(name=name,
-                                                        check=False)
+    coarse = coarse.renamed(layers=list(layers)).replaced(name=name,
+                                                          check=False)
+    stable, _ = coarse.stabilised(layers=["outer_core"])
+    return stable
 
 
+@functools.cache
 def prem_4() -> Model:
     return prem_like(
         ["icb", "cmb", "d670"],
@@ -367,6 +409,7 @@ def prem_4() -> Model:
         name="prem_4")
 
 
+@functools.cache
 def prem_6() -> Model:
     """Six-layer PREM. Elastic runs only for now: the cubic refits across
     the merged discontinuities give density inversions (rho increasing
@@ -383,7 +426,6 @@ def prem_6() -> Model:
 #: Models whose single interior interface the perturbation benchmark can
 #: shift, with the keyword that moves it (SI metres).
 SHIFTABLE: dict[str, str] = {
-    "fluid_core": "cmb",
     "aw_core": "cmb",
     "two_solid": "discontinuity",
 }
@@ -392,17 +434,14 @@ MODELS: dict[str, Callable[[], Model]] = {
     "homogeneous": homogeneous,
     "homogeneous_lithosphere": homogeneous_lithosphere,
     "two_solid": two_solid,
-    "fluid_core": fluid_core,
     "aw_core": aw_core,
     "inner_core": inner_core,
     "linear_solid": linear_solid,
-    "stratified_core": stratified_core,
-    "stable_core": stable_core,
-    "stable_core_mild": stable_core_mild,
-    "stable_core_strong": stable_core_strong,
-    "stable_mantle": stable_mantle,
     "aw_mantle": aw_mantle,
-    "earth_like": earth_like,
+    "bullen_core_weak": bullen_core_weak,
+    "bullen_core_strong": bullen_core_strong,
+    "bullen_mantle": bullen_mantle,
+    "bullen_mantle_stacked": bullen_mantle_stacked,
     "prem_4": prem_4,
     "prem_6": prem_6,
 }
@@ -433,8 +472,9 @@ def scaled(si: Model, *, time_scale: float | None = None) -> Model:
     out = si.converted(scales(radius, time_scale=time_scale))
     for i, layer in enumerate(out.layers):
         kappa, mu = kappa_mu(layer)
-        out = (out.with_field(i, "kappa", kappa, replace=True)
-                  .with_field(i, "mu", mu, replace=True))
+        for name, field in (("kappa", kappa), ("mu", mu)):
+            if name not in layer.fields:
+                out = out.with_field(i, name, field)
     return out
 
 

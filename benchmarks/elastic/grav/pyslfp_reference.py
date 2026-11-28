@@ -31,7 +31,7 @@ from pyslfp.love_numbers import love_numbers  # noqa: E402
 COLUMNS = ("l", "hp", "lp", "kp", "hT", "lT", "kT")
 
 #: The ladder models of the tier by default: solid and fluid-solid.
-DEFAULT_MODELS = ("homogeneous", "two_solid", "fluid_core")
+DEFAULT_MODELS = ("homogeneous", "two_solid", "aw_core")
 
 
 def main(argv: list[str] | None = None) -> None:
